@@ -1,0 +1,14 @@
+# rag-engine skeleton.
+# The real engine adds: bge-m3 (FlagEmbedding/sentence-transformers),
+# sqlite-vec or psycopg[binary]+pgvector, a cross-encoder reranker, torch.
+# Those are pinned by the engine implementer (CoLearn / in-house) per spec §8.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+
+# --- OPTIONAL: real document extraction (PDF/DOCX/XLSX -> structured markdown) ---
+# The ingest prototype (app/extract.py) uses Docling when present and falls back
+# to plain-text/markdown parsing otherwise, so the skeleton runs without it.
+# Heavy (pulls torch); install on the Jetson / real engine build:
+#   docling>=2.0

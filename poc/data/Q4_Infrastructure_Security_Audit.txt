@@ -1,0 +1,25 @@
+Q4 Infrastructure Security Audit - Assessment Report
+
+§2 Executive Summary
+
+Q4 infrastructure assessment covered 184 production assets across three geographic zones, mapped against ISO 27001 Annex A controls and CIS Benchmarks v8.
+
+Overall posture is rated Moderate, with two High-severity findings requiring remediation before the Q1 attestation window closes on 15 March.
+
+Encryption-at-rest is enforced on 100% of in-scope data stores; encryption-in-transit gaps remain on three internal east-west service meshes.
+
+§6 Vulnerabilities & Findings
+
+Finding SA-019 (High) — An outdated firmware patch on Firewall-03 (Edge-DC2) exposes the management plane to CVE-2024-31822. Vendor patch 11.4.7-h6 is available and pre-staged.
+
+Finding SA-022 (Medium) — Log retention on the SIEM cluster is configured to 45 days; the audit baseline requires 180 days for ISO 27001 control A.12.4.1 alignment.
+
+Finding SA-027 (Low) — Three service accounts retain interactive login rights with no recorded use in 90+ days; recommend conversion to managed identities.
+
+§11 ISO 27001 Compliance Notes
+
+Control A.9.2.5 (Review of user access rights) is partially satisfied — quarterly reviews exist but lack documented evidence of remediation closure.
+
+Control A.12.6.1 (Management of technical vulnerabilities) requires a sub-30-day mean-time-to-patch for critical CVEs; current MTTP is 41 days.
+
+Control A.15.1.1 (Information security in supplier relationships) is fully satisfied following the Q3 vendor risk matrix refresh.

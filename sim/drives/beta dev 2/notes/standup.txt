@@ -1,0 +1,6 @@
+Beta Dev 2 — Sub-folder note
+
+This file lives in a sub-directory to exercise recursive directory handling
+and the path-segment-aware drop/tree reconciliation.
+
+The secret beta passphrase referenced in standups is "aurora-7".

@@ -1,0 +1,25 @@
+Vendor Risk Matrix - 2025 Review
+
+This matrix rates key suppliers by data sensitivity, operational criticality and
+overall risk level for NIS2 supply-chain compliance.
+
+NimbusCloud Services GmbH - Hosting and infrastructure. Data sensitivity: high.
+Criticality: high. Overall risk: Medium. Notes: processes personal data under a
+GDPR Article 28 agreement; SOC 2 Type II in place; 24-hour breach notification
+clause signed. Mitigation: quarterly review and exit plan documented.
+
+BrightPay Solutions - Payroll processing. Data sensitivity: high (employee PII).
+Criticality: medium. Overall risk: Medium. Notes: ISO 27001 certified; DPA
+signed. Mitigation: annual penetration test evidence required.
+
+DataForge Analytics - Business intelligence. Data sensitivity: medium.
+Criticality: low. Overall risk: Low. Notes: pseudonymized data only.
+
+OpenParts Hardware - Component supplier. Data sensitivity: low. Criticality:
+high (single-source for a key component). Overall risk: High. Notes: no second
+source identified. Mitigation: qualify an alternate supplier in H1 2026; this is
+the top supply-chain risk in the portfolio.
+
+Summary: One high-risk supplier (single-source hardware), three medium/low. The
+recommended priority is to remove the single point of failure in the hardware
+supply chain before scaling AI Box production.

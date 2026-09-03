@@ -1,0 +1,13 @@
+Contract 2025 Final - Master Services Agreement
+
+MASTER SERVICES AGREEMENT
+
+Between ViVeSec Holdings GmbH ("Vendor") and Gaphopper Industries Kft. ("Client").
+
+Effective Date: 14 January 2025. Term: 36 months with auto-renewal unless terminated 90 days prior.
+
+4.2 Pricing & Renewal Clause — Annual fee fixed at €148,000 for years 1–2, with CPI-linked uplift capped at 4% in year 3.
+
+4.3 Termination for Convenience — Either party may terminate with 90 days written notice; pro-rated refund applies.
+
+9.1 Data Residency — All processing remains on Client-controlled infrastructure; no off-premise replication permitted.

@@ -1,0 +1,128 @@
+# ViVeSec AI Box — local appliance composition.
+#
+# Three (optionally four) services on the box, wired so the RAG layer is a
+# SWAPPABLE container (spec ViVeSec_AIBox_RAG_Interfesz_Spec.md §2, §9):
+#
+#   hid        - the in-house app: UI (iframe), auth, ACL pre-filter, T1-T4
+#                routing, grounding-guard, LLM call. Public-facing.
+#   rag-engine - retrieval-only, INTERNAL ONLY. Swap baseline <-> colearn by
+#                changing the image/build + RAG_ENGINE_NAME (no public port).
+#   ollama     - shared generation LLM (qwen2.5:14b Q8), INTERNAL ONLY.
+#   postgres   - OPTIONAL vector/facts backend (profile "postgres", spec §11.1).
+#
+# Networking: only `hid` is on the public-facing network. rag-engine / ollama /
+# postgres live on an INTERNAL network with no published ports (invariant 1).
+#
+# Model weights are mounted, never baked into images (invariant 6).
+#
+# GPU (Jetson AGX Orin): uncomment the `runtime: nvidia` / deploy blocks once the
+# real engine + Ollama need CUDA. On the dev box (no GPU) leave them commented.
+
+name: vivesec-aibox
+
+services:
+  hid:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      # Talk to the swappable engine over the internal network (spec §3).
+      RAG_ENGINE_URL: http://rag-engine:8081
+      RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:?set RAG_INTERNAL_TOKEN in .env}
+      # Generation stays in the HÍD -> Ollama (NOT in rag-engine).
+      OLLAMA_URL: http://ollama:11434
+      RAG_GEN_MODEL: ${RAG_GEN_MODEL:-qwen2.5:14b}
+    ports:
+      - "8080:8080" # the ONLY publicly exposed service (UI / iframe host)
+    networks:
+      - frontend
+      - internal
+    depends_on:
+      rag-engine:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  rag-engine:
+    build:
+      context: ./rag-engine
+      dockerfile: Dockerfile
+    # Swap point: RAG_ENGINE_NAME selects baseline|colearn; the image/tag can be
+    # swapped wholesale. The /ingest + /search contract stays identical.
+    environment:
+      RAG_ENGINE_NAME: ${RAG_ENGINE_NAME:-baseline}
+      RAG_INTERNAL_TOKEN: ${RAG_INTERNAL_TOKEN:?set RAG_INTERNAL_TOKEN in .env}
+      RAG_VECTOR_BACKEND: ${RAG_VECTOR_BACKEND:-sqlite} # sqlite | postgres (spec §11.1)
+      RAG_POSTGRES_DSN: ${RAG_POSTGRES_DSN:-}
+      RAG_EMBED_MODEL: ${RAG_EMBED_MODEL:-bge-m3}
+      RAG_EMBED_BACKEND: ${RAG_EMBED_BACKEND:-ollama} # auto | ollama | hashing
+      OLLAMA_URL: http://ollama:11434 # embeddings via shared Ollama (generation stays in HÍD)
+      RAG_MODEL_DIR: /models
+      RAG_STORE_PATH: /data/rag/index.db
+      RAG_RERANK: ${RAG_RERANK:-true}
+    volumes:
+      - ./models:/models:ro # weights mounted read-only (invariant 6)
+      - rag_data:/data/rag # vector-DB / index (rebuilt on swap; Box = source of truth)
+    networks:
+      - internal # INTERNAL ONLY — no published ports (invariant 1)
+    depends_on:
+      - ollama # embeddings (bge-m3) come from the shared Ollama
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/healthz').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    # --- Jetson GPU (uncomment when the real engine needs CUDA) ---
+    # runtime: nvidia
+    # environment:
+    #   NVIDIA_VISIBLE_DEVICES: all
+
+  ollama:
+    image: ollama/ollama:latest
+    # Shared generation LLM. Internal only — the HÍD is the sole client.
+    volumes:
+      - ollama_models:/root/.ollama
+    networks:
+      - internal # INTERNAL ONLY (no public LLM endpoint — invariant 1)
+    restart: unless-stopped
+    # --- Jetson GPU (uncomment on device) ---
+    # runtime: nvidia
+    # environment:
+    #   NVIDIA_VISIBLE_DEVICES: all
+
+  # Optional vector/facts backend. Enable with:  docker compose --profile postgres up
+  postgres:
+    image: postgres:16
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vivesec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-rag}
+    volumes:
+      # On the appliance the data dir + WAL + temp live on the LUKS volume (spec §11.1).
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - internal # INTERNAL ONLY
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vivesec}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  frontend:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true # no egress; services here are unreachable from outside the box
+
+volumes:
+  rag_data:
+  ollama_models:
+  pg_data:

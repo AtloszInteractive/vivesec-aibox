@@ -1,0 +1,10 @@
+Master Services Agreement 2025 — Summary
+
+This agreement is between ViVeSec Kft. (the Provider) and the Client.
+The initial term is 24 months, renewing automatically for 12-month periods.
+Either party may terminate for convenience with 60 days written notice.
+Either party may terminate for material breach not cured within 30 days.
+On termination the Provider must return or securely delete all Client data
+within 15 days and certify the deletion in writing.
+The Provider processes personal data strictly as a processor under GDPR
+Article 28 and must notify the Client of any data breach within 24 hours.

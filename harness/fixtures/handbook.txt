@@ -1,0 +1,9 @@
+Employee Handbook (synthetic fixture — not real data)
+
+Vacation policy.
+Full-time employees are entitled to 25 vacation days per year.
+Vacation days must be approved by the employee's line manager in advance.
+Unused vacation days may be carried over until the end of March of the next year.
+
+Working hours.
+Standard working hours are 40 hours per week, Monday to Friday.

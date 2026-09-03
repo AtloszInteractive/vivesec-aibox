@@ -1,0 +1,28 @@
+Information Security Audit Report - Q4 2025
+
+Scope: Annual internal audit of the ViVeSec production environment against
+ISO/IEC 27001:2022 Annex A controls and NIS2 readiness.
+
+Overall posture: Strong. 92 of 100 sampled controls were effective. No critical
+findings. Three medium findings and four low findings were identified.
+
+Finding M-1 (Medium, A.8.16 Monitoring). Centralized log retention was 30 days;
+policy requires 180 days for security-relevant events. Remediation: extend
+retention and enable tamper-evident storage on the ViVeSec Box. Owner: SecOps.
+Due: 31 January 2026.
+
+Finding M-2 (Medium, A.5.30 ICT readiness for business continuity). The disaster
+recovery runbook had not been tested in the last 12 months. Remediation: perform
+a full failover test and document RTO/RPO. Target RTO is under 60 minutes.
+
+Finding M-3 (Medium, A.8.24 Use of cryptography). Two internal services still used
+TLS 1.1. Remediation: enforce TLS 1.2+ and add post-quantum key exchange on the
+backup channel.
+
+Low findings concerned password rotation reminders, an outdated asset inventory
+entry, missing MFA on one legacy admin account, and incomplete vendor due
+diligence records.
+
+Conclusion: The environment is audit-ready for certification with the medium
+findings remediated. The immutable, isolated backup design was highlighted as a
+key strength against ransomware.

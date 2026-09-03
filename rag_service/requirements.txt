@@ -1,0 +1,15 @@
+# RAG service runtime dependencies.
+#
+# Embeddings go to Ollama on the HOST over HTTP (poc/ollama_client uses stdlib
+# urllib), so the only third-party need is the document extractor.
+#
+# MarkItDown converts office/PDF/HTML formats to markdown text. The [all] extra
+# pulls the format handlers (python-docx, pdfminer.six, openpyxl, python-pptx,
+# pandas for csv/xlsx, etc.). Text formats (.txt/.md/.csv/...) are handled by
+# extract.py natively and need none of this.
+markitdown[all]
+
+# sqlite-vec: loadable SQLite extension for vector KNN. Used only when
+# RAG_STORE_BACKEND=sqlite (the SqliteVecStore backend). Ships an arm64 wheel
+# (verified on the Jetson container), so no build step is required.
+sqlite-vec

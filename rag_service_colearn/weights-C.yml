@@ -1,0 +1,14 @@
+# Score-weight A/B override — Variant C: hierarchy OFF.
+# Drops the doc/page bonus entirely and keeps only the chunk score plus the
+# (now unicode-fixed) lexical branch. This isolates the question "is the
+# doc/page bonus itself the thing that buries relevant chunks?".
+#
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f weights.yml up -d
+services:
+  pageindexes-rag-service:
+    environment:
+      DOC_SCORE_WEIGHT: "0.00"
+      PAGE_SCORE_WEIGHT: "0.00"
+      CHUNK_SCORE_WEIGHT: "0.90"
+      KEYWORD_SCORE_WEIGHT: "0.10"

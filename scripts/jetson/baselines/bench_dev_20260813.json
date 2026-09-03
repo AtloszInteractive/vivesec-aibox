@@ -1,0 +1,320 @@
+{
+  "schema": 3,
+  "label": "dev-new",
+  "started_utc": "2026-08-13T21:07:35Z",
+  "environment": {
+    "adapter_url": "http://127.0.0.1:8088",
+    "drive": "/storage/drives/engineering/",
+    "status_http": 200,
+    "ui_ready": true,
+    "fs_ready": true,
+    "features": [
+      "basic"
+    ],
+    "storage_locked": false,
+    "index": {
+      "documents": 1110,
+      "pages": 1118,
+      "chunks": 2597,
+      "corpora": 12,
+      "skipped": {
+        "extraction_empty": 1
+      }
+    },
+    "mirror": {
+      "documents": 1172,
+      "files": 1110,
+      "directories": 62
+    },
+    "ollama_models": [
+      "qwen3.6:35b",
+      "bge-m3:latest",
+      "qwen2.5:3b"
+    ],
+    "adapter_env": {
+      "ADAPTER_NUM_PREDICT": "2048",
+      "ADAPTER_THINK": "off",
+      "ADAPTER_ANALYZE_MAX_CONTEXT_TOKENS": "60000",
+      "ADAPTER_ANALYZE_MAX_CHARS": "100000",
+      "ADAPTER_TENANT_ID": "default",
+      "ADAPTER_GEN_MODEL": "qwen3.6:35b",
+      "ADAPTER_ANALYZE_NUM_CTX": "65536"
+    },
+    "images": {
+      "adapter": "96b1c218aacd",
+      "rag": "82b3293e0571"
+    },
+    "rag_health": "{\"ok\": true, \"status\": \"ok\", \"embedding\": {\"provider\": \"ollama\", \"model_name\": \"bge-m3\", \"dimension\": 1024, \"normalized\": true}, \"vector_backend\": \"sqlite-vec\", \"min_score\": 0.45, \"query_reaccent\": true}",
+    "host": {
+      "hostname": "vivesec-aibox",
+      "mem": "Mem:             61          29           7           0          24          30"
+    }
+  },
+  "corpus": {
+    "http": 200,
+    "seconds": 0.01,
+    "file_count": 1002,
+    "truncated": false,
+    "size_bytes": {
+      "min": 657,
+      "median": 701,
+      "max": 1078820,
+      "total": 2087013
+    },
+    "informational": true
+  },
+  "capabilities": {
+    "rag_document_context_http": "400",
+    "rag_document_context": true,
+    "analyze_http": 200,
+    "analyze_action_echoed": "analyze",
+    "analyze_document_block": true,
+    "analyze_supported": true,
+    "analyze_seconds": 11.7,
+    "analyze_probe": {
+      "file": "/storage/drives/engineering/fleet/sites/SE-005_Örebro.md",
+      "chunks_used": 4,
+      "chunks_total": 4,
+      "truncated": false,
+      "body_chars": 140
+    }
+  },
+  "language": {
+    "cases": [
+      {
+        "asked": "English",
+        "http": 200,
+        "seconds": 43.8,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 58,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 21.2,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 58,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 10.8,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 58,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "asked": "German",
+        "http": 200,
+        "seconds": 9.0,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 58,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Dazu liegen in den Dokumenten keine Daten vor."
+      }
+    ],
+    "language_match": 4,
+    "refusal_correct": 4,
+    "total": 4
+  },
+  "grounding": {
+    "cases": [
+      {
+        "question": "List the exact figures this drive reports, with their units.",
+        "http": 200,
+        "seconds": 80.1,
+        "confidence": 68,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 32.3,
+        "body_chars": 2671
+      },
+      {
+        "question": "What are the most recent dated commitments and their deadlines?",
+        "http": 200,
+        "seconds": 12.5,
+        "confidence": 78,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 33.0,
+        "body_chars": 279
+      },
+      {
+        "question": "Summarise the key quantitative results and cite the source for each.",
+        "http": 200,
+        "seconds": 45.6,
+        "confidence": 73,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 32.8,
+        "body_chars": 2939
+      }
+    ],
+    "suppressed": 0,
+    "with_ungrounded": 0,
+    "mean_confidence": 73.0
+  },
+  "actions": {
+    "anchor": "HU 002 Székesfehérvár",
+    "cases": [
+      {
+        "action": "summary",
+        "http": 200,
+        "seconds": 25.6,
+        "echoed": "summary",
+        "tok_per_s": 32.6,
+        "body_chars": 1394,
+        "citations": 8,
+        "confidence": 60,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen3.6:35b (32.6 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "report",
+        "http": 200,
+        "seconds": 31.8,
+        "echoed": "report",
+        "tok_per_s": 32.4,
+        "body_chars": 1856,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen3.6:35b (32.4 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "presentation",
+        "http": 200,
+        "seconds": 58.1,
+        "echoed": "presentation",
+        "tok_per_s": 32.4,
+        "body_chars": 4580,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen3.6:35b (32.4 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "memo",
+        "http": 200,
+        "seconds": 20.8,
+        "echoed": "memo",
+        "tok_per_s": 32.3,
+        "body_chars": 916,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen3.6:35b (32.3 tok/s)",
+        "ends_cleanly": true
+      }
+    ],
+    "generated": 4,
+    "refused": 0,
+    "mean_seconds": 34.1,
+    "truncated_outputs": 0
+  },
+  "analyze": {
+    "supported": true,
+    "cases": [
+      {
+        "size": "small",
+        "file": "SE-005_Örebro.md",
+        "bytes": 2001,
+        "http": 200,
+        "seconds": 66.9,
+        "echoed": "analyze",
+        "chunks_used": 4,
+        "chunks_total": 4,
+        "coverage": 1.0,
+        "truncated": false,
+        "citations": 4,
+        "confidence": 75,
+        "band": "amber",
+        "body_chars": 3574,
+        "sections": 0,
+        "tok_per_s": 32.4
+      },
+      {
+        "size": "median",
+        "file": "HU-002_Székesfehérvár.md",
+        "bytes": 2058,
+        "http": 200,
+        "seconds": 40.4,
+        "echoed": "analyze",
+        "chunks_used": 4,
+        "chunks_total": 4,
+        "coverage": 1.0,
+        "truncated": false,
+        "citations": 4,
+        "confidence": 75,
+        "band": "amber",
+        "body_chars": 3115,
+        "sections": 0,
+        "tok_per_s": 32.5
+      },
+      {
+        "size": "large",
+        "file": "GC3000_Firmware_v3_Test_Log_2026-06.txt",
+        "bytes": 1078820,
+        "http": 200,
+        "seconds": 138.9,
+        "echoed": "analyze",
+        "chunks_used": 63,
+        "chunks_total": 876,
+        "coverage": 0.072,
+        "truncated": true,
+        "citations": 63,
+        "confidence": 75,
+        "band": "amber",
+        "body_chars": 2830,
+        "sections": 0,
+        "tok_per_s": 26.3
+      }
+    ],
+    "fully_covered": 2,
+    "degenerate_answers": 0,
+    "mean_seconds": 82.1
+  },
+  "wall_seconds": 617.4,
+  "verdict": {
+    "language_match": "4/4",
+    "refusal_correct": "4/4",
+    "ungrounded_cases": 0,
+    "mean_confidence": 73.0,
+    "analyze_supported": true,
+    "analyze_fully_covered": 2,
+    "analyze_degenerate": 0,
+    "actions_generated": 4,
+    "truncated_outputs": 0,
+    "mean_action_seconds": 34.1
+  }
+}

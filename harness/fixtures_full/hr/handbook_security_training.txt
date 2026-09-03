@@ -1,0 +1,5 @@
+Employee Handbook — Security Training (synthetic)
+
+Security awareness training is mandatory quarterly for all staff. Completion is tracked by HR and reported to the security officer. New joiners complete the baseline module during onboarding.
+
+Phishing simulations are run without prior notice; repeated failures trigger a refresher course.

@@ -1,0 +1,5 @@
+Vendor Agreement Summary — DataForge BV (synthetic)
+
+Annual contract value: 3500 thousand EUR. The agreement renews on 2026-03-09 unless terminated with 30 days written notice.
+
+Service level: DataForge BV commits to 99.3 percent monthly availability. Penalties apply below the committed level as defined in Annex B. Data processing terms follow the standard DPA. Invoicing is quarterly in arrears.

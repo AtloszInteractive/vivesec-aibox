@@ -1,0 +1,5 @@
+Vendor Agreement Summary — NetPulse GmbH (synthetic)
+
+Annual contract value: 4150 thousand EUR. The agreement renews on 2026-09-09 unless terminated with 90 days written notice.
+
+Service level: NetPulse GmbH commits to 99.9 percent monthly availability. Penalties apply below the committed level as defined in Annex B. Data processing terms follow the standard DPA. Invoicing is quarterly in arrears.

@@ -1,0 +1,27 @@
+Employee Handbook v4 - People and Workplace Policies
+
+Working hours and flexibility. Standard hours are 40 per week. Employees may
+adopt flexible start times between 07:00 and 10:00 by agreement with their lead.
+
+Remote and hybrid work. The default is hybrid, with a minimum of two days per
+week on site for most roles. Fully remote arrangements require manager approval
+and a secure home-office checklist, including use of company devices only.
+
+Leave. Annual paid leave is 25 working days, plus public holidays. Unused leave of
+up to 5 days may be carried into the next year and must be used by 31 March. Sick
+leave requires notification to the manager on the first day; a medical certificate
+is required from the fourth consecutive day.
+
+Onboarding. New joiners complete a 90-day onboarding plan. Week one covers
+security training, device setup and access provisioning under least-privilege.
+A 30-60-90 day review schedule applies, with a probation decision at day 90.
+
+Performance and development. Reviews occur twice a year. Each employee has an
+annual training budget and is encouraged to pursue one certification per year.
+
+Code of conduct. The company maintains a zero-tolerance policy for harassment and
+requires confidential handling of all customer data. Violations may lead to
+disciplinary action up to termination.
+
+Equipment. Laptops are refreshed every three years. Lost or stolen devices must be
+reported to IT within 24 hours so they can be remotely wiped.

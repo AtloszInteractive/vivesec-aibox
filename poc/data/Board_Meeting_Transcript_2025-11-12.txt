@@ -1,0 +1,26 @@
+Board Meeting Transcript - 12 November 2025
+
+Attendees: Chair, CEO, CFO, CTO, Head of AI, two non-executive directors.
+
+1. AI Box strategy. The CTO presented the plan to ship the ViVeSec AI Box on the
+NVIDIA Jetson Orin Nano 8GB Super as the entry hardware. The board agreed that a
+fully offline, retrieval-augmented assistant running a small quantized model is
+the right first product. Decision: approve the entry-tier hardware direction.
+Action item: Head of AI to deliver an on-device benchmark report by 5 December
+(owner: Head of AI).
+
+2. Roadmap and modules. The board reviewed the module plan: Legal Ops, Finance
+Assistant, Compliance Officer and Workforce/HR. Decision: prioritize Legal and
+Finance for the MVP. Action item: Product to produce module specs by 20 November
+(owner: Head of Product).
+
+3. Risks. Two risks were escalated. First, dependency on a single hardware vendor;
+mitigation is to validate a second module tier for larger deployments. Second,
+the perception that an offline box cannot generate, only search. The board asked
+for a clear demonstration of generative answers on the entry device. Action item:
+prepare a proof-of-concept demo for the January review (owner: CTO).
+
+4. Finance. The CFO confirmed Q4 revenue of EUR 4.82 million, ahead of plan, and
+reaffirmed 2026 guidance. No objections.
+
+5. Next meeting: 14 January 2026. The Chair closed the meeting.

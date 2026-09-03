@@ -1,0 +1,323 @@
+{
+  "schema": 3,
+  "label": "demo-2-code",
+  "started_utc": "2026-08-14T10:15:05Z",
+  "environment": {
+    "adapter_url": "http://127.0.0.1:80",
+    "drive": "/storage/drives/aiboxdev/",
+    "status_http": 200,
+    "ui_ready": true,
+    "fs_ready": true,
+    "features": [
+      "basic"
+    ],
+    "storage_locked": false,
+    "index": {
+      "documents": 5353,
+      "pages": 34912,
+      "chunks": 614485,
+      "corpora": 2,
+      "skipped": {
+        "empty_content": 47,
+        "extraction_empty": 337,
+        "invalid_content": 1,
+        "too_large": 13,
+        "unsupported_type": 475
+      }
+    },
+    "mirror": {
+      "documents": 6290,
+      "files": 5363,
+      "directories": 927
+    },
+    "ollama_models": [
+      "bge-m3:latest",
+      "qwen2.5:14b"
+    ],
+    "adapter_env": {
+      "ADAPTER_TENANT_ID": "default",
+      "ADAPTER_ANALYZE_MAX_CHARS": "50000",
+      "ADAPTER_ANALYZE_NUM_CTX": "32768",
+      "ADAPTER_ANALYZE_MAX_CONTEXT_TOKENS": "60000",
+      "ADAPTER_GEN_MODEL": "qwen2.5:14b",
+      "ADAPTER_NUM_PREDICT": "1024",
+      "ADAPTER_THINK": "off"
+    },
+    "images": {
+      "adapter": "393589f98b7f",
+      "rag": "3ca0a126bc3e"
+    },
+    "rag_health": "{\"ok\": true, \"status\": \"ok\", \"embedding\": {\"provider\": \"ollama\", \"model_name\": \"bge-m3\", \"dimension\": 1024, \"normalized\": true}, \"vector_backend\": \"sqlite-vec\", \"min_score\": 0.0, \"query_reaccent\": true}",
+    "host": {
+      "hostname": "szeredy-AI-desktop",
+      "mem": "Mem:             61           9          29           0          21          50"
+    }
+  },
+  "corpus": {
+    "http": 200,
+    "seconds": 0.03,
+    "file_count": 2000,
+    "truncated": true,
+    "size_bytes": {
+      "min": 0,
+      "median": 170233,
+      "max": 703607193,
+      "total": 5624830636
+    },
+    "informational": true
+  },
+  "capabilities": {
+    "rag_document_context_http": "400",
+    "rag_document_context": true,
+    "analyze_http": 200,
+    "analyze_action_echoed": "analyze",
+    "analyze_document_block": true,
+    "analyze_supported": true,
+    "analyze_seconds": 0.0,
+    "analyze_probe": {
+      "file": "/storage/drives/aiboxdev/CONSULTING/Porsche_SIEM/03_projekt/cert/phlogrep.in.porsche.hu.pem",
+      "chunks_used": 0,
+      "chunks_total": 0,
+      "truncated": false,
+      "body_chars": 43
+    }
+  },
+  "language": {
+    "cases": [
+      {
+        "asked": "English",
+        "http": 200,
+        "seconds": 18.7,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 100,
+        "band": "green",
+        "citations": 0,
+        "answer_head": "There is no information available about Microsoft's dividend per share for the 2027 financial year in the provided documents. [#1][#2][#3][#4]"
+      },
+      {
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 29.9,
+        "detected": "English",
+        "language_ok": false,
+        "refused": true,
+        "confidence": 78,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no information available about Microsoft's dividend per share for the 2027 financial year in the provided documents. [#1][#2][#3][#4]"
+      },
+      {
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 14.5,
+        "detected": "English",
+        "language_ok": false,
+        "refused": true,
+        "confidence": 78,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no information available about Microsoft's dividend per share for the 2027 financial year in the provided documents. [#4]"
+      },
+      {
+        "asked": "German",
+        "http": 200,
+        "seconds": 14.7,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 68,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Es gibt keine Informationen über eine股骨头坏死的月度报告摘要中没有关于微软2027财年每股分红的数据。[#1][#2][#3][#4]"
+      }
+    ],
+    "language_match": 2,
+    "refusal_correct": 4,
+    "total": 4
+  },
+  "grounding": {
+    "cases": [
+      {
+        "question": "List the exact figures this drive reports, with their units.",
+        "http": 200,
+        "seconds": 8.4,
+        "confidence": 71,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 0,
+        "tok_per_s": 14.1,
+        "body_chars": 234
+      },
+      {
+        "question": "What are the most recent dated commitments and their deadlines?",
+        "http": 200,
+        "seconds": 18.7,
+        "confidence": 85,
+        "band": "green",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.6,
+        "body_chars": 192
+      },
+      {
+        "question": "Summarise the key quantitative results and cite the source for each.",
+        "http": 200,
+        "seconds": 19.3,
+        "confidence": 73,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.8,
+        "body_chars": 434
+      }
+    ],
+    "suppressed": 0,
+    "with_ungrounded": 0,
+    "mean_confidence": 76.3
+  },
+  "actions": {
+    "anchor": "Kockazatelemzes 20170426",
+    "cases": [
+      {
+        "action": "summary",
+        "http": 200,
+        "seconds": 62.1,
+        "echoed": "summary",
+        "tok_per_s": 13.1,
+        "body_chars": 2669,
+        "citations": 8,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (13.1 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "report",
+        "http": 200,
+        "seconds": 73.7,
+        "echoed": "report",
+        "tok_per_s": 12.9,
+        "body_chars": 2298,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (12.9 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "presentation",
+        "http": 200,
+        "seconds": 55.3,
+        "echoed": "presentation",
+        "tok_per_s": 12.7,
+        "body_chars": 1743,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (12.7 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "memo",
+        "http": 200,
+        "seconds": 43.7,
+        "echoed": "memo",
+        "tok_per_s": 12.8,
+        "body_chars": 1423,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (12.8 tok/s)",
+        "ends_cleanly": true
+      }
+    ],
+    "generated": 4,
+    "refused": 0,
+    "mean_seconds": 58.7,
+    "truncated_outputs": 0
+  },
+  "analyze": {
+    "supported": true,
+    "cases": [
+      {
+        "size": "small",
+        "file": "phlogrep.in.porsche.hu.pem",
+        "bytes": 2451,
+        "http": 200,
+        "seconds": 0.0,
+        "echoed": "analyze",
+        "chunks_used": 0,
+        "chunks_total": 0,
+        "coverage": null,
+        "truncated": false,
+        "citations": 0,
+        "confidence": 44,
+        "band": "red",
+        "body_chars": 43,
+        "sections": 0,
+        "tok_per_s": null
+      },
+      {
+        "size": "median",
+        "file": "UV_Adatelemzes_Jelentes_202005_v01.docx",
+        "bytes": 179548,
+        "http": 200,
+        "seconds": 54.2,
+        "echoed": "analyze",
+        "chunks_used": 3,
+        "chunks_total": 3,
+        "coverage": 1.0,
+        "truncated": false,
+        "citations": 3,
+        "confidence": 90,
+        "band": "green",
+        "body_chars": 1465,
+        "sections": 0,
+        "tok_per_s": 13.2
+      },
+      {
+        "size": "large",
+        "file": "MK.zip",
+        "bytes": 703607193,
+        "http": 200,
+        "seconds": 0.0,
+        "echoed": "analyze",
+        "chunks_used": 0,
+        "chunks_total": 0,
+        "coverage": null,
+        "truncated": false,
+        "citations": 0,
+        "confidence": 44,
+        "band": "red",
+        "body_chars": 43,
+        "sections": 0,
+        "tok_per_s": null
+      }
+    ],
+    "fully_covered": 1,
+    "degenerate_answers": 2,
+    "mean_seconds": 18.1
+  },
+  "wall_seconds": 413.4,
+  "verdict": {
+    "language_match": "2/4",
+    "refusal_correct": "4/4",
+    "ungrounded_cases": 0,
+    "mean_confidence": 76.3,
+    "analyze_supported": true,
+    "analyze_fully_covered": 1,
+    "analyze_degenerate": 2,
+    "actions_generated": 4,
+    "truncated_outputs": 0,
+    "mean_action_seconds": 58.7
+  }
+}

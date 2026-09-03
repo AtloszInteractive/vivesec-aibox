@@ -1,0 +1,5 @@
+Vendor Agreement Summary — Cloudline Kft (synthetic)
+
+Annual contract value: 2600 thousand EUR. The agreement renews on 2026-07-09 unless terminated with 30 days written notice.
+
+Service level: Cloudline Kft commits to 99.3 percent monthly availability. Penalties apply below the committed level as defined in Annex B. Data processing terms follow the standard DPA. Invoicing is quarterly in arrears.

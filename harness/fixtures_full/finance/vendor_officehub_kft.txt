@@ -1,0 +1,5 @@
+Vendor Agreement Summary — OfficeHub Kft (synthetic)
+
+Annual contract value: 4300 thousand EUR. The agreement renews on 2026-07-12 unless terminated with 30 days written notice.
+
+Service level: OfficeHub Kft commits to 99.2 percent monthly availability. Penalties apply below the committed level as defined in Annex B. Data processing terms follow the standard DPA. Invoicing is quarterly in arrears.

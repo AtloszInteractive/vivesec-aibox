@@ -1,0 +1,475 @@
+{
+  "schema": 5,
+  "label": "demo-2-code",
+  "started_utc": "2026-08-14T10:42:53Z",
+  "environment": {
+    "adapter_url": "http://127.0.0.1:80",
+    "drive": "/storage/drives/aiboxdev/",
+    "status_http": 200,
+    "ui_ready": true,
+    "fs_ready": true,
+    "features": [
+      "basic"
+    ],
+    "storage_locked": false,
+    "index": {
+      "documents": 5353,
+      "pages": 34912,
+      "chunks": 614485,
+      "corpora": 2,
+      "skipped": {
+        "empty_content": 47,
+        "extraction_empty": 337,
+        "invalid_content": 1,
+        "too_large": 13,
+        "unsupported_type": 475
+      }
+    },
+    "mirror": {
+      "documents": 6290,
+      "files": 5363,
+      "directories": 927
+    },
+    "ollama_models": [
+      "bge-m3:latest",
+      "qwen2.5:14b"
+    ],
+    "adapter_env": {
+      "ADAPTER_TENANT_ID": "default",
+      "ADAPTER_ANALYZE_MAX_CHARS": "50000",
+      "ADAPTER_ANALYZE_NUM_CTX": "32768",
+      "ADAPTER_ANALYZE_MAX_CONTEXT_TOKENS": "60000",
+      "ADAPTER_GEN_MODEL": "qwen2.5:14b",
+      "ADAPTER_NUM_PREDICT": "1024",
+      "ADAPTER_THINK": "off"
+    },
+    "images": {
+      "adapter": "393589f98b7f",
+      "rag": "3ca0a126bc3e"
+    },
+    "rag_health": "{\"ok\": true, \"status\": \"ok\", \"embedding\": {\"provider\": \"ollama\", \"model_name\": \"bge-m3\", \"dimension\": 1024, \"normalized\": true}, \"vector_backend\": \"sqlite-vec\", \"min_score\": 0.0, \"query_reaccent\": true}",
+    "host": {
+      "hostname": "szeredy-AI-desktop",
+      "mem": "Mem:             61           9          29           0          21          50"
+    }
+  },
+  "corpus": {
+    "http": 200,
+    "seconds": 0.03,
+    "file_count": 2000,
+    "truncated": true,
+    "size_bytes": {
+      "min": 0,
+      "median": 170233,
+      "max": 703607193,
+      "total": 5624830636
+    },
+    "informational": true
+  },
+  "capabilities": {
+    "rag_document_context_http": "400",
+    "rag_document_context": true,
+    "analyze_http": 200,
+    "analyze_action_echoed": "analyze",
+    "analyze_document_block": true,
+    "analyze_supported": true,
+    "analyze_seconds": 0.0,
+    "analyze_probe": {
+      "file": "/storage/drives/aiboxdev/CONSULTING/Porsche_SIEM/00_kommunikacio/státusz 2.eml",
+      "chunks_used": 0,
+      "chunks_total": 0,
+      "truncated": false,
+      "body_chars": 43
+    }
+  },
+  "language": {
+    "repeats": 3,
+    "cases": [
+      {
+        "trial": 1,
+        "asked": "English",
+        "http": 200,
+        "seconds": 29.7,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 1,
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 15.5,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "trial": 1,
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 14.8,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 1,
+        "asked": "German",
+        "http": 200,
+        "seconds": 17.5,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 68,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Es gibt keine Daten für eine Dividende im Geschäftsjahr 2027. Die angegebenen Dokumente enthalten Informationen nur bis zum Geschäftsjahr 2025 und erwähnen dort"
+      },
+      {
+        "trial": 2,
+        "asked": "English",
+        "http": 200,
+        "seconds": 12.7,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 2,
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 13.5,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "trial": 2,
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 13.4,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 2,
+        "asked": "German",
+        "http": 200,
+        "seconds": 16.8,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 78,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Es gibt keine Daten für eine Dividende im Geschäftsjahr 2027. Die angegebenen Dokumente enthalten Informationen nur bis zum Geschäftsjahr 2025 und erwähnen dort"
+      },
+      {
+        "trial": 3,
+        "asked": "English",
+        "http": 200,
+        "seconds": 10.7,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 3,
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 11.5,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "trial": 3,
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 11.4,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 3,
+        "asked": "German",
+        "http": 200,
+        "seconds": 14.8,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 78,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Es gibt keine Daten für eine Dividende im Geschäftsjahr 2027. Die angegebenen Dokumente enthalten Informationen nur bis zum Geschäftsjahr 2025 und erwähnen dort"
+      }
+    ],
+    "per_language": {
+      "English": {
+        "ok": 3,
+        "trials": 3,
+        "answered_in": [
+          "English"
+        ]
+      },
+      "Hungarian": {
+        "ok": 3,
+        "trials": 3,
+        "answered_in": [
+          "Hungarian"
+        ]
+      },
+      "Danish": {
+        "ok": 3,
+        "trials": 3,
+        "answered_in": [
+          "Danish"
+        ]
+      },
+      "German": {
+        "ok": 3,
+        "trials": 3,
+        "answered_in": [
+          "German"
+        ]
+      }
+    },
+    "language_match": 12,
+    "refusal_correct": 12,
+    "total": 12,
+    "unstable_languages": []
+  },
+  "grounding": {
+    "cases": [
+      {
+        "question": "List the exact figures this drive reports, with their units.",
+        "http": 200,
+        "seconds": 5.8,
+        "confidence": 71,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 0,
+        "tok_per_s": 14.3,
+        "body_chars": 189
+      },
+      {
+        "question": "What are the most recent dated commitments and their deadlines?",
+        "http": 200,
+        "seconds": 21.4,
+        "confidence": 75,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.5,
+        "body_chars": 413
+      },
+      {
+        "question": "Summarise the key quantitative results and cite the source for each.",
+        "http": 200,
+        "seconds": 20.7,
+        "confidence": 73,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.8,
+        "body_chars": 570
+      }
+    ],
+    "suppressed": 0,
+    "with_ungrounded": 0,
+    "mean_confidence": 73.0
+  },
+  "actions": {
+    "anchor": "Kockazatelemzes 20170426",
+    "cases": [
+      {
+        "action": "summary",
+        "http": 200,
+        "seconds": 34.5,
+        "echoed": "summary",
+        "tok_per_s": 13.0,
+        "body_chars": 107,
+        "citations": 8,
+        "confidence": 50,
+        "band": "red",
+        "refused": true,
+        "backend": "ollama:qwen2.5:14b (13.0 tok/s) (suppressed: ungrounded numb",
+        "ends_cleanly": null
+      },
+      {
+        "action": "report",
+        "http": 200,
+        "seconds": 16.8,
+        "echoed": "report",
+        "tok_per_s": 13.4,
+        "body_chars": 92,
+        "citations": 10,
+        "confidence": 70,
+        "band": "amber",
+        "refused": true,
+        "backend": "ollama:qwen2.5:14b (13.4 tok/s)",
+        "ends_cleanly": null
+      },
+      {
+        "action": "presentation",
+        "http": 200,
+        "seconds": 45.4,
+        "echoed": "presentation",
+        "tok_per_s": 12.9,
+        "body_chars": 1746,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (12.9 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "memo",
+        "http": 200,
+        "seconds": 38.3,
+        "echoed": "memo",
+        "tok_per_s": 13.0,
+        "body_chars": 107,
+        "citations": 10,
+        "confidence": 50,
+        "band": "red",
+        "refused": true,
+        "backend": "ollama:qwen2.5:14b (13.0 tok/s) (suppressed: ungrounded numb",
+        "ends_cleanly": null
+      }
+    ],
+    "generated": 1,
+    "refused": 3,
+    "mean_seconds": 45.4,
+    "mean_tok_per_s": 12.9,
+    "truncated_outputs": 0
+  },
+  "analyze": {
+    "supported": true,
+    "cases": [
+      {
+        "size": "small",
+        "file": "49021_2018-1_8h75wf2xt5riek5nh52xt5rizrmhki2xt5ri.pdf",
+        "bytes": 14080,
+        "http": 200,
+        "seconds": 42.0,
+        "echoed": "analyze",
+        "chunks_used": 1,
+        "chunks_total": 1,
+        "coverage": 1.0,
+        "truncated": false,
+        "citations": 1,
+        "confidence": 75,
+        "band": "amber",
+        "body_chars": 1248,
+        "sections": 0,
+        "tok_per_s": 13.7,
+        "attempt": 9,
+        "no_text": false
+      },
+      {
+        "size": "median",
+        "file": "felhívás megküldése Új Világ.pdf",
+        "bytes": 165015,
+        "http": 200,
+        "seconds": 54.7,
+        "echoed": "analyze",
+        "chunks_used": 2,
+        "chunks_total": 2,
+        "coverage": 1.0,
+        "truncated": false,
+        "citations": 2,
+        "confidence": 90,
+        "band": "green",
+        "body_chars": 1752,
+        "sections": 0,
+        "tok_per_s": 13.5,
+        "attempt": 1,
+        "no_text": false
+      },
+      {
+        "size": "large",
+        "file": "web_PDF_A_kiberter_vedelme_comp.docx",
+        "bytes": 23493027,
+        "http": 200,
+        "seconds": 0.0,
+        "echoed": "analyze",
+        "chunks_used": 0,
+        "chunks_total": 0,
+        "coverage": null,
+        "truncated": false,
+        "citations": 0,
+        "confidence": 44,
+        "band": "red",
+        "body_chars": 43,
+        "sections": 0,
+        "tok_per_s": null,
+        "attempt": 10,
+        "no_text": true
+      }
+    ],
+    "analyzable": 2,
+    "fully_covered": 2,
+    "degenerate_answers": 0,
+    "no_text_documents": 1,
+    "mean_seconds": 48.4
+  },
+  "wall_seconds": 462.2,
+  "verdict": {
+    "language_match": "12/12",
+    "unstable_languages": [],
+    "refusal_correct": "12/12",
+    "ungrounded_cases": 0,
+    "mean_confidence": 73.0,
+    "analyze_supported": true,
+    "analyze_analyzable": 2,
+    "analyze_fully_covered": 2,
+    "analyze_degenerate": 0,
+    "actions_generated": 1,
+    "truncated_outputs": 0,
+    "mean_action_seconds": 45.4,
+    "mean_action_tok_per_s": 12.9
+  }
+}

@@ -1,0 +1,5 @@
+Employee Handbook — Remote Work (synthetic)
+
+Employees may work remotely up to 2 days per week after probation. Remote days are coordinated within the team so that every project keeps an on-site presence. Equipment for remote work is provided by the company.
+
+Security rules: company data may only be accessed through the managed VPN, and confidential documents must not be stored on personal devices.

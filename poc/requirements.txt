@@ -1,0 +1,7 @@
+# The PoC core is STDLIB-ONLY — nothing to install to run `cli.py`.
+# Ollama is a separate native install (https://ollama.com), not a pip package.
+#
+# Optional production upgrades on the Jetson (swap the fallback backends):
+#   sentence-transformers   # local embeddings if not using Ollama embeddings
+#   qdrant-client           # production vector DB instead of the JSON store
+#   pypdf                   # ingest real PDFs from the ViVeSec Box drive

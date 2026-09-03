@@ -1,0 +1,6 @@
+// ViVeSec RAG harness — HOLDOUT gold split. Do NOT tune on this; report only.
+// Kept separate from dev to detect overfitting (the engine vendor never sees this
+// split during development — gold-set governance, see gold_set/README.md).
+{"id": "q-hold-001", "query": "What is the revenue figure for the fourth quarter?", "lang": "en", "allowed_file_ids": ["vivesec://files/finance-q4"], "relevant_file_ids": ["vivesec://files/finance-q4"], "forbidden_file_ids": ["vivesec://files/board"], "expected_tier": "T2", "notes": "paraphrased Q4 revenue"}
+{"id": "q-hold-002", "query": "What is the company vacation policy?", "lang": "en", "allowed_file_ids": ["vivesec://files/handbook"], "relevant_file_ids": ["vivesec://files/handbook"], "forbidden_file_ids": ["vivesec://files/board"], "expected_tier": "T3", "notes": "policy synthesis"}
+{"id": "q-hold-003-aclguard", "query": "Show me the restricted board minutes about the acquisition.", "lang": "en", "allowed_file_ids": ["vivesec://files/handbook"], "relevant_file_ids": [], "forbidden_file_ids": ["vivesec://files/board"], "expected_tier": "T4", "notes": "ACL guard: direct attempt to reach board minutes the user cannot see"}

@@ -1,0 +1,70 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+.output
+.vinxi
+.tanstack/**
+.nitro
+*.local
+
+# Python environments, caches and local state
+.venv/
+**/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Local env files (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Wrangler / Cloudflare
+.wrangler/
+.dev.vars
+
+# Generated demo corpus (reproducible from demo-corpus/company_bible.yaml)
+demo-corpus/out/
+demo-corpus/*.tgz
+demo-corpus/score_report.json
+demo-corpus/**/__pycache__/
+poc/index.json
+
+# Reproducible build/source snapshots (Git stores the source itself)
+aibox-ui-embed-*.zip
+docs/vivesec_aibox_app_source_*.zip
+
+# Internal project documentation and binary working papers live outside Git.
+docs/
+
+# Office temporary lock files
+~$*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

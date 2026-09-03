@@ -1,0 +1,494 @@
+{
+  "schema": 9,
+  "label": "demo-3-model",
+  "started_utc": "2026-08-14T12:34:14Z",
+  "environment": {
+    "adapter_url": "http://127.0.0.1:80",
+    "drive": "/storage/drives/aiboxdev/",
+    "status_http": 200,
+    "ui_ready": true,
+    "fs_ready": true,
+    "features": [
+      "basic"
+    ],
+    "storage_locked": false,
+    "index": {
+      "documents": 5353,
+      "pages": 34912,
+      "chunks": 614485,
+      "corpora": 2,
+      "skipped": {
+        "empty_content": 47,
+        "extraction_empty": 337,
+        "invalid_content": 1,
+        "too_large": 13,
+        "unsupported_type": 475
+      }
+    },
+    "mirror": {
+      "documents": 6290,
+      "files": 5363,
+      "directories": 927
+    },
+    "ollama_models": [
+      "qwen3.6:35b",
+      "bge-m3:latest",
+      "qwen2.5:14b"
+    ],
+    "adapter_env": {
+      "ADAPTER_NUM_PREDICT": "2048",
+      "ADAPTER_GEN_MODEL": "qwen3.6:35b",
+      "ADAPTER_ANALYZE_MAX_CHARS": "200000",
+      "ADAPTER_ANALYZE_NUM_CTX": "131072",
+      "ADAPTER_ANALYZE_MAX_CONTEXT_TOKENS": "120000",
+      "ADAPTER_TENANT_ID": "default",
+      "ADAPTER_THINK": "off"
+    },
+    "images": {
+      "adapter": "393589f98b7f",
+      "rag": "3ca0a126bc3e"
+    },
+    "rag_health": "{\"ok\": true, \"status\": \"ok\", \"embedding\": {\"provider\": \"ollama\", \"model_name\": \"bge-m3\", \"dimension\": 1024, \"normalized\": true}, \"vector_backend\": \"sqlite-vec\", \"min_score\": 0.0, \"query_reaccent\": true}",
+    "host": {
+      "hostname": "szeredy-AI-desktop",
+      "mem": "Mem:             61          35           0           0          25          24"
+    }
+  },
+  "corpus": {
+    "http": 200,
+    "seconds": 0.03,
+    "file_count": 2000,
+    "truncated": true,
+    "size_bytes": {
+      "min": 0,
+      "median": 170233,
+      "max": 703607193,
+      "total": 5624830636
+    },
+    "informational": true
+  },
+  "capabilities": {
+    "rag_document_context_http": "400",
+    "rag_document_context": true,
+    "analyze_http": 200,
+    "analyze_action_echoed": "analyze",
+    "analyze_document_block": true,
+    "analyze_supported": true,
+    "analyze_seconds": 0.0,
+    "analyze_probe": {
+      "file": "/storage/drives/aiboxdev/CONSULTING/Porsche_SIEM/00_kommunikacio/státusz 2.eml",
+      "chunks_used": 0,
+      "chunks_total": 0,
+      "truncated": false,
+      "body_chars": 43
+    }
+  },
+  "language": {
+    "repeats": 1,
+    "cases": [
+      {
+        "trial": 1,
+        "mode": "explicit",
+        "asked": "English",
+        "http": 200,
+        "seconds": 9.7,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "English",
+        "refusal_localised": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 1,
+        "mode": "auto",
+        "asked": "English",
+        "http": 200,
+        "seconds": 8.8,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "English",
+        "refusal_localised": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 1,
+        "mode": "explicit",
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 8.6,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Hungarian",
+        "refusal_localised": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "trial": 1,
+        "mode": "auto",
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 8.9,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Hungarian",
+        "refusal_localised": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "trial": 1,
+        "mode": "explicit",
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 8.5,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Danish",
+        "refusal_localised": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 1,
+        "mode": "auto",
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 8.9,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Danish",
+        "refusal_localised": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 1,
+        "mode": "explicit",
+        "asked": "German",
+        "http": 200,
+        "seconds": 8.8,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "German",
+        "refusal_localised": true,
+        "confidence": 78,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Dazu liegen in den Dokumenten keine Daten vor. [#1]"
+      },
+      {
+        "trial": 1,
+        "mode": "auto",
+        "asked": "German",
+        "http": 200,
+        "seconds": 8.9,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "German",
+        "refusal_localised": true,
+        "confidence": 63,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Dazu liegen in den Dokumenten keine Daten vor."
+      }
+    ],
+    "by_mode": {
+      "explicit": {
+        "ok": 4,
+        "trials": 4
+      },
+      "auto": {
+        "ok": 4,
+        "trials": 4
+      }
+    },
+    "per_language": {
+      "English": {
+        "ok": 1,
+        "trials": 1,
+        "answered_in": [
+          "English"
+        ]
+      },
+      "Hungarian": {
+        "ok": 1,
+        "trials": 1,
+        "answered_in": [
+          "Hungarian"
+        ]
+      },
+      "Danish": {
+        "ok": 1,
+        "trials": 1,
+        "answered_in": [
+          "Danish"
+        ]
+      },
+      "German": {
+        "ok": 1,
+        "trials": 1,
+        "answered_in": [
+          "German"
+        ]
+      }
+    },
+    "language_match": 8,
+    "refusal_correct": 8,
+    "refusal_localised": 8,
+    "total": 8,
+    "unstable_languages": []
+  },
+  "grounding": {
+    "cases": [
+      {
+        "trial": 1,
+        "question": "List the exact figures this drive reports, with their units.",
+        "http": 200,
+        "seconds": 21.6,
+        "confidence": 63,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 35.0,
+        "body_chars": 1037
+      },
+      {
+        "trial": 1,
+        "question": "What are the most recent dated commitments and their deadlines?",
+        "http": 200,
+        "seconds": 11.3,
+        "confidence": 75,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 35.9,
+        "body_chars": 283
+      },
+      {
+        "trial": 1,
+        "question": "Summarise the key quantitative results and cite the source for each.",
+        "http": 200,
+        "seconds": 5.3,
+        "confidence": 0,
+        "band": "red",
+        "ungrounded": [
+          "2027"
+        ],
+        "suppressed": true,
+        "citations": 0,
+        "tok_per_s": 35.5,
+        "body_chars": 107
+      }
+    ],
+    "suppressed": 1,
+    "with_ungrounded": 1,
+    "mean_confidence": 46.0
+  },
+  "actions": {
+    "repeats": 1,
+    "anchor": "Kockazatelemzes 20170426",
+    "cases": [
+      {
+        "trial": 1,
+        "action": "summary",
+        "http": 200,
+        "seconds": 9.7,
+        "echoed": "summary",
+        "tok_per_s": 36.1,
+        "body_chars": 43,
+        "citations": 8,
+        "confidence": 70,
+        "band": "amber",
+        "refused": true,
+        "backend": "ollama:qwen3.6:35b (36.1 tok/s)",
+        "short_output": false,
+        "ends_cleanly": null
+      },
+      {
+        "trial": 1,
+        "action": "report",
+        "http": 200,
+        "seconds": 9.3,
+        "echoed": "report",
+        "tok_per_s": 37.2,
+        "body_chars": 43,
+        "citations": 10,
+        "confidence": 70,
+        "band": "amber",
+        "refused": true,
+        "backend": "ollama:qwen3.6:35b (37.2 tok/s)",
+        "short_output": false,
+        "ends_cleanly": null
+      },
+      {
+        "trial": 1,
+        "action": "presentation",
+        "http": 200,
+        "seconds": 27.9,
+        "echoed": "presentation",
+        "tok_per_s": 35.4,
+        "body_chars": 2946,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen3.6:35b (35.4 tok/s)",
+        "short_output": false,
+        "ends_cleanly": true
+      },
+      {
+        "trial": 1,
+        "action": "memo",
+        "http": 200,
+        "seconds": 10.7,
+        "echoed": "memo",
+        "tok_per_s": 36.8,
+        "body_chars": 43,
+        "citations": 10,
+        "confidence": 65,
+        "band": "amber",
+        "refused": true,
+        "backend": "ollama:qwen3.6:35b (36.8 tok/s)",
+        "short_output": false,
+        "ends_cleanly": null
+      }
+    ],
+    "per_action": {
+      "summary": {
+        "generated": 0,
+        "trials": 1
+      },
+      "report": {
+        "generated": 0,
+        "trials": 1
+      },
+      "presentation": {
+        "generated": 1,
+        "trials": 1
+      },
+      "memo": {
+        "generated": 0,
+        "trials": 1
+      }
+    },
+    "generated": 1,
+    "refused": 3,
+    "short_outputs": 0,
+    "mean_seconds": 27.9,
+    "mean_tok_per_s": 35.4,
+    "truncated_outputs": 0
+  },
+  "analyze": {
+    "supported": true,
+    "cases": [
+      {
+        "size": "small",
+        "file": "49021_2018-1_8h75wf2xt5riek5nh52xt5rizrmhki2xt5ri.pdf",
+        "bytes": 14080,
+        "http": 200,
+        "seconds": 41.2,
+        "echoed": "analyze",
+        "chunks_used": 1,
+        "chunks_total": 1,
+        "coverage": 1.0,
+        "truncated": false,
+        "citations": 1,
+        "confidence": 95,
+        "band": "green",
+        "body_chars": 1647,
+        "sections": 5,
+        "tok_per_s": 36.0,
+        "attempt": 9,
+        "no_text": false
+      },
+      {
+        "size": "median",
+        "file": "felhívás megküldése Új Világ.pdf",
+        "bytes": 165015,
+        "http": 200,
+        "seconds": 21.6,
+        "echoed": "analyze",
+        "chunks_used": 2,
+        "chunks_total": 2,
+        "coverage": 1.0,
+        "truncated": false,
+        "citations": 2,
+        "confidence": 80,
+        "band": "amber",
+        "body_chars": 1802,
+        "sections": 5,
+        "tok_per_s": 35.8,
+        "attempt": 1,
+        "no_text": false
+      },
+      {
+        "size": "large",
+        "file": "web_PDF_A_kiberter_vedelme_comp.docx",
+        "bytes": 23493027,
+        "http": 200,
+        "seconds": 0.0,
+        "echoed": "analyze",
+        "chunks_used": 0,
+        "chunks_total": 0,
+        "coverage": null,
+        "truncated": false,
+        "citations": 0,
+        "confidence": 44,
+        "band": "red",
+        "body_chars": 43,
+        "sections": 0,
+        "tok_per_s": null,
+        "attempt": 10,
+        "no_text": true
+      }
+    ],
+    "analyzable": 2,
+    "fully_covered": 2,
+    "degenerate_answers": 0,
+    "no_text_documents": 1,
+    "mean_seconds": 31.4
+  },
+  "wall_seconds": 230.0,
+  "verdict": {
+    "language_match": "8/8",
+    "language_auto": "4/4",
+    "language_explicit": "4/4",
+    "unstable_languages": [],
+    "refusal_correct": "8/8",
+    "ungrounded_cases": 1,
+    "mean_confidence": 46.0,
+    "analyze_supported": true,
+    "analyze_analyzable": 2,
+    "analyze_fully_covered": 2,
+    "analyze_degenerate": 0,
+    "actions_generated": 1,
+    "truncated_outputs": 0,
+    "mean_action_seconds": 27.9,
+    "mean_action_tok_per_s": 35.4
+  }
+}

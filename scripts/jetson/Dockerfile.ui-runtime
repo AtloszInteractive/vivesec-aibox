@@ -1,0 +1,9 @@
+# Runtime-only image for the demo box: the Nitro bundle is built on the dev
+# machine and copied in, so the Jetson does not have to run the toolchain.
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=8080
+COPY .output ./.output
+EXPOSE 8080
+CMD ["node", ".output/server/index.mjs"]

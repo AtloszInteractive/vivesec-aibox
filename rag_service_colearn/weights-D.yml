@@ -1,0 +1,16 @@
+# Score-weight variant D — pure chunk ranking, as proposed by the RAG developer.
+# Drops the hierarchy AND the lexical branch, so the ranking is literally
+#   final_score = chunk_vector_score
+# This isolates the dense retriever with nothing layered on top; compare against
+# variant C (0.90 chunk + 0.10 keyword) to see what the keyword branch is worth
+# once the doc/page bonus is gone.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f host-ollama.yml -f weights.yml up -d
+services:
+  pageindexes-rag-service:
+    environment:
+      DOC_SCORE_WEIGHT: "0.00"
+      PAGE_SCORE_WEIGHT: "0.00"
+      CHUNK_SCORE_WEIGHT: "1.00"
+      KEYWORD_SCORE_WEIGHT: "0.00"

@@ -1,0 +1,577 @@
+{
+  "template_version": 1,
+  "documents": [
+    {
+      "file_id": "vivesec://files/finance/report_q1_2025",
+      "path": "finance/report_q1_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "financial_report",
+      "language_hint": "en",
+      "title": "Q1 2025 Financial Report",
+      "mtime_days_ago": 76
+    },
+    {
+      "file_id": "vivesec://files/finance/report_q2_2025",
+      "path": "finance/report_q2_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "financial_report",
+      "language_hint": "en",
+      "title": "Q2 2025 Financial Report",
+      "mtime_days_ago": 20
+    },
+    {
+      "file_id": "vivesec://files/finance/report_q3_2025",
+      "path": "finance/report_q3_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "financial_report",
+      "language_hint": "en",
+      "title": "Q3 2025 Financial Report",
+      "mtime_days_ago": 292
+    },
+    {
+      "file_id": "vivesec://files/finance/report_q4_2025",
+      "path": "finance/report_q4_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "financial_report",
+      "language_hint": "en",
+      "title": "Q4 2025 Financial Report",
+      "mtime_days_ago": 147
+    },
+    {
+      "file_id": "vivesec://files/finance/report_q1_2026",
+      "path": "finance/report_q1_2026.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "financial_report",
+      "language_hint": "en",
+      "title": "Q1 2026 Financial Report",
+      "mtime_days_ago": 115
+    },
+    {
+      "file_id": "vivesec://files/finance/invoices_q1_2025",
+      "path": "finance/invoices_q1_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "invoice_summary",
+      "language_hint": "en",
+      "title": "Invoice Summary Q1 2025",
+      "mtime_days_ago": 54
+    },
+    {
+      "file_id": "vivesec://files/finance/invoices_q2_2025",
+      "path": "finance/invoices_q2_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "invoice_summary",
+      "language_hint": "en",
+      "title": "Invoice Summary Q2 2025",
+      "mtime_days_ago": 27
+    },
+    {
+      "file_id": "vivesec://files/finance/invoices_q3_2025",
+      "path": "finance/invoices_q3_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "invoice_summary",
+      "language_hint": "en",
+      "title": "Invoice Summary Q3 2025",
+      "mtime_days_ago": 45
+    },
+    {
+      "file_id": "vivesec://files/finance/invoices_q4_2025",
+      "path": "finance/invoices_q4_2025.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "invoice_summary",
+      "language_hint": "en",
+      "title": "Invoice Summary Q4 2025",
+      "mtime_days_ago": 190
+    },
+    {
+      "file_id": "vivesec://files/finance/invoices_q1_2026",
+      "path": "finance/invoices_q1_2026.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "invoice_summary",
+      "language_hint": "en",
+      "title": "Invoice Summary Q1 2026",
+      "mtime_days_ago": 343
+    },
+    {
+      "file_id": "vivesec://files/finance/budget_finance",
+      "path": "finance/budget_finance.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "budget_memo",
+      "language_hint": "en",
+      "title": "Budget Memo Finance",
+      "mtime_days_ago": 56
+    },
+    {
+      "file_id": "vivesec://files/finance/budget_operations",
+      "path": "finance/budget_operations.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "budget_memo",
+      "language_hint": "en",
+      "title": "Budget Memo Operations",
+      "mtime_days_ago": 191
+    },
+    {
+      "file_id": "vivesec://files/finance/budget_engineering",
+      "path": "finance/budget_engineering.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "budget_memo",
+      "language_hint": "en",
+      "title": "Budget Memo Engineering",
+      "mtime_days_ago": 141
+    },
+    {
+      "file_id": "vivesec://files/finance/budget_sales",
+      "path": "finance/budget_sales.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "budget_memo",
+      "language_hint": "en",
+      "title": "Budget Memo Sales",
+      "mtime_days_ago": 278
+    },
+    {
+      "file_id": "vivesec://files/finance/budget_hr",
+      "path": "finance/budget_hr.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "budget_memo",
+      "language_hint": "en",
+      "title": "Budget Memo HR",
+      "mtime_days_ago": 332
+    },
+    {
+      "file_id": "vivesec://files/finance/budget_legal",
+      "path": "finance/budget_legal.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "budget_memo",
+      "language_hint": "en",
+      "title": "Budget Memo Legal",
+      "mtime_days_ago": 21
+    },
+    {
+      "file_id": "vivesec://files/finance/vendor_cloudline_kft",
+      "path": "finance/vendor_cloudline_kft.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "vendor_contract",
+      "language_hint": "en",
+      "title": "Vendor Agreement Cloudline Kft",
+      "mtime_days_ago": 295
+    },
+    {
+      "file_id": "vivesec://files/finance/vendor_secureware_zrt",
+      "path": "finance/vendor_secureware_zrt.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "vendor_contract",
+      "language_hint": "en",
+      "title": "Vendor Agreement SecureWare Zrt",
+      "mtime_days_ago": 334
+    },
+    {
+      "file_id": "vivesec://files/finance/vendor_dataforge_bv",
+      "path": "finance/vendor_dataforge_bv.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "vendor_contract",
+      "language_hint": "en",
+      "title": "Vendor Agreement DataForge BV",
+      "mtime_days_ago": 386
+    },
+    {
+      "file_id": "vivesec://files/finance/vendor_netpulse_gmbh",
+      "path": "finance/vendor_netpulse_gmbh.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "vendor_contract",
+      "language_hint": "en",
+      "title": "Vendor Agreement NetPulse GmbH",
+      "mtime_days_ago": 224
+    },
+    {
+      "file_id": "vivesec://files/finance/vendor_officehub_kft",
+      "path": "finance/vendor_officehub_kft.txt",
+      "drive": "finance",
+      "acl_scope": [
+        "finance"
+      ],
+      "sensitivity": "confidential",
+      "doc_type": "vendor_contract",
+      "language_hint": "en",
+      "title": "Vendor Agreement OfficeHub Kft",
+      "mtime_days_ago": 265
+    },
+    {
+      "file_id": "vivesec://files/hr/handbook_working_hours",
+      "path": "hr/handbook_working_hours.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "employee_handbook",
+      "language_hint": "en",
+      "title": "Handbook working-hours",
+      "mtime_days_ago": 391
+    },
+    {
+      "file_id": "vivesec://files/hr/handbook_leave",
+      "path": "hr/handbook_leave.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "employee_handbook",
+      "language_hint": "en",
+      "title": "Handbook leave",
+      "mtime_days_ago": 61
+    },
+    {
+      "file_id": "vivesec://files/hr/handbook_remote",
+      "path": "hr/handbook_remote.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "employee_handbook",
+      "language_hint": "en",
+      "title": "Handbook remote",
+      "mtime_days_ago": 326
+    },
+    {
+      "file_id": "vivesec://files/hr/handbook_security_training",
+      "path": "hr/handbook_security_training.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "employee_handbook",
+      "language_hint": "en",
+      "title": "Handbook security-training",
+      "mtime_days_ago": 353
+    },
+    {
+      "file_id": "vivesec://files/hr/onboarding_finance",
+      "path": "hr/onboarding_finance.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "onboarding_guide",
+      "language_hint": "en",
+      "title": "Onboarding Finance",
+      "mtime_days_ago": 37
+    },
+    {
+      "file_id": "vivesec://files/hr/onboarding_operations",
+      "path": "hr/onboarding_operations.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "onboarding_guide",
+      "language_hint": "en",
+      "title": "Onboarding Operations",
+      "mtime_days_ago": 310
+    },
+    {
+      "file_id": "vivesec://files/hr/onboarding_engineering",
+      "path": "hr/onboarding_engineering.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "onboarding_guide",
+      "language_hint": "en",
+      "title": "Onboarding Engineering",
+      "mtime_days_ago": 133
+    },
+    {
+      "file_id": "vivesec://files/hr/onboarding_sales",
+      "path": "hr/onboarding_sales.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "onboarding_guide",
+      "language_hint": "en",
+      "title": "Onboarding Sales",
+      "mtime_days_ago": 353
+    },
+    {
+      "file_id": "vivesec://files/hr/onboarding_hr",
+      "path": "hr/onboarding_hr.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "onboarding_guide",
+      "language_hint": "en",
+      "title": "Onboarding HR",
+      "mtime_days_ago": 279
+    },
+    {
+      "file_id": "vivesec://files/hr/onboarding_legal",
+      "path": "hr/onboarding_legal.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "onboarding_guide",
+      "language_hint": "en",
+      "title": "Onboarding Legal",
+      "mtime_days_ago": 179
+    },
+    {
+      "file_id": "vivesec://files/hr/empty_placeholder",
+      "path": "hr/empty_placeholder.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "note",
+      "language_hint": "en",
+      "title": "Empty placeholder",
+      "mtime_days_ago": 62
+    },
+    {
+      "file_id": "vivesec://files/hr/unicode_note",
+      "path": "hr/unicode_note.txt",
+      "drive": "hr",
+      "acl_scope": [
+        "hr"
+      ],
+      "sensitivity": "internal",
+      "doc_type": "note",
+      "language_hint": "hu",
+      "title": "Ékezetes jegyzet",
+      "mtime_days_ago": 155
+    },
+    {
+      "file_id": "vivesec://files/board/minutes_january_2026",
+      "path": "board/minutes_january_2026.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "board_minutes",
+      "language_hint": "en",
+      "title": "Board Minutes January 2026",
+      "mtime_days_ago": 139
+    },
+    {
+      "file_id": "vivesec://files/board/minutes_february_2026",
+      "path": "board/minutes_february_2026.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "board_minutes",
+      "language_hint": "en",
+      "title": "Board Minutes February 2026",
+      "mtime_days_ago": 157
+    },
+    {
+      "file_id": "vivesec://files/board/minutes_march_2026",
+      "path": "board/minutes_march_2026.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "board_minutes",
+      "language_hint": "en",
+      "title": "Board Minutes March 2026",
+      "mtime_days_ago": 281
+    },
+    {
+      "file_id": "vivesec://files/board/minutes_april_2026",
+      "path": "board/minutes_april_2026.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "board_minutes",
+      "language_hint": "en",
+      "title": "Board Minutes April 2026",
+      "mtime_days_ago": 62
+    },
+    {
+      "file_id": "vivesec://files/board/minutes_may_2026",
+      "path": "board/minutes_may_2026.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "board_minutes",
+      "language_hint": "en",
+      "title": "Board Minutes May 2026",
+      "mtime_days_ago": 45
+    },
+    {
+      "file_id": "vivesec://files/board/minutes_june_2026",
+      "path": "board/minutes_june_2026.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "board_minutes",
+      "language_hint": "en",
+      "title": "Board Minutes June 2026",
+      "mtime_days_ago": 70
+    },
+    {
+      "file_id": "vivesec://files/board/strategy_northwind",
+      "path": "board/strategy_northwind.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "strategy_memo",
+      "language_hint": "en",
+      "title": "Strategy Northwind",
+      "mtime_days_ago": 89
+    },
+    {
+      "file_id": "vivesec://files/board/strategy_bluebird",
+      "path": "board/strategy_bluebird.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "strategy_memo",
+      "language_hint": "en",
+      "title": "Strategy Bluebird",
+      "mtime_days_ago": 315
+    },
+    {
+      "file_id": "vivesec://files/board/strategy_granite",
+      "path": "board/strategy_granite.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "strategy_memo",
+      "language_hint": "en",
+      "title": "Strategy Granite",
+      "mtime_days_ago": 281
+    },
+    {
+      "file_id": "vivesec://files/board/strategy_meridian",
+      "path": "board/strategy_meridian.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "strategy_memo",
+      "language_hint": "en",
+      "title": "Strategy Meridian",
+      "mtime_days_ago": 164
+    },
+    {
+      "file_id": "vivesec://files/board/strategy_lighthouse",
+      "path": "board/strategy_lighthouse.txt",
+      "drive": "board",
+      "acl_scope": [
+        "board"
+      ],
+      "sensitivity": "restricted",
+      "doc_type": "strategy_memo",
+      "language_hint": "en",
+      "title": "Strategy Lighthouse",
+      "mtime_days_ago": 337
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# Jetson trial override — copied to the Jetson as `docker-compose.override.yml`
+# (auto-loaded by compose there). NOT auto-loaded on dev machines (different name).
+#
+# Why: on the AI Box every externally reachable port is a liability; :8080 is
+# already taken by vivesec-ui (host network), so the candidate lives on :8180.
+#
+# 2026-07-29: opened up for CoLearn side-by-side evaluation over Tailscale,
+# mirroring our own eval RAG on :8091. Protection is layered:
+#   1. Tailscale grants  -> only autogroup:shared reaches :8180
+#   2. API_KEY (.env)    -> /rag/search_context returns 401 without X-API-Key
+# Local access stays available via SSH tunnel:
+#   ssh -N -L 8180:localhost:8180 aibox@192.168.0.181
+services:
+  pageindexes-rag-service:
+    ports: !override
+      - "0.0.0.0:8180:8080"

@@ -1,0 +1,31 @@
+{
+  "documents": [
+    {
+      "file_id": "vivesec://files/finance-q4",
+      "path": "finance_q4.txt",
+      "acl_scope": ["finance"],
+      "sensitivity": "confidential",
+      "doc_type": "financial_report",
+      "language_hint": "en",
+      "title": "Q4 Financial Summary (synthetic fixture)"
+    },
+    {
+      "file_id": "vivesec://files/handbook",
+      "path": "handbook.txt",
+      "acl_scope": ["hr", "all"],
+      "sensitivity": "internal",
+      "doc_type": "employee_handbook",
+      "language_hint": "en",
+      "title": "Employee Handbook (synthetic fixture)"
+    },
+    {
+      "file_id": "vivesec://files/board",
+      "path": "board_minutes.txt",
+      "acl_scope": ["board"],
+      "sensitivity": "restricted",
+      "doc_type": "board_minutes",
+      "language_hint": "en",
+      "title": "Board Minutes (synthetic fixture, must never leak)"
+    }
+  ]
+}

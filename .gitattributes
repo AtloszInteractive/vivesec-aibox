@@ -1,0 +1,26 @@
+* text=auto
+
+# Runtime source and scripts execute in Linux containers/on the Jetson.
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+scripts/image_vs_source.sh whitespace=-blank-at-eof
+
+# Binary documentation and assets.
+*.doc binary
+*.docx binary
+*.pdf binary
+*.pptx binary
+*.xlsx binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary

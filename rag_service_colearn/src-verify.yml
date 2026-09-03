@@ -1,0 +1,12 @@
+# LOCAL DEV ONLY — source-verification override (explicit -f use, never auto-loaded).
+# The delivered source repo is missing alembic/ (feedback item), so the stock
+# entrypoint dies at `alembic upgrade head`. The postgres volume already holds
+# the schema created by the 1.0 image, so for verification we bypass the
+# entrypoint and start uvicorn directly.
+#   docker compose -f docker-compose.yml -f src-verify.yml up -d
+services:
+  pageindexes-rag-service:
+    image: pageindexes-rag-service:src-verify
+    entrypoint: ["python", "-m", "uvicorn", "app.main:app",
+                 "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+    command: []

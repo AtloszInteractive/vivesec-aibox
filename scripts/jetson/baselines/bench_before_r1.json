@@ -1,0 +1,515 @@
+{
+  "schema": 6,
+  "label": "demo-1-before",
+  "started_utc": "2026-08-14T11:02:15Z",
+  "environment": {
+    "adapter_url": "http://127.0.0.1:80",
+    "drive": "/storage/drives/aiboxdev/",
+    "status_http": 200,
+    "ui_ready": true,
+    "fs_ready": true,
+    "features": [
+      "basic"
+    ],
+    "storage_locked": false,
+    "index": {
+      "documents": 5353,
+      "pages": 34912,
+      "chunks": 614485,
+      "corpora": 2,
+      "skipped": {
+        "empty_content": 47,
+        "extraction_empty": 337,
+        "invalid_content": 1,
+        "too_large": 13,
+        "unsupported_type": 475
+      }
+    },
+    "mirror": {
+      "documents": 6290,
+      "files": 5363,
+      "directories": 927
+    },
+    "ollama_models": [
+      "bge-m3:latest",
+      "qwen2.5:14b"
+    ],
+    "adapter_env": {
+      "ADAPTER_NUM_PREDICT": "1024",
+      "ADAPTER_GEN_MODEL": "qwen2.5:14b",
+      "ADAPTER_TENANT_ID": "default"
+    },
+    "images": {
+      "adapter": "291b89d2f7a7",
+      "rag": "37eb1af5e5b0"
+    },
+    "rag_health": "{\"ok\": true, \"status\": \"ok\", \"embedding\": {\"provider\": \"ollama\", \"model_name\": \"bge-m3\", \"dimension\": 1024, \"normalized\": true}, \"vector_backend\": \"sqlite-vec\", \"min_score\": 0.0, \"query_reaccent\": true}",
+    "host": {
+      "hostname": "szeredy-AI-desktop",
+      "mem": "Mem:             61           9          29           0          21          50"
+    }
+  },
+  "corpus": {
+    "http": 200,
+    "seconds": 0.03,
+    "file_count": 2000,
+    "truncated": true,
+    "size_bytes": {
+      "min": 0,
+      "median": 170233,
+      "max": 703607193,
+      "total": 5624830636
+    },
+    "informational": true
+  },
+  "capabilities": {
+    "rag_document_context_http": "404",
+    "rag_document_context": false,
+    "analyze_http": 200,
+    "analyze_action_echoed": null,
+    "analyze_document_block": false,
+    "analyze_supported": false,
+    "analyze_seconds": 35.5,
+    "analyze_probe": {
+      "file": "/storage/drives/aiboxdev/CONSULTING/Porsche_SIEM/00_kommunikacio/státusz 2.eml",
+      "chunks_used": null,
+      "chunks_total": null,
+      "truncated": null,
+      "body_chars": 43
+    }
+  },
+  "language": {
+    "repeats": 3,
+    "cases": [
+      {
+        "trial": 1,
+        "asked": "English",
+        "http": 200,
+        "seconds": 9.6,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "English",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 1,
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 7.2,
+        "detected": "English",
+        "language_ok": false,
+        "refused": true,
+        "refused_in": "English",
+        "refusal_localised": false,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 1,
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 7.6,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Danish",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 1,
+        "asked": "German",
+        "http": 200,
+        "seconds": 8.7,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "German",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Es gibt keine Daten für dieses Jahr in den Dokumenten. Dazu liegen in den Dokumenten keine Daten vor."
+      },
+      {
+        "trial": 2,
+        "asked": "English",
+        "http": 200,
+        "seconds": 7.5,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "English",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 2,
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 7.6,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Hungarian",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "trial": 2,
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 7.8,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Danish",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 2,
+        "asked": "German",
+        "http": 200,
+        "seconds": 9.3,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "German",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Es gibt keine Daten für das Geschäftsjahr 2027 in den Dokumenten. Dazu liegen in den Dokumenten keine Daten vor."
+      },
+      {
+        "trial": 3,
+        "asked": "English",
+        "http": 200,
+        "seconds": 7.6,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "English",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents."
+      },
+      {
+        "trial": 3,
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 7.6,
+        "detected": "Hungarian",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Hungarian",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Erre nincs adat a dokumentumokban."
+      },
+      {
+        "trial": 3,
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 7.8,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "Danish",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne."
+      },
+      {
+        "trial": 3,
+        "asked": "German",
+        "http": 200,
+        "seconds": 9.5,
+        "detected": "German",
+        "language_ok": true,
+        "refused": true,
+        "refused_in": "German",
+        "refusal_localised": true,
+        "confidence": 53,
+        "band": "red",
+        "citations": 5,
+        "answer_head": "Es gibt keine Daten für das Geschäftsjahr 2027 in den Dokumenten. Dazu liegen in den Dokumenten keine Daten vor."
+      }
+    ],
+    "per_language": {
+      "English": {
+        "ok": 3,
+        "trials": 3,
+        "answered_in": [
+          "English"
+        ]
+      },
+      "Hungarian": {
+        "ok": 2,
+        "trials": 3,
+        "answered_in": [
+          "English",
+          "Hungarian"
+        ]
+      },
+      "Danish": {
+        "ok": 3,
+        "trials": 3,
+        "answered_in": [
+          "Danish"
+        ]
+      },
+      "German": {
+        "ok": 3,
+        "trials": 3,
+        "answered_in": [
+          "German"
+        ]
+      }
+    },
+    "language_match": 11,
+    "refusal_correct": 12,
+    "refusal_localised": 11,
+    "total": 12,
+    "unstable_languages": [
+      "Hungarian"
+    ]
+  },
+  "grounding": {
+    "cases": [
+      {
+        "question": "List the exact figures this drive reports, with their units.",
+        "http": 200,
+        "seconds": 20.6,
+        "confidence": 73,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.8,
+        "body_chars": 403
+      },
+      {
+        "question": "What are the most recent dated commitments and their deadlines?",
+        "http": 200,
+        "seconds": 23.6,
+        "confidence": 75,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.6,
+        "body_chars": 574
+      },
+      {
+        "question": "Summarise the key quantitative results and cite the source for each.",
+        "http": 200,
+        "seconds": 21.5,
+        "confidence": 50,
+        "band": "red",
+        "ungrounded": [
+          "2024187",
+          "202431",
+          "2024384",
+          "2024410",
+          "2025206",
+          "2025440",
+          "2025486",
+          "202552"
+        ],
+        "suppressed": true,
+        "citations": 5,
+        "tok_per_s": 13.8,
+        "body_chars": 107
+      }
+    ],
+    "suppressed": 1,
+    "with_ungrounded": 1,
+    "mean_confidence": 66.0
+  },
+  "actions": {
+    "anchor": "Kockazatelemzes 20170426",
+    "cases": [
+      {
+        "action": "summary",
+        "http": 200,
+        "seconds": 35.2,
+        "echoed": "summary",
+        "tok_per_s": 13.1,
+        "body_chars": 1434,
+        "citations": 8,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (13.1 tok/s)",
+        "short_output": false,
+        "ends_cleanly": true
+      },
+      {
+        "action": "report",
+        "http": 200,
+        "seconds": 28.8,
+        "echoed": "report",
+        "tok_per_s": 13.1,
+        "body_chars": 940,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (13.1 tok/s)",
+        "short_output": false,
+        "ends_cleanly": true
+      },
+      {
+        "action": "presentation",
+        "http": 200,
+        "seconds": 37.7,
+        "echoed": "presentation",
+        "tok_per_s": 12.9,
+        "body_chars": 1132,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (12.9 tok/s)",
+        "short_output": false,
+        "ends_cleanly": true
+      },
+      {
+        "action": "memo",
+        "http": 200,
+        "seconds": 45.9,
+        "echoed": "memo",
+        "tok_per_s": 12.9,
+        "body_chars": 107,
+        "citations": 10,
+        "confidence": 50,
+        "band": "red",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (12.9 tok/s) (suppressed: ungrounded numb",
+        "short_output": true,
+        "ends_cleanly": true
+      }
+    ],
+    "generated": 4,
+    "refused": 0,
+    "short_outputs": 1,
+    "mean_seconds": 36.9,
+    "mean_tok_per_s": 13.0,
+    "truncated_outputs": 0
+  },
+  "analyze": {
+    "supported": false,
+    "cases": [
+      {
+        "size": "small",
+        "file": "státusz 2.eml",
+        "bytes": 4642,
+        "http": 200,
+        "seconds": 12.4,
+        "echoed": null,
+        "chunks_used": null,
+        "chunks_total": null,
+        "coverage": null,
+        "truncated": null,
+        "citations": 4,
+        "confidence": 53,
+        "band": "red",
+        "body_chars": 136,
+        "sections": 0,
+        "tok_per_s": 13.9,
+        "attempt": 1,
+        "no_text": true
+      },
+      {
+        "size": "median",
+        "file": "felhívás megküldése Új Világ.pdf",
+        "bytes": 165015,
+        "http": 200,
+        "seconds": 23.2,
+        "echoed": null,
+        "chunks_used": null,
+        "chunks_total": null,
+        "coverage": null,
+        "truncated": null,
+        "citations": 4,
+        "confidence": 75,
+        "band": "amber",
+        "body_chars": 454,
+        "sections": 0,
+        "tok_per_s": 13.5,
+        "attempt": 1,
+        "no_text": true
+      },
+      {
+        "size": "large",
+        "file": "PMP-PMBOK-Guide-7th-Edition.pdf",
+        "bytes": 70955202,
+        "http": 200,
+        "seconds": 14.8,
+        "echoed": null,
+        "chunks_used": null,
+        "chunks_total": null,
+        "coverage": null,
+        "truncated": null,
+        "citations": 4,
+        "confidence": 95,
+        "band": "green",
+        "body_chars": 282,
+        "sections": 0,
+        "tok_per_s": 13.7,
+        "attempt": 1,
+        "no_text": true
+      }
+    ],
+    "analyzable": 0,
+    "fully_covered": 0,
+    "degenerate_answers": 0,
+    "no_text_documents": 3,
+    "mean_seconds": 0.0
+  },
+  "wall_seconds": 397.4,
+  "verdict": {
+    "language_match": "11/12",
+    "unstable_languages": [
+      "Hungarian"
+    ],
+    "refusal_correct": "12/12",
+    "ungrounded_cases": 1,
+    "mean_confidence": 66.0,
+    "analyze_supported": false,
+    "analyze_analyzable": 0,
+    "analyze_fully_covered": 0,
+    "analyze_degenerate": 0,
+    "actions_generated": 4,
+    "truncated_outputs": 0,
+    "mean_action_seconds": 36.9,
+    "mean_action_tok_per_s": 13.0
+  }
+}

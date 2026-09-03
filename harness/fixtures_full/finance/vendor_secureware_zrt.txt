@@ -1,0 +1,5 @@
+Vendor Agreement Summary — SecureWare Zrt (synthetic)
+
+Annual contract value: 2600 thousand EUR. The agreement renews on 2026-04-21 unless terminated with 60 days written notice.
+
+Service level: SecureWare Zrt commits to 99.6 percent monthly availability. Penalties apply below the committed level as defined in Annex B. Data processing terms follow the standard DPA. Invoicing is quarterly in arrears.

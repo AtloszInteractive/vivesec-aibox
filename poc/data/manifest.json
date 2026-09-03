@@ -1,0 +1,39 @@
+{
+  "_comment": "Maps each corpus .txt (ingested source) to the DriveFile shown in the ViVeSec app, so live citations can open the right document. fileId = DriveFile.id in ViveSecApp.tsx INITIAL_FILES; name = display name.",
+  "Cloud_Infrastructure_SLA_2026.txt": {
+    "fileId": "fsla",
+    "name": "Cloud_Infrastructure_SLA_2026.pdf"
+  },
+  "Vendor_Agreement_2025_Final.txt": {
+    "fileId": "fv1",
+    "name": "Vendor_Agreement_2025.pdf"
+  },
+  "Q4_Infrastructure_Security_Audit.txt": {
+    "fileId": "fa1",
+    "name": "Q4_Infrastructure_Security_Audit.pdf"
+  },
+  "Employee_Handbook_v4.txt": {
+    "fileId": "fh1",
+    "name": "Employee_Handbook_v4.docx"
+  },
+  "Contract_2025_Final.txt": {
+    "fileId": "f1",
+    "name": "Contract_2025_Final.pdf"
+  },
+  "Q4_Financials.txt": {
+    "fileId": "f2",
+    "name": "Q4_Financials.xlsx"
+  },
+  "Board_Meeting_Transcript_2025-11-12.txt": {
+    "fileId": "f4",
+    "name": "Board_Meeting_Transcript_2025-11-12.txt"
+  },
+  "Security_Audit_Report.txt": {
+    "fileId": "f5",
+    "name": "Security_Audit_Report.pdf"
+  },
+  "Vendor_Risk_Matrix.txt": {
+    "fileId": "f6",
+    "name": "Vendor_Risk_Matrix.md"
+  }
+}

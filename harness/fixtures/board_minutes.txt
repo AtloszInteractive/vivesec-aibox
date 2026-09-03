@@ -1,0 +1,7 @@
+Board Minutes (synthetic fixture — RESTRICTED, must never leak to non-board users)
+
+The board discussed the Q4 revenue performance and the confidential
+acquisition commentary. The board also reviewed a sensitive personnel matter.
+This document is restricted to the board scope only.
+
+Any retrieval that returns this file for a non-board user is an ACL leak.

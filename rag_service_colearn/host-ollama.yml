@@ -1,0 +1,27 @@
+# Route the PageIndexes candidate at the Jetson's NATIVE (JetPack CUDA) Ollama
+# instead of the bundled CPU container.
+#
+# Why: measured batch-embedding throughput on this box —
+#   batch 1: 0.61 s (GPU) vs 0.73 s (CPU)
+#   batch 16: 1.01 s vs 3.79 s
+#   batch 64: 2.17 s vs 14.69 s  -> 6.8x
+# The bundled ollama image has no Tegra CUDA support, so it silently runs on CPU;
+# that is what starves ingest into the hardcoded 60 s embed timeout.
+#
+# The host Ollama listens on 127.0.0.1 only (production posture, serves the
+# adapter). Rather than re-binding it, a socat relay in the host network
+# namespace republishes it on the compose bridge gateway:
+#
+#   docker run -d --name ollama-relay --network host --restart unless-stopped \
+#     alpine/socat TCP-LISTEN:11434,fork,reuseaddr,bind=172.18.0.1 TCP:127.0.0.1:11434
+#
+# so it stays reachable only from containers on that bridge, never from the LAN.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f host-ollama.yml up -d
+services:
+  pageindexes-rag-service:
+    environment:
+      OLLAMA_URL: "http://host.docker.internal:11434"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

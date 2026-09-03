@@ -1,0 +1,74 @@
+services:
+  pageindexes-rag-service:
+    image: ${PAGEINDEXES_IMAGE:-sseres/pageindexes-rag-service:1.0}
+    ports:
+      - "${PAGEINDEXES_PORT:-8080}:8080"
+    environment:
+      API_KEY: ${API_KEY:-change-me}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://pageindexes:pageindexes@postgres:5432/pageindexes}
+      VECTOR_BACKEND: ${VECTOR_BACKEND:-qdrant}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+      EMBEDDING_NORMALIZE: ${EMBEDDING_NORMALIZE:-true}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      LOCAL_INGEST_ROOT: ${LOCAL_INGEST_ROOT:-data/corpora}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      ollama:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pageindexes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pageindexes}
+      POSTGRES_DB: ${POSTGRES_DB:-pageindexes}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pageindexes} -d ${POSTGRES_DB:-pageindexes}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["monitoring"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  ollama_data:

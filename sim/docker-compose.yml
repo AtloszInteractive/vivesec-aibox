@@ -1,0 +1,43 @@
+# ViVeSec AIBox mock on the Jetson.
+#
+# network_mode: host  ->  the container shares the Jetson's network namespace, so
+#   - it reaches the host Ollama at http://localhost:11434 (GPU embeddings), and
+#   - it binds the AIBox API on the host's 127.0.0.1:8088.
+# This avoids the Jetson host.docker.internal / docker0-bridge dance entirely.
+#
+# Usage (run on the Jetson, from the repo root):
+#   docker compose -f sim/docker-compose.yml up -d --build      # start AIBox
+#   docker compose -f sim/docker-compose.yml run --rm sim drives # run simulator
+#   docker compose -f sim/docker-compose.yml run --rm sim sync
+#   docker compose -f sim/docker-compose.yml down               # stop AIBox
+
+services:
+  aibox:
+    build:
+      context: ..
+      dockerfile: sim/Dockerfile
+    image: vivesec-aibox-sim:latest
+    container_name: vivesec-aibox
+    network_mode: host
+    environment:
+      AIBOX_HOST: 127.0.0.1
+      AIBOX_PORT: 8088
+      AIBOX_INDEX_PATH: /data/aibox_index.json
+      OLLAMA_URL: http://localhost:11434
+      VIVESEC_BACKEND: auto
+    volumes:
+      # Persist the AIBox index on the NVMe /data volume (survives restarts).
+      - /data/aibox:/data
+    restart: unless-stopped
+
+  # On-demand simulator (ViVeSecBox push client). Not started by `up`; invoke
+  # explicitly with `docker compose ... run --rm sim <command>`.
+  sim:
+    image: vivesec-aibox-sim:latest
+    network_mode: host
+    profiles: ["tools"]
+    environment:
+      AIBOX_URL: http://localhost:8088
+      VIVESEC_BACKEND: auto
+    entrypoint: ["python", "sim/vivesecbox_sim.py"]
+    command: ["drives"]

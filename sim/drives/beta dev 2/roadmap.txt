@@ -1,0 +1,9 @@
+Beta Dev 2 — Product Roadmap (internal)
+
+This drive name intentionally contains spaces ("beta dev 2") to test that the
+AIBox never tokenizes the VVS-Drive header on whitespace.
+
+Q3 2026: ship the deterministic ingest pipeline and the eval harness.
+Q4 2026: hardware bring-up on the 32GB Orin module and the retail golden image.
+Q1 2027: pilot deployment with three design-partner customers.
+The internal codename for the appliance program is "Northstar".

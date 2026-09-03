@@ -1,0 +1,1423 @@
+# =============================================================================
+# ViVeSec AI Box — DEMÓ-ADATÁLLOMÁNY: CÉG-BIBLIA (ground truth ténytábla)
+# =============================================================================
+# Ez a fájl a demó-korpusz EGYETLEN igazságforrása.
+#   - Minden generált dokumentum (finance / hr / engineering / legal / public)
+#     KIZÁRÓLAG az itt rögzített tényekből épülhet.
+#   - Ugyanez a fájl a kiértékelés ground truth-ja (Q&A generálás + ellenőrzés).
+#   - A `not_in_corpus` blokk adja a HITELES T4 (negatív / elutasítandó) eseteket:
+#     ami itt szerepel, arról a rendszernek NEM szabad választ improvizálnia.
+#
+# Séma-verzió: 1.0        Készült: 2026-07-31        Demó dátuma: 2026-08-10
+# A cég, a személyek, a számok és a szerződések TELJESEN FIKTÍVEK.
+# =============================================================================
+
+meta:
+  schema_version: "1.0"
+  created: "2026-07-31"
+  demo_date: "2026-08-10"          # a demón ez "ma"
+  as_of: "2026-06-30"              # a legtöbb szám ehhez a fordulónaphoz tartozik
+  corporate_language: en
+  document_languages: [en, hu, da, de]
+  currency: EUR
+  fiscal_year: calendar            # üzleti év = naptári év
+  notes: >
+    Minden összeg EUR-ban, ha nincs másképp jelölve. A negyedéves számok
+    menedzsment-számviteli (nem auditált) adatok, kivéve az FY2025 sorokat,
+    amelyek auditáltak (auditor: Lindqvist & Partners, jelentés 2026-03-18).
+
+# -----------------------------------------------------------------------------
+# 1. A CÉG
+# -----------------------------------------------------------------------------
+company:
+  id: voltara
+  name: "Voltara Energy Group"
+  short_name: "Voltara"
+  founded: 2013
+  industry: "Grid-scale energy storage and smart-grid control systems"
+  description: >
+    Voltara designs, manufactures and services grid-scale battery energy storage
+    systems (BESS) and the GC-series grid controllers that operate them. Main
+    markets: Nordics, DACH and Central Europe. Customers are utilities,
+    municipal energy providers and industrial sites.
+  headquarters: "Budapest, Hungary"
+  website: "voltara-energy.example"
+  employees_fte: 214              # 2026-06-30
+  legal_entities:
+    - id: ent_hu
+      name: "Voltara Energy Group Zrt."
+      country: HU
+      city: "Budapest"
+      role: "Holding, R&D, software engineering, CEE sales"
+      registration: "Cg. 01-10-049217"
+      vat: "HU24915063"
+      headcount: 118
+      language: hu
+    - id: ent_de
+      name: "Voltara Systems GmbH"
+      country: DE
+      city: "München"
+      role: "Manufacturing, type approval, quality & compliance, DACH sales"
+      registration: "HRB 214 887"
+      vat: "DE318442097"
+      headcount: 61
+      language: de
+    - id: ent_dk
+      name: "Voltara Nordic A/S"
+      country: DK
+      city: "København"
+      role: "Nordic sales, project delivery and field service"
+      registration: "CVR 41 208 663"
+      vat: "DK41208663"
+      headcount: 35
+      language: da
+  ownership:
+    - holder: "Aurora Growth Partners SCA"
+      type: "financial investor"
+      share_pct: 34.0
+      since: "2022-06-30"
+    - holder: "Founders (Ilona Barát, Dr. Andreas Lehmann)"
+      type: "founders"
+      share_pct: 41.0
+    - holder: "Management & employee option pool"
+      type: "ESOP"
+      share_pct: 9.0
+    - holder: "Nordisk Industriinvest ApS"
+      type: "financial investor"
+      share_pct: 16.0
+      since: "2024-02-14"
+
+# -----------------------------------------------------------------------------
+# 2. EMBEREK (21 nevesített szereplő)
+#    A `drives` mező szabja meg, hogy az illető NEVÉBEN indított lekérdezés
+#    mely drive-okat láthatja -> ez az ACL-demó alapja.
+# -----------------------------------------------------------------------------
+people:
+  - id: p_barat
+    name: "Ilona Barát"
+    title: "Chief Executive Officer"
+    entity: ent_hu
+    location: "Budapest"
+    email: "ilona.barat@voltara-energy.example"
+    languages: [hu, en]
+    since: "2013-04-01"
+    groups: [management, all-staff]
+    board_member: true
+    notes: "Társalapító. A board és a tulajdonosi kommunikáció felelőse."
+
+  - id: p_lehmann
+    name: "Dr. Andreas Lehmann"
+    title: "Chief Technology Officer"
+    entity: ent_de
+    location: "München"
+    email: "andreas.lehmann@voltara-energy.example"
+    languages: [de, en]
+    since: "2013-04-01"
+    groups: [management, engineering, all-staff]
+    board_member: true
+    notes: "Társalapító. A Meridian és az Orion projekt szponzora."
+
+  - id: p_sorensen
+    name: "Mikkel Sørensen"
+    title: "Chief Financial Officer"
+    entity: ent_dk
+    location: "København"
+    email: "mikkel.sorensen@voltara-energy.example"
+    languages: [da, en]
+    since: "2021-09-01"
+    groups: [management, finance, legal, all-staff]
+    board_member: true
+
+  - id: p_holm
+    name: "Katrine Holm"
+    title: "Chief Operating Officer"
+    entity: ent_dk
+    location: "København"
+    email: "katrine.holm@voltara-energy.example"
+    languages: [da, en]
+    since: "2023-03-01"
+    groups: [management, engineering, all-staff]
+    notes: "A Helios projekt szponzora, a szállítási szervezet vezetője."
+
+  - id: p_somogyi
+    name: "Réka Somogyi"
+    title: "Chief of Staff"
+    entity: ent_hu
+    location: "Budapest"
+    email: "reka.somogyi@voltara-energy.example"
+    languages: [hu, en]
+    since: "2024-01-08"
+    groups: [management, all-staff]
+    notes: "Board-anyagok, vezetői riportok, stratégiai nyomon követés."
+
+  - id: p_halasz
+    name: "Péter Halász"
+    title: "VP Engineering"
+    entity: ent_hu
+    location: "Budapest"
+    email: "peter.halasz@voltara-energy.example"
+    languages: [hu, en]
+    since: "2016-05-16"
+    groups: [engineering, all-staff]
+
+  - id: p_kiss
+    name: "Márton Kiss"
+    title: "Lead Software Architect, Grid Control"
+    entity: ent_hu
+    location: "Budapest"
+    email: "marton.kiss@voltara-energy.example"
+    languages: [hu, en]
+    since: "2018-09-03"
+    groups: [engineering, all-staff]
+    notes: "A Meridian (GC-3000 firmware v3) projekt vezetője."
+
+  - id: p_petrova
+    name: "Dr. Elena Petrova"
+    title: "Head of R&D, Battery Systems"
+    entity: ent_de
+    location: "München"
+    email: "elena.petrova@voltara-energy.example"
+    languages: [de, en]
+    since: "2019-02-01"
+    groups: [engineering, all-staff]
+    notes: "A TUNDRA-STORE konzorcium műszaki vezetője."
+
+  - id: p_ruhland
+    name: "Stefan Ruhland"
+    title: "Plant Manager, München"
+    entity: ent_de
+    location: "München"
+    email: "stefan.ruhland@voltara-energy.example"
+    languages: [de, en]
+    since: "2020-07-01"
+    groups: [engineering, all-staff]
+    notes: "Az Orion (2-es gyártósor) projekt vezetője."
+
+  - id: p_brandt
+    name: "Julia Brandt"
+    title: "Head of Compliance & Quality"
+    entity: ent_de
+    location: "München"
+    email: "julia.brandt@voltara-energy.example"
+    languages: [de, en]
+    since: "2022-04-04"
+    groups: [legal, engineering, all-staff]
+    notes: "ISO 27001 / ISO 9001 tanúsítási felelős, NIS2 program-tulajdonos."
+
+  - id: p_novak
+    name: "Tamás Novák"
+    title: "Head of Finance (Group Controller)"
+    entity: ent_hu
+    location: "Budapest"
+    email: "tamas.novak@voltara-energy.example"
+    languages: [hu, en]
+    since: "2019-11-04"
+    groups: [finance, all-staff]
+    notes: "Az Anchor (ERP-migráció) projekt vezetője."
+
+  - id: p_lund
+    name: "Sofie Lund"
+    title: "Head of Sales, Nordics"
+    entity: ent_dk
+    location: "København"
+    email: "sofie.lund@voltara-energy.example"
+    languages: [da, en]
+    since: "2022-01-10"
+    groups: [all-staff]
+    notes: >
+      SZÁNDÉKOS ACL-DEMÓ SZEREPLŐ: nincs finance/hr hozzáférése, tehát a
+      fedezeti szintre vagy a bérsávokra vonatkozó kérdésére a rendszernek
+      NEM szabad tartalmat visszaadnia.
+
+  - id: p_erdelyi
+    name: "Gábor Erdélyi"
+    title: "Head of Sales, DACH & CEE"
+    entity: ent_de
+    location: "München"
+    email: "gabor.erdelyi@voltara-energy.example"
+    languages: [hu, de, en]
+    since: "2021-03-15"
+    groups: [all-staff]
+
+  - id: p_nygaard
+    name: "Lars Nygaard"
+    title: "Head of Field Service & Commissioning"
+    entity: ent_dk
+    location: "København"
+    email: "lars.nygaard@voltara-energy.example"
+    languages: [da, en]
+    since: "2020-08-17"
+    groups: [engineering, all-staff]
+    notes: "A Helios projekt projektvezetője."
+
+  - id: p_kovacs
+    name: "Anna Kovács"
+    title: "HR Director"
+    entity: ent_hu
+    location: "Budapest"
+    email: "anna.kovacs@voltara-energy.example"
+    languages: [hu, en]
+    since: "2018-02-01"
+    groups: [hr, all-staff]
+
+  - id: p_toth
+    name: "Bence Tóth"
+    title: "IT & Information Security Manager"
+    entity: ent_hu
+    location: "Budapest"
+    email: "bence.toth@voltara-energy.example"
+    languages: [hu, en]
+    since: "2021-06-01"
+    groups: [engineering, all-staff]
+    notes: "Az ISMS operatív felelőse, az incidenskezelés első szintje."
+
+  - id: p_varga
+    name: "Zoltán Varga"
+    title: "Procurement Manager"
+    entity: ent_hu
+    location: "Budapest"
+    email: "zoltan.varga@voltara-energy.example"
+    languages: [hu, en]
+    since: "2020-01-13"
+    groups: [all-staff]
+
+  - id: p_weber
+    name: "Nina Weber"
+    title: "Grants & Programmes Manager"
+    entity: ent_de
+    location: "München"
+    email: "nina.weber@voltara-energy.example"
+    languages: [de, en]
+    since: "2023-09-01"
+    groups: [all-staff]
+    notes: "A TUNDRA-STORE (Horizon Europe) projekt koordinátora Voltara oldalról."
+
+  - id: p_farkas
+    name: "Judit Farkas"
+    title: "Executive Assistant & Board Secretary"
+    entity: ent_hu
+    location: "Budapest"
+    email: "judit.farkas@voltara-energy.example"
+    languages: [hu, en]
+    since: "2017-10-02"
+    groups: [all-staff]
+    notes: "A board-jegyzőkönyvek szerkesztője."
+
+  # Külső, nem munkavállaló szereplők
+  - id: p_dahl
+    name: "Ove Dahl"
+    title: "Chair of the Board (non-executive)"
+    entity: null
+    location: "Oslo"
+    languages: [da, en]
+    since: "2022-06-30"
+    groups: []
+    board_member: true
+    external: true
+
+  - id: p_falk
+    name: "Christina Falk"
+    title: "Data Protection Officer (external)"
+    entity: null
+    location: "København"
+    organisation: "Falk & Holm Advokatfirma"
+    languages: [da, en]
+    since: "2023-05-01"
+    groups: []
+    external: true
+
+board:
+  members: [p_dahl, p_barat, p_lehmann, p_sorensen, p_iversen, p_wieland]
+  non_executive_directors:
+    - id: p_iversen
+      name: "Hanne Iversen"
+      nominated_by: "Aurora Growth Partners SCA"
+      since: "2022-06-30"
+    - id: p_wieland
+      name: "Dr. Georg Wieland"
+      nominated_by: "Nordisk Industriinvest ApS"
+      since: "2024-02-14"
+  secretary: p_farkas
+  meetings_2026:
+    - date: "2026-02-11"
+      location: "Budapest"
+      key_decisions:
+        - "FY2025 auditált beszámoló elfogadásra javasolva a közgyűlésnek."
+        - "A 2026-os üzleti terv (60,0 M EUR árbevétel) jóváhagyva."
+    - date: "2026-05-13"
+      location: "München"
+      key_decisions:
+        - "Orion beruházás (4,6 M EUR capex, 2-es gyártósor) JÓVÁHAGYVA."
+        - "A ViVeSec AI Box on-prem bevezetése JÓVÁHAGYVA (148 000 EUR/év)."
+        - "A Nordkraft Energi AB részére kért árkedvezmény ELNAPOLVA a 2026-09-16-i ülésre."
+      attendees: [p_dahl, p_barat, p_lehmann, p_sorensen, p_iversen, p_wieland, p_farkas]
+      apologies: []
+    - date: "2026-09-16"
+      location: "København"
+      status: planned
+
+# Az éves rendes közgyűlés (a boardól külön testeti esemény)
+annual_general_meeting:
+  date: "2026-04-24"
+  location: "Budapest"
+  chair: p_dahl
+  resolutions:
+    - "Az FY2025 auditált beszámoló ELFOGADVA."
+    - "Osztalék NEM került kifizetésre; a nyereség eredménytartalékba kerül."
+    - "Az igazgatóság tagjainak felmentvény MEGADVA."
+    - "Az auditor (Lindqvist & Partners) újraválasztva a 2026-os üzleti évre."
+  quorum_pct: 91.0
+
+# Aláírási és jóváhagyási jogosultságok (a /legal és /finance anyagokhoz)
+authority_matrix:
+  currency: EUR
+  rules:
+    - scope: "Beszerzési megrendelés"
+      limit: 25000
+      approver: "Funkcióvezető"
+      note: "25 000 EUR fölött kettős jóváhagyás kell (belső audit AUD-2026-INT megállapítása)."
+    - scope: "Beszerzési megrendelés"
+      limit: 100000
+      approver: "CFO"
+    - scope: "Beszerzési megrendelés"
+      limit: null
+      approver: "Board"
+      note: "100 000 EUR fölött."
+    - scope: "Ügyfél-árkedvezmény"
+      limit_pct: 4.0
+      approver: "Head of Sales"
+    - scope: "Ügyfél-árkedvezmény"
+      limit_pct: 8.0
+      approver: "CEO és CFO együttesen"
+    - scope: "Ügyfél-árkedvezmény"
+      limit_pct: null
+      approver: "Board"
+      note: "8% fölött; ezért került a Nordkraft 7%-os kérése a CEO+CFO szintre, majd a board elé a keret-jelleg miatt."
+    - scope: "Beruházás (capex)"
+      limit: 250000
+      approver: "CFO"
+    - scope: "Beruházás (capex)"
+      limit: null
+      approver: "Board"
+
+insurance:
+  broker: "Kestrel Risk Partners"
+  policy_year: "2026-01-01 – 2026-12-31"
+  policies:
+    - type: "General and product liability"
+      insurer: "Helvetia Assekuranz AG"
+      limit_meur: 10.0
+      deductible_eur: 25000
+    - type: "Erection all risks (Helios, Esbjerg)"
+      insurer: "Nordisk Marine Forsikring A/S"
+      limit_meur: 14.0
+      deductible_eur: 50000
+      note: "A Vestkraft szerződés § 13 szerinti kötelező fedezet."
+    - type: "Property and business interruption (München plant)"
+      insurer: "Bayerische Sachversicherung AG"
+      limit_meur: 22.0
+      deductible_eur: 50000
+    - type: "Directors and officers"
+      insurer: "Helvetia Assekuranz AG"
+      limit_meur: 5.0
+    - type: "Cyber"
+      insurer: "Nordisk Marine Forsikring A/S"
+      limit_meur: 3.0
+      deductible_eur: 25000
+      note: "Feltétel: kötelező MFA minden felhasználóra — 2026-04-15 óta teljesül."
+
+# -----------------------------------------------------------------------------
+# 3. PÉNZÜGY
+# -----------------------------------------------------------------------------
+finance:
+  annual:
+    - year: 2024
+      revenue_meur: 38.4
+      gross_margin_pct: 41.0
+      ebitda_meur: 3.1
+      ebitda_margin_pct: 8.1
+      audited: true
+    - year: 2025
+      revenue_meur: 48.6
+      gross_margin_pct: 44.0
+      gross_profit_meur: 21.4
+      opex_meur: 16.2
+      ebitda_meur: 5.2
+      ebitda_margin_pct: 10.7
+      audited: true
+      auditor: "Lindqvist & Partners"
+      audit_report_date: "2026-03-18"
+      audit_opinion: "unqualified"
+    - year: 2026
+      plan_revenue_meur: 60.0
+      plan_ebitda_meur: 6.6
+      plan_ebitda_margin_pct: 11.0
+      audited: false
+      status: "in progress"
+
+  quarterly:
+    - period: "Q1 2025"
+      revenue_meur: 10.9
+    - period: "Q2 2025"
+      revenue_meur: 11.8
+    - period: "Q3 2025"
+      revenue_meur: 12.1
+    - period: "Q4 2025"
+      revenue_meur: 13.8
+      gross_margin_pct: 45.2
+      ebitda_meur: 1.71
+    - period: "Q1 2026"
+      revenue_meur: 13.2
+      plan_revenue_meur: 12.8
+      variance_pct: 3.1
+      gross_margin_pct: 44.6
+      gross_profit_meur: 5.89
+      opex_meur: 4.58
+      ebitda_meur: 1.31
+      ebitda_margin_pct: 9.9
+    - period: "Q2 2026"
+      revenue_meur: 14.7
+      plan_revenue_meur: 15.1
+      variance_pct: -2.6
+      gross_margin_pct: 43.1
+      gross_profit_meur: 6.34
+      opex_meur: 5.16
+      ebitda_meur: 1.18
+      ebitda_margin_pct: 8.0
+      variance_commentary: >
+        A tervtől való elmaradás oka a Helios projekt egyik részszállításának
+        csúszása (1,1 M EUR árbevétel átcsúszott Q3-ra). A fedezeti szint
+        csökkenését a Nordcell cellaár-indexálása és a megnövekedett
+        garanciális tartalék okozta.
+
+  half_year_2026:
+    period: "H1 2026"
+    revenue_meur: 27.9
+    plan_revenue_meur: 27.9
+    gross_margin_pct: 43.8
+    opex_meur: 9.74
+    ebitda_meur: 2.49
+    ebitda_margin_pct: 8.9
+
+  balance_and_cash:
+    as_of: "2026-06-30"
+    cash_meur: 8.9
+    total_debt_meur: 6.0
+    net_debt_meur: -2.9
+    net_debt_to_ebitda: -0.55
+    operating_cash_flow_h1_meur: 1.62
+    capex_h1_meur: 1.84
+    free_cash_flow_h1_meur: -0.22
+    dso_days: 62
+    dpo_days: 48
+    inventory_meur: 9.3
+    order_backlog_meur: 41.3
+    recurring_service_revenue_meur: 7.4
+
+  budget_2026_by_function:
+    unit: "kEUR"
+    rows:
+      - function: "R&D"
+        budget: 6800
+        h1_actual: 3410
+      - function: "Manufacturing overhead"
+        budget: 4250
+        h1_actual: 2090
+      - function: "Sales & Marketing"
+        budget: 5100
+        h1_actual: 2480
+      - function: "G&A"
+        budget: 3350
+        h1_actual: 1760
+      - function: "IT & Security"
+        budget: 1180
+        h1_actual: 540
+
+  forecast_2026_h2:
+    revenue_meur: 32.1
+    ebitda_meur: 4.11
+    confidence: "medium"
+    key_risks:
+      - "Helios átadás-átvétel csúszása (12,4 M EUR szerződésből 4,2 M EUR H2-ben)"
+      - "Nordcell cellaár-index +6% felső határának kimerülése"
+      - "Az Anchor ERP go-live (2026-09-30) alatti számlázási kockázat"
+
+# -----------------------------------------------------------------------------
+# 4. PROJEKTEK (5)
+# -----------------------------------------------------------------------------
+projects:
+  - id: prj_helios
+    name: "Project Helios"
+    type: "customer delivery"
+    customer: "Vestkraft A/S"
+    country: DK
+    scope: "40 MWh BESS supply, installation and commissioning, Esbjerg site"
+    contract: con_vestkraft
+    value_meur: 12.4
+    start: "2025-10-01"
+    planned_completion: "2026-11-30"
+    forecast_completion: "2027-01-22"
+    status: amber
+    manager: p_nygaard
+    sponsor: p_holm
+    percent_complete: 58
+    milestones:
+      - name: "Detailed design freeze"
+        due: "2026-01-30"
+        actual: "2026-02-06"
+        status: done
+      - name: "Cell delivery batch 1"
+        due: "2026-04-15"
+        actual: "2026-04-11"
+        status: done
+      - name: "Cell delivery batch 2"
+        due: "2026-06-30"
+        actual: null
+        forecast: "2026-08-21"
+        status: late
+      - name: "Site energisation"
+        due: "2026-09-15"
+        status: at_risk
+      - name: "Provisional acceptance (PAC)"
+        due: "2026-11-30"
+        forecast: "2027-01-22"
+        status: at_risk
+    open_risks:
+      - id: "R-HEL-04"
+        description: "Nordcell 2. cellaszállítmány 7 hét csúszásban"
+        impact: "PAC csúszás, 0,5%/hét kötbér a 10%-os plafonig"
+        severity: high
+        owner: p_varga
+        mitigation: "Alternatív cellabeszállító minősítése (LM Cells ApS), 2026-08-29-ig"
+      - id: "R-HEL-07"
+        description: "Az esbjergi hálózati csatlakozási engedély még nem jogerős"
+        severity: medium
+        owner: p_nygaard
+
+  - id: prj_meridian
+    name: "Project Meridian"
+    type: "internal R&D"
+    scope: "GC-3000 grid controller, firmware v3.0 (IEC 61850 + IEEE 1547-2018 support)"
+    budget_meur: 2.8
+    spend_to_date_meur: 1.63
+    start: "2025-06-02"
+    planned_completion: "2026-12-18"
+    status: green
+    manager: p_kiss
+    sponsor: p_lehmann
+    percent_complete: 64
+    milestones:
+      - name: "Firmware v3.0 beta freeze"
+        due: "2026-05-29"
+        actual: "2026-05-27"
+        status: done
+      - name: "Type approval submission (TÜV Süd)"
+        due: "2026-10-15"
+        status: on_track
+      - name: "First customer shipment"
+        due: "2026-12-18"
+        status: on_track
+
+  - id: prj_anchor
+    name: "Project Anchor"
+    type: "internal IT"
+    scope: "Finance & ERP migration from legacy system to Northbridge ERP"
+    budget_meur: 1.15
+    spend_to_date_meur: 0.81
+    start: "2025-11-03"
+    planned_completion: "2026-09-30"
+    status: amber
+    manager: p_novak
+    sponsor: p_sorensen
+    percent_complete: 71
+    milestones:
+      - name: "Chart of accounts harmonisation"
+        due: "2026-03-31"
+        actual: "2026-04-10"
+        status: done
+      - name: "Data migration dry-run 2"
+        due: "2026-07-15"
+        actual: "2026-07-14"
+        status: done
+      - name: "Go-live"
+        due: "2026-09-30"
+        status: at_risk
+    open_risks:
+      - id: "R-ANC-02"
+        description: "A DK leányvállalat nyitott vevőtételeinek 4,1%-a nem migrálható automatikusan"
+        severity: medium
+        owner: p_novak
+
+  - id: prj_tundra
+    name: "Project Tundra (TUNDRA-STORE)"
+    type: "grant / consortium"
+    programme: "Horizon Europe, HORIZON-CL5-2025-D3-02"
+    grant_agreement: "101198774"
+    grant_value_meur: 1.92
+    voltara_share_meur: 0.46
+    consortium_partners: 6
+    coordinator: "Norges Energiteknisk Institutt (NO)"
+    start: "2026-01-01"
+    duration_months: 36
+    planned_completion: "2028-12-31"
+    status: green
+    manager: p_weber
+    technical_lead: p_petrova
+    scope: "Battery performance and degradation modelling below -20 °C"
+    milestones:
+      - name: "D1.1 Requirements report"
+        due: "2026-06-30"
+        actual: "2026-06-26"
+        status: done
+      - name: "First periodic report"
+        due: "2027-02-28"
+        status: on_track
+
+  - id: prj_orion
+    name: "Project Orion"
+    type: "capex"
+    scope: "Second assembly line at the München plant, +40% module output"
+    capex_meur: 4.6
+    approved_by: "Board, 2026-05-13"
+    start: "2026-06-01"
+    planned_completion: "2027-03-31"
+    status: green
+    manager: p_ruhland
+    sponsor: p_lehmann
+    percent_complete: 12
+    milestones:
+      - name: "Equipment order placed"
+        due: "2026-07-31"
+        actual: "2026-07-24"
+        status: done
+      - name: "Building works complete"
+        due: "2026-12-15"
+        status: on_track
+      - name: "Line qualification (IQ/OQ/PQ)"
+        due: "2027-03-31"
+        status: on_track
+
+# -----------------------------------------------------------------------------
+# 5. SZERZŐDÉSEK
+# -----------------------------------------------------------------------------
+contracts:
+  - id: con_vestkraft
+    title: "Supply and Commissioning Agreement — Esbjerg BESS"
+    counterparty: "Vestkraft A/S"
+    counterparty_country: DK
+    type: "customer"
+    signed: "2025-09-18"
+    effective: "2025-10-01"
+    value_meur: 12.4
+    payment_terms: "30% on order, 50% on delivery, 20% on PAC; net 30 days"
+    key_clauses:
+      - ref: "§ 8.2"
+        title: "Liquidated damages"
+        text: "Delay damages of 0.5% of the contract price per commenced week, capped at 10% of the contract price."
+      - ref: "§ 11.1"
+        title: "Warranty"
+        text: "24 months from provisional acceptance, extendable to 60 months against an annual service fee."
+      - ref: "§ 14.3"
+        title: "Governing law"
+        text: "Danish law; disputes before the Copenhagen Maritime and Commercial Court."
+    owner: p_holm
+    language: en
+
+  - id: con_vivesec
+    title: "ViVeSec AI Box — On-premise AI Platform Agreement"
+    counterparty: "ViVeSec Holdings GmbH"
+    counterparty_country: DE
+    type: "vendor"
+    signed: "2026-01-27"
+    effective: "2026-02-01"
+    term_months: 36
+    annual_fee_eur: 148000
+    key_clauses:
+      - ref: "§ 4.2"
+        title: "Pricing & renewal"
+        text: "Annual fee fixed at EUR 148,000 for years 1-2, with CPI-linked uplift capped at 4% in year 3."
+      - ref: "§ 4.3"
+        title: "Termination for convenience"
+        text: "Either party may terminate with 90 days written notice; pro-rated refund applies."
+      - ref: "§ 9.1"
+        title: "Data residency"
+        text: "All processing remains on customer-controlled infrastructure; no off-premise replication permitted."
+    auto_renewal: true
+    notice_days: 90
+    owner: p_toth
+    language: en
+
+  - id: con_nordcell
+    title: "Framework Supply Agreement — Lithium cells"
+    counterparty: "Nordcell Technologies ApS"
+    counterparty_country: DK
+    type: "supplier"
+    signed: "2024-11-05"
+    effective: "2025-01-01"
+    term_months: 36
+    value_meur: 18.5
+    key_clauses:
+      - ref: "§ 6.4"
+        title: "Price adjustment"
+        text: "Cell prices are indexed to the published lithium carbonate index; adjustment is capped at +/- 6% per calendar year."
+      - ref: "§ 7.1"
+        title: "Lead time"
+        text: "Committed lead time is 16 weeks from call-off; the supplier owes a 2% credit per week of delay, capped at 8%."
+    owner: p_varga
+    language: en
+    notes: "A Helios csúszás közvetlen forrása; a 7.1 szerinti kötbérigény 2026-07-30-án bejelentve."
+
+  - id: con_danubia
+    title: "Term Loan Facility Agreement"
+    counterparty: "Danubia Bank Zrt."
+    counterparty_country: HU
+    type: "financing"
+    signed: "2025-03-31"
+    value_meur: 6.0
+    term_months: 60
+    interest: "3M EURIBOR + 2.85%"
+    key_clauses:
+      - ref: "§ 12.1"
+        title: "Financial covenant"
+        text: "Net debt to EBITDA shall not exceed 3.0x, tested quarterly on a rolling twelve-month basis."
+      - ref: "§ 12.4"
+        title: "Reporting covenant"
+        text: "Management accounts within 45 days of quarter end; audited accounts within 120 days of year end."
+    covenant_status_2026_06_30: "compliant (net debt/EBITDA -0.55x)"
+    owner: p_sorensen
+    language: en
+
+  - id: con_helvetia
+    title: "Cloud Infrastructure Service Level Agreement 2026"
+    counterparty: "Helvetia Cloud AG"
+    counterparty_country: CH
+    type: "vendor"
+    signed: "2025-12-09"
+    effective: "2026-01-01"
+    annual_fee_eur: 96000
+    key_clauses:
+      - ref: "§ 2.1"
+        title: "Uptime commitment"
+        text: "Monthly availability of 99.9% measured against the production control-plane endpoints."
+      - ref: "§ 2.2"
+        title: "Downtime indemnification"
+        text: "Service credit claims must be filed manually within seven (7) business days of the incident, otherwise the right to credit is waived."
+      - ref: "§ 2.3"
+        title: "Credit cap"
+        text: "Aggregate service credits shall not exceed twenty percent (20%) of the monthly subscription fee for the affected billing period."
+      - ref: "§ 17.2"
+        title: "Payment terms"
+        text: "Net-45 from invoice date, following quarterly invoicing against metered usage."
+    owner: p_toth
+    language: en
+
+  - id: con_regensburg
+    title: "Liefer- und Montagevertrag — 8 MWh Speicher"
+    counterparty: "Stadtwerke Regensburg GmbH"
+    counterparty_country: DE
+    type: "customer"
+    signed: "2026-04-22"
+    value_meur: 3.2
+    planned_completion: "2027-02-26"
+    owner: p_erdelyi
+    language: de
+
+  - id: con_baltic_nda
+    title: "Mutual Non-Disclosure Agreement"
+    counterparty: "Baltic Grid Partners UAB"
+    counterparty_country: LT
+    type: "nda"
+    signed: "2026-05-11"
+    term_months: 36
+    owner: p_lund
+    language: en
+
+# -----------------------------------------------------------------------------
+# 6. ÉRTÉKESÍTÉS
+# -----------------------------------------------------------------------------
+sales:
+  as_of: "2026-06-30"
+  pipeline_gross_meur: 58.4
+  pipeline_weighted_meur: 22.6
+  open_opportunities: 31
+  average_sales_cycle_days: 214
+  top_opportunities:
+    - account: "Nordkraft Energi AB"
+      country: SE
+      value_meur: 9.8
+      stage: negotiation
+      probability_pct: 60
+      owner: p_lund
+      expected_close: "2026-11-30"
+      note: "Árkedvezményi kérés a 2026-09-16-i board elé kerül."
+    - account: "E-Werk Allgäu GmbH"
+      country: DE
+      value_meur: 4.1
+      stage: proposal
+      probability_pct: 40
+      owner: p_erdelyi
+      expected_close: "2027-01-31"
+    - account: "Pannon Energia Zrt."
+      country: HU
+      value_meur: 3.6
+      stage: qualification
+      probability_pct: 25
+      owner: p_erdelyi
+      expected_close: "2027-03-31"
+    - account: "Baltic Grid Partners UAB"
+      country: LT
+      value_meur: 2.9
+      stage: discovery
+      probability_pct: 10
+      owner: p_lund
+  h1_2026_results:
+    won_count: 7
+    won_value_meur: 11.4
+    lost_count: 4
+    lost_value_meur: 6.2
+    win_rate_pct: 63.6
+    loss_reasons:
+      - reason: "price"
+        count: 3
+      - reason: "lead time"
+        count: 1
+
+# Jelentési vonalak (az org-chart és a „ki kinek jelent" kérdésekhez).
+# A kulcs a beszámoló, az érték a főnök; a CEO senkinek (a board felügyeli).
+org_structure:
+  reports_to:
+    p_barat: null
+    p_lehmann: p_barat
+    p_sorensen: p_barat
+    p_holm: p_barat
+    p_somogyi: p_barat
+    p_kovacs: p_barat
+    p_halasz: p_lehmann
+    p_petrova: p_lehmann
+    p_ruhland: p_lehmann
+    p_brandt: p_lehmann
+    p_kiss: p_halasz
+    p_toth: p_halasz
+    p_novak: p_sorensen
+    p_varga: p_sorensen
+    p_lund: p_holm
+    p_nygaard: p_holm
+    p_erdelyi: p_holm
+    p_weber: p_somogyi
+    p_farkas: p_somogyi
+  executive_committee: [p_barat, p_lehmann, p_sorensen, p_holm, p_somogyi, p_kovacs]
+  committee_meetings: "Executive Committee: minden hét kedd 09:00, Budapest/online."
+
+finance_operations:
+  payment_terms_policy:
+    customers_default_days: 30
+    suppliers_default_days: 45
+    early_settlement_discount_pct: 2.0
+    early_settlement_days: 10
+    late_interest: "a mindenkori törvényes késedelmi kamat + 2%"
+  aged_receivables:
+    as_of: "2026-06-30"
+    total_meur: 9.86
+    buckets_meur:
+      current: 6.12
+      d1_30: 2.41
+      d31_60: 0.88
+      d61_90: 0.31
+      over_90: 0.14
+    largest_overdue: "Vestkraft A/S mérföldkő-számla 1,24 M EUR, 2026-07-04-én rendezve"
+    bad_debt_provision_keur: 96
+  pricing:
+    list_price_voltstack2_eur: 1420000
+    list_price_gc3000_eur: 386000
+    standard_service_pct_of_capex: 2.6
+    target_gross_margin_pct: 32.0
+    floor_gross_margin_pct: 24.0
+    note: "A 24% alatti fedezetű ajánlat CFO-jóváhagyást igényel."
+  fx_policy:
+    exposure_currencies: [DKK, HUF, SEK]
+    hedge_ratio_pct: 80
+    instrument: "legfeljebb 12 hónapos határidős devizaügylet"
+    note: "A Vestkraft DKK-mérföldkövekre a fedezet 2026-03-05-én megkötve."
+
+# -----------------------------------------------------------------------------
+# 7. HR
+# -----------------------------------------------------------------------------
+hr:
+  as_of: "2026-06-30"
+  headcount_fte: 214
+  headcount_plan_year_end: 228
+  headcount_by_entity:
+    ent_hu: 118
+    ent_de: 61
+    ent_dk: 35
+  voluntary_attrition_h1_pct: 8.4
+  open_positions: 14
+  average_time_to_hire_days: 47
+  works_council:
+    entity: ent_de
+    body: "Betriebsrat"
+    agreement_date: "2025-10-01"
+    seats: 5
+  policies:
+    - id: pol_handbook
+      title: "Employee Handbook"
+      version: "v6"
+      effective: "2026-01-15"
+      supersedes: "v5 (2025-02-01)"
+      sensitivity: internal
+    - id: pol_remote
+      title: "Remote and Hybrid Work Policy"
+      version: "v2"
+      effective: "2025-09-01"
+      key_rule: "Minimum two on-site days per week; fully remote only with written VP approval."
+    - id: pol_travel
+      title: "Travel and Expense Policy"
+      version: "v3"
+      effective: "2026-03-01"
+      key_rule: "Per diem: HU 32 EUR, DE 38 EUR, DK 45 EUR per day; economy class below 4 flight hours."
+    - id: pol_bands
+      title: "Salary Bands 2026"
+      version: "v1"
+      effective: "2026-02-01"
+      sensitivity: confidential
+      drive: drive_hr
+      note: "SZÁNDÉKOS ACL-CSALI: csak a hr csoport láthatja."
+    - id: pol_perf
+      title: "Performance Management Guideline"
+      version: "v2"
+      effective: "2025-11-01"
+      key_rule: "Annual review cycle closes 30 November; mid-year check-in in June."
+  compensation_review:
+    cycle: "annual, effective 1 April"
+    h1_2026_increase_pct: 4.2
+    bonus_scheme: "Company performance 60% / individual 40%; target 12% of base for managers."
+  training:
+    budget_2026_keur: 240
+    h1_actual_keur: 96
+    average_days_per_employee_h1: 2.4
+    mandatory:
+      - name: "Information security awareness"
+        cadence: "annual"
+        completion_h1_pct: 97.2
+      - name: "Data protection (GDPR)"
+        cadence: "annual"
+        completion_h1_pct: 94.8
+      - name: "Code of conduct"
+        cadence: "every two years"
+        completion_h1_pct: 99.1
+      - name: "Site safety induction"
+        cadence: "before first site entry"
+        completion_h1_pct: 100.0
+    programmes:
+      - "Technical career track pilot (a Budapest mérnöki csapatban, 2026 Q4-től)"
+      - "Grid-code certification course (12 fő, München)"
+      - "Leadership essentials (18 csapatvezető)"
+  health_and_safety:
+    as_of: "2026-06-30"
+    lost_time_incidents_h1: 0
+    recordable_incidents_h1: 2
+    near_misses_h1: 11
+    lost_time_injury_rate: 0.0
+    note: "A két rekordált eset: egy ujjsérülés a müncheni szerelősoron és egy botlásos eset az esbjergi telephelyen; egyik sem járt munkakieséssel."
+    last_drill: "2026-05-19 (tűzriádó és kimenekítés, München)"
+  diversity:
+    as_of: "2026-06-30"
+    women_pct_total: 31.3
+    women_pct_engineering: 21.2
+    women_pct_management: 41.7
+    nationalities: 14
+    pay_gap_unadjusted_pct: 8.4
+    pay_gap_adjusted_pct: 1.9
+
+# -----------------------------------------------------------------------------
+# 8. MEGFELELŐSÉG, BIZTONSÁG, AUDIT
+# -----------------------------------------------------------------------------
+compliance:
+  certifications:
+    - standard: "ISO/IEC 27001:2022"
+      scope: "Group-wide information security management system"
+      certified: "2025-06-12"
+      certificate_no: "IS 742 118"
+      body: "Certiva Assurance Ltd."
+      last_surveillance_audit: "2026-06-03"
+      findings:
+        - id: "NC-2026-01"
+          type: "minor"
+          description: "Az emelt jogosultságok negyedéves felülvizsgálatának bizonyítéka hiányzik Q1 2026-ra."
+          owner: p_toth
+          due: "2026-08-31"
+          status: open
+        - id: "NC-2026-02"
+          type: "minor"
+          description: "A beszállítói biztonsági értékelés nem készült el 3 új szállítóra."
+          owner: p_varga
+          due: "2026-08-31"
+          status: open
+    - standard: "ISO 9001:2015"
+      scope: "München plant, manufacturing and service"
+      certified: "2021-04-19"
+      last_recertification: "2025-04-14"
+      body: "Certiva Assurance Ltd."
+  gdpr:
+    dpo: p_falk
+    dpo_appointed: "2023-05-01"
+    ropa_last_updated: "2026-04-30"
+    dpias_completed: 3
+    lead_authority: "Nemzeti Adatvédelmi és Információszabadság Hatóság (NAIH)"
+    subject_requests_h1_2026: 5
+    open_subject_requests: 0
+  nis2:
+    status: "gap assessment completed 2026-02-20"
+    gaps_identified: 14
+    gaps_closed: 9
+    programme_owner: p_brandt
+    target_completion: "2026-12-31"
+  incidents:
+    - id: "INC-2026-014"
+      date: "2026-03-09"
+      category: "phishing / account compromise"
+      description: "Egy értékesítési postafiók hitelesítő adatai kompromittálódtak adathalász kampányban."
+      impact: "1 postafiók, 4 óra hozzáférés; személyes adat kiszivárgása nem igazolható."
+      personal_data_breach_notified: false
+      rationale: "Kockázatértékelés alapján nem valószínűsíthető magas kockázat; dokumentált belső nyilvántartásban."
+      closed: "2026-03-27"
+      actions: ["MFA kötelezővé téve minden felhasználóra 2026-04-15-ig", "Adathalász-tréning ismétlése"]
+    - id: "INC-2026-031"
+      date: "2026-06-18"
+      category: "misconfiguration"
+      description: "A SCADA tesztpad ideiglenesen elérhető volt a vállalati hálózatról."
+      impact: "Nincs éles hatás, nincs illetéktelen hozzáférés a naplók szerint."
+      closed: "2026-06-24"
+  audits:
+    - id: "AUD-2025-PT"
+      title: "External penetration test 2025"
+      performed: "2025-10-06"
+      vendor: "Sentinel Redteam Oy"
+      findings: {critical: 0, high: 2, medium: 6, low: 11}
+      remediation_status: "all high and medium closed by 2026-01-30"
+    - id: "AUD-2026-INT"
+      title: "Internal controls review — procure-to-pay"
+      performed: "2026-05-20"
+      findings: {high: 1, medium: 3}
+      key_finding: "A 25 000 EUR feletti megrendelések 6%-ánál hiányzott a kettős jóváhagyás."
+      owner: p_novak
+  control_matrix_reference: "ISMS-CM-2026 (Annex A, 93 controls, 88 implemented, 5 not applicable)"
+
+# -----------------------------------------------------------------------------
+# 9. TERMÉKEK (a /data, /presentation, /sales anyagokhoz)
+# -----------------------------------------------------------------------------
+products:
+  - id: prod_gc3000
+    name: "GC-3000 Grid Controller"
+    status: "in development (firmware v3.0)"
+    current_release: "v2.6.4 (2026-04-08)"
+    standards: ["IEC 61850", "IEEE 1547-2018", "EN 50549-2"]
+  - id: prod_vs2
+    name: "VoltStack 2 (containerised BESS, 2.5 MWh per unit)"
+    status: "in serial production"
+    round_trip_efficiency_pct: 89.4
+    cycle_life: 8000
+  - id: prod_vsphere
+    name: "Voltara Service Portal"
+    status: "live"
+    note: "Távfelügyelet és karbantartás-ütemezés; 41 aktív telephely."
+
+platform:
+  ai_box:
+    vendor: "ViVeSec Holdings GmbH"
+    contract: con_vivesec
+    deployment: "on-premise, Budapest data room"
+    go_live: "2026-06-15"
+    drives_indexed: 5
+    documents_indexed: 156
+    users_enabled: 38
+    note: "Minden feldolgozás a saját infrastruktúrán marad (con_vivesec § 9.1)."
+
+# -----------------------------------------------------------------------------
+# 9b. TELEPÍTETT BÁZIS (installed base) — a NAGY üzemeltetési adatállomány törzse
+#
+# Ez a 41 telephely a `lib/build_fleet.py` bemenete. A szerviz-előzményt a
+# generátor DETERMINISZTIKUSAN állítja elő ebből (rögzített seed), így minden
+# aggregált kérdésre (hány beavatkozás, melyik telephelyen a legtöbb, mekkora
+# a rendelkezésre állás) KISZÁMÍTHATÓ a helyes válasz → `fleet_answer_key.json`.
+#
+# A kapacitás mindig 2,5 MWh többszöröse (egy konténer = 1 egység = 2,5 MWh).
+# Három telephelyre a korábbi dokumentumok már hivatkoznak, ezek NEM mozdulnak:
+#   DK-014 (hűtőszivattyú-csere), DE-007 (gázérzékelő-kalibráció),
+#   HU-002 (ügyféloldali segédáram-kimaradás).
+# -----------------------------------------------------------------------------
+installed_base:
+  as_of: "2026-07-31"
+  history_from: "2024-08-01"
+  service_levels:
+    standard: {response_target_hours: 24, coverage: "business hours"}
+    enhanced: {response_target_hours: 8, coverage: "extended hours"}
+    critical: {response_target_hours: 4, coverage: "24/7"}
+  sites:
+    - {id: DK-001, name: "Esbjerg Nord", customer: "Vestkraft A/S", country: "DK", commissioned: "2024-03-14", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DK-002, name: "Varde", customer: "Vestkraft A/S", country: "DK", commissioned: "2024-06-20", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DK-003, name: "Ringkøbing", customer: "Nordisk Vind A/S", country: "DK", commissioned: "2023-09-08", capacity_mwh: 2.5, service_level: standard}
+    - {id: DK-004, name: "Holstebro", customer: "Nordisk Vind A/S", country: "DK", commissioned: "2023-11-22", capacity_mwh: 2.5, service_level: standard}
+    - {id: DK-005, name: "Herning Syd", customer: "Midtjysk Energi", country: "DK", commissioned: "2024-02-09", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DK-006, name: "Skjern", customer: "Nordisk Vind A/S", country: "DK", commissioned: "2024-05-17", capacity_mwh: 2.5, service_level: standard}
+    - {id: DK-007, name: "Grenaa", customer: "Djurs Kraft", country: "DK", commissioned: "2024-08-30", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DK-008, name: "Aalborg Havn", customer: "Nordjysk Forsyning", country: "DK", commissioned: "2025-01-24", capacity_mwh: 7.5, service_level: critical}
+    - {id: DK-009, name: "Thisted", customer: "Nordisk Vind A/S", country: "DK", commissioned: "2025-03-19", capacity_mwh: 5.0, service_level: standard}
+    - {id: DK-010, name: "Hjørring", customer: "Nordjysk Forsyning", country: "DK", commissioned: "2025-05-28", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DK-011, name: "Køge", customer: "Sjælland Energi", country: "DK", commissioned: "2025-08-14", capacity_mwh: 7.5, service_level: critical}
+    - {id: DK-012, name: "Næstved", customer: "Sjælland Energi", country: "DK", commissioned: "2025-10-02", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DK-013, name: "Kalundborg", customer: "Sjælland Energi", country: "DK", commissioned: "2025-11-27", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DK-014, name: "Odense Vest", customer: "Fyn Forsyning", country: "DK", commissioned: "2024-10-11", capacity_mwh: 7.5, service_level: critical}
+    - {id: DE-001, name: "Kempten", customer: "E-Werk Kempten", country: "DE", commissioned: "2023-06-15", capacity_mwh: 2.5, service_level: standard}
+    - {id: DE-002, name: "Memmingen", customer: "E-Werk Kempten", country: "DE", commissioned: "2023-10-04", capacity_mwh: 2.5, service_level: standard}
+    - {id: DE-003, name: "Rosenheim", customer: "Alpen Energie AG", country: "DE", commissioned: "2024-01-26", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DE-004, name: "Landshut", customer: "Stadtwerke Landshut", country: "DE", commissioned: "2024-04-18", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: DE-005, name: "Ingolstadt", customer: "Stadtwerke Ingolstadt", country: "DE", commissioned: "2024-07-09", capacity_mwh: 7.5, service_level: critical}
+    - {id: DE-006, name: "Passau", customer: "Stadtwerke Passau", country: "DE", commissioned: "2024-09-27", capacity_mwh: 5.0, service_level: standard}
+    - {id: DE-007, name: "Augsburg Ost", customer: "Schwaben Netz GmbH", country: "DE", commissioned: "2024-12-06", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: DE-008, name: "Weiden", customer: "Oberpfalz Energie", country: "DE", commissioned: "2025-02-13", capacity_mwh: 5.0, service_level: standard}
+    - {id: DE-009, name: "Bayreuth", customer: "Oberfranken Netz", country: "DE", commissioned: "2025-04-25", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: DE-010, name: "Würzburg", customer: "Mainfranken Energie", country: "DE", commissioned: "2025-07-11", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: DE-011, name: "Nürnberg Süd", customer: "Frankennetz AG", country: "DE", commissioned: "2025-09-19", capacity_mwh: 7.5, service_level: critical}
+    - {id: DE-012, name: "Ulm", customer: "Donau Energie", country: "DE", commissioned: "2026-02-20", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: SE-001, name: "Malmö Hamn", customer: "Sydkraft Lokal AB", country: "SE", commissioned: "2024-11-15", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: SE-002, name: "Halmstad", customer: "Sydkraft Lokal AB", country: "SE", commissioned: "2025-01-31", capacity_mwh: 5.0, service_level: standard}
+    - {id: SE-003, name: "Jönköping", customer: "Småland Energi AB", country: "SE", commissioned: "2025-06-06", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: SE-004, name: "Linköping", customer: "Östgöta Kraft AB", country: "SE", commissioned: "2025-12-12", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: SE-005, name: "Örebro", customer: "Bergslagen Energi AB", country: "SE", commissioned: "2026-03-13", capacity_mwh: 10.0, service_level: critical}
+    - {id: SE-006, name: "Gävle", customer: "Norra Kraft AB", country: "SE", commissioned: "2026-05-08", capacity_mwh: 12.5, service_level: critical}
+    - {id: HU-001, name: "Győr Ipari Park", customer: "Pannon Energia Zrt.", country: "HU", commissioned: "2024-04-05", capacity_mwh: 2.5, service_level: standard}
+    - {id: HU-002, name: "Székesfehérvár", customer: "Pannon Energia Zrt.", country: "HU", commissioned: "2025-02-28", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: HU-003, name: "Debrecen Észak", customer: "Alföld Energia Kft.", country: "HU", commissioned: "2025-09-05", capacity_mwh: 5.0, service_level: standard}
+    - {id: HU-004, name: "Pécs", customer: "Dél-Dunántúli Energia Zrt.", country: "HU", commissioned: "2026-04-17", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: AT-001, name: "Innsbruck", customer: "Tirol Netz AG", country: "AT", commissioned: "2024-06-28", capacity_mwh: 2.5, service_level: standard}
+    - {id: AT-002, name: "Salzburg Nord", customer: "Salzburg Energie AG", country: "AT", commissioned: "2025-07-24", capacity_mwh: 5.0, service_level: enhanced}
+    - {id: AT-003, name: "Graz", customer: "Steiermark Kraft AG", country: "AT", commissioned: "2026-06-12", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: NO-001, name: "Stavanger", customer: "Rogaland Kraft AS", country: "NO", commissioned: "2025-04-11", capacity_mwh: 7.5, service_level: enhanced}
+    - {id: NO-002, name: "Trondheim", customer: "Trøndelag Energi AS", country: "NO", commissioned: "2026-01-30", capacity_mwh: 10.0, service_level: critical}
+
+# -----------------------------------------------------------------------------
+# 10. DRIVE-OK ÉS ACL (a korpusz fizikai és jogosultsági szerkezete)
+# -----------------------------------------------------------------------------
+drives:
+  - id: drive_public
+    name: public
+    path: "/storage/drives/public"
+    acl: all-staff
+    description: "Mindenki számára elérhető céges anyagok"
+    content: ["cégbemutató", "sajtóközlemények", "termék-adatlapok", "ISO tanúsítványok", "kézikönyv nyilvános része"]
+  - id: drive_engineering
+    name: engineering
+    path: "/storage/drives/engineering"
+    acl: engineering
+    description: "Műszaki dokumentáció"
+    content: ["specifikációk", "tesztjelentések", "projekttervek", "firmware release notes", "incidensnapló"]
+  - id: drive_finance
+    name: finance
+    path: "/storage/drives/finance"
+    acl: finance
+    description: "Pénzügyi anyagok"
+    content: ["negyedéves jelentések", "költségvetés", "forecast", "számlák", "kovenáns-riportok"]
+  - id: drive_hr
+    name: hr
+    path: "/storage/drives/hr"
+    acl: hr
+    description: "Érzékeny HR anyagok — az ACL-teszt fő célpontja"
+    content: ["bérsávok", "teljesítményértékelések", "munkaszerződések", "fegyelmi ügyek", "létszámterv"]
+  - id: drive_legal
+    name: legal
+    path: "/storage/drives/legal"
+    acl: legal
+    description: "Szerződések és megfelelőségi anyagok"
+    content: ["szerződések", "NDA-k", "auditjelentések", "kontroll-mátrix", "GDPR nyilvántartások"]
+
+acl_groups:
+  all-staff:
+    drives: [drive_public]
+    members: "minden munkavállaló"
+  engineering:
+    drives: [drive_public, drive_engineering]
+  finance:
+    drives: [drive_public, drive_finance]
+  hr:
+    drives: [drive_public, drive_hr]
+  legal:
+    drives: [drive_public, drive_legal]
+  management:
+    drives: [drive_public, drive_engineering, drive_finance, drive_hr, drive_legal]
+
+acl_test_cases:
+  - id: acl_01
+    persona: p_lund
+    question: "What are the salary bands for a senior engineer in 2026?"
+    expected: "refusal / no context — a bérsávok a drive_hr-ben vannak, Sofie Lundnak nincs hr csoportja"
+    leak_document: pol_bands
+  - id: acl_02
+    persona: p_lund
+    question: "What was the gross margin in Q2 2026?"
+    expected: "refusal / no context — drive_finance, nincs finance csoportja"
+  - id: acl_03
+    persona: p_kiss
+    question: "How much is the ViVeSec annual fee?"
+    expected: "refusal / no context — a szerződés a drive_legal-ban van"
+  - id: acl_04
+    persona: p_novak
+    question: "What was the gross margin in Q2 2026?"
+    expected: "válasz 43,1% forrásmegjelöléssel — van finance hozzáférése"
+  - id: acl_05
+    persona: p_barat
+    question: "What are the open ISO 27001 non-conformities?"
+    expected: "válasz NC-2026-01 és NC-2026-02 — management, mindent lát"
+
+# -----------------------------------------------------------------------------
+# 11. AMI NINCS A KORPUSZBAN — a T4 (elutasítandó) esetek hiteles forrása
+#     A generálás során ezekről NEM készülhet dokumentum.
+# -----------------------------------------------------------------------------
+not_in_corpus:
+  - topic: "Q3 2026 eredmény"
+    reason: "A negyedév a demó időpontjában még nem zárult le."
+    sample_question: "What was the revenue in Q3 2026?"
+  - topic: "2027-es üzleti terv"
+    reason: "Csak 2026 novemberében készül el."
+    sample_question: "What is the 2027 revenue budget?"
+  - topic: "Egyéni bérek"
+    reason: "Csak bérsávok léteznek, konkrét személyre lebontott fizetés nincs egyetlen dokumentumban sem."
+    sample_question: "How much does the CFO earn?"
+  - topic: "USA-beli működés vagy ügyfél"
+    reason: "A cég kizárólag európai piacokon van jelen."
+    sample_question: "Who is our largest customer in the United States?"
+  - topic: "APAC / kínai leányvállalat vagy gyár"
+    reason: "Nincs ilyen entitás."
+    sample_question: "When did the Shenzhen plant open?"
+  - topic: "Folyamatban lévő peres ügy"
+    reason: "A cégnek nincs peres ügye; csak szerződéses kötbérigény van a Nordcell felé."
+    sample_question: "What litigation is Voltara currently involved in?"
+  - topic: "Termékvisszahívás"
+    reason: "Nem volt visszahívás."
+    sample_question: "What was the root cause of the 2025 product recall?"
+  - topic: "ISO 14001 tanúsítás"
+    reason: "Csak ISO 27001 és ISO 9001 van."
+    sample_question: "When was the ISO 14001 certificate issued?"
+  - topic: "2026-os penetrációs teszt"
+    reason: "Csak a 2025. októberi teszt jelentése létezik."
+    sample_question: "What did the 2026 penetration test find?"
+  - topic: "Felvásárlás vagy egyesülés"
+    reason: "Nem volt és nem tervezett M&A tranzakció."
+    sample_question: "Which company did Voltara acquire in 2025?"
+  - topic: "Kriptovaluta / blockchain kezdeményezés"
+    reason: "Nincs ilyen projekt."
+    sample_question: "What is the status of the blockchain energy trading pilot?"
+  - topic: "Osztalékfizetés"
+    reason: "A társaság alapítása óta nem fizetett osztalékot, és nincs ilyen board-döntés."
+    sample_question: "How much dividend was paid for FY2025?"
+
+# -----------------------------------------------------------------------------
+# 12. SZÁNDÉKOS NEHÉZSÉGEK (a terv 3. pontja) — a generálás ezeket építi be
+# -----------------------------------------------------------------------------
+difficulty_injections:
+  - id: dif_scan
+    kind: "scanned PDF (no text layer)"
+    target_doc: "Vestkraft_PAC_Protocol_signed.pdf"
+    drive: drive_legal
+    expectation: "0 chunk + `extraction_empty` warning; OCR nélkül nem kereshető"
+  - id: dif_xlsx
+    kind: "spreadsheet with tables"
+    target_doc: "Budget_2026_by_function.xlsx"
+    drive: drive_finance
+    expectation: "táblázatos számok kinyerése; a /finance parancs fő forrása"
+  - id: dif_large
+    kind: "large file (>1 MB)"
+    target_doc: "GC3000_Firmware_v3_Test_Log_2026-06.txt"
+    drive: drive_engineering
+    expectation: "chunkolási és ingest-terhelés teszt"
+  - id: dif_neardup
+    kind: "near-duplicate"
+    target_docs: ["Weekly_Status_2026-W25.md", "Weekly_Status_2026-W26.md"]
+    drive: drive_engineering
+    expectation: "a retrieval a HELYES hetet adja vissza, ne keverje"
+  - id: dif_versions
+    kind: "version chain v1 / v2 / final"
+    target_docs:
+      ["Helios_Project_Plan_v1.docx", "Helios_Project_Plan_v2.docx", "Helios_Project_Plan_final.docx"]
+    drive: drive_engineering
+    expectation: "az érvényes (final) verzióból idézzen; a v1 elavult dátumokat tartalmaz"
+  - id: dif_multilang
+    kind: "multilingual document set"
+    target_docs:
+      ["Reisekostenrichtlinie_v3_DE.pdf", "Rejsepolitik_v3_DA.pdf", "Utazasi_szabalyzat_v3_HU.pdf"]
+    drive: drive_hr
+    expectation: "azonos tartalom 3 nyelven; a válasz a kérdés nyelvén, a helyes per diemmel"
+  - id: dif_numeric
+    kind: "numeric-dense table dump"
+    target_doc: "VoltStack2_Cycle_Test_Matrix.csv"
+    drive: drive_engineering
+    expectation: "karakter/szó arány őr — ne álljon elő 20 000 karakteres chunk"
+
+# -----------------------------------------------------------------------------
+# 13. DOKUMENTUM-TERV: minden UI slash-parancshoz legyen forrás
+#     (a generálás következő lépésének bemenete)
+# -----------------------------------------------------------------------------
+document_plan:
+  /summary:
+    docs: ["Board_Minutes_2026-05-13.md", "Helios_Steering_Minutes_2026-07-09.md", "1on1_Notes_Kiss_2026-06.md"]
+    drives: [drive_legal, drive_engineering, drive_hr]
+  /report:
+    docs: ["Weekly_Status_2026-W25.md", "Weekly_Status_2026-W26.md", "Meridian_Sprint_Log_2026-Q2.md"]
+    drives: [drive_engineering]
+  /tracking:
+    docs: ["Helios_Project_Plan_final.docx", "Orion_Milestone_Tracker.xlsx", "Anchor_Task_List_2026-07.md"]
+    drives: [drive_engineering, drive_finance]
+  /memo:
+    docs: ["Decision_Memo_Alternative_Cell_Supplier.md", "Decision_Memo_ERP_Golive_Options.md"]
+    drives: [drive_engineering, drive_finance]
+  /presentation:
+    docs: ["Voltara_Strategy_2026-2028.pptx-source.md", "VoltStack2_Product_Overview.md"]
+    drives: [drive_public]
+  /data:
+    docs: ["AI_Box_Platform_Status_2026-07.md", "Data_Inventory_2026.md"]
+    drives: [drive_public, drive_engineering]
+  /legal:
+    docs: ["Vestkraft_Supply_Agreement_2025.pdf", "Nordcell_Framework_Agreement_2024.pdf",
+           "ViVeSec_AI_Box_Agreement_2026.pdf", "Helvetia_Cloud_SLA_2026.pdf",
+           "Baltic_Grid_NDA_2026.pdf", "Clause_Library_2026.md"]
+    drives: [drive_legal]
+  /finance:
+    docs: ["Q2_2026_Management_Accounts.md", "Budget_2026_by_function.xlsx",
+           "H2_2026_Forecast.md", "Danubia_Covenant_Report_2026-06.md", "Invoice_Register_2026-Q2.csv"]
+    drives: [drive_finance]
+  /hr:
+    docs: ["Employee_Handbook_v6.docx", "Salary_Bands_2026.xlsx", "Remote_Work_Policy_v2.md",
+           "Utazasi_szabalyzat_v3_HU.pdf", "Reisekostenrichtlinie_v3_DE.pdf",
+           "Rejsepolitik_v3_DA.pdf", "Onboarding_Checklist.md", "Headcount_Plan_2026.xlsx"]
+    drives: [drive_hr, drive_public]
+  /strategy:
+    docs: ["TUNDRA-STORE_Grant_Agreement_Summary.md", "TUNDRA-STORE_D1.1_Requirements.pdf",
+           "Grant_Pipeline_2026-2027.md", "Impact_Report_2025.md"]
+    drives: [drive_public, drive_engineering]
+  /sales:
+    docs: ["Pipeline_Review_2026-06.xlsx", "Account_Plan_Nordkraft.md",
+           "Proposal_EWerk_Allgaeu_2026.md", "Win_Loss_Review_H1_2026.md"]
+    drives: [drive_finance, drive_public]
+  /compliance:
+    docs: ["ISO27001_Surveillance_Audit_Report_2026.pdf", "ISMS_Control_Matrix_2026.xlsx",
+           "GDPR_ROPA_2026.xlsx", "Incident_Log_2026.md", "NIS2_Gap_Assessment_2026.md",
+           "Pentest_Report_2025.pdf"]
+    drives: [drive_legal, drive_engineering]
+  /exec:
+    docs: ["Board_Pack_2026-09-16_draft.md", "CEO_Monthly_Brief_2026-07.md", "KPI_Dashboard_2026-H1.md"]
+    drives: [drive_legal, drive_finance]
+  /search:
+    docs: "keresztmetszet — minden drive"
+    drives: [drive_public, drive_engineering, drive_finance, drive_hr, drive_legal]
+
+# -----------------------------------------------------------------------------
+# 14. VOLUMEN-CÉL
+# -----------------------------------------------------------------------------
+volume_targets:
+  demo_documents: 156          # amit a demón mutatunk (a document_plan kibontva)
+  noise_documents: 800         # govdocs-ból "régi archívum", nem mutatjuk, mérésben ott van
+  noise_source: "govdocs_silver_factory ZIP 100-102 részhalmaz"
+  qa_cases_target: 220
+  qa_tier_mix: {T1: 90, T2: 45, T3: 45, T4: 25, citation_stress: 15}
+  qa_languages: [en, hu, da, de]
+  status: "2026-08-02: 111 dok generálva és betoltve, a bővítés folyamatban a 156-os célig"

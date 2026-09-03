@@ -1,0 +1,7 @@
+Beta2 — separate drive
+
+This is a DIFFERENT drive from "beta dev 2". It exists to prove the
+segment-aware prefix: dropping or querying "/storage/drives/beta dev 2" must
+never touch "/storage/drives/beta2", and vice versa.
+
+Beta2 tracks the marketing website refresh, unrelated to the appliance program.

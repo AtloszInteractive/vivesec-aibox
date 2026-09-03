@@ -1,0 +1,13 @@
+# PageIndexes 0.93 latency tuning — shrink the p95 tail.
+#
+# 0.93 has an excellent median (652 ms, better than our baseline) but a heavy
+# tail (p95 ~2.1 s vs the 1500 ms budget). The new scoring pulls
+# retrieval_top_k candidates at doc/page/chunk level and scores them in Python,
+# so the tail should track that fan-out. 40 is the schema minimum.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f host-ollama.yml -f tuning.yml up -d
+services:
+  pageindexes-rag-service:
+    environment:
+      RETRIEVAL_TOP_K: "40"

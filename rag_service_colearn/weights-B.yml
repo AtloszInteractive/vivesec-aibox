@@ -1,0 +1,17 @@
+# Score-weight A/B override for the PageIndexes candidate (eval only).
+# The published deploy compose does not forward the tuning knobs to the
+# container, so this file injects them. Weights apply at SEARCH time, so a
+# variant costs a restart + an eval run — no re-ingest.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.override.yml \
+#                  -f weights.yml up -d
+#
+# Variant B — chunk-dominant: tests whether the doc/page bonus (50% in the
+# shipped default) is what buries the relevant chunk.
+services:
+  pageindexes-rag-service:
+    environment:
+      DOC_SCORE_WEIGHT: "0.05"
+      PAGE_SCORE_WEIGHT: "0.15"
+      CHUNK_SCORE_WEIGHT: "0.70"
+      KEYWORD_SCORE_WEIGHT: "0.10"

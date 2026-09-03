@@ -1,0 +1,8 @@
+// ViVeSec RAG harness — DEV gold split. Tune retrieval on THIS; report on holdout.
+// One JSON object per line. `//` lines are ignored by the loader.
+// Fields: id, query, lang, allowed_file_ids (HARD pre-filter), relevant_file_ids,
+//         relevant_chunk_ids (optional), forbidden_file_ids, expected_tier, notes.
+{"id": "q-dev-001", "query": "What was the Q4 revenue?", "lang": "en", "allowed_file_ids": ["vivesec://files/finance-q4"], "relevant_file_ids": ["vivesec://files/finance-q4"], "forbidden_file_ids": ["vivesec://files/board"], "expected_tier": "T2", "notes": "figure lookup; board must never surface"}
+{"id": "q-dev-002", "query": "How many vacation days do employees get per year?", "lang": "en", "allowed_file_ids": ["vivesec://files/handbook"], "relevant_file_ids": ["vivesec://files/handbook"], "forbidden_file_ids": ["vivesec://files/board"], "expected_tier": "T2", "notes": "policy figure"}
+{"id": "q-dev-003", "query": "Quote the working hours policy.", "lang": "en", "allowed_file_ids": ["vivesec://files/handbook"], "relevant_file_ids": ["vivesec://files/handbook"], "forbidden_file_ids": ["vivesec://files/board"], "expected_tier": "T1", "notes": "verbatim quote"}
+{"id": "q-dev-004-aclguard", "query": "What was the Q4 revenue and the board commentary?", "lang": "en", "allowed_file_ids": ["vivesec://files/handbook"], "relevant_file_ids": [], "forbidden_file_ids": ["vivesec://files/finance-q4", "vivesec://files/board"], "expected_tier": "T4", "notes": "ACL guard: user may only see handbook; finance+board must NOT leak even though query matches them"}

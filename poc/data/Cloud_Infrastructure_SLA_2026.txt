@@ -1,0 +1,25 @@
+Cloud Infrastructure SLA 2026 - Service Level Agreement
+
+§2 Service Levels & Availability
+
+2.1 Uptime Commitment — Provider guarantees a monthly availability of 99.9% measured against the production control-plane endpoints.
+
+2.2 Downtime Indemnification — Should monthly availability drop below 99.9%, Customer may submit a service credit claim. Claims must be filed manually within seven (7) business days of the underlying incident or the right to credit is waived.
+
+2.3 Credit Cap — Aggregate service credits shall not exceed twenty percent (20%) of the monthly subscription fee for the affected billing period.
+
+§11 Data Protection & Cryptographic Controls
+
+11.1 Encryption at Rest — All Customer Data is encrypted with AES-256 keys provisioned per tenant within Provider's hardware security modules.
+
+11.2 Key Rotation — Encryption keys must be rotated on a bi-annual cadence; Customer is responsible for initiating coordinated rotation windows and validating successful re-wrap of stored objects.
+
+11.3 Key Custody — Customer may opt into Hold-Your-Own-Key mode at any time with thirty (30) days notice to Provider's Trust Operations team.
+
+§17 Invoicing & Payment Terms
+
+17.1 Billing Cycle — Provider invoices Customer on the first business day of each calendar quarter for the preceding consumption window.
+
+17.2 Payment Terms — Net-45 from invoice date. Customer's Finance team is expected to perform a quarterly invoicing verification against metered usage records before settlement.
+
+17.3 Disputes — Billing disputes must be raised in writing within fifteen (15) business days of invoice receipt.

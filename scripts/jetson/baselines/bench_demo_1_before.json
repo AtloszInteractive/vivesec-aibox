@@ -1,0 +1,328 @@
+{
+  "schema": 3,
+  "label": "demo-1-before",
+  "started_utc": "2026-08-14T09:48:04Z",
+  "environment": {
+    "adapter_url": "http://127.0.0.1:80",
+    "drive": "/storage/drives/aiboxdev/",
+    "status_http": 200,
+    "ui_ready": true,
+    "fs_ready": true,
+    "features": [
+      "basic"
+    ],
+    "storage_locked": false,
+    "index": {
+      "documents": 5353,
+      "pages": 34912,
+      "chunks": 614485,
+      "corpora": 1,
+      "skipped": {
+        "empty_content": 47,
+        "extraction_empty": 337,
+        "invalid_content": 1,
+        "too_large": 13,
+        "unsupported_type": 475
+      }
+    },
+    "mirror": {
+      "documents": 6290,
+      "files": 5363,
+      "directories": 927
+    },
+    "ollama_models": [
+      "bge-m3:latest",
+      "qwen2.5:14b"
+    ],
+    "adapter_env": {
+      "ADAPTER_NUM_PREDICT": "1024",
+      "ADAPTER_TENANT_ID": "default",
+      "ADAPTER_GEN_MODEL": "qwen2.5:14b"
+    },
+    "images": {
+      "adapter": "291b89d2f7a7",
+      "rag": "37eb1af5e5b0"
+    },
+    "rag_health": "{\"ok\": true, \"status\": \"ok\", \"embedding\": {\"provider\": \"ollama\", \"model_name\": \"bge-m3\", \"dimension\": 1024, \"normalized\": true}, \"vector_backend\": \"sqlite-vec\", \"min_score\": 0.0, \"query_reaccent\": true}",
+    "host": {
+      "hostname": "szeredy-AI-desktop",
+      "mem": "Mem:             61          13          25           0          21          46"
+    }
+  },
+  "corpus": {
+    "http": 200,
+    "seconds": 0.03,
+    "file_count": 2000,
+    "truncated": true,
+    "size_bytes": {
+      "min": 0,
+      "median": 170233,
+      "max": 703607193,
+      "total": 5624830636
+    },
+    "informational": true
+  },
+  "capabilities": {
+    "rag_document_context_http": "404",
+    "rag_document_context": false,
+    "analyze_http": 200,
+    "analyze_action_echoed": null,
+    "analyze_document_block": false,
+    "analyze_supported": false,
+    "analyze_seconds": 30.5,
+    "analyze_probe": {
+      "file": "/storage/drives/aiboxdev/CONSULTING/Porsche_SIEM/03_projekt/cert/phlogrep.in.porsche.hu.pem",
+      "chunks_used": null,
+      "chunks_total": null,
+      "truncated": null,
+      "body_chars": 60
+    }
+  },
+  "language": {
+    "cases": [
+      {
+        "asked": "English",
+        "http": 200,
+        "seconds": 14.9,
+        "detected": "English",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 68,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents. [#1][#2][#3][#4]"
+      },
+      {
+        "asked": "Hungarian",
+        "http": 200,
+        "seconds": 14.1,
+        "detected": "English",
+        "language_ok": false,
+        "refused": true,
+        "confidence": 68,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents. [#1][#2][#3][#4][#5]"
+      },
+      {
+        "asked": "Danish",
+        "http": 200,
+        "seconds": 14.2,
+        "detected": "Danish",
+        "language_ok": true,
+        "refused": true,
+        "confidence": 68,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "Der er ingen data om dette i dokumenterne. [#1][#2][#3][#4][#5]"
+      },
+      {
+        "asked": "German",
+        "http": 200,
+        "seconds": 12.7,
+        "detected": "English",
+        "language_ok": false,
+        "refused": true,
+        "confidence": 68,
+        "band": "amber",
+        "citations": 5,
+        "answer_head": "There is no data for this in the documents. [#1][#2][#3][#4][#5]"
+      }
+    ],
+    "language_match": 2,
+    "refusal_correct": 4,
+    "total": 4
+  },
+  "grounding": {
+    "cases": [
+      {
+        "question": "List the exact figures this drive reports, with their units.",
+        "http": 200,
+        "seconds": 25.4,
+        "confidence": 73,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.4,
+        "body_chars": 462
+      },
+      {
+        "question": "What are the most recent dated commitments and their deadlines?",
+        "http": 200,
+        "seconds": 22.4,
+        "confidence": 75,
+        "band": "amber",
+        "ungrounded": null,
+        "suppressed": false,
+        "citations": 5,
+        "tok_per_s": 13.3,
+        "body_chars": 460
+      },
+      {
+        "question": "Summarise the key quantitative results and cite the source for each.",
+        "http": 200,
+        "seconds": 23.2,
+        "confidence": 50,
+        "band": "red",
+        "ungrounded": [
+          "2024187",
+          "202431",
+          "2024384",
+          "2024410",
+          "2025206",
+          "2025440",
+          "2025486",
+          "202552"
+        ],
+        "suppressed": true,
+        "citations": 5,
+        "tok_per_s": 13.7,
+        "body_chars": 107
+      }
+    ],
+    "suppressed": 1,
+    "with_ungrounded": 1,
+    "mean_confidence": 66.0
+  },
+  "actions": {
+    "anchor": "Kockazatelemzes 20170426",
+    "cases": [
+      {
+        "action": "summary",
+        "http": 200,
+        "seconds": 39.8,
+        "echoed": "summary",
+        "tok_per_s": 12.9,
+        "body_chars": 1529,
+        "citations": 8,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (12.9 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "report",
+        "http": 200,
+        "seconds": 30.6,
+        "echoed": "report",
+        "tok_per_s": 13.0,
+        "body_chars": 996,
+        "citations": 10,
+        "confidence": 75,
+        "band": "amber",
+        "refused": false,
+        "backend": "ollama:qwen2.5:14b (13.0 tok/s)",
+        "ends_cleanly": true
+      },
+      {
+        "action": "presentation",
+        "http": 200,
+        "seconds": 59.9,
+        "echoed": "presentation",
+        "tok_per_s": 12.7,
+        "body_chars": 107,
+        "citations": 10,
+        "confidence": 50,
+        "band": "red",
+        "refused": true,
+        "backend": "ollama:qwen2.5:14b (12.7 tok/s) (suppressed: ungrounded numb",
+        "ends_cleanly": null
+      },
+      {
+        "action": "memo",
+        "http": 200,
+        "seconds": 40.2,
+        "echoed": "memo",
+        "tok_per_s": 13.0,
+        "body_chars": 107,
+        "citations": 10,
+        "confidence": 50,
+        "band": "red",
+        "refused": true,
+        "backend": "ollama:qwen2.5:14b (13.0 tok/s) (suppressed: ungrounded numb",
+        "ends_cleanly": null
+      }
+    ],
+    "generated": 2,
+    "refused": 2,
+    "mean_seconds": 35.2,
+    "truncated_outputs": 0
+  },
+  "analyze": {
+    "supported": false,
+    "cases": [
+      {
+        "size": "small",
+        "file": "phlogrep.in.porsche.hu.pem",
+        "bytes": 2451,
+        "http": 200,
+        "seconds": 12.8,
+        "echoed": null,
+        "chunks_used": null,
+        "chunks_total": null,
+        "coverage": null,
+        "truncated": null,
+        "citations": 4,
+        "confidence": 90,
+        "band": "green",
+        "body_chars": 60,
+        "sections": 0,
+        "tok_per_s": 14.0
+      },
+      {
+        "size": "median",
+        "file": "UV_Adatelemzes_Jelentes_202005_v01.docx",
+        "bytes": 179548,
+        "http": 200,
+        "seconds": 24.5,
+        "echoed": null,
+        "chunks_used": null,
+        "chunks_total": null,
+        "coverage": null,
+        "truncated": null,
+        "citations": 4,
+        "confidence": 85,
+        "band": "green",
+        "body_chars": 427,
+        "sections": 0,
+        "tok_per_s": 13.4
+      },
+      {
+        "size": "large",
+        "file": "MK.zip",
+        "bytes": 703607193,
+        "http": 200,
+        "seconds": 9.3,
+        "echoed": null,
+        "chunks_used": null,
+        "chunks_total": null,
+        "coverage": null,
+        "truncated": null,
+        "citations": 4,
+        "confidence": 75,
+        "band": "amber",
+        "body_chars": 60,
+        "sections": 0,
+        "tok_per_s": 14.2
+      }
+    ],
+    "fully_covered": 0,
+    "degenerate_answers": 2,
+    "mean_seconds": 15.5
+  },
+  "wall_seconds": 374.5,
+  "verdict": {
+    "language_match": "2/4",
+    "refusal_correct": "4/4",
+    "ungrounded_cases": 1,
+    "mean_confidence": 66.0,
+    "analyze_supported": false,
+    "analyze_fully_covered": 0,
+    "analyze_degenerate": 2,
+    "actions_generated": 2,
+    "truncated_outputs": 0,
+    "mean_action_seconds": 35.2
+  }
+}

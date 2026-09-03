@@ -1,0 +1,28 @@
+Vendor Agreement and Service Contract 2025 - Final
+
+Parties: ViVeSec Kft. (Client) and NimbusCloud Services GmbH (Vendor).
+Effective date: 1 January 2025. Initial term: 24 months with automatic renewal
+for successive 12-month periods unless either party gives written notice of
+non-renewal at least 90 days before the end of the then-current term.
+
+Payment terms: The Client shall pay invoices within 30 days of receipt. Late
+payments accrue interest at 0.05% per day. Fees are fixed for the initial term
+and may increase by no more than 3% per renewal period.
+
+Service levels: The Vendor guarantees 99.9% monthly uptime as defined in the
+linked SLA. Service credits of 5% of the monthly fee apply for each 0.1% below
+target, capped at 25% of the monthly fee.
+
+Liability: Each party's aggregate liability is limited to the total fees paid in
+the 12 months preceding the claim. Neither party is liable for indirect or
+consequential damages. This cap does not apply to breaches of confidentiality or
+data protection obligations.
+
+Termination: The Client may terminate for convenience with 60 days notice. Either
+party may terminate for material breach not cured within 30 days of written
+notice. On termination the Vendor must return or securely delete all Client data
+within 15 days and certify deletion in writing.
+
+Confidentiality and data protection: The Vendor processes personal data strictly
+as a processor under GDPR Article 28, only on documented instructions, and must
+notify the Client of any data breach within 24 hours.

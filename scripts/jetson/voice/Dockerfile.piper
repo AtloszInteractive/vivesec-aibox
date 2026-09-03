@@ -1,0 +1,17 @@
+FROM python:3.11-slim
+
+# Piper is CPU-only here on purpose: the single Orin GPU is compute-bound by the
+# 35B chat model, and a TTS request must never queue behind (or in front of) it.
+RUN pip install --no-cache-dir piper-tts
+
+ARG VOICES="en_US-lessac-medium hu_HU-anna-medium"
+ENV PIPER_VOICE_DIR=/voices
+RUN mkdir -p /voices && python -m piper.download_voices --data-dir /voices ${VOICES}
+
+COPY piper_http.py /app/piper_http.py
+
+ENV PIPER_DEFAULT_VOICE=en_US-lessac-medium \
+    PIPER_HOST=0.0.0.0 \
+    PIPER_PORT=5000
+EXPOSE 5000
+CMD ["python", "/app/piper_http.py"]
