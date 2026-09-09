@@ -547,7 +547,8 @@ def _file_search(drive, pattern):
 
 
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
-            params=None, agent=None, history_snapshot=None):
+            params=None, agent=None, history_snapshot=None, cancel_event=None,
+            progress_callback=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -628,7 +629,9 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     answer, backend = llm.generate(query, contexts, lang=lang, history=history,
                                    task=action, params=params,
                                    num_ctx=ANALYZE_NUM_CTX if action == "analyze" else None,
-                                   chat_only=chat_only, agent=agent)
+                                   chat_only=chat_only, agent=agent,
+                                   cancel_event=cancel_event,
+                                   progress_callback=progress_callback)
     degenerate = (action == "analyze" and contexts and answer is not None
                   and len(answer.strip()) < ANALYZE_MIN_ANSWER_CHARS)
     if degenerate:
@@ -702,12 +705,17 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
 
 
 def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
-                files=None, params=None, agent=None, history_snapshot=None):
+                files=None, params=None, agent=None, history_snapshot=None,
+                cancel_event=None):
     if JOBS.start(user, drive, job_id) is None:
         return
+    progress = lambda chars, tokens: JOBS.progress(user, drive, job_id, chars, tokens)
     try:
         code, payload = 200, _answer(user, drive, query, top_k, lang, action,
-                                     mode, files, params, agent, history_snapshot)
+                                     mode, files, params, agent, history_snapshot,
+                                     cancel_event, progress)
+    except llm.GenerationCancelled as e:
+        code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
         code, payload = e.status, e.body
     except Exception as e:  # noqa: BLE001
@@ -1167,6 +1175,8 @@ class Handler(BaseHTTPRequestHandler):
         if job.get("status") not in ("done", "error", "cancelled", "interrupted"):
             self._send(200, {"ok": True, "status": "pending", "job_id": job_id,
                              "job_status": job.get("status"),
+                             "progress_chars": job.get("progress_chars", 0),
+                             "progress_tokens": job.get("progress_tokens", 0),
                              "queue_position": HEAVY_SCHEDULER.position(job_id, user, drive)})
             return
         code = job.get("code") or (200 if job.get("status") in
@@ -1191,6 +1201,8 @@ class Handler(BaseHTTPRequestHandler):
                          "created": job.get("created"), "started": job.get("started"),
                          "finished": job.get("finished"), "seen_ts": job.get("seen_ts"),
                          "error": job.get("error"),
+                         "progress_chars": job.get("progress_chars", 0),
+                         "progress_tokens": job.get("progress_tokens", 0),
                          "queue_position": HEAVY_SCHEDULER.position(
                              job.get("job_id"), user, drive)})
         self._send(200, {"ok": True, "jobs": jobs})
@@ -1238,8 +1250,9 @@ class Handler(BaseHTTPRequestHandler):
                              "status": job.get("status")})
             return
         if state == "running" or job.get("status") == "running":
-            self._send(409, {"ok": False, "job_id": job_id, "status": "running",
-                             "error": "running jobs can be cancelled after streaming is enabled"})
+            JOBS.request_cancel(user, drive, job_id)
+            self._send(202, {"ok": True, "job_id": job_id, "status": "running",
+                             "cancel_requested": True})
             return
         self._send(409, {"ok": False, "job_id": job_id,
                          "status": job.get("status"),

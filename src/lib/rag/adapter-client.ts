@@ -114,6 +114,9 @@ export type AdapterJobSummary = {
   finished?: number | null;
   seen_ts?: number | null;
   error?: string | null;
+  progress_chars?: number;
+  progress_tokens?: number;
+  cancel_requested?: boolean;
   queue_position?: number | null;
 };
 

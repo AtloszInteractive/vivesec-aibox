@@ -31,7 +31,7 @@ class HeavyScheduler:
 
     def submit(self, job_id, user, drive, args):
         item = {"job_id": job_id, "user": user or "", "drive": drive or "",
-                "args": tuple(args)}
+                "args": tuple(args), "cancel_event": threading.Event()}
         with self._condition:
             queued = sum(1 for current in self._queue
                          if current["user"] == item["user"])
@@ -55,6 +55,7 @@ class HeavyScheduler:
             if (self._running and self._running["job_id"] == job_id
                     and self._running["user"] == user
                     and self._running["drive"] == drive):
+                self._running["cancel_event"].set()
                 return "running"
             return "missing"
 
@@ -83,7 +84,7 @@ class HeavyScheduler:
                 item = self._queue.popleft()
                 self._running = item
             try:
-                self.worker(*item["args"])
+                self.worker(*item["args"], cancel_event=item["cancel_event"])
             finally:
                 with self._condition:
                     self._running = None

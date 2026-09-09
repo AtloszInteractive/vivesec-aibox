@@ -103,10 +103,16 @@ class JobStore:
     def finish(self, user, drive, job_id, code, result):
         return self.update(
             user, drive, job_id,
-            status="error" if code >= 400 else "done", code=code,
+            status="cancelled" if code == 499 else ("error" if code >= 400 else "done"), code=code,
             result=result, error=(result or {}).get("error") if isinstance(result, dict) else None,
             finished=time.time(),
         )
+
+    def progress(self, user, drive, job_id, chars=None, tokens=None):
+        changes = {"progress_chars": int(chars or 0)}
+        if tokens is not None:
+            changes["progress_tokens"] = int(tokens)
+        return self.update(user, drive, job_id, **changes)
 
     def wait(self, user, drive, job_id, timeout):
         job = self.get(user, drive, job_id)
@@ -148,6 +154,9 @@ class JobStore:
             self._write(path, job)
             self._events.setdefault(job_id, threading.Event()).set()
             return dict(job)
+
+    def request_cancel(self, user, drive, job_id):
+        return self.update(user, drive, job_id, cancel_requested=True)
 
     def recover_interrupted(self):
         if not self.root:

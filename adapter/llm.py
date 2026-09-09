@@ -14,6 +14,8 @@ skipped gracefully and the caller still gets the raw hits.
 import json
 import os
 import re
+import socket
+import threading
 import urllib.request
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
@@ -39,6 +41,10 @@ CONDENSE_TIMEOUT = float(os.environ.get("ADAPTER_CONDENSE_TIMEOUT", "60") or 60)
 
 class ThinkingBudgetExhausted(RuntimeError):
     """The model spent its whole num_predict budget on reasoning."""
+
+
+class GenerationCancelled(RuntimeError):
+    """The caller cancelled a streaming generation."""
 
 
 # Agent personas. The persona shapes ROLE and TONE only — GROUNDING_RULES and
@@ -402,7 +408,8 @@ def build_context(contexts):
     return "\n\n".join(blocks), citations
 
 
-def _chat(system, user, history=None, timeout=600, num_ctx=None):
+def _chat(system, user, history=None, timeout=600, num_ctx=None,
+          cancel_event=None, progress_callback=None, stream=None):
     options = {"temperature": TEMPERATURE}
     if NUM_PREDICT:
         options["num_predict"] = NUM_PREDICT
@@ -416,10 +423,12 @@ def _chat(system, user, history=None, timeout=600, num_ctx=None):
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user})
+    use_stream = ((os.environ.get("ADAPTER_STREAM", "on") or "on").lower()
+                  not in ("off", "false", "0")) if stream is None else bool(stream)
     payload = {
         "model": GEN_MODEL,
         "messages": messages,
-        "stream": False,
+        "stream": use_stream,
         "options": options,
     }
     if THINK in ("off", "false", "0"):
@@ -429,8 +438,20 @@ def _chat(system, user, history=None, timeout=600, num_ctx=None):
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(OLLAMA_URL + "/api/chat", data=data,
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        out = json.loads(r.read().decode("utf-8"))
+    if not use_stream:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.loads(r.read().decode("utf-8"))
+    else:
+        response = urllib.request.urlopen(req, timeout=min(float(timeout), 2.0))
+        if not hasattr(response, "readline"):
+            try:
+                out = json.loads(response.read().decode("utf-8"))
+            finally:
+                if hasattr(response, "close"):
+                    response.close()
+        else:
+            out = _read_stream(response, cancel_event=cancel_event,
+                               progress_callback=progress_callback)
     message = out.get("message") or {}
     content = (message.get("content") or "").strip()
     thinking = (message.get("thinking") or "").strip()
@@ -444,8 +465,51 @@ def _chat(system, user, history=None, timeout=600, num_ctx=None):
     return content, out.get("eval_count"), out.get("eval_duration")
 
 
+def _read_stream(response, cancel_event=None, progress_callback=None):
+    """Read Ollama's newline-delimited JSON stream and aggregate its final
+    metadata. A short socket timeout lets cancellation become responsive even
+    when the model pauses between chunks."""
+    content_parts, thinking_parts = [], []
+    final = {}
+    chars = 0
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise GenerationCancelled("generation cancelled")
+            try:
+                line = response.readline()
+            except socket.timeout:
+                continue
+            if not line:
+                break
+            try:
+                chunk = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            message = chunk.get("message") or {}
+            text = message.get("content") or ""
+            thinking = message.get("thinking") or ""
+            if text:
+                content_parts.append(text)
+                chars += len(text)
+            if thinking:
+                thinking_parts.append(thinking)
+            final.update({k: chunk[k] for k in ("eval_count", "eval_duration")
+                          if k in chunk})
+            if progress_callback is not None:
+                progress_callback(chars, final.get("eval_count"))
+            if chunk.get("done"):
+                break
+    finally:
+        response.close()
+    final["message"] = {"content": "".join(content_parts),
+                         "thinking": "".join(thinking_parts)}
+    return final
+
+
 def generate(question, contexts, lang=None, history=None, task=None,
-             params=None, num_ctx=None, chat_only=False, agent=None):
+             params=None, num_ctx=None, chat_only=False, agent=None,
+             cancel_event=None, progress_callback=None):
     """Return (answer, backend_label). answer is None when generation is off or
     Ollama is unreachable (caller still has the raw hits). 'history' is an
     optional list of prior {"role","content"} turns for multi-turn follow-ups;
@@ -471,8 +535,12 @@ def generate(question, contexts, lang=None, history=None, task=None,
     if conversational:
         system = persona_for(agent) + "\n\n" + _build_chat_guard(lang)
         try:
-            content, ec, ed = _chat(system, question, history=history,
-                                    num_ctx=num_ctx)
+            chat_kwargs = {"history": history, "num_ctx": num_ctx}
+            if cancel_event is not None:
+                chat_kwargs["cancel_event"] = cancel_event
+            if progress_callback is not None:
+                chat_kwargs["progress_callback"] = progress_callback
+            content, ec, ed = _chat(system, question, **chat_kwargs)
         except Exception as e:  # noqa: BLE001
             return None, "error: %s" % e
         label = "ollama:" + GEN_MODEL + " (chat)"
@@ -494,7 +562,12 @@ def generate(question, contexts, lang=None, history=None, task=None,
         "Use only numbers that appear verbatim in CONTEXT, and cite [#n]." %
         (context_tagged, question))
     try:
-        content, ec, ed = _chat(system, user, history=history, num_ctx=num_ctx)
+        chat_kwargs = {"history": history, "num_ctx": num_ctx}
+        if cancel_event is not None:
+            chat_kwargs["cancel_event"] = cancel_event
+        if progress_callback is not None:
+            chat_kwargs["progress_callback"] = progress_callback
+        content, ec, ed = _chat(system, user, **chat_kwargs)
     except Exception as e:  # noqa: BLE001
         return None, "error: %s" % e
     if task_block:

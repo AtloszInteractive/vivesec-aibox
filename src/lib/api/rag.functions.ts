@@ -266,8 +266,8 @@ export async function markRagJobSeen(jobId: string, drive?: string): Promise<voi
   await adapterMarkJobSeen(jobId, { drive });
 }
 
-export async function cancelRagJob(jobId: string, drive?: string): Promise<void> {
-  await adapterCancelJob(jobId, { drive });
+export async function cancelRagJob(jobId: string, drive?: string): Promise<Record<string, unknown>> {
+  return adapterCancelJob(jobId, { drive });
 }
 
 export type { AdapterJobStatus };

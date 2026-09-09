@@ -15,7 +15,7 @@ class HeavySchedulerTest(unittest.TestCase):
         first_started = threading.Event()
         completed = []
 
-        def worker(job_id):
+        def worker(job_id, **_kwargs):
             if job_id == "j1":
                 first_started.set()
                 release.wait(2)
@@ -39,7 +39,7 @@ class HeavySchedulerTest(unittest.TestCase):
         release = threading.Event()
         started = threading.Event()
 
-        def worker(_job_id):
+        def worker(_job_id, **_kwargs):
             started.set()
             release.wait(2)
 

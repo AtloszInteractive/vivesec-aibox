@@ -26,7 +26,7 @@ class SchedulerHttpTest(unittest.TestCase):
         service.JOBS = jobstore.JobStore(tempfile.mkdtemp(prefix="vivesec-http-jobs-"))
         service.SESSIONS = session.SessionManager()
 
-        def worker(job_id, user, drive, *_args):
+        def worker(job_id, user, drive, *_args, **_kwargs):
             service.JOBS.start(user, drive, job_id)
             self.started.set()
             self.release.wait(3)
@@ -119,7 +119,8 @@ class SchedulerHttpTest(unittest.TestCase):
 
         code, running = self.request("/api/v1/ui/jobs/cancel",
                                      {"job_id": first["job_id"]})
-        self.assertEqual((code, running["status"]), (409, "running"))
+        self.assertEqual((code, running["status"], running.get("cancel_requested")),
+                 (202, "running", True))
 
 
 if __name__ == "__main__":
