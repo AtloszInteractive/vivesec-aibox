@@ -244,7 +244,7 @@ function adapterInput(data: z.input<typeof askInput>) {
 }
 
 export async function submitRagJob({ data }: { data: z.input<typeof askInput> }) {
-  return adapterSubmitJob(adapterInput(data));
+  return adapterSubmitJob({ ...adapterInput(data), origin: "background" });
 }
 
 export function listRagJobs(drive?: string): Promise<BackgroundJob[] | null> {

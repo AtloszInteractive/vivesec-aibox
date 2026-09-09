@@ -1585,7 +1585,8 @@ def main():
 
         # -- async UI channel (J5): /ui/ask -> /ui/poll long-poll ----------
         code, sub = post_json(adapter_base, "/api/v1/ui/ask",
-                              {"query": "What was Q4 revenue?", "top_k": 3},
+                              {"query": "What was Q4 revenue?", "top_k": 3,
+                               "origin": "background"},
                               headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1",
                                        "VVS-Session": "sess-a"})
         check("ask returns job_id", code == 202 and bool(sub.get("job_id"))
@@ -1624,6 +1625,19 @@ def main():
                             {"job_id": sub.get("job_id")},
                             headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1"})
         check("job can be marked seen", seen.get("seen_ts") is not None, seen)
+        _, chat_sub = post_json(adapter_base, "/api/v1/ui/ask",
+                                {"query": "What was Q4 revenue?", "top_k": 3},
+                                headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1"})
+        _, chat_done = post_json(adapter_base, "/api/v1/ui/poll",
+                                 {"job_id": chat_sub.get("job_id"), "timeout": 30},
+                                 headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1"})
+        check("chat job still answers on its own channel",
+              chat_done.get("status") == "done", chat_done)
+        _, listed2 = get_json(adapter_base, "/api/v1/ui/jobs",
+                              headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1"})
+        check("chat job stays out of the background list",
+              [j["job_id"] for j in listed2.get("jobs", [])] == [sub.get("job_id")],
+              listed2)
         unk = post_json_expect_error(adapter_base, "/api/v1/ui/poll",
                                      {"job_id": "deadbeef"},
                                      headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1"})

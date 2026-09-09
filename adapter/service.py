@@ -1126,16 +1126,22 @@ class Handler(BaseHTTPRequestHandler):
     def _ask(self):
         if self._locked_guard():
             return
-        parsed = self._read_query(self._read_json())
+        payload = self._read_json()
+        parsed = self._read_query(payload)
         if parsed is None:
             return
         job_id = uuid.uuid4().hex
         user, drive = parsed[0], parsed[1]
         history_snapshot = SESSIONS.history(user, drive)
+        # Where the request was STARTED decides where its result belongs: a chat
+        # question answers in the conversation, a quick action in the job list.
+        origin = (str(payload.get("origin") or "chat")).strip().lower()
+        if origin not in ("chat", "background"):
+            origin = "chat"
         request = {"query": parsed[2], "top_k": parsed[3], "lang": parsed[4],
                    "action": parsed[5], "mode": parsed[6], "files": parsed[7],
                    "params": parsed[8], "agent": parsed[9],
-                   "history": history_snapshot}
+                   "origin": origin, "history": history_snapshot}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
         heavy = action is not None and not (action == "search" and mode == "files")
@@ -1196,6 +1202,8 @@ class Handler(BaseHTTPRequestHandler):
         jobs = []
         for job in JOBS.list(user, drive):
             request = job.get("request") or {}
+            if request.get("origin") != "background":
+                continue
             jobs.append({"job_id": job.get("job_id"), "status": job.get("status"),
                          "action": request.get("action"), "query": request.get("query"),
                          "created": job.get("created"), "started": job.get("started"),

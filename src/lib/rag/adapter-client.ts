@@ -94,6 +94,8 @@ export type AdapterAskInput = {
   purpose?: string;
   /** Source files picked in the drive dialog (adapter _answer files filter). */
   files?: string[];
+  /** Where the request was started; only background runs join the job list. */
+  origin?: "chat" | "background";
 };
 
 export type AdapterJobStatus =
@@ -357,6 +359,7 @@ export async function adapterSubmitJob(input: AdapterAskInput): Promise<AdapterJ
       audience: input.audience,
       purpose: input.purpose,
       files: input.files?.length ? input.files : undefined,
+      origin: input.origin ?? "chat",
     }),
     signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
   });

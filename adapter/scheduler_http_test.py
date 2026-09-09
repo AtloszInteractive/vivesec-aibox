@@ -74,12 +74,14 @@ class SchedulerHttpTest(unittest.TestCase):
         service.SESSIONS.record("queue-user", "/storage/drives/finance/",
                                 "earlier question", "earlier answer")
         code, first = self.request("/api/v1/ui/ask",
-                                   {"action": "report", "query": "first"})
+                                   {"action": "report", "query": "first",
+                                    "origin": "background"})
         self.assertEqual(code, 202)
         self.assertTrue(self.started.wait(1))
 
         code, second = self.request("/api/v1/ui/ask",
-                                    {"action": "report", "query": "second"})
+                                    {"action": "report", "query": "second",
+                                     "origin": "background"})
         self.assertEqual(code, 202)
         self.assertEqual(second["queue_position"], 1)
         service.SESSIONS.record("queue-user", "/storage/drives/finance/",
@@ -99,7 +101,8 @@ class SchedulerHttpTest(unittest.TestCase):
         )["status"], "done")
 
         code, rejected = self.request("/api/v1/ui/ask",
-                                      {"action": "report", "query": "third"})
+                                      {"action": "report", "query": "third",
+                                       "origin": "background"})
         self.assertEqual(code, 429)
         self.assertIn("too many queued", rejected["error"])
 
@@ -109,6 +112,8 @@ class SchedulerHttpTest(unittest.TestCase):
                       if job["job_id"] == second["job_id"])
         self.assertEqual(queued["status"], "queued")
         self.assertEqual(queued["queue_position"], 1)
+        self.assertNotIn(interactive["job_id"],
+                         [job["job_id"] for job in listing["jobs"]])
 
         code, cancelled = self.request("/api/v1/ui/jobs/cancel",
                                        {"job_id": second["job_id"]})
