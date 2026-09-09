@@ -1249,9 +1249,17 @@ function ViveSecAppInner() {
 
   async function cancelBackgroundJob(jobId: string) {
     try {
-      await cancelRagJob(jobId, drive || undefined);
+      const response = await cancelRagJob(jobId, drive || undefined);
       setBackgroundJobs((jobs) =>
-        jobs.map((job) => (job.job_id === jobId ? { ...job, status: "cancelled" } : job)),
+        jobs.map((job) =>
+          job.job_id === jobId
+            ? {
+                ...job,
+                status: response.cancel_requested ? "running" : "cancelled",
+                cancel_requested: Boolean(response.cancel_requested),
+              }
+            : job,
+        ),
       );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tm("The job could not be cancelled."));
@@ -2204,7 +2212,9 @@ function ViveSecAppInner() {
                         {backgroundJobs.map((job) => {
                           const active = job.status === "queued" || job.status === "running";
                           const status =
-                            job.status === "queued" && job.queue_position
+                            job.cancel_requested
+                              ? tm("Cancel requested")
+                              : job.status === "queued" && job.queue_position
                               ? `${tm("Queued")} · ${job.queue_position}`
                               : tm(
                                   job.status === "running"
@@ -2247,12 +2257,18 @@ function ViveSecAppInner() {
                                     {job.query || tm("Background task")}
                                   </div>
                                   <div className="text-[10.5px] text-white/40">{status}</div>
+                                  {job.status === "running" && (job.progress_tokens ?? 0) > 0 && (
+                                    <div className="text-[10px] text-lime-200/60">
+                                      {job.progress_tokens} tokens · {job.progress_chars ?? 0} chars
+                                    </div>
+                                  )}
                                 </div>
                                 {job.status === "done" && (
                                   <ChevronRight className="h-3.5 w-3.5 shrink-0 text-white/30" />
                                 )}
                               </button>
-                              {job.status === "queued" && (
+                              {(job.status === "queued" || job.status === "running") &&
+                                !job.cancel_requested && (
                                 <button
                                   onClick={() => void cancelBackgroundJob(job.job_id)}
                                   className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white"

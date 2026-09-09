@@ -1203,6 +1203,7 @@ class Handler(BaseHTTPRequestHandler):
                          "error": job.get("error"),
                          "progress_chars": job.get("progress_chars", 0),
                          "progress_tokens": job.get("progress_tokens", 0),
+                         "cancel_requested": bool(job.get("cancel_requested")),
                          "queue_position": HEAVY_SCHEDULER.position(
                              job.get("job_id"), user, drive)})
         self._send(200, {"ok": True, "jobs": jobs})
