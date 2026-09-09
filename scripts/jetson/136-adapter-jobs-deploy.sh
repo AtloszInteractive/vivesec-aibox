@@ -38,6 +38,7 @@ run_test() {
 run_test voice /app/adapter/voice_test.py
 run_test docgen /app/adapter/docgen_test.py
 run_test scheduler /app/adapter/scheduler_test.py
+run_test stream /app/adapter/llm_stream_test.py
 run_test smoke /app/adapter/smoke_test.py
 
 echo

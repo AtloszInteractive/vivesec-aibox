@@ -25,6 +25,18 @@ class Response:
         self.closed = True
 
 
+class BlockingResponse:
+    def __init__(self):
+        self.closed = threading.Event()
+
+    def readline(self):
+        self.closed.wait(2)
+        return b""
+
+    def close(self):
+        self.closed.set()
+
+
 class StreamTest(unittest.TestCase):
     @staticmethod
     def line(payload):
@@ -44,7 +56,7 @@ class StreamTest(unittest.TestCase):
                 progress_callback=lambda chars, tokens: progress.append((chars, tokens)),
             )
         self.assertEqual(result, ("hello world", 7, 1000000000))
-        self.assertEqual(progress[-1], (11, 7))
+        self.assertEqual(progress[-1], (15, 7))
         self.assertTrue(response.closed)
 
     def test_cancel_stops_before_next_chunk(self):
@@ -55,6 +67,28 @@ class StreamTest(unittest.TestCase):
             with self.assertRaises(llm.GenerationCancelled):
                 llm._chat("system", "user", stream=True, cancel_event=cancel)
         self.assertTrue(response.closed)
+
+    def test_cancel_closes_blocking_stream(self):
+        cancel = threading.Event()
+        response = BlockingResponse()
+        errors = []
+
+        def run():
+            try:
+                llm._chat("system", "user", stream=True, cancel_event=cancel)
+            except Exception as error:  # noqa: BLE001
+                errors.append(error)
+
+        with mock.patch.object(llm.urllib.request, "urlopen", return_value=response):
+            thread = threading.Thread(target=run)
+            thread.start()
+            self.assertTrue(thread.is_alive())
+            cancel.set()
+            thread.join(1)
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(response.closed.is_set())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], llm.GenerationCancelled)
 
 
 if __name__ == "__main__":

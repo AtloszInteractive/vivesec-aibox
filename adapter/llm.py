@@ -442,7 +442,7 @@ def _chat(system, user, history=None, timeout=600, num_ctx=None,
         with urllib.request.urlopen(req, timeout=timeout) as r:
             out = json.loads(r.read().decode("utf-8"))
     else:
-        response = urllib.request.urlopen(req, timeout=min(float(timeout), 2.0))
+        response = urllib.request.urlopen(req, timeout=timeout)
         if not hasattr(response, "readline"):
             try:
                 out = json.loads(response.read().decode("utf-8"))
@@ -472,15 +472,34 @@ def _read_stream(response, cancel_event=None, progress_callback=None):
     content_parts, thinking_parts = [], []
     final = {}
     chars = 0
+    closed_by_cancel = threading.Event()
+
+    def close_on_cancel():
+        if cancel_event is not None and cancel_event.wait():
+            closed_by_cancel.set()
+            try:
+                response.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    watcher = None
+    if cancel_event is not None:
+        watcher = threading.Thread(target=close_on_cancel, daemon=True,
+                                   name="ollama-stream-cancel")
+        watcher.start()
     try:
         while True:
-            if cancel_event is not None and cancel_event.is_set():
+            if closed_by_cancel.is_set() or (cancel_event is not None and cancel_event.is_set()):
                 raise GenerationCancelled("generation cancelled")
             try:
                 line = response.readline()
-            except socket.timeout:
+            except (socket.timeout, OSError, ValueError):
+                if closed_by_cancel.is_set() or (cancel_event is not None and cancel_event.is_set()):
+                    raise GenerationCancelled("generation cancelled")
                 continue
             if not line:
+                if closed_by_cancel.is_set() or (cancel_event is not None and cancel_event.is_set()):
+                    raise GenerationCancelled("generation cancelled")
                 break
             try:
                 chunk = json.loads(line.decode("utf-8"))
@@ -494,6 +513,7 @@ def _read_stream(response, cancel_event=None, progress_callback=None):
                 chars += len(text)
             if thinking:
                 thinking_parts.append(thinking)
+                chars += len(thinking)
             final.update({k: chunk[k] for k in ("eval_count", "eval_duration")
                           if k in chunk})
             if progress_callback is not None:
@@ -541,6 +561,8 @@ def generate(question, contexts, lang=None, history=None, task=None,
             if progress_callback is not None:
                 chat_kwargs["progress_callback"] = progress_callback
             content, ec, ed = _chat(system, question, **chat_kwargs)
+        except GenerationCancelled:
+            raise
         except Exception as e:  # noqa: BLE001
             return None, "error: %s" % e
         label = "ollama:" + GEN_MODEL + " (chat)"
@@ -568,6 +590,8 @@ def generate(question, contexts, lang=None, history=None, task=None,
         if progress_callback is not None:
             chat_kwargs["progress_callback"] = progress_callback
         content, ec, ed = _chat(system, user, **chat_kwargs)
+    except GenerationCancelled:
+        raise
     except Exception as e:  # noqa: BLE001
         return None, "error: %s" % e
     if task_block:
