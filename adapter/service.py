@@ -80,6 +80,7 @@ import jobstore  # noqa: E402
 import llm  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
+import scope  # noqa: E402
 import session  # noqa: E402
 import storage  # noqa: E402
 import voice  # noqa: E402
@@ -227,6 +228,30 @@ _LAST_STATUS_TS = [time.time()]
 # be finalized when the content is committed.
 _TOKEN_PATHS = {}
 
+# Read scope: which drives one request may search. Without the box header the
+# scope is the active VVS-Drive, so the default behaviour is the single-drive
+# one; the entitlements file exists so multi-drive can be exercised against a
+# ViVeSecBox that does not send the header yet.
+ENTITLEMENTS = scope.Entitlements.from_env()
+SCOPE_ALL_DRIVES = (os.environ.get("ADAPTER_SCOPE_ALL_DRIVES", "").strip().lower()
+                    in ("1", "on", "true", "yes"))
+
+
+def _known_drive_roots():
+    """Every drive root the mirror has seen. Demo-only scope source: it has no
+    per-user filtering, so it must never be enabled on a real deployment."""
+    prefix = corpus.norm(corpus.DRIVE_PREFIX)
+    return [corpus.norm(entry.get("path") or "")
+            for entry in MIRROR.get_children(prefix) if not entry.get("file")]
+
+
+def _resolve_scope(headers, user, drive):
+    return scope.resolve_request(
+        drive, headers.get(scope.HEADER_OTHER_DRIVES), user,
+        entitlements=ENTITLEMENTS,
+        all_drives=_known_drive_roots if SCOPE_ALL_DRIVES else None,
+        on_warning=lambda message: sys.stderr.write("[adapter] scope: %s\n" % message))
+
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
 SESSIONS = session.SessionManager.from_env()
@@ -248,7 +273,29 @@ TRACES = feedback.TraceRegistry(
 PUTFILE_RETRIES = int(os.environ.get("ADAPTER_PUTFILE_RETRIES", "3") or 3)
 PUTFILE_RETRY_DELAY = float(os.environ.get("ADAPTER_PUTFILE_RETRY_DELAY", "1.0") or 1.0)
 PUTFILE_TIMEOUT = float(os.environ.get("ADAPTER_PUTFILE_TIMEOUT", "30") or 30)
+GETFILE_TIMEOUT = float(os.environ.get("ADAPTER_GETFILE_TIMEOUT", "60") or 60)
 FILES_DOWNLOAD_PATH = "/api/v1/ui/files/download"
+DRIVE_FILE_PATH = "/api/v1/ui/file"
+
+# Types the document viewer may render INLINE. Anything else is sent as an
+# attachment: an inline .html or .svg would execute in the UI's own origin.
+_INLINE_TYPES = {
+    "pdf": "application/pdf",
+    "txt": "text/plain; charset=utf-8",
+    "md": "text/plain; charset=utf-8",
+    "markdown": "text/plain; charset=utf-8",
+    "csv": "text/plain; charset=utf-8",
+    "tsv": "text/plain; charset=utf-8",
+    "log": "text/plain; charset=utf-8",
+    "json": "text/plain; charset=utf-8",
+    "yaml": "text/plain; charset=utf-8",
+    "yml": "text/plain; charset=utf-8",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
 
 # Async UI query channel (spec sec 2.4: the answer takes time, so /ui/ask
 # submits a job and /ui/poll long-polls for it). Long-poll waits are bounded so
@@ -294,6 +341,9 @@ def status_payload():
             "watchdog_seconds": WATCHDOG_SECONDS,
             "storage": STORAGE.status(),
             "sessions": SESSIONS.stats(),
+            "scope": {"header": scope.HEADER_OTHER_DRIVES,
+                      "entitlements": ENTITLEMENTS is not None,
+                      "all_drives": SCOPE_ALL_DRIVES},
             "ws_fs": {"connected": WSFS.connected()},
             "files": FILES.stats(),
             "voice": voice.status(),
@@ -425,8 +475,11 @@ _BARE_QUERY = {
 # Synthesis tasks need broader context coverage than a point question.
 _DEFAULT_TOP_K = {"summary": 8, "report": 10, "tracking": 10,
                   "presentation": 10, "memo": 10}
-# Task parameters accepted from the payload (spec F3/F5 dialog answers).
-_PARAM_KEYS = ("audience", "purpose")
+# Task parameters accepted from the payload: the quick-action dialog answers
+# ("AI Box Quick-action function upgrade"). They shape framing and depth only;
+# the grounding rules always win.
+_PARAM_KEYS = ("audience", "purpose", "coverage", "report_type", "aspect",
+               "keywords", "outcome", "situation", "extra")
 
 # An analysis that silently covered only part of the file would be worse than
 # no analysis, so a truncated whole-document read says so, in the user's
@@ -528,19 +581,25 @@ def parse_action(payload, query):
     return action, mode, q
 
 
-def _file_search(drive, pattern):
-    """#search files: — filename lookup over the metadata mirror, scoped to
-    the VVS-Drive root (spec F7 UX 2.A). No LLM involved; deterministic."""
-    root = corpus.norm(drive)
-    matches = MIRROR.find(root, pattern, files_only=True,
-                          limit=FILE_SEARCH_LIMIT + 1)
+def _file_search(req_scope, pattern):
+    """#search files: — filename lookup over the metadata mirror, across every
+    drive in scope (spec F7 UX 2.A). No LLM involved; deterministic. The
+    active drive is searched first, so it keeps its share of a capped result."""
+    budget = FILE_SEARCH_LIMIT + 1
+    matches = []
+    for root in req_scope.drive_roots:
+        if len(matches) >= budget:
+            break
+        matches.extend(MIRROR.find(root, pattern, files_only=True,
+                                   limit=budget - len(matches)))
     truncated = len(matches) > FILE_SEARCH_LIMIT
     if truncated:
         matches = matches[:FILE_SEARCH_LIMIT]
     lines = ["%s" % m["path"] for m in matches]
     header = "Talált fájlok (%d%s):" % (len(matches), "+" if truncated else "")
     answer = header + ("\n- " + "\n- ".join(lines) if lines else " nincs találat")
-    return {"ok": True, "drive": root, "action": "search", "mode": "files",
+    return {"ok": True, "drive": req_scope.active_root, "action": "search",
+            "mode": "files",
             "pattern": pattern, "files": matches, "answer": answer,
             "truncated": truncated, "limit": FILE_SEARCH_LIMIT,
             "backend": "mirror", "citations": [], "hits": []}
@@ -548,7 +607,7 @@ def _file_search(drive, pattern):
 
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
-            progress_callback=None):
+            progress_callback=None, req_scope=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -563,14 +622,17 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     analysis cannot miss a section just because the question did not name it.
     Every generated answer carries a confidence score (spec: mandatory), and a
     detected hallucination (ungrounded number) suppresses the answer."""
+    if req_scope is None:
+        req_scope = scope.resolve(drive)
     if action == "search" and mode == "files":
-        return _file_search(drive, query)
+        return _file_search(req_scope, query)
     # The UI never sends `lang`: detect it from the question so the guard, the
     # refusal and the audit footer speak the user's language.
     if not lang:
         lang = llm.detect_lang(query) or None
-    corpus_id = corpus.corpus_id_of_drive(drive)
-    history = (SESSIONS.history(user, drive) if history_snapshot is None
+    corpus_id = req_scope.corpus_id
+    history = (SESSIONS.history(user, req_scope.session_scope)
+               if history_snapshot is None
                else [dict(turn) for turn in history_snapshot])
     document = None
     # Conversational mode (plain asks only — quick actions are standalone
@@ -589,8 +651,14 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         if not target:
             raise RagError(400, {"ok": False,
                                  "error": "analyze requires a source file"})
+        try:
+            target_corpus = req_scope.corpus_id_for_path(target)
+        except ValueError:
+            # A bare filename (no drive prefix) is resolved by name inside the
+            # first corpus in scope; a path outside the scope is never reached.
+            target_corpus = req_scope.corpus_ids[0]
         res = rag_post_json("/rag/document_context",
-                            {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
+                            {"corpus_id": target_corpus, "tenant_id": TENANT_ID,
                              "source_path": corpus.norm(target),
                              "max_context_tokens": ANALYZE_MAX_CONTEXT_TOKENS})
         contexts = res.get("contexts", [])
@@ -601,6 +669,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     else:
         res = rag_post_json("/rag/search_context",
                             {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
+                             "corpus_ids": list(req_scope.corpus_ids),
                              "question": retrieval_query, "top_k": top_k,
                              "max_context_tokens": MAX_CONTEXT_TOKENS})
         contexts = res.get("contexts", [])
@@ -662,7 +731,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     # from a disabled/unreachable model is not a turn worth remembering). The
     # history stays footer-free so audit blocks never leak into later prompts.
     if answer:
-        SESSIONS.record(user, drive, query, answer)
+        SESSIONS.record(user, req_scope.session_scope, query, answer)
     # Spec (C6): mandatory "Adatkontroll & Audit Info" footer + audit id on
     # every displayed output; band message (+ degraded metrics on amber).
     aid = confidence.audit_id(user, drive, query, answer or "")
@@ -693,7 +762,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     # box actually retrieved and answered (audit id = the join key).
     TRACES.put(aid, {
         "ts": time.time(), "user": user, "drive": corpus.norm(drive),
-        "corpus_id": corpus_id, "action": action,
+        "corpus_id": corpus_id, "scope": req_scope.as_dict(), "action": action,
         "agent": result["agent"], "lang": lang,
         "question": query,
         "retrieval_query": retrieval_query if retrieval_query != query else None,
@@ -709,11 +778,15 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
                 cancel_event=None):
     if JOBS.start(user, drive, job_id) is None:
         return
+    job = JOBS.get(user, drive, job_id) or {}
+    # The request headers are long gone by the time a queued job runs, so the
+    # scope travels with the job record instead of being re-derived.
+    req_scope = scope.rebuild(drive, (job.get("request") or {}).get("scope_drives"))
     progress = lambda chars, tokens: JOBS.progress(user, drive, job_id, chars, tokens)
     try:
         code, payload = 200, _answer(user, drive, query, top_k, lang, action,
                                      mode, files, params, agent, history_snapshot,
-                                     cancel_event, progress)
+                                     cancel_event, progress, req_scope)
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -891,11 +964,17 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/ui/files":
             self._files_list()
             return
+        if path == "/api/v1/ui/scope":
+            self._scope_info()
+            return
         if path == "/api/v1/ui/jobs":
             self._jobs_list()
             return
         if path == FILES_DOWNLOAD_PATH:
             self._files_download(query)
+            return
+        if path == DRIVE_FILE_PATH:
+            self._drive_file(query)
             return
         if self.path in ("/", ""):
             self._send(200, {"ok": True, "service": "ViVeSec AIBox adapter"})
@@ -1114,13 +1193,31 @@ class Handler(BaseHTTPRequestHandler):
         return (user, drive, query, top_k, payload.get("lang"), action, mode,
                 files, params, agent)
 
+    def _scope_for(self, user, drive, payload):
+        """Resolved scope, narrowed by the body's optional `drives` list.
+        Returns None after sending 403 when the client named a drive it was
+        not entitled to -- the selection may only ever narrow."""
+        resolved = _resolve_scope(self.headers, user, drive)
+        requested = payload.get("drives")
+        if not isinstance(requested, list) or not requested:
+            return resolved
+        try:
+            return resolved.narrow([str(d) for d in requested if d])
+        except ValueError as e:
+            self._send(403, {"ok": False, "error": str(e)})
+            return None
+
     def _query(self):
         if self._locked_guard():
             return
-        parsed = self._read_query(self._read_json())
+        payload = self._read_json()
+        parsed = self._read_query(payload)
         if parsed is None:
             return
-        self._send(200, _answer(*parsed))
+        req_scope = self._scope_for(parsed[0], parsed[1], payload)
+        if req_scope is None:
+            return
+        self._send(200, _answer(*parsed, req_scope=req_scope))
 
     # -- async UI channel: submit a job, then long-poll for it (spec sec 2.4) -
     def _ask(self):
@@ -1132,7 +1229,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         job_id = uuid.uuid4().hex
         user, drive = parsed[0], parsed[1]
-        history_snapshot = SESSIONS.history(user, drive)
+        req_scope = self._scope_for(user, drive, payload)
+        if req_scope is None:
+            return
+        history_snapshot = SESSIONS.history(user, req_scope.session_scope)
         # Where the request was STARTED decides where its result belongs: a chat
         # question answers in the conversation, a quick action in the job list.
         origin = (str(payload.get("origin") or "chat")).strip().lower()
@@ -1141,6 +1241,7 @@ class Handler(BaseHTTPRequestHandler):
         request = {"query": parsed[2], "top_k": parsed[3], "lang": parsed[4],
                    "action": parsed[5], "mode": parsed[6], "files": parsed[7],
                    "params": parsed[8], "agent": parsed[9],
+                   "scope_drives": list(req_scope.drive_roots),
                    "origin": origin, "history": history_snapshot}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
@@ -1310,7 +1411,10 @@ class Handler(BaseHTTPRequestHandler):
         """Save a generated file: render to the requested format, session store
         FIRST, then transfer over the ws-fs channel. permission / no channel ->
         the copy stays stored and is offered for download over the tunnel;
-        'temporary' was already retried by the channel."""
+        'temporary' was already retried by the channel.
+
+        The target is ALWAYS the active VVS-Drive, even when the read scope
+        spans several drives: a generated file needs one unambiguous owner."""
         if self._locked_guard():
             return
         vvs = self._read_vvs()
@@ -1417,6 +1521,23 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {"ok": True, "files": FILES.list(user, drive),
                          "download_path": FILES_DOWNLOAD_PATH})
 
+    def _scope_info(self):
+        """The drives this caller may search. The UI cannot work this out on
+        its own: the entitlement never passes through the browser."""
+        vvs = self._read_vvs()
+        if vvs is None:
+            return
+        user, drive = vvs
+        resolved = _resolve_scope(self.headers, user, drive)
+        self._send(200, {
+            "ok": True,
+            "active_drive": resolved.active_root,
+            "source": resolved.source,
+            "drives": [{"path": root,
+                        "name": root.rsplit("/", 1)[-1],
+                        "active": root == resolved.active_root}
+                       for root in resolved.drive_roots]})
+
     def _files_download(self, query):
         vvs = self._read_vvs()
         if vvs is None:
@@ -1438,6 +1559,61 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _drive_file(self, query):
+        """Serve one drive file, fetched from the ViVeSecBox over ws-fs.
+
+        The document itself never lives on the AI Box, so a citation can only
+        be shown in full by asking the box for it. The box applies its own
+        access rules; the scope is checked here as well, so naming a file in a
+        drive this request was not granted never reaches the channel.
+        """
+        if self._locked_guard():
+            return
+        vvs = self._read_vvs()
+        if vvs is None:
+            return
+        user, drive = vvs
+        raw_path = (urllib.parse.parse_qs(query or "").get("path") or [""])[0]
+        if not raw_path:
+            self._send(400, {"ok": False, "error": "Missing 'path'"})
+            return
+        path = corpus.norm(raw_path)
+        req_scope = _resolve_scope(self.headers, user, drive)
+        if not req_scope.contains_path(path):
+            self._send(403, {"ok": False,
+                             "error": "file outside the request scope"})
+            return
+        try:
+            header, content = WSFS.get_file(user, path, timeout=GETFILE_TIMEOUT)
+        except wsfs.ChannelError as e:
+            self._send(503, {"ok": False, "reason": "no-channel",
+                             "error": "ViVeSecBox not connected: %s" % e})
+            return
+        error = (header or {}).get("error")
+        if error:
+            status = {"permission": 403, "not-found": 404,
+                      "missing": 404, "temporary": 503}.get(error, 502)
+            self._send(status, {"ok": False, "error": error})
+            return
+        if not content:
+            self._send(502, {"ok": False,
+                             "error": "the box returned no file content"})
+            return
+        name = path.rsplit("/", 1)[-1] or "document"
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        ctype = _INLINE_TYPES.get(ext)
+        disposition = "inline" if ctype else "attachment"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype or "application/octet-stream")
+        # Without nosniff the browser could still sniff an octet-stream body
+        # into HTML and run it in our origin.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Disposition",
+                         '%s; filename="%s"' % (disposition, name.replace('"', "_")))
+        self.send_header("Content-Length", str(len(content)))
+        self.end_headers()
+        self.wfile.write(content)
 
     # -- voice I/O (on-box STT/TTS; voice.py) --------------------------------
     def _stt(self):
@@ -1515,6 +1691,10 @@ def main():
         STORAGE.mode, "on" if WATCHDOG_ENFORCES else "off", WATCHDOG_SECONDS))
     print("  Sessions    :", "%s (idle=%ds, %d turns)" % (
         SESSIONS.spill_dir or "(in-memory)", SESSIONS.idle_seconds, SESSIONS.max_turns))
+    print("  Read scope  :", "%s header | entitlements=%s | all-drives=%s" % (
+        scope.HEADER_OTHER_DRIVES,
+        ENTITLEMENTS.path if ENTITLEMENTS else "off",
+        "ON (demo, no per-user filter)" if SCOPE_ALL_DRIVES else "off"))
     print("  Provisioning:", "%s | TLS=%s" % (
         "initialized" if PROVISIONER.is_initialized() else "not initialized",
         "on" if TLS_ENABLED else "off"))

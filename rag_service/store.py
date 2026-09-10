@@ -78,6 +78,26 @@ class EmbeddingConflict(Exception):
 EMPTY_EXTRACTION_WARNING = "extraction_empty"
 
 
+def normalize_corpus_ids(corpus_id=None, corpus_ids=None):
+    """Ordered, de-duplicated corpus list from either contract form.
+
+    The v1 contract carries a single `corpus_id`; a multi-drive request carries
+    `corpus_ids`. Accepting both keeps every existing caller (harness, eval
+    runs, the adapter's analyse path) working unchanged.
+    """
+    raw = corpus_ids if corpus_ids else corpus_id
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    out = []
+    for value in raw:
+        cid = value.strip() if isinstance(value, str) else value
+        if cid and cid not in out:
+            out.append(cid)
+    return out
+
+
 def index_result(doc_id, page_records, chunk_records, source_path, size):
     """Build the ingest response, flagging documents that produced no chunks."""
     result = {
@@ -522,29 +542,35 @@ class RagStore:
         }
 
     # ----- retrieval ---------------------------------------------------------
-    def _vocabulary(self, corpus_id):
-        """The corpus's accented words, rebuilt when the corpus changes."""
+    def _vocabulary(self, corpus_ids):
+        """The scope's accented words, rebuilt when any of its corpora change."""
+        scope = tuple(corpus_ids)
         texts = [
             ch["text"]
-            for doc_id, doc in self._docs.items() if doc.get("corpus_id") == corpus_id
+            for doc_id, doc in self._docs.items() if doc.get("corpus_id") in scope
             for ch in self._chunks.get(doc_id, [])
         ]
-        cached = self._vocabularies.get(corpus_id)
+        cached = self._vocabularies.get(scope)
         if cached is not None and cached[0] == len(texts):
             return cached[1]
         vocabulary = reaccent.build(texts[:REACCENT_MAX_CHUNKS])
-        self._vocabularies[corpus_id] = (len(texts), vocabulary)
+        self._vocabularies[scope] = (len(texts), vocabulary)
         return vocabulary
 
-    def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000):
+    def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000,
+                       corpus_ids=None):
+        scope = normalize_corpus_ids(corpus_id, corpus_ids)
+        if not scope:
+            return [], {"chunk_hits_count": 0, "estimated_tokens": 0}
         with self._lock:
-            self._corpus_embedding_guard(corpus_id, self._corpora.get(corpus_id, {}).get("tenant_id", "default"))
+            for cid in scope:
+                self._corpus_embedding_guard(cid, self._corpora.get(cid, {}).get("tenant_id", "default"))
             if question and REACCENT_ACTIVE:
-                question = self._vocabulary(corpus_id).repair(question)
+                question = self._vocabulary(scope).repair(question)
             qvec = self._embed([question])[0] if question else None
             candidates = []
             for doc_id, doc in self._docs.items():
-                if doc.get("corpus_id") != corpus_id:
+                if doc.get("corpus_id") not in scope:
                     continue
                 for ch in self._chunks.get(doc_id, []):
                     if not ch.get("vector"):
@@ -568,7 +594,7 @@ class RagStore:
                 "chunk_id": ch["chunk_id"],
                 "doc_id": doc["doc_id"],
                 "page_id": ch["page_id"],
-                "corpus_id": corpus_id,
+                "corpus_id": doc.get("corpus_id"),
                 "title": doc.get("title"),
                 "source_path": doc.get("source_path"),
                 "page_number": ch.get("page_number"),

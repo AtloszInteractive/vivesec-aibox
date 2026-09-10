@@ -184,19 +184,20 @@ class FsChannel:
             self._wfile.flush()
 
     def request(self, header, blob=None, timeout=30.0):
-        """Send a numbered request and wait for its ack. Returns the reply
-        header. Raises ChannelError on transport failure/timeout."""
+        """Send a numbered request and wait for its ack. Returns
+        (reply header, reply body); the body is empty for replies that carry
+        no payload. Raises ChannelError on transport failure/timeout."""
         num = self._next_num()
         header = dict(header)
         header["num"] = num
-        slot = {"event": threading.Event(), "reply": None}
+        slot = {"event": threading.Event(), "reply": None, "blob": b""}
         with self._pending_lock:
             self._pending[num] = slot
         try:
             self.send_message(header, blob)
             if not slot["event"].wait(timeout):
                 raise ChannelError("timeout waiting for ack %d" % num)
-            return slot["reply"]
+            return slot["reply"], slot["blob"]
         finally:
             with self._pending_lock:
                 self._pending.pop(num, None)
@@ -210,17 +211,30 @@ class FsChannel:
         attempts = max(1, int(retries))
         reply = None
         for i in range(attempts):
-            reply = self.request({"type": "put-file", "user": user,
-                                  "drive": drive, "name": name},
-                                 blob=content, timeout=timeout)
+            reply, _blob = self.request({"type": "put-file", "user": user,
+                                         "drive": drive, "name": name},
+                                        blob=content, timeout=timeout)
             if (reply or {}).get("error") != "temporary":
                 return reply
             if i < attempts - 1:
                 sleep(retry_delay)
         return reply
 
+    def get_file(self, user, path, timeout=30.0):
+        """The get-file client flow (docs/aibox_patch_0902.md): the box returns
+        the JSON header, a newline and the file content on success, and a bare
+        JSON header with `error` on failure.
+
+        Returns (header, content). NOT retried: the error vocabulary for reads
+        is not part of the contract yet, so a retry could hammer the box for a
+        condition that will never clear.
+        """
+        reply, blob = self.request({"type": "get-file", "user": user,
+                                    "path": path}, timeout=timeout)
+        return (reply or {}), blob
+
     # -- incoming ------------------------------------------------------------
-    def _resolve_ack(self, header):
+    def _resolve_ack(self, header, blob=b""):
         try:
             num = int(header.get("ack"))
         except (TypeError, ValueError):
@@ -229,6 +243,7 @@ class FsChannel:
             slot = self._pending.get(num)
         if slot is not None:
             slot["reply"] = header
+            slot["blob"] = blob or b""
             slot["event"].set()
 
     def _handle_request(self, header):
@@ -264,11 +279,11 @@ class FsChannel:
                     continue
                 if opcode == OP_PONG:
                     continue
-                header, _blob = parse_message(payload)
+                header, blob = parse_message(payload)
                 if header is None:
                     continue  # spec: no response
                 if "ack" in header:
-                    self._resolve_ack(header)
+                    self._resolve_ack(header, blob)
                 elif "num" in header:
                     self._handle_request(header)
                 # neither num nor ack -> unparseable basic fields -> silence
@@ -287,6 +302,7 @@ class FsChannel:
         with self._pending_lock:
             for slot in self._pending.values():
                 slot["reply"] = {"error": "channel-closed"}
+                slot["blob"] = b""
                 slot["event"].set()
         if self._on_close is not None:
             try:
@@ -329,3 +345,9 @@ class FsChannelHub:
             raise ChannelError("no ws-fs channel connected")
         return ch.put_file(user, drive, name, content, retries=retries,
                            retry_delay=retry_delay, timeout=timeout)
+
+    def get_file(self, user, path, timeout=30.0):
+        ch = self.get()
+        if ch is None:
+            raise ChannelError("no ws-fs channel connected")
+        return ch.get_file(user, path, timeout=timeout)

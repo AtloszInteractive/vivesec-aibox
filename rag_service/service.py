@@ -34,7 +34,14 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from store import MIN_SCORE, REACCENT_ACTIVE, RagStore, EmbeddingConflict, norm_path  # noqa: E402
+from store import (  # noqa: E402
+    MIN_SCORE,
+    REACCENT_ACTIVE,
+    RagStore,
+    EmbeddingConflict,
+    norm_path,
+    normalize_corpus_ids,
+)
 
 HOST = os.environ.get("RAG_HOST", "127.0.0.1")
 PORT = int(os.environ.get("RAG_PORT", "8090"))
@@ -266,13 +273,15 @@ class Handler(BaseHTTPRequestHandler):
     # ----- retrieval ---------------------------------------------------------
     def _search_context(self):
         body = self._read_json()
-        corpus_id = body.get("corpus_id")
+        # `corpus_ids` is the multi-drive form; `corpus_id` stays valid so the
+        # harness and every recorded eval run keep working unchanged.
+        scope = normalize_corpus_ids(body.get("corpus_id"), body.get("corpus_ids"))
         question = body.get("question")
-        if not corpus_id or not question:
+        if not scope or not question:
             raise HttpError(400, "corpus_id and question are required")
         top_k = int(body.get("top_k") or 3)
         max_tokens = int(body.get("max_context_tokens") or 4000)
-        contexts, debug = STORE.search_context(corpus_id, question, top_k, max_tokens)
+        contexts, debug = STORE.search_context(scope, question, top_k, max_tokens)
         out = {"contexts": contexts}
         if body.get("include_debug"):
             out["debug"] = debug

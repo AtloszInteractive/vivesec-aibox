@@ -53,6 +53,7 @@ from store import (  # noqa: E402
     _estimate_tokens,
     index_result,
     norm_path,
+    normalize_corpus_ids,
     under,
 )
 
@@ -476,37 +477,46 @@ class SqliteVecStore:
         }
 
     # ----- retrieval ---------------------------------------------------------
-    def _vocabulary(self, corpus_id):
-        """The corpus's accented words, rebuilt when the corpus changes."""
+    def _vocabulary(self, corpus_ids):
+        """The scope's accented words, rebuilt when any of its corpora change."""
+        scope = tuple(corpus_ids)
+        marks = ",".join("?" * len(scope))
         signature = self._conn.execute(
-            "SELECT COUNT(*), IFNULL(MAX(rowid), 0) FROM chunks WHERE corpus_id=?",
-            (corpus_id,),
+            "SELECT COUNT(*), IFNULL(MAX(rowid), 0) FROM chunks "
+            "WHERE corpus_id IN (%s)" % marks,
+            scope,
         ).fetchone()
-        cached = self._vocabularies.get(corpus_id)
+        cached = self._vocabularies.get(scope)
         if cached is not None and cached[0] == signature:
             return cached[1]
         rows = self._conn.execute(
-            "SELECT text FROM chunks WHERE corpus_id=? LIMIT ?",
-            (corpus_id, REACCENT_MAX_CHUNKS),
+            "SELECT text FROM chunks WHERE corpus_id IN (%s) LIMIT ?" % marks,
+            scope + (REACCENT_MAX_CHUNKS,),
         )
         vocabulary = reaccent.build(text for (text,) in rows)
-        self._vocabularies[corpus_id] = (signature, vocabulary)
+        self._vocabularies[scope] = (signature, vocabulary)
         return vocabulary
 
-    def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000):
+    def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000,
+                       corpus_ids=None):
+        scope = normalize_corpus_ids(corpus_id, corpus_ids)
+        if not scope:
+            return [], {"chunk_hits_count": 0, "estimated_tokens": 0}
         with self._lock:
-            tenant = "default"
-            row = self._conn.execute(
-                "SELECT tenant_id FROM corpora WHERE corpus_id=?", (corpus_id,)
-            ).fetchone()
-            if row is not None and row[0]:
-                tenant = row[0]
-            self._corpus_embedding_guard(corpus_id, tenant)
-
-            total = self._conn.execute(
-                "SELECT COUNT(*) FROM chunks WHERE corpus_id=? AND vec_rowid IS NOT NULL",
-                (corpus_id,),
-            ).fetchone()[0]
+            totals = {}
+            for cid in scope:
+                tenant = "default"
+                row = self._conn.execute(
+                    "SELECT tenant_id FROM corpora WHERE corpus_id=?", (cid,)
+                ).fetchone()
+                if row is not None and row[0]:
+                    tenant = row[0]
+                self._corpus_embedding_guard(cid, tenant)
+                totals[cid] = self._conn.execute(
+                    "SELECT COUNT(*) FROM chunks WHERE corpus_id=? AND vec_rowid IS NOT NULL",
+                    (cid,),
+                ).fetchone()[0]
+            total = sum(totals.values())
 
             k = max(top_k, 0)
             if not question or not self._vec_ready or k == 0 or total == 0:
@@ -514,8 +524,10 @@ class SqliteVecStore:
 
             queries = query_split.split_question(question)
             if REACCENT_ACTIVE:
-                vocabulary = self._vocabulary(corpus_id)
+                vocabulary = self._vocabulary(scope)
                 queries = [vocabulary.repair(q) for q in queries]
+            # The question is embedded ONCE for the whole scope: the embedding
+            # is the expensive step, the per-partition scan is not.
             qvecs = [v for v in self._embed(queries) if v]
             if not qvecs:
                 return [], {"chunk_hits_count": total, "estimated_tokens": 0}
@@ -523,20 +535,28 @@ class SqliteVecStore:
             k = min(k, total)
             runs = []
             for qvec in qvecs:
-                rows = self._conn.execute(
-                    "SELECT chunk_id, distance FROM chunk_vectors "
-                    "WHERE corpus_id=? AND embedding MATCH ? AND k=? ORDER BY distance",
-                    (corpus_id, sqlite_vec.serialize_float32(qvec), k),
-                ).fetchall()
+                blob = sqlite_vec.serialize_float32(qvec)
                 kept = []
-                for chunk_id, distance in rows:
-                    score = 1.0 - float(distance)
-                    # Rows arrive best-first, so the first one under the floor
-                    # ends this sub-question's list.
-                    if MIN_SCORE_ACTIVE and score < MIN_SCORE:
-                        break
-                    kept.append((chunk_id, score))
-                runs.append(kept)
+                for cid in scope:
+                    if not totals[cid]:
+                        continue
+                    rows = self._conn.execute(
+                        "SELECT chunk_id, distance FROM chunk_vectors "
+                        "WHERE corpus_id=? AND embedding MATCH ? AND k=? ORDER BY distance",
+                        (cid, blob, min(k, totals[cid])),
+                    ).fetchall()
+                    for chunk_id, distance in rows:
+                        score = 1.0 - float(distance)
+                        # Rows arrive best-first, so the first one under the floor
+                        # ends this corpus's list.
+                        if MIN_SCORE_ACTIVE and score < MIN_SCORE:
+                            break
+                        kept.append((chunk_id, score))
+                # Corpora compete on one cosine scale per sub-question; the
+                # sub-questions themselves are interleaved afterwards, so a
+                # strong corpus cannot take every slot from a sub-question.
+                kept.sort(key=lambda hit: hit[1], reverse=True)
+                runs.append(kept[:k])
             hits = query_split.interleave(runs, k)
 
             contexts = []
@@ -544,7 +564,7 @@ class SqliteVecStore:
             for chunk_id, score in hits:
                 row = self._conn.execute(
                     "SELECT c.doc_id, c.page_id, c.page_number, c.section_path, c.text, "
-                    "d.title, d.source_path, d.file, d.mtime, d.size "
+                    "c.corpus_id, d.title, d.source_path, d.file, d.mtime, d.size "
                     "FROM chunks c JOIN documents d ON c.doc_id=d.doc_id "
                     "WHERE c.chunk_id=?",
                     (chunk_id,),
@@ -552,7 +572,7 @@ class SqliteVecStore:
                 if row is None:
                     continue
                 (doc_id, page_id, page_number, section_path, text,
-                 title, source_path, file_flag, mtime, size) = row
+                 chunk_corpus, title, source_path, file_flag, mtime, size) = row
                 est = _estimate_tokens(text)
                 if contexts and used_tokens + est > max_context_tokens:
                     break
@@ -561,7 +581,7 @@ class SqliteVecStore:
                     "chunk_id": chunk_id,
                     "doc_id": doc_id,
                     "page_id": page_id,
-                    "corpus_id": corpus_id,
+                    "corpus_id": chunk_corpus,
                     "title": title,
                     "source_path": source_path,
                     "page_number": page_number,

@@ -100,6 +100,13 @@ def vvs(path):
     return base64.urlsafe_b64encode(path.encode("utf-8")).decode("ascii")
 
 
+def other_drives(*paths):
+    """Encode a VVS-Other-Drives header: urlsafe base64 of the UTF-8 drive
+    paths joined by NUL bytes (docs/aibox_patch_0902.md)."""
+    blob = "\x00".join(paths).encode("utf-8")
+    return base64.urlsafe_b64encode(blob).decode("ascii")
+
+
 def wait_up(base, path, timeout=20):
     end = time.time() + timeout
     while time.time() < end:
@@ -1086,8 +1093,10 @@ def test_action_parse_unit():
           all(a in llm.TASK_INSTRUCTIONS
               for a in ("summary", "report", "tracking", "presentation", "memo")),
           sorted(llm.TASK_INSTRUCTIONS))
-    check("param keys are audience+purpose",
-          set(service._PARAM_KEYS) == {"audience", "purpose"},
+    check("param keys cover the quick-action dialog answers",
+          set(service._PARAM_KEYS) == {"audience", "purpose", "coverage",
+                                       "report_type", "aspect", "keywords",
+                                       "outcome", "situation", "extra"},
           service._PARAM_KEYS)
     # trailing-refusal strip (structured tasks): appended refusal removed,
     # pure refusal answer left intact
@@ -1169,7 +1178,7 @@ def test_wsfs_unit():
     ch = wsfs.FsChannel(io.BytesIO(), io.BytesIO())
     replies = [{"error": "temporary"}, {"error": "temporary"}, {"path": "V/x.txt"}]
     calls = []
-    ch.request = lambda h, blob=None, timeout=0: (calls.append(h), replies[len(calls) - 1])[1]
+    ch.request = lambda h, blob=None, timeout=0: (calls.append(h), (replies[len(calls) - 1], b""))[1]
     naps = []
     out = ch.put_file("u", "/d/f", "x.txt", b"data", retries=3,
                       retry_delay=0.5, sleep=naps.append)
@@ -1186,6 +1195,26 @@ def test_wsfs_unit():
                       retry_delay=0, sleep=lambda s: None)
     check("ws put-file exhausts retries -> temporary",
           out == {"error": "temporary"} and len(calls) == 3, (out, calls))
+
+    # get-file: the reply BODY is the whole point of the read, and the ack
+    # handler used to drop it -- a regression here would silently return an
+    # empty document.
+    ch = wsfs.FsChannel(io.BytesIO(), io.BytesIO())
+    slot = {"event": threading.Event(), "reply": None, "blob": b""}
+    ch._pending[7] = slot
+    ch._resolve_ack({"ack": 7, "path": "/storage/drives/finance/a.pdf"}, b"%PDF-1.4")
+    check("ws ack carries the payload",
+          slot["blob"] == b"%PDF-1.4" and slot["event"].is_set(), slot)
+
+    ch = wsfs.FsChannel(io.BytesIO(), io.BytesIO())
+    ch.request = lambda h, blob=None, timeout=0: ({"path": h["path"], "size": 4}, b"DATA")
+    hdr, body = ch.get_file("u", "/storage/drives/finance/a.pdf")
+    check("ws get-file returns the content",
+          body == b"DATA" and hdr.get("size") == 4, (hdr, body))
+    ch.request = lambda h, blob=None, timeout=0: ({"error": "not-found"}, b"")
+    hdr, body = ch.get_file("u", "/storage/drives/finance/missing.pdf")
+    check("ws get-file error carries no content",
+          hdr.get("error") == "not-found" and body == b"", (hdr, body))
 
     # session file store: sanitization + isolation + purge
     check("filestore traversal stripped",
@@ -1811,6 +1840,28 @@ def main():
         check("save without channel renders pdf",
               resp.get("name") == "brief.pdf" and resp.get("format") == "pdf"
               and resp.get("transferred") is False, resp)
+
+        # -- writes stay drive-scoped even when reads are not ---------------
+        # A wider read scope must not make the write target ambiguous: the
+        # active drive owns the generated file.
+        wide_h = dict(vvs_h)
+        wide_h["VVS-Other-Drives"] = other_drives(hr + "/")
+        _, wide_save = post_json(adapter_base, "/api/v1/ui/save",
+                                 {"name": "scoped.md", "text": "# scoped"},
+                                 headers=wide_h)
+        saved_name = wide_save.get("name")
+        check("save succeeds with a wider read scope",
+              wide_save.get("ok") is True and bool(saved_name), wide_save)
+        _, active_files = get_json(adapter_base, "/api/v1/ui/files", headers=wide_h)
+        check("generated file lands on the active drive",
+              any(f.get("name") == saved_name
+                  for f in active_files.get("files", [])), active_files)
+        _, other_files = get_json(adapter_base, "/api/v1/ui/files",
+                                  headers={"VVS-Drive": vvs(hr + "/"),
+                                           "VVS-User": "u-1"})
+        check("a drive that was only readable does not receive it",
+              all(f.get("name") != saved_name
+                  for f in other_files.get("files", [])), other_files)
         data = get_raw(adapter_base, resp["download"], headers=vvs_h)
         check("stored pdf downloads as pdf", data.startswith(b"%PDF-"), data[:16])
 
@@ -1834,6 +1885,67 @@ def main():
                          headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1"})
         check("finance never returns hr docs",
               all(not x["path"].startswith(hr) for x in q3.get("hits", [])), q3)
+
+        # -- read scope: VVS-Other-Drives widens the search -----------------
+        # Same question, same active drive as q3: only the header may make the
+        # second drive reachable, so this is the whole feature in one check.
+        _, q4 = post_json(adapter_base, "/api/v1/ui/query",
+                         {"query": "vacation days", "top_k": 3},
+                         headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1",
+                                  "VVS-Other-Drives": other_drives(hr + "/")})
+        check("other-drives header reaches the second drive",
+              any(x["path"].startswith(hr) for x in q4.get("hits", [])), q4)
+        check("widened answer still reports the active corpus",
+              q4.get("corpus_id") == fin_corpus, q4)
+        _, q5 = post_json(adapter_base, "/api/v1/ui/query",
+                         {"query": "vacation days", "top_k": 3},
+                         headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1",
+                                  "VVS-Other-Drives": "not-base64!!"})
+        check("malformed other-drives degrades to the active drive",
+              all(not x["path"].startswith(hr) for x in q5.get("hits", [])), q5)
+        _, q6 = post_json(adapter_base, "/api/v1/ui/query",
+                         {"query": "vacation days", "top_k": 3},
+                         headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1",
+                                  "VVS-Other-Drives": other_drives("/etc")})
+        check("other-drives outside the drive prefix is ignored",
+              all(not x["path"].startswith(hr) for x in q6.get("hits", [])), q6)
+
+        # -- the client may narrow the scope, never widen it ----------------
+        _, sc = get_json(adapter_base, "/api/v1/ui/scope",
+                         headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1",
+                                  "VVS-Other-Drives": other_drives(hr + "/")})
+        check("scope endpoint lists the entitled drives",
+              {d["path"] for d in sc.get("drives", [])} == {fin, hr}, sc)
+        check("scope endpoint marks the active drive",
+              [d["path"] for d in sc.get("drives", []) if d.get("active")] == [fin], sc)
+        _, narrowed = post_json(adapter_base, "/api/v1/ui/query",
+                               {"query": "vacation days", "top_k": 3,
+                                "drives": [hr + "/"]},
+                               headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1",
+                                        "VVS-Other-Drives": other_drives(hr + "/")})
+        check("narrowing keeps only the selected drive",
+              narrowed.get("hits") and
+              all(x["path"].startswith(hr) for x in narrowed["hits"]), narrowed)
+        widened = post_json_expect_error(
+            adapter_base, "/api/v1/ui/query",
+            {"query": "vacation days", "drives": [hr + "/"]},
+            headers={"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1"})
+        check("selecting an unentitled drive -> 403",
+              widened and widened[0] == 403, widened)
+
+        # The async path persists the scope in the job record; restoring it
+        # must not quietly put the active drive back into the search.
+        wide_ask_h = {"VVS-Drive": vvs(fin + "/"), "VVS-User": "u-1",
+                      "VVS-Other-Drives": other_drives(hr + "/")}
+        _, nsub = post_json(adapter_base, "/api/v1/ui/ask",
+                            {"query": "vacation days", "top_k": 3,
+                             "drives": [hr + "/"]}, headers=wide_ask_h)
+        _, npol = post_json(adapter_base, "/api/v1/ui/poll",
+                            {"job_id": nsub.get("job_id"), "timeout": 30},
+                            headers=wide_ask_h)
+        check("queued job keeps the narrowed scope",
+              npol.get("hits") and
+              all(x["path"].startswith(hr) for x in npol["hits"]), npol)
 
         # -- bad path (not under drive prefix) -----------------------------
         err = post_json_expect_error(adapter_base, "/api/v1/index/upsert/directory",

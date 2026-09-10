@@ -220,6 +220,23 @@ TASK_INSTRUCTIONS = {
         "there, never the word 'Title' or any other placeholder. Then, on the "
         "following lines: 'Core message: ' (1-2 sentences) and 'Suggested "
         "visuals: ' (only data that appears in CONTEXT).\n"
+        "Aim for this six-part arc, and DROP any part CONTEXT cannot support: "
+        "(1) title and strategic framing, (2) current state or problem with "
+        "baseline figures, (3) the proposed strategy or solution, (4) the key "
+        "metrics and their financial or operational impact, (5) the execution "
+        "roadmap with its risks, (6) the decision asked for and the next "
+        "steps with owners and dates.\n"
+        "Adapt the framing to the department the audience and purpose imply, "
+        "and prefer that department's metrics WHEN CONTEXT CONTAINS THEM: "
+        "sales -> pipeline conversion, ARR/MRR, win rate, acquisition cost; "
+        "marketing -> campaign ROI, CAC/LTV, lead generation, reach; "
+        "leadership or board -> EBITDA, enterprise risk, strategic roadmap; "
+        "IT and security -> uptime, vulnerability SLAs, compliance; "
+        "HR -> retention, headcount, eNPS, training completion; "
+        "logistics or operations -> SLA compliance, cycle time, bottlenecks; "
+        "financial -> CAPEX/OPEX, budget variance, burn rate, ROI/payback. "
+        "The department changes the emphasis and the wording, never the facts: "
+        "a metric that is not in CONTEXT stays out of the deck.\n"
         "When — and ONLY when — CONTEXT gives at least two comparable figures "
         "for that slide (plan vs actual, a quarterly series, a split by unit), "
         "add one more line in EXACTLY this machine-readable form so the deck "
@@ -574,7 +591,9 @@ def generate(question, contexts, lang=None, history=None, task=None,
     system = persona_for(agent) + "\n\n" + _build_guard(lang, has_history=bool(history))
     task_block = TASK_INSTRUCTIONS.get(task or "")
     if task_block and params:
-        plines = ["- %s: %s" % (k, v) for k, v in sorted(params.items()) if v]
+        # Payload keys are snake_case; the model reads the label, not the key.
+        plines = ["- %s: %s" % (k.replace("_", " "), v)
+                  for k, v in sorted(params.items()) if v]
         if plines:
             task_block += ("\nPARAMETERS — tailor the tone, depth and framing "
                            "to these (they never override the grounding "

@@ -95,6 +95,18 @@ def box_path(drive, subdir, name):
     return "/".join(p for p in parts if p)
 
 
+def local_path(path):
+    """Box absolute file path -> the local file under sim/drives, or None when
+    it is not a drive path. '..' segments are dropped, so a read cannot climb
+    out of the simulated drive root."""
+    raw = (path or "").strip()
+    if not raw.startswith(STORAGE_PREFIX):
+        return None
+    parts = [p for p in raw[len(STORAGE_PREFIX):].split("/")
+             if p and p not in (".", "..")]
+    return os.path.join(DRIVES_ROOT, *parts) if parts else None
+
+
 class BoxSim(object):
     def __init__(self, sock, reader, subdir, reject, keepalive):
         self._sock = sock
@@ -148,6 +160,32 @@ class BoxSim(object):
             % (base, len(blob), header.get("user"), os.path.join(folder, base)))
         self.send({"type": "put-file", "ack": ack, "path": stored})
 
+    def handle_get_file(self, header):
+        """Answer a read: JSON header + newline + content on success, a bare
+        JSON header with `error` on failure (docs/aibox_patch_0902.md)."""
+        ack = header.get("num")
+        path = header.get("path") or ""
+        if self._reject:
+            log("get-file %s -> REJECTED (%s)" % (path, self._reject))
+            self.send({"type": "get-file", "ack": ack, "error": self._reject})
+            return
+        local = local_path(path)
+        if local is None or not os.path.isfile(local):
+            log("get-file %s -> not found (%s)" % (path, local))
+            self.send({"type": "get-file", "ack": ack, "error": "not-found"})
+            return
+        try:
+            with open(local, "rb") as f:
+                content = f.read()
+        except OSError as e:
+            log("get-file %s -> read failed: %s" % (path, e))
+            self.send({"type": "get-file", "ack": ack, "error": "temporary"})
+            return
+        log("get-file %s (%d bytes, user=%s)" % (path, len(content),
+                                                 header.get("user")))
+        self.send({"type": "get-file", "ack": ack, "path": path,
+                   "size": len(content)}, content)
+
     def serve(self):
         ka = threading.Thread(target=self.keepalive_loop, daemon=True)
         ka.start()
@@ -169,6 +207,8 @@ class BoxSim(object):
                     continue
                 if header.get("type") == "put-file" and "num" in header:
                     self.handle_put_file(header, blob)
+                elif header.get("type") == "get-file" and "num" in header:
+                    self.handle_get_file(header)
                 elif "ack" in header:
                     continue  # our keepalive came back
                 elif "num" in header:
