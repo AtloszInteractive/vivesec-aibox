@@ -18,6 +18,7 @@ import {
   adapterDemoConfig,
   adapterSession,
   adapterDownloadGenerated,
+  adapterDriveFile,
   adapterDriveFiles,
   adapterFeedback,
   adapterGeneratedFiles,
@@ -25,6 +26,7 @@ import {
   adapterListJobs,
   adapterMarkJobSeen,
   adapterSave,
+  adapterScope,
   adapterSpeak,
   adapterStatus,
   adapterStatusRaw,
@@ -149,8 +151,19 @@ const askInput = z.object({
   mode: z.enum(["files", "text"]).optional(),
   audience: z.string().optional(),
   purpose: z.string().optional(),
+  // Remaining quick-action dialog answers ("Quick-action function upgrade").
+  coverage: z.string().optional(),
+  report_type: z.string().optional(),
+  aspect: z.string().optional(),
+  keywords: z.string().optional(),
+  outcome: z.string().optional(),
+  situation: z.string().optional(),
+  extra: z.string().optional(),
   // Source files picked in the F1/F3/F5 dialog (adapter-side filter).
   files: z.array(z.string()).optional(),
+  // Search scope selection. Narrows the drives the box already granted; the
+  // adapter refuses anything wider with a 403.
+  drives: z.array(z.string()).optional(),
 });
 
 export async function askRag({ data }: { data: z.input<typeof askInput> }): Promise<RagAskResult> {
@@ -171,7 +184,15 @@ export async function askRag({ data }: { data: z.input<typeof askInput> }): Prom
       mode: data.mode,
       audience: data.audience,
       purpose: data.purpose,
+      coverage: data.coverage,
+      report_type: data.report_type,
+      aspect: data.aspect,
+      keywords: data.keywords,
+      outcome: data.outcome,
+      situation: data.situation,
+      extra: data.extra,
       files: data.files,
+      drives: data.drives,
       topK: data.action ? undefined : 5,
     });
 
@@ -238,7 +259,15 @@ function adapterInput(data: z.input<typeof askInput>) {
     mode: data.mode,
     audience: data.audience,
     purpose: data.purpose,
+    coverage: data.coverage,
+    report_type: data.report_type,
+    aspect: data.aspect,
+    keywords: data.keywords,
+    outcome: data.outcome,
+    situation: data.situation,
+    extra: data.extra,
     files: data.files,
+    drives: data.drives,
     topK: data.action ? undefined : 5,
   };
 }
@@ -403,6 +432,20 @@ export type DriveList = {
   picker: boolean;
   error?: string;
 };
+
+export type ScopeDrive = { path: string; name: string; active: boolean };
+export type ScopeInfo = { ok: boolean; activeDrive: string; drives: ScopeDrive[] };
+
+/** The drives this session may search. Server-resolved: the entitlement never
+ *  reaches the browser, so a selection can only ever narrow this list. */
+export async function listScope(drive?: string): Promise<ScopeInfo> {
+  try {
+    const scope = await adapterScope({ drive });
+    return { ok: scope.ok, activeDrive: scope.activeDrive, drives: scope.drives };
+  } catch {
+    return { ok: false, activeDrive: drive ?? "", drives: [] };
+  }
+}
 
 export async function listDrives(): Promise<DriveList> {
   // Embedded there is no demo-config endpoint, so the picker stays off and the
@@ -680,8 +723,24 @@ export async function downloadGenerated({
   }
 }
 
-/* ------------------------------- Voice I/O ------------------------------- */
+export type DriveDocument = {
+  ok: boolean;
+  blob?: Blob;
+  contentType?: string;
+  error?: string;
+};
 
+/** Fetch one drive document in full, straight from the ViVeSecBox.
+ *  Used by the viewer: the AI Box never stored the file itself. */
+export async function openDriveDocument(path: string, drive?: string): Promise<DriveDocument> {
+  try {
+    return await adapterDriveFile({ path, drive });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "the box did not answer" };
+  }
+}
+
+/* ------------------------------- Voice I/O ------------------------------- */
 export type TranscriptResult = { ok: boolean; text: string; error?: string };
 
 /** Recorded utterance -> text, transcribed on the box. The text is then sent

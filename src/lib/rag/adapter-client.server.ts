@@ -90,11 +90,20 @@ export type AdapterAskInput = {
   action?: AdapterAction;
   /** Only meaningful for the search action: filename lookup vs. grounded text. */
   mode?: "files" | "text";
-  /** F3/F5 dialog answers forwarded as PARAMETERS to the generator. */
+  /** Quick-action dialog answers forwarded as PARAMETERS to the generator. */
   audience?: string;
   purpose?: string;
+  coverage?: string;
+  report_type?: string;
+  aspect?: string;
+  keywords?: string;
+  outcome?: string;
+  situation?: string;
+  extra?: string;
   /** Source files picked in the drive dialog (adapter _answer files filter). */
   files?: string[];
+  /** Search scope selection. May only NARROW what the box already granted. */
+  drives?: string[];
 };
 
 // This module runs in both worlds: in the browser (embedded UI + demo UI) every
@@ -263,7 +272,15 @@ export async function adapterAsk(input: AdapterAskInput): Promise<AdapterAnswer>
       mode: input.mode,
       audience: input.audience,
       purpose: input.purpose,
+      coverage: input.coverage,
+      report_type: input.report_type,
+      aspect: input.aspect,
+      keywords: input.keywords,
+      outcome: input.outcome,
+      situation: input.situation,
+      extra: input.extra,
       files: input.files?.length ? input.files : undefined,
+      drives: input.drives?.length ? input.drives : undefined,
     }),
     signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
   });

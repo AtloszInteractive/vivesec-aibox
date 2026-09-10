@@ -89,11 +89,21 @@ export type AdapterAskInput = {
   action?: AdapterAction;
   /** Only meaningful for the search action: filename lookup vs. grounded text. */
   mode?: "files" | "text";
-  /** F3/F5 dialog answers forwarded as PARAMETERS to the generator. */
+  /** Quick-action dialog answers forwarded as PARAMETERS to the generator. */
   audience?: string;
   purpose?: string;
+  coverage?: string;
+  report_type?: string;
+  aspect?: string;
+  keywords?: string;
+  outcome?: string;
+  situation?: string;
+  extra?: string;
   /** Source files picked in the drive dialog (adapter _answer files filter). */
   files?: string[];
+  /** Search scope selection. May only NARROW what the box already granted;
+   *  the adapter answers 403 for anything else. */
+  drives?: string[];
   /** Where the request was started; only background runs join the job list. */
   origin?: "chat" | "background";
 };
@@ -334,6 +344,48 @@ export function adapterSession(): Promise<SessionInfo> {
   return sessionRequest;
 }
 
+export type AdapterScopeDrive = { path: string; name: string; active: boolean };
+export type AdapterScope = {
+  ok: boolean;
+  activeDrive: string;
+  source: string;
+  drives: AdapterScopeDrive[];
+};
+
+/**
+ * GET /api/v1/ui/scope — the drives this session may search. The entitlement
+ * never passes through the browser, so the UI cannot derive it locally.
+ */
+export async function adapterScope(input?: {
+  drive?: string;
+  user?: string;
+}): Promise<AdapterScope> {
+  const drive = input?.drive ?? demoDrive();
+  const user = input?.user ?? demoUser();
+  const empty: AdapterScope = { ok: false, activeDrive: drive, source: "", drives: [] };
+  try {
+    const res = await apiFetch(`${adapterUrl()}/api/v1/ui/scope`, {
+      headers: vvsHeaders(drive, user),
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    });
+    if (!res.ok) return empty;
+    const j = await safeJson(res);
+    const drives = Array.isArray(j.drives) ? j.drives : [];
+    return {
+      ok: true,
+      activeDrive: typeof j.active_drive === "string" ? j.active_drive : drive,
+      source: typeof j.source === "string" ? j.source : "",
+      drives: drives.map((d: Record<string, unknown>) => ({
+        path: String(d.path ?? ""),
+        name: String(d.name ?? ""),
+        active: Boolean(d.active),
+      })),
+    };
+  } catch {
+    return empty;
+  }
+}
+
 /**
  * Agentic query over the async long-poll channel: submit the job (/ui/ask),
  * then bounded long-poll (/ui/poll) until it completes. The VVS-Drive header is
@@ -358,7 +410,15 @@ export async function adapterSubmitJob(input: AdapterAskInput): Promise<AdapterJ
       mode: input.mode,
       audience: input.audience,
       purpose: input.purpose,
+      coverage: input.coverage,
+      report_type: input.report_type,
+      aspect: input.aspect,
+      keywords: input.keywords,
+      outcome: input.outcome,
+      situation: input.situation,
+      extra: input.extra,
       files: input.files?.length ? input.files : undefined,
+      drives: input.drives?.length ? input.drives : undefined,
       origin: input.origin ?? "chat",
     }),
     signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
@@ -766,13 +826,50 @@ export async function adapterDownloadGenerated(input: {
   };
 }
 
+/** How long the box may take to hand over a document (ws-fs round trip). */
+const DRIVE_FILE_TIMEOUT_MS = 60_000;
+
+/** GET /api/v1/ui/file — the ORIGINAL document, fetched from the ViVeSecBox.
+ *
+ * The AI Box only ever stored the passages it retrieved, so showing the real
+ * document means asking the box for it. The adapter re-checks the read scope,
+ * so a path outside this request's drives comes back as 403 rather than bytes.
+ */
+export async function adapterDriveFile(input: {
+  path: string;
+  drive?: string;
+  user?: string;
+}): Promise<{ ok: boolean; blob?: Blob; contentType?: string; error?: string }> {
+  const drive = input.drive ?? demoDrive();
+  const user = input.user ?? demoUser();
+  const qs = new URLSearchParams({ path: input.path }).toString();
+  let res: Response;
+  try {
+    res = await apiFetch(`${adapterUrl()}/api/v1/ui/file?${qs}`, {
+      method: "GET",
+      headers: vvsHeaders(drive, user),
+      signal: AbortSignal.timeout(DRIVE_FILE_TIMEOUT_MS),
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "request failed" };
+  }
+  if (!res.ok) {
+    const j = await safeJson(res);
+    return { ok: false, error: (j.error as string) ?? `HTTP ${res.status}` };
+  }
+  return {
+    ok: true,
+    blob: await res.blob(),
+    contentType: res.headers.get("content-type") ?? "application/octet-stream",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Voice I/O. Speech is only an input and an output shell around the SAME
 // grounded pipeline: /ui/stt returns text that is then sent through /ui/ask
 // exactly as if it had been typed, and /ui/tts reads back an answer that was
 // already produced, cited and scored. Nothing about retrieval changes.
 // ---------------------------------------------------------------------------
-
 const STT_TIMEOUT_MS = 120_000;
 const TTS_TIMEOUT_MS = 120_000;
 

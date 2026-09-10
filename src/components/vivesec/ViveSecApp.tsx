@@ -28,6 +28,7 @@ import {
   listDriveChildren,
   listDriveFiles,
   listDrives,
+  listScope,
   sessionUser,
   listGeneratedFiles,
   listRagJobs,
@@ -38,11 +39,13 @@ import {
   sendFeedback,
   submitRagJob,
   downloadGenerated,
+  openDriveDocument,
   type DriveInfo,
   type BackgroundJob,
   type GeneratedFile,
   type PlatformInsight,
   type SaveFormat,
+  type ScopeDrive,
 } from "@/lib/api/rag.functions";
 import { useVoice } from "./use-voice";
 import {
@@ -98,6 +101,7 @@ import {
   Volume2,
   VolumeX,
   Loader2,
+  Download,
   ThumbsUp,
   ThumbsDown,
 } from "lucide-react";
@@ -383,6 +387,11 @@ const BG = "#1E2225";
 /** Staging delay before an assistant message appears (the "typing" beat). */
 const AI_REPLY_DELAY_MS = 350;
 
+/** Image types the document viewer renders inline (adapter _INLINE_TYPES). */
+const INLINE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+/** Characters of a text document rendered at once; the rest is announced. */
+const TEXT_VIEW_LIMIT = 400_000;
+
 /* ---------- Active drive ----------
    Cards deep in the tree (save buttons) need the drive that produced them; the
    drive is the ACL boundary, so it must travel with every adapter call. */
@@ -416,7 +425,7 @@ const LIVE_ACTIONS: Record<string, LiveAction> = {
   "/analyze": "analyze",
 };
 
-/** Dialog answers collected before an F1/F3/F5 run (spec "UX logic"). */
+/** Dialog answers collected before a quick-action run (spec "UX logic"). */
 type LiveExtras = {
   audience?: string;
   purpose?: string;
@@ -424,6 +433,11 @@ type LiveExtras = {
   files?: string[];
   extra?: string;
   situation?: string;
+  coverage?: string;
+  reportType?: string;
+  aspect?: string;
+  keywords?: string;
+  outcome?: string;
 };
 
 /* ---------- Guided dialogs (spec F1/F3/F5 "UX logic") ----------
@@ -431,17 +445,67 @@ type LiveExtras = {
    model runs. The answers are not decoration: audience+purpose travel to the
    generator as PARAMETERS, the picked files become the adapter's retrieval
    source filter. */
-type WizardKind = "summary" | "presentation" | "memo";
-type WizardStep = "audience" | "purpose" | "sources" | "extra" | "situation";
+type WizardKind = "summary" | "presentation" | "memo" | "report" | "search";
+type WizardStep =
+  | "audience"
+  | "purpose"
+  | "sources"
+  | "extra"
+  | "situation"
+  | "subject"
+  | "coverage"
+  | "reportType"
+  | "aspect"
+  | "keywords";
 
 const WIZARD_STEPS: Record<WizardKind, WizardStep[]> = {
-  summary: ["sources", "extra"],
+  summary: ["coverage", "purpose", "sources", "extra"],
   presentation: ["audience", "purpose", "sources", "extra"],
   memo: ["audience", "purpose", "sources", "extra", "situation"],
+  report: ["reportType", "coverage", "aspect", "audience", "sources"],
+  search: ["subject", "keywords"],
 };
 
-/** Spec 3.2 / 5.2: prebuilt purpose answers; "Else" opens a free-text field. */
-const PURPOSE_OPTIONS: Record<"presentation" | "memo", string[]> = {
+/** The "subject" question only makes sense when the user has not already
+ *  typed what they are after: "/search Q2 revenue" has answered it. */
+function stepsFor(kind: WizardKind, brief: string): WizardStep[] {
+  const steps = WIZARD_STEPS[kind];
+  return brief.trim() ? steps.filter((s) => s !== "subject") : steps;
+}
+
+const REPORT_TYPE_OPTIONS = [
+  "Quick report — short, summarized, bullet points",
+  "General report — detailed and descriptive",
+];
+
+const ASPECT_OPTIONS = [
+  "General (no specific aspect)",
+  "Marketing",
+  "Sales",
+  "Financial",
+  "IT",
+  "HR",
+  "Business strategy",
+];
+
+/** Steps answered by picking one prebuilt option. */
+const CHOICE_OPTIONS: Partial<Record<WizardStep, string[]>> = {
+  reportType: REPORT_TYPE_OPTIONS,
+  aspect: ASPECT_OPTIONS,
+};
+
+/** Steps answered by typing, with the hint shown in the input. */
+const TEXT_PLACEHOLDER: Partial<Record<WizardStep, string>> = {
+  audience: "e.g. the board of directors",
+  situation: "Describe the decision to be made",
+  subject: "Describe what you are looking for",
+  coverage: "e.g. the Q2 results and the risks behind them",
+  keywords: "e.g. budget, deadline, risk",
+};
+
+/** Spec 3.2 / 5.2: prebuilt purpose answers; "Else" opens a free-text field.
+ *  A kind without options goes straight to the free-text field. */
+const PURPOSE_OPTIONS: Partial<Record<WizardKind, string[]>> = {
   presentation: ["Project summary & review (general)", "Project pitch", "Board update"],
   memo: [
     "Situation analysis with 3 suggested solution scenarios",
@@ -454,18 +518,24 @@ const WIZARD_NOUN: Record<WizardKind, string> = {
   summary: "meeting summary",
   presentation: "presentation",
   memo: "decision making memo",
+  report: "report",
+  search: "search",
 };
 
 const WIZARD_CMD: Record<WizardKind, SlashCmd> = {
   summary: "/summary",
   presentation: "/presentation",
   memo: "/memo",
+  report: "/report",
+  search: "/search",
 };
 
 const WIZARD_OF: Record<string, WizardKind> = {
   "/summary": "summary",
   "/presentation": "presentation",
   "/memo": "memo",
+  "/report": "report",
+  "/search": "search",
 };
 
 function wizardQuestion(kind: WizardKind, step: WizardStep): string {
@@ -481,6 +551,18 @@ function wizardQuestion(kind: WizardKind, step: WizardStep): string {
       return `Is there any other relevant file or information that could be important for getting the best result with the ${noun}?`;
     case "situation":
       return "Please describe the decision making situation.";
+    case "subject":
+      return kind === "search"
+        ? "What are you searching for?"
+        : `What would you like the ${noun} to be about?`;
+    case "coverage":
+      return `What should the ${noun} cover?`;
+    case "reportType":
+      return "What type of report do you want?";
+    case "aspect":
+      return "Select the aspect of the report.";
+    case "keywords":
+      return "What words or keywords should it focus on?";
   }
 }
 
@@ -496,6 +578,11 @@ type WizardState = {
   files: string[];
   extra: string;
   situation: string;
+  subject: string;
+  coverage: string;
+  reportType: string;
+  aspect: string;
+  keywords: string;
 };
 
 /** Split "/report last week" into { cmd: "/report", rest: "last week" }. */
@@ -573,6 +660,12 @@ function humanMtime(mtime: number | null): string {
   if (Number.isNaN(d.getTime())) return "—";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** The drive segment of a box-absolute path (`/storage/drives/<name>/...`). */
+function driveNameOf(path?: string): string {
+  const parts = (path ?? "").split("/").filter(Boolean);
+  return parts[0] === "storage" && parts[1] === "drives" ? (parts[2] ?? "") : "";
 }
 
 function toDriveFile(
@@ -712,6 +805,13 @@ function ViveSecAppInner() {
   const [drivePicker, setDrivePicker] = useState(false);
   const [drive, setDrive] = useState<string>("");
 
+  /* ---------- Search scope (which drives the answer may draw from) --------
+     The entitlement is resolved on the box and never reaches the browser, so
+     the UI can only narrow what /ui/scope reports. An empty selection means
+     "every entitled drive"; the adapter re-validates every request anyway. */
+  const [scopeDrives, setScopeDrives] = useState<ScopeDrive[]>([]);
+  const [selectedDrives, setSelectedDrives] = useState<string[]>([]);
+
   useEffect(() => {
     listDrives()
       .then((d) => {
@@ -724,6 +824,43 @@ function ViveSecAppInner() {
         setDrive(d.picker && known(saved) ? (saved as string) : d.current);
       })
       .catch(() => setDrive(""));
+  }, []);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("vivesec_scope");
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) setSelectedDrives(parsed.map(String));
+    } catch {
+      window.localStorage.removeItem("vivesec_scope");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!drive || boxState !== "online") return;
+    let cancelled = false;
+    void listScope(drive).then((scope) => {
+      if (cancelled) return;
+      setScopeDrives(scope.drives);
+      // A grant can be withdrawn between sessions; drop anything stale so the
+      // box never has to answer 403 for a selection the UI still remembers.
+      const entitled = new Set(scope.drives.map((d) => d.path));
+      setSelectedDrives((current) => current.filter((path) => entitled.has(path)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [drive, boxState]);
+
+  useEffect(() => {
+    window.localStorage.setItem("vivesec_scope", JSON.stringify(selectedDrives));
+  }, [selectedDrives]);
+
+  const toggleScopeDrive = useCallback((path: string) => {
+    setSelectedDrives((current) =>
+      current.includes(path) ? current.filter((p) => p !== path) : [...current, path],
+    );
   }, []);
 
   /** Metadata for every file seen so far, keyed by box path. Browsing only
@@ -1318,7 +1455,15 @@ function ViveSecAppInner() {
       drive: drive || undefined,
       audience: extras?.audience || undefined,
       purpose: extras?.purpose || undefined,
+      coverage: extras?.coverage || undefined,
+      report_type: extras?.reportType || undefined,
+      aspect: extras?.aspect || undefined,
+      keywords: extras?.keywords || undefined,
+      outcome: extras?.outcome || undefined,
+      situation: extras?.situation || undefined,
+      extra: extras?.extra || undefined,
       files: extras?.files?.length ? extras.files : undefined,
+      drives: selectedDrives.length ? selectedDrives : undefined,
     };
     if (pane === "results" && jobsSupported === true) {
       try {
@@ -1444,7 +1589,7 @@ function ViveSecAppInner() {
       toast.error(tm("AI Box unreachable — no answer can be produced."));
       return;
     }
-    if (wizard) return;
+    if (liveBusy || wizard) return;
     setMobilePane("results");
     if (cmd === "/data") {
       runData("results");
@@ -1502,7 +1647,8 @@ function ViveSecAppInner() {
 
   /* ---------- Guided dialog (spec F1/F3/F5) ---------- */
   const [wizard, setWizard] = useState<WizardState | null>(null);
-  const wizardStep: WizardStep | null = wizard ? WIZARD_STEPS[wizard.kind][wizard.stepIndex] : null;
+  const wizardSteps = wizard ? stepsFor(wizard.kind, wizard.brief) : [];
+  const wizardStep: WizardStep | null = wizard ? wizardSteps[wizard.stepIndex] : null;
 
   function askWizard(kind: WizardKind, step: WizardStep) {
     pushAi({
@@ -1526,8 +1672,13 @@ function ViveSecAppInner() {
       files: [],
       extra: "",
       situation: "",
+      subject: "",
+      coverage: "",
+      reportType: "",
+      aspect: "",
+      keywords: "",
     });
-    if (pane === "chat") askWizard(kind, WIZARD_STEPS[kind][0]);
+    if (pane === "chat") askWizard(kind, stepsFor(kind, brief)[0]);
   }
 
   /** Record one dialog answer and move on; the last step fires the request. */
@@ -1535,21 +1686,27 @@ function ViveSecAppInner() {
     if (!wizard) return;
     const next = { ...wizard, ...patch };
     if (next.pane === "chat") pushUser(echo);
-    const steps = WIZARD_STEPS[next.kind];
+    const steps = stepsFor(next.kind, next.brief);
     if (next.stepIndex + 1 < steps.length) {
       setWizard({ ...next, stepIndex: next.stepIndex + 1 });
       if (next.pane === "chat") askWizard(next.kind, steps[next.stepIndex + 1]);
       return;
     }
     setWizard(null);
+    // The "subject" answer is the query itself, not a framing parameter.
+    const brief = next.brief.trim() || next.subject.trim();
     void runLive(
-      `${WIZARD_CMD[next.kind]} ${next.brief}`.trim(),
+      `${WIZARD_CMD[next.kind]} ${brief}`.trim(),
       {
         audience: next.audience,
         purpose: next.purpose,
         files: next.files,
         extra: next.extra,
         situation: next.situation,
+        coverage: next.coverage,
+        reportType: next.reportType,
+        aspect: next.aspect,
+        keywords: next.keywords,
       },
       next.pane,
     );
@@ -1650,7 +1807,7 @@ function ViveSecAppInner() {
       toast.error(tm("AI Box unreachable — no answer can be produced."));
       return;
     }
-    if (wizard) return;
+    if (liveBusy || wizard) return;
     setPreviewFile(f);
     setPreviewCitation(null);
     markResult(pushUser(`/analyze ${f.name}`));
@@ -1743,8 +1900,7 @@ function ViveSecAppInner() {
         </header>
 
         <div className="flex w-full min-h-0 flex-1 gap-0">
-            {/* Desktop: Drive-or-preview | Results | Chat. Mobile keeps the
-              existing chat/results pane switch and off-canvas drive. */}
+          {/* Chat | Results | Drive-or-preview */}
           <div className="relative flex min-w-0 flex-1">
             {/* Chat column — no upload path: files reach the corpus from the
               ViVeSecBox, never from here. */}
@@ -1905,7 +2061,7 @@ function ViveSecAppInner() {
                     kind={wizard.kind}
                     step={wizardStep}
                     stepIndex={wizard.stepIndex}
-                    stepCount={WIZARD_STEPS[wizard.kind].length}
+                    stepCount={wizardSteps.length}
                     files={files}
                     picked={wizard.files}
                     onPick={(ids) => setWizard((w) => (w ? { ...w, files: ids } : w))}
@@ -2094,9 +2250,9 @@ function ViveSecAppInner() {
                 <div className="text-sm font-medium">{tm("Quick actions")}</div>
                 <div className="ml-auto text-[11px] text-white/40">
                   {unseenBackgroundJobs > 0
-                    ? tm(`${unseenBackgroundJobs} new`)
+                    ? `${unseenBackgroundJobs} ${tm("new")}`
                     : activeBackgroundJobs > 0
-                      ? tm(`${activeBackgroundJobs} active`)
+                      ? `${activeBackgroundJobs} ${tm("active")}`
                       : resultMessages.length > 0
                         ? resultMessages.length
                         : ""}
@@ -2116,7 +2272,7 @@ function ViveSecAppInner() {
                     return (
                       <button
                         key={s.cmd}
-                        disabled={!!wizard || boxState !== "online"}
+                        disabled={!!wizard || boxState !== "online" || liveBusy}
                         onClick={() => launchAction(s.cmd)}
                         title={t.slashDesc[s.cmd] ?? s.desc}
                         className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition hover:bg-white/10 disabled:opacity-40 ${
@@ -2177,7 +2333,7 @@ function ViveSecAppInner() {
                     kind={wizard.kind}
                     step={wizardStep}
                     stepIndex={wizard.stepIndex}
-                    stepCount={WIZARD_STEPS[wizard.kind].length}
+                    stepCount={wizardSteps.length}
                     files={files}
                     picked={wizard.files}
                     onPick={(ids) => setWizard((w) => (w ? { ...w, files: ids } : w))}
@@ -2259,7 +2415,8 @@ function ViveSecAppInner() {
                                   <div className="text-[10.5px] text-white/40">{status}</div>
                                   {job.status === "running" && (job.progress_tokens ?? 0) > 0 && (
                                     <div className="text-[10px] text-lime-200/60">
-                                      {job.progress_tokens} tokens · {job.progress_chars ?? 0} chars
+                                      {job.progress_tokens} {tm("tokens")} · {job.progress_chars ?? 0}{" "}
+                                      {tm("chars")}
                                     </div>
                                   )}
                                 </div>
@@ -2272,7 +2429,7 @@ function ViveSecAppInner() {
                                 <button
                                   onClick={() => void cancelBackgroundJob(job.job_id)}
                                   className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white"
-                                  title={tm("Cancel")}
+                                  title={tm("Cancel job")}
                                 >
                                   <X className="h-3.5 w-3.5" />
                                 </button>
@@ -2307,12 +2464,13 @@ function ViveSecAppInner() {
               </div>
             </section>
 
-            {/* PDF preview pane — takes the drive's place on the left */}
+            {/* PDF preview pane — takes the drive's place on the right */}
             {previewFile && driveOpen && (
               <PdfPreviewPane
                 file={previewFile}
                 citation={previewCitation}
                 evidence={viewerCitations}
+                drive={drive}
                 mode={viewerMode}
                 matchCount={viewerCitations.length}
                 matchIndex={viewerIndex}
@@ -2379,6 +2537,10 @@ function ViveSecAppInner() {
                 loading={filesLoading}
                 error={filesError}
                 onRefresh={() => void loadFolder(drive, cwd)}
+                scopeDrives={scopeDrives}
+                selectedDrives={selectedDrives}
+                onToggleScopeDrive={toggleScopeDrive}
+                onClearScope={() => setSelectedDrives([])}
                 onInsertFile={(f) => {
                   setPickerOpen(false);
                   setMessages((m) => [
@@ -2500,10 +2662,152 @@ function LanguageSelector() {
   );
 }
 
+/** The original document, fetched from the ViVeSecBox on demand.
+ *
+ *  Nothing is cached on the AI Box, so this is a live round trip over the ws-fs
+ *  channel. Only formats we can render safely are put behind a blob: URL — an
+ *  inline .html would run in this origin, so anything else is a download.
+ */
+function DocumentView({
+  path,
+  name,
+  drive,
+  page,
+  terms,
+}: {
+  path: string;
+  name: string;
+  drive?: string;
+  /** Page to open on for PDFs — the citation the user clicked. */
+  page?: number;
+  terms?: string[];
+}) {
+  const { tm } = useLang();
+  const [state, setState] = useState<
+    | { kind: "loading" }
+    | { kind: "error"; message: string }
+    | { kind: "pdf" | "image" | "download"; url: string }
+    | { kind: "text"; body: string; truncated: boolean }
+  >({ kind: "loading" });
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    setState({ kind: "loading" });
+    void openDriveDocument(path, drive).then(async (res) => {
+      if (cancelled) return;
+      if (!res.ok || !res.blob) {
+        setState({ kind: "error", message: res.error ?? "the box did not return the file" });
+        return;
+      }
+      const type = (res.contentType ?? "").split(";")[0].trim().toLowerCase();
+      const buf = await res.blob.arrayBuffer();
+      if (cancelled) return;
+      const show = (kind: "pdf" | "image" | "download", mime: string) => {
+        objectUrl = URL.createObjectURL(new Blob([buf], { type: mime }));
+        setState({ kind, url: objectUrl });
+      };
+      if (type === "application/pdf") show("pdf", "application/pdf");
+      else if (INLINE_IMAGE_TYPES.has(type)) show("image", type);
+      else if (type === "text/plain") {
+        const full = new TextDecoder().decode(buf);
+        // A megabyte of log text would lock the tab up; say so rather than
+        // silently showing a part of the document as if it were all of it.
+        const truncated = full.length > TEXT_VIEW_LIMIT;
+        setState({
+          kind: "text",
+          body: truncated ? full.slice(0, TEXT_VIEW_LIMIT) : full,
+          truncated,
+        });
+      } else show("download", "application/octet-stream");
+    });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [path, drive]);
+
+  if (state.kind === "loading") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-white/50">
+        <Loader2 className="h-5 w-5 animate-spin" style={{ color: LIME }} />
+        {tm("Fetching the document from the ViVeSecBox…")}
+      </div>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+        <AlertTriangle className="h-5 w-5 text-amber-300" />
+        <div className="text-[12.5px] text-white/70">
+          {tm("The ViVeSecBox did not hand over this document.")}
+        </div>
+        <div className="max-w-xs text-[11.5px] text-white/40">{state.message}</div>
+      </div>
+    );
+  }
+
+  if (state.kind === "pdf") {
+    return (
+      <iframe
+        // Remount on a new citation so the viewer actually jumps to the page.
+        key={`${state.url}#${page ?? 1}`}
+        src={`${state.url}#page=${page ?? 1}&view=FitH`}
+        title={name}
+        className="flex-1 border-0 bg-[#23272B]"
+      />
+    );
+  }
+
+  if (state.kind === "image") {
+    return (
+      <div className="vvs-scroll flex-1 overflow-auto bg-[#15181B] p-3">
+        <img src={state.url} alt={name} className="mx-auto max-w-full" />
+      </div>
+    );
+  }
+
+  if (state.kind === "text") {
+    return (
+      <div className="vvs-scroll flex-1 overflow-auto p-3 sm:p-4">
+        <div className="mx-auto max-w-3xl rounded-md bg-[#F6F4EE] p-4 sm:p-6 text-[12.5px] leading-relaxed text-[#1E2225] shadow-2xl">
+          <pre className="whitespace-pre-wrap break-words font-sans">
+            <HighlightedText text={state.body} terms={terms ?? []} />
+          </pre>
+          {state.truncated && (
+            <p className="mt-4 border-t border-black/10 pt-3 text-[11.5px] text-black/50">
+              {tm("Only the first part of this document is shown here.")}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+      <FileText className="h-6 w-6 text-white/40" />
+      <div className="text-[12.5px] text-white/70">
+        {tm("This format cannot be shown in the browser.")}
+      </div>
+      <a
+        href={state.url}
+        download={name}
+        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold"
+        style={{ backgroundColor: LIME, color: "#15181B" }}
+      >
+        <Download className="h-3.5 w-3.5" /> {tm("Download")}
+      </a>
+    </div>
+  );
+}
+
 function PdfPreviewPane({
   file,
   citation,
   evidence,
+  drive,
   mode = "side",
   matchCount = 0,
   matchIndex = 0,
@@ -2518,6 +2822,8 @@ function PdfPreviewPane({
   citation: Citation | null;
   /** Every passage the box retrieved from this document in the current answer. */
   evidence?: Citation[];
+  /** Active drive, forwarded as the demo picker's hint. */
+  drive?: string;
   mode?: "side" | "split";
   matchCount?: number;
   matchIndex?: number;
@@ -2529,7 +2835,9 @@ function PdfPreviewPane({
   children?: React.ReactNode;
 }) {
   // The document itself stays on the ViVeSecBox: what the AI Box has is the
-  // evidence it retrieved. Show exactly that — never a stand-in page.
+  // evidence it retrieved. The "Document" tab asks the box for the real file;
+  // "Passages" shows exactly what the answer was grounded in.
+  const [tab, setTab] = useState<"document" | "passages">("document");
   type Para = { page: number; heading?: string; text: string };
   const paras: Para[] = useMemo(() => {
     const fromEvidence = (evidence ?? [])
@@ -2620,6 +2928,23 @@ function PdfPreviewPane({
         </button>
       </div>
 
+      <div className="flex items-center gap-1 border-b border-white/5 px-3 py-1.5 text-[11.5px]">
+        {(["document", "passages"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`rounded-md px-2.5 py-1 transition ${
+              tab === t ? "bg-white/[0.08] text-white" : "text-white/55 hover:text-white"
+            }`}
+          >
+            {t === "document" ? tm("Document") : tm("Retrieved passages")}
+            {t === "passages" && paras.length > 0 && (
+              <span className="ml-1 text-white/40">{paras.length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
       {citation && (
         <div
           className="flex items-center gap-2 border-b border-white/5 px-3 py-2 text-[11.5px]"
@@ -2645,6 +2970,17 @@ function PdfPreviewPane({
         </div>
       )}
 
+      {tab === "document" && (
+        <DocumentView
+          path={file.id}
+          name={file.name}
+          drive={drive}
+          page={citation?.page}
+          terms={citation?.terms}
+        />
+      )}
+
+      {tab === "passages" && (
       <div ref={scrollRef} className="vvs-scroll relative flex-1 overflow-y-auto p-3 sm:p-4">
         <div
           className={`mx-auto rounded-md bg-[#F6F4EE] p-4 sm:p-6 text-[13px] leading-relaxed text-[#1E2225] shadow-2xl ${isSplit ? "max-w-2xl" : "w-full lg:max-w-xl"}`}
@@ -2726,7 +3062,9 @@ function PdfPreviewPane({
           </div>
         </div>
       </div>
+      )}
 
+      {tab === "passages" && (
       <div className="flex items-center justify-between gap-2 border-t border-white/5 px-3 py-2 text-[11.5px] text-white/60">
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
@@ -2747,6 +3085,7 @@ function PdfPreviewPane({
           Next <ArrowRight className="h-3 w-3" />
         </button>
       </div>
+      )}
 
       {children}
     </section>
@@ -3000,11 +3339,14 @@ function WizardPanel({
   );
   const pickedNames = picked.map((id) => files.find((f) => f.id === id)?.name ?? id).join(", ");
 
-  const submitText = (key: "audience" | "extra" | "situation" | "purpose") => {
+  const submitText = (key: keyof WizardState) => {
     const v = text.trim();
     if (!v) return;
     onAnswer({ [key]: v } as Partial<WizardState>, v);
   };
+
+  const purposeOptions = PURPOSE_OPTIONS[kind] ?? [];
+  const choiceOptions = CHOICE_OPTIONS[step];
 
   return (
     <div
@@ -3028,7 +3370,11 @@ function WizardPanel({
       <div className="p-3">
         <div className="mb-2.5 text-[13px] text-white/85">{tm(wizardQuestion(kind, step))}</div>
 
-        {(step === "audience" || step === "situation") && (
+        {(step === "audience" ||
+          step === "situation" ||
+          step === "subject" ||
+          step === "coverage" ||
+          step === "keywords") && (
           <div className="flex gap-2">
             <input
               autoFocus
@@ -3037,11 +3383,7 @@ function WizardPanel({
               onKeyDown={(e) => {
                 if (e.key === "Enter") submitText(step);
               }}
-              placeholder={
-                step === "audience"
-                  ? tm("e.g. the board of directors")
-                  : tm("Describe the decision to be made")
-              }
+              placeholder={tm(TEXT_PLACEHOLDER[step] ?? "")}
               className="flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[13px] text-white placeholder:text-white/35 outline-none focus:border-white/25"
             />
             <button
@@ -3055,10 +3397,25 @@ function WizardPanel({
           </div>
         )}
 
-        {step === "purpose" && kind !== "summary" && (
+        {choiceOptions && (
+          <div className="space-y-1.5">
+            {choiceOptions.map((o) => (
+              <button
+                key={o}
+                onClick={() => onAnswer({ [step]: o } as Partial<WizardState>, tm(o))}
+                className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-[13px] text-white/85 transition hover:border-white/25 hover:bg-white/[0.07]"
+              >
+                <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                {tm(o)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {step === "purpose" && (
           <div className="space-y-1.5">
             {!elseMode &&
-              PURPOSE_OPTIONS[kind].map((p) => (
+              purposeOptions.map((p) => (
                 <button
                   key={p}
                   onClick={() => onAnswer({ purpose: p }, tm(p))}
@@ -3068,7 +3425,7 @@ function WizardPanel({
                   {tm(p)}
                 </button>
               ))}
-            {!elseMode ? (
+            {!elseMode && purposeOptions.length > 0 ? (
               <button
                 onClick={() => setElseMode(true)}
                 className="w-full rounded-lg border border-dashed border-white/15 px-3 py-2 text-left text-[13px] text-white/55 transition hover:text-white/80"
@@ -3921,6 +4278,10 @@ function SearchCard({
   // outgrew the answer itself and buried it.
   const visibleCitations = showAllSources ? msg.citations : msg.citations.slice(0, 1);
   const hiddenCount = msg.citations.length - visibleCitations.length;
+  // Which drive a passage came from only matters once an answer mixes several;
+  // on a single-drive box the badge would be noise on every card.
+  const crossDrive =
+    new Set(msg.citations.map((c) => driveNameOf(c.fileId)).filter(Boolean)).size > 1;
   // The card icon already says "search"; repeating the "/search" prefix does not.
   const term = msg.query.replace(/^\/\w+\s*/, "").trim();
 
@@ -3970,6 +4331,11 @@ function SearchCard({
                 <div className="flex items-center gap-1.5 text-[11.5px]">
                   <FileText className="h-3 w-3 text-rose-400" />
                   <span className="truncate font-medium text-white/85">{c.label}</span>
+                  {crossDrive && driveNameOf(c.fileId) && (
+                    <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
+                      {driveNameOf(c.fileId)}
+                    </span>
+                  )}
                 </div>
                 {c.snippet && (
                   <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-white/65">
@@ -4688,6 +5054,10 @@ function DrivePanel(props: {
   loading: boolean;
   error: string;
   onRefresh: () => void;
+  scopeDrives: ScopeDrive[];
+  selectedDrives: string[];
+  onToggleScopeDrive: (path: string) => void;
+  onClearScope: () => void;
 }) {
   const {
     open,
@@ -4918,6 +5288,55 @@ function DrivePanel(props: {
             <ShieldCheck className="h-3 w-3" style={{ color: LIME }} />
             {tm("Searched 100% locally on ViVeSecBox")}
           </div>
+
+          {/* Search scope. Only shown when the box granted more than one
+              drive, so the single-drive deployment looks exactly as before. */}
+          {props.scopeDrives.length > 1 && (
+            <div className="border-t border-white/5 px-3 py-2">
+              <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">
+                {tm("Search in")}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={props.onClearScope}
+                  className={`rounded-full border px-2 py-1 text-[11px] transition ${
+                    props.selectedDrives.length === 0
+                      ? "border-transparent text-black"
+                      : "border-white/10 text-white/70 hover:bg-white/10"
+                  }`}
+                  style={
+                    props.selectedDrives.length === 0 ? { backgroundColor: LIME } : undefined
+                  }
+                >
+                  {tm("All drives")}
+                </button>
+                {props.scopeDrives.map((d) => {
+                  const on = props.selectedDrives.includes(d.path);
+                  return (
+                    <button
+                      key={d.path}
+                      onClick={() => props.onToggleScopeDrive(d.path)}
+                      title={d.path}
+                      className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition ${
+                        on
+                          ? "border-transparent text-black"
+                          : "border-white/10 text-white/70 hover:bg-white/10"
+                      }`}
+                      style={on ? { backgroundColor: LIME } : undefined}
+                    >
+                      {d.active && (
+                        <CircleDot
+                          className="h-2.5 w-2.5"
+                          style={{ color: on ? "#15181B" : LIME }}
+                        />
+                      )}
+                      {d.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Breadcrumb — hidden while searching, which spans the whole drive */}
