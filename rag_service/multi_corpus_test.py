@@ -9,7 +9,9 @@ else, even when the question targets the excluded corpus directly.
 """
 import os
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("VIVESEC_BACKEND", "fallback")
 
@@ -86,6 +88,106 @@ class MultiCorpusSearchTest(unittest.TestCase):
         contexts, debug = self.store.search_context(None, "travel policy", top_k=5)
         self.assertEqual(contexts, [])
         self.assertEqual(debug["chunk_hits_count"], 0)
+
+
+class SqliteHybridSearchTest(MultiCorpusSearchTest):
+    def setUp(self):
+        import sqlite_store
+        self.store = sqlite_store.SqliteVecStore()
+        self.addCleanup(self.store._conn.close)
+        self._index(FINANCE, "/storage/drives/finance/travel.txt", SHARED)
+        self._index(HR, "/storage/drives/hr/travel.txt", SHARED)
+        self._index(HR, "/storage/drives/hr/council.txt", HR_ONLY)
+        self._index(LEGAL, "/storage/drives/legal/supply.txt", LEGAL_ONLY)
+
+    def test_name_lookup_survives_unhelpful_vectors(self):
+        target = "/storage/drives/hr/director.txt"
+        with patch.object(self.store, "_embed", side_effect=lambda texts: [[1.0, 0.0] for text in texts]):
+            self.store = self._fresh_store()
+            with patch.object(self.store, "_embed", side_effect=lambda texts: [[1.0, 0.0] for text in texts]):
+                for index in range(300):
+                    self._index(FINANCE, "/storage/drives/finance/staff%d.txt" % index,
+                                "Other staff work for another company.")
+                self._index(HR, target, "Szeredy Csaba represents ViVeTech Zrt as CEO.")
+                self._index(LEGAL, "/storage/drives/legal/secret.txt", "Szeredy Csaba private legal record.")
+                contexts, debug = self.store.search_context(
+                    [FINANCE, HR], "szeredy csaba melyik cegnel dolgozik?", top_k=1)
+                self.assertEqual([target], self._paths(contexts))
+                self.assertGreater(debug["lexical_candidates"], 0)
+                self.assertLessEqual(debug["dense_candidates"], 40)
+                self.assertLessEqual(debug["lexical_candidates"], 40)
+
+    def _fresh_store(self):
+        import sqlite_store
+        result = sqlite_store.SqliteVecStore()
+        self.addCleanup(result._conn.close)
+        return result
+
+    def test_explicit_file_is_a_prefilter_across_drives(self):
+        contexts, _ = self.store.search_context(
+            [FINANCE, HR], "salary bands", top_k=5, source_paths=["travel.txt"])
+        self.assertEqual({FINANCE, HR}, {context["corpus_id"] for context in contexts})
+        self.assertTrue(all(context["source_path"].endswith("/travel.txt") for context in contexts))
+        contexts, _ = self.store.search_context(
+            [FINANCE, HR], "supply", source_paths=["/storage/drives/legal/supply.txt"])
+        self.assertEqual(contexts, [])
+        contexts, _ = self.store.search_context(FINANCE, "travel", source_paths=["missing.txt"])
+        self.assertEqual(contexts, [])
+
+    def test_evidence_is_reloaded_only_inside_current_scope(self):
+        old, _ = self.store.search_context(HR, "works council", top_k=1)
+        reference = old[0]["chunk_id"]
+        contexts, debug = self.store.search_context(
+            FINANCE, "travel", evidence_chunk_ids=[reference])
+        self.assertEqual(debug["evidence_revalidated"], 0)
+        self.assertNotIn(reference, [context["chunk_id"] for context in contexts])
+        contexts, debug = self.store.search_context(
+            [FINANCE, HR], "travel", evidence_chunk_ids=[reference])
+        self.assertEqual(contexts[0]["chunk_id"], reference)
+        self.assertEqual(debug["evidence_revalidated"], 1)
+
+    def test_fts_tracks_replacement_and_deletion(self):
+        path = "/storage/drives/hr/person.txt"
+        self._index(HR, path, "Uniquename person record")
+        self._index(HR, path, "Replacement text")
+        self.assertEqual(self.store._conn.execute(
+            "SELECT count(*) FROM chunk_text_fts WHERE chunk_text_fts MATCH 'Uniquename'").fetchone()[0], 0)
+        self.store.drop_tree(HR, path, False)
+        self.assertEqual(self.store._conn.execute(
+            "SELECT count(*) FROM chunk_text_fts WHERE chunk_text_fts MATCH 'Replacement'").fetchone()[0], 0)
+
+    def test_existing_database_backfills_without_embedding(self):
+        import sqlite_store
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "index.sqlite")
+            original = sqlite_store.SqliteVecStore(path)
+            original._index_document(HR, "default", "/hr/person.txt", "person.txt",
+                                     [(1, "root", "Uniquename employment record")], None, None)
+            original._conn.executescript("""
+                DROP TRIGGER chunks_fts_insert;
+                DROP TRIGGER chunks_fts_delete;
+                DROP TRIGGER chunks_fts_update;
+                DROP TABLE chunk_text_fts;
+                DELETE FROM meta WHERE key='fts_ready';
+            """)
+            original._conn.close()
+            with patch.object(sqlite_store.SqliteVecStore, "_embed", side_effect=AssertionError("reembedding")):
+                migrated = sqlite_store.SqliteVecStore(path)
+            try:
+                self.assertEqual(migrated._conn.execute(
+                    "SELECT count(*) FROM chunk_text_fts WHERE chunk_text_fts MATCH 'Uniquename'").fetchone()[0], 1)
+                migrated._conn.execute("DELETE FROM meta WHERE key='fts_ready'")
+                migrated._conn.execute("INSERT INTO chunk_text_fts(chunk_text_fts) VALUES('delete-all')")
+                migrated._conn.commit()
+            finally:
+                migrated._conn.close()
+            restarted = sqlite_store.SqliteVecStore(path)
+            try:
+                self.assertEqual(restarted._conn.execute(
+                    "SELECT count(*) FROM chunk_text_fts WHERE chunk_text_fts MATCH 'Uniquename'").fetchone()[0], 1)
+                restarted._conn.execute("INSERT INTO chunk_text_fts(chunk_text_fts, rank) VALUES('integrity-check', 1)")
+            finally:
+                restarted._conn.close()
 
 
 class NormalizeCorpusIdsTest(unittest.TestCase):

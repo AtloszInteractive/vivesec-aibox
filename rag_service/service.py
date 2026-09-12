@@ -281,7 +281,15 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(400, "corpus_id and question are required")
         top_k = int(body.get("top_k") or 3)
         max_tokens = int(body.get("max_context_tokens") or 4000)
-        contexts, debug = STORE.search_context(scope, question, top_k, max_tokens)
+        options = {}
+        for key, limit in (("source_paths", 20), ("evidence_chunk_ids", 8)):
+            value = body.get(key)
+            if value is not None:
+                if (not isinstance(value, list) or len(value) > limit
+                        or any(not isinstance(item, str) or not item.strip() for item in value)):
+                    raise HttpError(400, key + " must be a bounded list of nonempty strings")
+                options[key] = value
+        contexts, debug = STORE.search_context(scope, question, top_k, max_tokens, **options)
         out = {"contexts": contexts}
         if body.get("include_debug"):
             out["debug"] = debug

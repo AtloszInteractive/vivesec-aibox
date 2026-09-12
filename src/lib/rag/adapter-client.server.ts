@@ -53,6 +53,8 @@ export type AdapterAnswer = {
   answer: string;
   backend?: string;
   action?: string | null;
+  profile?: "grounded" | "hybrid";
+  audit_id?: string;
   confidence?: AdapterConfidence;
   files?: { path: string; mtime: number | null; size: number | null }[];
   citations: AdapterCitation[];
@@ -82,6 +84,7 @@ export type AdapterAction =
 
 export type AdapterAskInput = {
   query: string;
+  profile?: "grounded" | "hybrid";
   topK?: number;
   lang?: string; // adapter expects a language NAME (English/Hungarian/Danish/German)
   drive?: string;
@@ -266,6 +269,7 @@ export async function adapterAsk(input: AdapterAskInput): Promise<AdapterAnswer>
     headers,
     body: JSON.stringify({
       query: input.query,
+      profile: input.profile,
       top_k: input.topK ?? (input.action ? undefined : 5),
       lang: input.lang,
       action: input.action,
@@ -318,6 +322,8 @@ export async function adapterAsk(input: AdapterAskInput): Promise<AdapterAnswer>
       // C6: the confidence block (score/band/components) drives the UI badge —
       // it must be forwarded, otherwise the live path renders without a score.
       confidence: (j.confidence as AdapterConfidence | undefined) ?? undefined,
+      profile: j.profile === "hybrid" ? "hybrid" : "grounded",
+      audit_id: j.audit_id as string | undefined,
       files: Array.isArray(j.files)
         ? (j.files as { path: string; mtime: number | null; size: number | null }[])
         : undefined,

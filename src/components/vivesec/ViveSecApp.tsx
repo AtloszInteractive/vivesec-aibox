@@ -46,6 +46,8 @@ import {
   type PlatformInsight,
   type SaveFormat,
   type ScopeDrive,
+  type ChatProfile,
+  type ChatPolicy,
 } from "@/lib/api/rag.functions";
 import { useVoice } from "./use-voice";
 import {
@@ -144,6 +146,7 @@ type ReportTask = {
 };
 
 type Citation = {
+  rank?: number;
   fileId: string;
   page: number;
   label: string;
@@ -178,6 +181,7 @@ type Slide = {
    grounding evidence: the C6 confidence band, the audit footer lines, the
    verbatim answer (what gets saved to the drive) and the citations. */
 type LiveMeta = {
+  profile?: ChatProfile;
   confidence?: { score: number; band: "green" | "amber" | "red" };
   audit?: string[];
   raw?: string;
@@ -759,6 +763,14 @@ function ViveSecAppInner() {
   const [boxState, setBoxState] = useState<"probing" | "online" | "offline">("probing");
   const [boxDetail, setBoxDetail] = useState<string>("");
   const [liveBusy, setLiveBusy] = useState(false);
+  const [chatPolicy, setChatPolicy] = useState<ChatPolicy>({
+    policy: "locked_grounded", default_profile: "grounded", allow_switch: false,
+  });
+  const [chosenProfile, setChosenProfile] = useState<ChatProfile | null>(null);
+  const chatProfile: ChatProfile = chatPolicy.allow_switch
+    ? chosenProfile ?? chatPolicy.default_profile
+    : chatPolicy.default_profile;
+  const [messageProfiles, setMessageProfiles] = useState<Record<string, ChatProfile>>({});
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobsError, setJobsError] = useState("");
@@ -776,6 +788,13 @@ function ViveSecAppInner() {
       setBoxState(h.ok ? "online" : "offline");
       setBoxDetail(h.ok ? (h.mode ?? "") : (h.error ?? ""));
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
+      if (h.ok) {
+        const policy = h.chatPolicy;
+        setChatPolicy(policy && ["locked_hybrid", "selectable_grounded", "selectable_hybrid"].includes(policy.policy)
+          ? { ...policy, allow_switch: policy.policy !== "locked_hybrid",
+              default_profile: policy.policy === "selectable_grounded" ? "grounded" : "hybrid" }
+          : { policy: "locked_grounded", default_profile: "grounded", allow_switch: false });
+      }
       return h.ok;
     } catch (err) {
       setBoxState("offline");
@@ -950,8 +969,9 @@ function ViveSecAppInner() {
     setResultIds((prev) => new Set(prev).add(id));
   }, []);
   const chatMessages = useMemo(
-    () => messages.filter((m) => !resultIds.has(m.id)),
-    [messages, resultIds],
+    () => messages.filter((m) => !resultIds.has(m.id) &&
+      (m.role === "system" || (messageProfiles[m.id] ?? "grounded") === chatProfile)),
+    [messages, resultIds, messageProfiles, chatProfile],
   );
   const resultMessages = useMemo(
     () => messages.filter((m) => resultIds.has(m.id)),
@@ -1090,10 +1110,12 @@ function ViveSecAppInner() {
   /* ---------- Send / commands ---------- */
   function pushUser(text: string) {
     const id = uid();
+    setMessageProfiles((profiles) => ({ ...profiles, [id]: chatProfile }));
     setMessages((m) => [...m, { id, role: "user", name: senderName, ts: nowTs(), text }]);
     return id;
   }
   function pushAi(msg: Message) {
+    setMessageProfiles((profiles) => ({ ...profiles, [msg.id]: chatProfile }));
     setTimeout(() => setMessages((m) => [...m, msg]), AI_REPLY_DELAY_MS);
   }
 
@@ -1143,6 +1165,7 @@ function ViveSecAppInner() {
     question?: string,
   ): Message {
     const citations: Citation[] = res.citations.map((c) => ({
+      rank: c.rank,
       fileId: c.fileId || c.source,
       page: typeof c.chunk === "number" ? c.chunk : 0,
       label: c.label,
@@ -1157,10 +1180,11 @@ function ViveSecAppInner() {
       name: "ViVeSec AI",
       ts: nowTs(),
       confidence: res.confidence,
+      profile: res.profile,
       audit,
       raw: res.answer,
       citations,
-      auditId: res.confidence?.auditId,
+      auditId: res.auditId ?? res.confidence?.auditId,
       question: question ?? label,
       feedbackDrive: drive || undefined,
     };
@@ -1450,6 +1474,7 @@ function ViveSecAppInner() {
     const label = cmd ? (rest ? `${cmd} ${rest}` : cmd).slice(0, 90) : v.slice(0, 80);
     const requestData = {
       query,
+      profile: action || pane === "results" ? "grounded" as const : chatProfile,
       lang,
       action: brief ? action : undefined,
       drive: drive || undefined,
@@ -1486,6 +1511,7 @@ function ViveSecAppInner() {
       return;
     }
     const loadingId = uid();
+    setMessageProfiles((profiles) => ({ ...profiles, [loadingId]: chatProfile }));
     if (pane === "results") markResult(loadingId);
     setLiveBusy(true);
     setMessages((m) => [
@@ -1636,14 +1662,14 @@ function ViveSecAppInner() {
 
   /** Read the most recent AI answer out loud. */
   const lastSpeakable = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i] as Message & { kind?: string; text?: string; body?: string };
+    for (let index = chatMessages.length - 1; index >= 0; index--) {
+      const m = chatMessages[index] as Message & { kind?: string; text?: string; body?: string; raw?: string };
       if (m.role !== "ai") continue;
-      const body = m.text ?? m.body ?? "";
+      const body = splitAuditFooter(m.raw ?? m.text ?? m.body ?? "").body;
       if (body.trim()) return body;
     }
     return "";
-  }, [messages]);
+  }, [chatMessages]);
 
   /* ---------- Guided dialog (spec F1/F3/F5) ---------- */
   const [wizard, setWizard] = useState<WizardState | null>(null);
@@ -1910,10 +1936,26 @@ function ViveSecAppInner() {
               } ${previewFile && viewerMode === "split" ? "lg:hidden" : "lg:order-3 lg:flex lg:border-l lg:border-white/5"}`}
             >
               {/* Pinned chat header strip */}
-              <div className="relative flex items-center gap-3 border-b border-white/5 px-4 py-2.5">
-                <div className="hidden sm:block text-xs text-white/55">
+              <div className="relative flex flex-wrap items-center gap-2 border-b border-white/5 px-4 py-2.5">
+                <div className="hidden xl:block text-xs text-white/55">
                   Encrypted channel · Edge inference only
                 </div>
+                {chatPolicy.allow_switch && <div role="group" aria-label={tm("Chat profile")} className="flex shrink-0 items-center rounded-md border border-white/10 p-0.5">
+                  {(["grounded", "hybrid"] as const).map((profile) => (
+                    <button
+                      key={profile}
+                      type="button"
+                      aria-pressed={chatProfile === profile}
+                      disabled={!chatPolicy.allow_switch || boxState !== "online" || liveBusy || !!wizard}
+                      onClick={() => { voice.stopSpeaking(); setChosenProfile(profile); setPreviewFile(null); setPreviewCitation(null); }}
+                      className={`inline-flex min-h-8 items-center gap-1 rounded px-2 text-[11px] disabled:cursor-default ${chatProfile === profile ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/5"}`}
+                      title={tm(profile === "grounded" ? "Grounded" : "Hybrid")}
+                    >
+                      {profile === "grounded" ? <Lock className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
+                      {tm(profile === "grounded" ? "Grounded" : "Hybrid")}
+                    </button>
+                  ))}
+                </div>}
                 <button
                   onClick={() => setMobilePane("results")}
                   className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden"
@@ -3560,10 +3602,11 @@ function LiveFooter({ meta }: { meta: LiveMeta }) {
   const { tm } = useLang();
   const conf = meta.confidence;
   const color = conf?.band === "green" ? "#a3e635" : conf?.band === "amber" ? "#fbbf24" : "#f87171";
-  if (!conf && !meta.audit?.length) return null;
+  if (!conf && !meta.audit?.length && !meta.auditId && !meta.profile) return null;
   return (
     <div className="mt-3 border-t border-white/10 pt-2">
       <div className="flex flex-wrap items-center gap-2">
+        {meta.profile && <span className="text-[11px] text-white/60">{tm(meta.profile === "hybrid" ? "Hybrid" : "Grounded")}</span>}
         {conf && (
           <span
             className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold"
@@ -4330,6 +4373,7 @@ function SearchCard({
               >
                 <div className="flex items-center gap-1.5 text-[11.5px]">
                   <FileText className="h-3 w-3 text-rose-400" />
+                  {c.rank && <span className="shrink-0 text-white/55">[#{c.rank}]</span>}
                   <span className="truncate font-medium text-white/85">{c.label}</span>
                   {crossDrive && driveNameOf(c.fileId) && (
                     <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">

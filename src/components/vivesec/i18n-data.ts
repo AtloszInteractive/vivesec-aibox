@@ -4,6 +4,9 @@ import type { Lang } from "./i18n";
    and AI agent output text. Keyed by the English source string. */
 type Tri = [hu: string, da: string, de: string];
 const M: Record<string, Tri> = {
+  "Chat profile": ["Beszélgetési profil", "Chatprofil", "Chatprofil"],
+  "Grounded": ["Dokumentumalapú", "Dokumentbaseret", "Dokumentbasiert"],
+  "Hybrid": ["Hibrid", "Hybrid", "Hybrid"],
   // ---- Agent names ----
   "Operations Assistant": ["Műveleti asszisztens", "Driftsassistent", "Betriebsassistent"],
   "Legal Operations": ["Jogi műveletek", "Juridiske operationer", "Rechtsabteilung"],

@@ -16,8 +16,10 @@ Memory is a write-through cache: every recorded exchange is persisted, and idle
 sessions are evicted from memory (their disk copy stays) by a periodic sweep.
 """
 import hashlib
+import copy
 import json
 import os
+import re
 import threading
 import time
 
@@ -26,6 +28,26 @@ def session_key(user, drive):
     """Stable, filesystem-safe identifier for a (user, drive) conversation."""
     raw = (user or "") + "\x00" + (drive or "")
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def followup_evidence(question, history, corpus_ids):
+    followup = re.search(
+        r"\b(?:korábban|előbb|előző|ellentmond\w*|mégis|visszavon\w*|azt mondtad|"
+        r"azt írtad|ezt írtad|miért állít\w*|previous|earlier|you said|you wrote|contradict\w*)\b",
+        question, re.I)
+    short_reference = len(question.split()) <= 14 and re.search(
+        r"\b(?:róla|őt|ő|erről|ebben|ezt|ennek|ugyanez|that|it|he|she|they)\b", question, re.I)
+    if not followup and not short_reference:
+        return []
+    evidence = []
+    for turn in reversed(history[-6:]):
+        if turn.get("role") != "assistant":
+            continue
+        for source in turn.get("sources", []):
+            chunk_id = source.get("chunk_id")
+            if source.get("corpus_id") in corpus_ids and chunk_id and chunk_id not in evidence:
+                evidence.append(chunk_id)
+    return evidence[:8]
 
 
 class SessionManager:
@@ -101,15 +123,18 @@ class SessionManager:
             if not sess:
                 return []
             sess["ts"] = time.time()
-            return [dict(t) for t in sess["turns"]]
+            return copy.deepcopy(sess["turns"])
 
-    def record(self, user, drive, question, answer):
+    def record(self, user, drive, question, answer, sources=None):
         """Append the user question + assistant answer, trim to the window, and
         persist. Returns the number of exchanges now stored."""
         with self._lock:
             key, sess = self._get(user, drive, create=True)
             sess["turns"].append({"role": "user", "content": question or ""})
-            sess["turns"].append({"role": "assistant", "content": answer or ""})
+            turn = {"role": "assistant", "content": answer or ""}
+            if sources:
+                turn["sources"] = copy.deepcopy(sources[:8])
+            sess["turns"].append(turn)
             cap = self.max_turns * 2
             if len(sess["turns"]) > cap:
                 sess["turns"] = sess["turns"][-cap:]

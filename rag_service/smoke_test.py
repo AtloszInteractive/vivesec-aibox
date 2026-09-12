@@ -145,6 +145,31 @@ def run_tests():
     cb = s2.get("contexts", [])
     check("search B only corpus B", all(c.get("corpus_id") == CB for c in cb), "n=%d" % len(cb))
 
+    target = contexts[0]["source_path"]
+    status, selected = _req("POST", "/rag/search_context", {
+        "corpus_ids": [CA, CB], "question": "vacation policy", "top_k": 5,
+        "source_paths": [target], "include_debug": True,
+    })
+    check("HTTP source constraint before top-k", status == 200 and bool(selected.get("contexts"))
+          and all(context["source_path"] == target for context in selected["contexts"]))
+    status, missing = _req("POST", "/rag/search_context", {
+        "corpus_ids": [CA, CB], "question": "revenue", "source_paths": ["missing.txt"],
+    })
+    check("HTTP missing file never falls back", status == 200 and missing.get("contexts") == [])
+    status, recalled = _req("POST", "/rag/search_context", {
+        "corpus_id": CA, "question": "revenue", "include_debug": True,
+        "evidence_chunk_ids": [cb[0]["chunk_id"]],
+    })
+    check("HTTP evidence cannot cross ACL", status == 200
+          and recalled.get("debug", {}).get("evidence_revalidated") == 0
+          and all(context["corpus_id"] == CA for context in recalled.get("contexts", [])))
+    for key, invalid in (("source_paths", "report.txt"), ("evidence_chunk_ids", [None]),
+                         ("source_paths", ["file.txt"] * 21)):
+        status, _ = _req("POST", "/rag/search_context", {
+            "corpus_id": CA, "question": "revenue", key: invalid,
+        })
+        check("HTTP rejects malformed " + key, status == 400)
+
     # --- check() on unsupported type -> token null + reason ---
     head_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
     status, ck = _req("POST", "/index/upsert/file/check", {

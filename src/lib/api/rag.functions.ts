@@ -40,7 +40,11 @@ import {
   type AdapterJobStatus,
   type AdapterJobSummary,
   type AdapterVoice,
+  type ChatProfile,
+  type ChatPolicy,
 } from "../rag/adapter-client";
+
+export type { ChatProfile, ChatPolicy } from "../rag/adapter-client";
 
 const ACTIONS = [
   "search",
@@ -85,6 +89,8 @@ export type RagCitation = {
 
 export type RagAskResult = {
   ok: boolean;
+  profile?: ChatProfile;
+  auditId?: string;
   answer: string;
   mode: string;
   backend: string;
@@ -113,6 +119,7 @@ export type RagHealth = {
   mode?: string;
   /** On-box speech engines; absent/false means the box has no voice backend. */
   voice?: AdapterVoice;
+  chatPolicy?: ChatPolicy;
   error?: string;
 };
 
@@ -129,6 +136,7 @@ export async function ragHealth(): Promise<RagHealth> {
       index_ready: status.fsReady,
       embed_backend: status.features.join(", ") || "basic",
       voice: status.voice,
+      chatPolicy: status.chatPolicy,
       mode: status.uiReady
         ? "aibox-adapter (/api/v1/ui)"
         : status.locked
@@ -142,6 +150,7 @@ export async function ragHealth(): Promise<RagHealth> {
 
 const askInput = z.object({
   query: z.string().min(1),
+  profile: z.enum(["grounded", "hybrid"]).optional(),
   lang: z.string().optional(),
   drive: z.string().optional(),
   // Quick actions (function specification v2 F1-F7). The UI's slash command
@@ -178,6 +187,7 @@ export async function askRag({ data }: { data: z.input<typeof askInput> }): Prom
   try {
     const result = await adapterAsk({
       query: data.query,
+      profile: data.profile,
       lang: langName(data.lang),
       drive: data.drive,
       action: data.action as AdapterAction | undefined,
@@ -234,6 +244,8 @@ function ragResultFromAdapter(result: AdapterAnswer): RagAskResult {
     backend: result.backend ?? "aibox-adapter",
     label: result.corpus_id,
     action: result.action ?? undefined,
+    profile: result.profile,
+    auditId: result.audit_id ?? result.confidence?.audit_id,
     files: result.files,
     sources,
     citations,
@@ -253,6 +265,7 @@ export type BackgroundJob = AdapterJobSummary;
 function adapterInput(data: z.input<typeof askInput>) {
   return {
     query: data.query,
+    profile: data.profile,
     lang: langName(data.lang),
     drive: data.drive,
     action: data.action as AdapterAction | undefined,

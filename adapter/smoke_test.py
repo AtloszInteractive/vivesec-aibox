@@ -1216,6 +1216,45 @@ def test_wsfs_unit():
     check("ws get-file error carries no content",
           hdr.get("error") == "not-found" and body == b"", (hdr, body))
 
+    # The ViVeSecBox tunnel forwards the request path but NOT the query string,
+    # so an embedded UI can only name the file in a body: both entry points have
+    # to exist, or the viewer works over IP and fails inside the box.
+    import service  # noqa: E402
+
+    check("drive file endpoint has a POST twin",
+          hasattr(service.Handler, "_drive_file_post"))
+    check("drive file query parser reads the path",
+          service.Handler._drive_file_path_from_query(None, "path=%2Fa%2Fb+c.txt")
+          == "/a/b c.txt")
+    check("drive file query parser tolerates a missing query",
+          service.Handler._drive_file_path_from_query(None, "") == "")
+
+    # Which of body/query their tunnel preserves is its own business, so the
+    # POST route must resolve either way -- and a query must never take part in
+    # route matching, or POST /ui/file?path=... would 404.
+    seen = []
+
+    class _PostProbe(object):
+        _read_json = lambda self: self._body  # noqa: E731
+        _drive_file = lambda self, p: seen.append(p)  # noqa: E731
+        _drive_file_path_from_query = service.Handler._drive_file_path_from_query
+        _drive_file_post = service.Handler._drive_file_post
+
+    p = _PostProbe()
+    p._body = {"path": "/storage/drives/finance/a.pdf"}
+    p._post_query = ""
+    p._drive_file_post()
+    p._body = {}
+    p._post_query = "path=%2Fstorage%2Fdrives%2Ffinance%2Fb.pdf"
+    p._drive_file_post()
+    p._body = {"path": "/storage/drives/finance/c.pdf"}
+    p._post_query = "path=%2Fignored.pdf"
+    p._drive_file_post()
+    check("drive file POST reads the body, falls back to the query, body wins",
+          seen == ["/storage/drives/finance/a.pdf",
+                   "/storage/drives/finance/b.pdf",
+                   "/storage/drives/finance/c.pdf"], seen)
+
     # session file store: sanitization + isolation + purge
     check("filestore traversal stripped",
           filestore.safe_name("../../etc/passwd") == "passwd")
@@ -1358,6 +1397,7 @@ def main():
         "ADAPTER_DRIVE_PREFIX": "/storage/drives",
         "ADAPTER_FEATURES": "accounting,hr",  # exercise the license feature flags
         "ADAPTER_GENERATE": "off",  # deterministic: don't depend on dev Ollama
+      "ADAPTER_CHAT_POLICY": "locked_grounded",
         "ADAPTER_FILES_DIR": os.path.join(tmp, "generated"),
         "ADAPTER_FEEDBACK_DIR": os.path.join(tmp, "feedback"),
       "ADAPTER_JOBS_DIR": os.path.join(tmp, "jobs"),

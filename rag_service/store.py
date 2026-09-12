@@ -558,9 +558,10 @@ class RagStore:
         return vocabulary
 
     def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000,
-                       corpus_ids=None):
+                       corpus_ids=None, source_paths=None, evidence_chunk_ids=None):
+        import retrieval
         scope = normalize_corpus_ids(corpus_id, corpus_ids)
-        if not scope:
+        if not scope or not question or top_k <= 0:
             return [], {"chunk_hits_count": 0, "estimated_tokens": 0}
         with self._lock:
             for cid in scope:
@@ -572,23 +573,47 @@ class RagStore:
             for doc_id, doc in self._docs.items():
                 if doc.get("corpus_id") not in scope:
                     continue
+                if not retrieval.match_source(doc.get("source_path"), source_paths):
+                    continue
                 for ch in self._chunks.get(doc_id, []):
                     if not ch.get("vector"):
                         continue
                     score = _cosine(qvec, ch["vector"])
                     candidates.append((score, doc, ch))
         candidates.sort(key=lambda t: t[0], reverse=True)
+        limit = min(max(top_k, 0), 50)
+        pool_size = min(max(limit * 8, 40), 256)
+        dense = [chunk["chunk_id"] for score, doc, chunk in candidates
+                 if not MIN_SCORE_ACTIVE or score >= MIN_SCORE][:pool_size]
+        query_terms = set(retrieval.terms(question))
+        frequencies = {}
+        matches = {}
+        for score, doc, chunk in candidates:
+            matched = query_terms.intersection(retrieval.terms(chunk["text"], limit=None))
+            matches[chunk["chunk_id"]] = matched
+            for term in matched:
+                frequencies[term] = frequencies.get(term, 0) + 1
+        lexical_scores = {chunk_id: sum(1.0 / frequencies[term] for term in matched)
+                          for chunk_id, matched in matches.items() if matched}
+        lexical = sorted(lexical_scores, key=lambda chunk_id: (-lexical_scores[chunk_id], chunk_id))[:pool_size]
+        by_id = {chunk["chunk_id"]: (score, doc, chunk) for score, doc, chunk in candidates}
+        evidence = [chunk_id for chunk_id in (evidence_chunk_ids or [])[:8] if chunk_id in by_id]
+        ranked = retrieval.fuse(dense, lexical, evidence)
 
         contexts = []
         used_tokens = 0
-        for score, doc, ch in candidates[: max(top_k, 0)]:
-            # Candidates are sorted by descending score, so the first chunk
-            # under the floor means every remaining one is too.
+        seen_text = set()
+        for chunk_id in ranked:
+            score, doc, ch = by_id[chunk_id]
             if MIN_SCORE_ACTIVE and score < MIN_SCORE:
-                break
+                continue
+            text_key = (doc.get("corpus_id"), " ".join(ch["text"].casefold().split()))
+            if text_key in seen_text:
+                continue
+            seen_text.add(text_key)
             est = _estimate_tokens(ch["text"])
             if contexts and used_tokens + est > max_context_tokens:
-                break
+                continue
             used_tokens += est
             contexts.append({
                 "chunk_id": ch["chunk_id"],
@@ -605,7 +630,7 @@ class RagStore:
                     "chunk": round(score, 6),
                     "page": 0.0,
                     "doc": 0.0,
-                    "keyword": 0.0,
+                    "keyword": 1.0 if chunk_id in lexical else 0.0,
                 },
                 "metadata": {
                     "file": doc.get("file", True),
@@ -613,7 +638,11 @@ class RagStore:
                     "size": doc.get("size"),
                 },
             })
-        return contexts, {"chunk_hits_count": len(candidates), "estimated_tokens": used_tokens}
+            if len(contexts) >= limit:
+                break
+        return contexts, {"chunk_hits_count": len(candidates), "estimated_tokens": used_tokens,
+                          "dense_candidates": len(dense), "lexical_candidates": len(lexical),
+                          "evidence_revalidated": len(evidence), "retrieval": "dense+lexical"}
 
     # ----- whole-document retrieval ------------------------------------------
     def document_context(self, corpus_id, source_path, max_context_tokens=12000):

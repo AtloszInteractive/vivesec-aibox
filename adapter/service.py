@@ -82,6 +82,7 @@ import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
 import session  # noqa: E402
+import chat_policy
 import storage  # noqa: E402
 import voice  # noqa: E402
 import wsfs  # noqa: E402
@@ -347,6 +348,7 @@ def status_payload():
             "ws_fs": {"connected": WSFS.connected()},
             "files": FILES.stats(),
             "voice": voice.status(),
+            "chat_policy": chat_policy.settings(),
             "mirror": MIRROR.stats(), "index": index}
 
 
@@ -460,7 +462,7 @@ _CHUNK_LINE_MAX = 65536
 # `audience`/`purpose` payload parameters (the box UI dialog answers).
 _ACTIONS = ("search", "summary", "report", "tracking", "presentation", "memo",
             "analyze")
-_ACTION_RE = re.compile(r"^#(\w+)\s*(.*)$", re.S)
+_ACTION_RE = re.compile(r"^[#/](\w+)\s*(.*)$", re.S)
 
 # Bare "#action" (no query text): a retrieval seed aimed at the task's material.
 # #analyze is absent on purpose: it never retrieves, and without a file it is
@@ -607,7 +609,7 @@ def _file_search(req_scope, pattern):
 
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
-            progress_callback=None, req_scope=None):
+            progress_callback=None, req_scope=None, profile="grounded"):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -624,14 +626,17 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     detected hallucination (ungrounded number) suppresses the answer."""
     if req_scope is None:
         req_scope = scope.resolve(drive)
+    if action is not None:
+        profile = "grounded"
+    session_scope = chat_policy.history_scope(req_scope.session_scope, profile)
     if action == "search" and mode == "files":
-        return _file_search(req_scope, query)
+        return {**_file_search(req_scope, query), "profile": "grounded"}
     # The UI never sends `lang`: detect it from the question so the guard, the
     # refusal and the audit footer speak the user's language.
     if not lang:
         lang = llm.detect_lang(query) or None
     corpus_id = req_scope.corpus_id
-    history = (SESSIONS.history(user, req_scope.session_scope)
+    history = (SESSIONS.history(user, session_scope)
                if history_snapshot is None
                else [dict(turn) for turn in history_snapshot])
     document = None
@@ -643,6 +648,15 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     retrieval_query = query
     if action is None and history:
         retrieval_query, chat_only = llm.condense(query, history, lang)
+    source_paths = [str(source) for source in (files or []) if source]
+    if not source_paths and action is None:
+        source_paths = llm.source_files(query)
+    evidence_ids = []
+    if action is None and not source_paths:
+        from session import followup_evidence
+        evidence_ids = followup_evidence(query, history, req_scope.corpus_ids)
+    if source_paths or evidence_ids:
+        chat_only = False
     if action == "analyze":
         # The user pointed at ONE file and asked what is in it. Similarity
         # retrieval would only return the parts that match the question, so the
@@ -671,23 +685,11 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                             {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
                              "corpus_ids": list(req_scope.corpus_ids),
                              "question": retrieval_query, "top_k": top_k,
-                             "max_context_tokens": MAX_CONTEXT_TOKENS})
+                             "max_context_tokens": MAX_CONTEXT_TOKENS,
+                             "source_paths": source_paths,
+                             "evidence_chunk_ids": evidence_ids,
+                             "include_debug": True})
         contexts = res.get("contexts", [])
-        # Source-file filter (spec UX: file selection). Graceful: when the filter
-        # matches nothing, the unfiltered contexts are kept so the user still gets
-        # a grounded answer instead of an empty refusal.
-        if files:
-            wanted = [corpus.norm(str(f)) for f in files if f]
-
-            def _match(c):
-                sp = corpus.norm(c.get("source_path") or "")
-                base = sp.rsplit("/", 1)[-1]
-                return any(sp == w or base == w.rsplit("/", 1)[-1]
-                           or sp.endswith("/" + w.lstrip("/")) for w in wanted)
-
-            picked = [c for c in contexts if _match(c)]
-            if picked:
-                contexts = picked
     hits = []
     for i, c in enumerate(contexts, 1):
         snippet = " ".join((c.get("text") or "")[:200].split())
@@ -700,7 +702,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                                    num_ctx=ANALYZE_NUM_CTX if action == "analyze" else None,
                                    chat_only=chat_only, agent=agent,
                                    cancel_event=cancel_event,
-                                   progress_callback=progress_callback)
+                                   progress_callback=progress_callback,
+                                   **({"profile": profile} if profile == "hybrid" else {}))
     degenerate = (action == "analyze" and contexts and answer is not None
                   and len(answer.strip()) < ANALYZE_MIN_ANSWER_CHARS)
     if degenerate:
@@ -710,8 +713,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         answer = _analyze_too_large_message(document, lang)
         backend = (backend or "") + " (did not fit the context window)"
     conf = confidence.score(contexts, answer, question=query, history=history,
-                            conversational=chat_only)
-    if answer and conf["suppress"]:
+                            conversational=chat_only) if profile == "grounded" else None
+    if answer and conf and conf["suppress"]:
         # Spec: detected hallucination (ungrounded figure) -> the defensive
         # standard response replaces the fabricated text.
         bad = (conf["components"].get("context_adherence") or {}).get("ungrounded")
@@ -724,14 +727,26 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         # budget ran out). The score only measures retrieval, so leaving it as
         # is would render an empty card wearing a green badge.
         answer = _generation_incomplete_message(lang)
-        conf["score"] = 0
-        conf["band"] = "red"
+        if conf is not None:
+            conf["score"] = 0
+            conf["band"] = "red"
     _, citations = llm.build_context(contexts)
+    if profile == "hybrid" and answer:
+        valid_refs = {str(citation["ref"]) for citation in citations}
+        answer = re.sub(r"\[#(\d+)\]", lambda match: match.group(0)
+                        if match.group(1) in valid_refs else "", answer)
+        used_refs = set(re.findall(r"\[#(\d+)\]", answer))
+        citations = [citation for citation in citations if str(citation["ref"]) in used_refs]
     # Only completed exchanges go into the conversation memory (an empty answer
     # from a disabled/unreachable model is not a turn worth remembering). The
     # history stays footer-free so audit blocks never leak into later prompts.
     if answer:
-        SESSIONS.record(user, req_scope.session_scope, query, answer)
+        cited = set(re.findall(r"\[#(\d+)\]", answer))
+        sources = [{"chunk_id": context["chunk_id"], "corpus_id": context.get("corpus_id"),
+                    "source_path": context.get("source_path")}
+                   for position, context in enumerate(contexts, 1)
+                   if str(position) in cited and context.get("chunk_id")]
+        SESSIONS.record(user, session_scope, query, answer, sources=sources)
     # Spec (C6): mandatory "Adatkontroll & Audit Info" footer + audit id on
     # every displayed output; band message (+ degraded metrics on amber).
     aid = confidence.audit_id(user, drive, query, answer or "")
@@ -739,17 +754,23 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     if answer and not degenerate and document and document.get("truncated"):
         display = answer + "\n\n" + _analyze_truncation_note(document, lang)
     if display:
-        display = display + "\n\n" + confidence.footer(conf, citations, aid, lang)
+        display = display + "\n\n" + (confidence.footer(conf, citations, aid, lang)
+                if conf is not None else
+                "---\n**Adatkontroll & Audit Info**\n* Profile: hybrid\n* Audit ID: " + aid)
     result = {"ok": True, "drive": corpus.norm(drive), "user": user,
               "corpus_id": corpus_id, "answer": display, "backend": backend,
-              "action": action,
+              "action": action, "profile": profile, "audit_id": aid,
               "agent": (agent or "").strip().lower() or llm.DEFAULT_AGENT,
               "confidence": {"score": conf["score"], "band": conf["band"],
                              "message": confidence.band_message(conf["band"], lang),
                              "degraded": conf.get("degraded") or [],
                              "audit_id": aid,
-                             "components": conf["components"]},
+                             "components": conf["components"]} if conf is not None else None,
               "citations": citations, "hits": hits}
+    if action != "analyze" and not chat_only:
+        result["retrieval_debug"] = res.get("debug", {})
+        result["source_paths"] = source_paths
+        result["evidence_chunk_ids"] = evidence_ids
     if params:
         result["params"] = params
     if retrieval_query != query:
@@ -763,7 +784,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     TRACES.put(aid, {
         "ts": time.time(), "user": user, "drive": corpus.norm(drive),
         "corpus_id": corpus_id, "scope": req_scope.as_dict(), "action": action,
-        "agent": result["agent"], "lang": lang,
+        "agent": result["agent"], "lang": lang, "profile": profile,
         "question": query,
         "retrieval_query": retrieval_query if retrieval_query != query else None,
         "answer": answer, "backend": backend,
@@ -786,7 +807,8 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
     try:
         code, payload = 200, _answer(user, drive, query, top_k, lang, action,
                                      mode, files, params, agent, history_snapshot,
-                                     cancel_event, progress, req_scope)
+                                     cancel_event, progress, req_scope,
+                                     (job.get("request") or {}).get("profile", "grounded"))
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -974,7 +996,7 @@ class Handler(BaseHTTPRequestHandler):
             self._files_download(query)
             return
         if path == DRIVE_FILE_PATH:
-            self._drive_file(query)
+            self._drive_file(self._drive_file_path_from_query(query))
             return
         if self.path in ("/", ""):
             self._send(200, {"ok": True, "service": "ViVeSec AIBox adapter"})
@@ -983,7 +1005,9 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- POST ----------------------------------------------------------------
     def do_POST(self):
-        path = self.path
+        # A query string on a POST is legitimate, so it must not take part in
+        # route matching -- otherwise POST /ui/file?path=... would 404.
+        path, _, self._post_query = self.path.partition("?")
         try:
             if path.startswith(CONTENT_PREFIX):
                 return self._content(path[len(CONTENT_PREFIX):])
@@ -1002,6 +1026,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/jobs/seen": self._jobs_seen,
                 "/api/v1/ui/jobs/cancel": self._jobs_cancel,
                 "/api/v1/ui/save": self._save,
+                "/api/v1/ui/file": self._drive_file_post,
                 "/api/v1/ui/feedback": self._feedback,
                 "/api/v1/ui/stt": self._stt,
                 "/api/v1/ui/tts": self._tts,
@@ -1207,6 +1232,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(403, {"ok": False, "error": str(e)})
             return None
 
+    def _profile_for(self, payload, action):
+        try:
+            return chat_policy.resolve(payload.get("profile"), action)
+        except PermissionError as error:
+            self._send(403, {"ok": False, "error": str(error)})
+        except ValueError as error:
+            self._send(400, {"ok": False, "error": str(error)})
+        return None
+
     def _query(self):
         if self._locked_guard():
             return
@@ -1217,7 +1251,10 @@ class Handler(BaseHTTPRequestHandler):
         req_scope = self._scope_for(parsed[0], parsed[1], payload)
         if req_scope is None:
             return
-        self._send(200, _answer(*parsed, req_scope=req_scope))
+        profile = self._profile_for(payload, parsed[5])
+        if profile is None:
+            return
+        self._send(200, _answer(*parsed, req_scope=req_scope, profile=profile))
 
     # -- async UI channel: submit a job, then long-poll for it (spec sec 2.4) -
     def _ask(self):
@@ -1232,7 +1269,10 @@ class Handler(BaseHTTPRequestHandler):
         req_scope = self._scope_for(user, drive, payload)
         if req_scope is None:
             return
-        history_snapshot = SESSIONS.history(user, req_scope.session_scope)
+        profile = self._profile_for(payload, parsed[5])
+        if profile is None:
+            return
+        history_snapshot = SESSIONS.history(user, chat_policy.history_scope(req_scope.session_scope, profile))
         # Where the request was STARTED decides where its result belongs: a chat
         # question answers in the conversation, a quick action in the job list.
         origin = (str(payload.get("origin") or "chat")).strip().lower()
@@ -1242,7 +1282,7 @@ class Handler(BaseHTTPRequestHandler):
                    "action": parsed[5], "mode": parsed[6], "files": parsed[7],
                    "params": parsed[8], "agent": parsed[9],
                    "scope_drives": list(req_scope.drive_roots),
-                   "origin": origin, "history": history_snapshot}
+                   "origin": origin, "history": history_snapshot, "profile": profile}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
         heavy = action is not None and not (action == "search" and mode == "files")
@@ -1560,7 +1600,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _drive_file(self, query):
+    def _drive_file_path_from_query(self, query):
+        return (urllib.parse.parse_qs(query or "").get("path") or [""])[0]
+
+    def _drive_file_post(self):
+        """POST twin of the GET below.
+
+        The ViVeSecBox tunnel forwards the request path but NOT the query
+        string, so an embedded UI cannot name the file in the URL; measured on
+        the demo box, where every embedded GET arrived as a bare
+        `/api/v1/ui/file` and was answered 400. The body survives the tunnel.
+
+        The query is still honoured as a fallback: which of the two the tunnel
+        preserves is its implementation detail, and the client sends both.
+        """
+        payload = self._read_json()
+        path = (payload.get("path") or "").strip()
+        if not path:
+            path = self._drive_file_path_from_query(getattr(self, "_post_query", ""))
+        self._drive_file(path)
+
+    def _drive_file(self, raw_path):
         """Serve one drive file, fetched from the ViVeSecBox over ws-fs.
 
         The document itself never lives on the AI Box, so a citation can only
@@ -1574,7 +1634,6 @@ class Handler(BaseHTTPRequestHandler):
         if vvs is None:
             return
         user, drive = vvs
-        raw_path = (urllib.parse.parse_qs(query or "").get("path") or [""])[0]
         if not raw_path:
             self._send(400, {"ok": False, "error": "Missing 'path'"})
             return

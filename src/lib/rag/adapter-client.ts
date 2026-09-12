@@ -14,6 +14,13 @@
 //   ADAPTER_DEMO_DRIVE  default VVS-Drive path (default /storage/drives/finance/)
 //   ADAPTER_DEMO_USER   default VVS-User id (default demo)
 
+export type ChatProfile = "grounded" | "hybrid";
+export type ChatPolicy = {
+  policy: "locked_grounded" | "locked_hybrid" | "selectable_grounded" | "selectable_hybrid";
+  default_profile: ChatProfile;
+  allow_switch: boolean;
+};
+
 export type AdapterCitation = {
   ref: number;
   path: string | null;
@@ -42,6 +49,8 @@ export type AdapterConfidence = {
 
 export type AdapterAnswer = {
   ok: boolean;
+  profile?: ChatProfile;
+  audit_id?: string;
   drive?: string;
   user?: string;
   corpus_id?: string;
@@ -65,6 +74,7 @@ export type AdapterStatus = {
   features: string[];
   locked: boolean;
   voice: AdapterVoice;
+  chatPolicy?: ChatPolicy;
   error?: string;
 };
 
@@ -81,6 +91,7 @@ export type AdapterAction =
 
 export type AdapterAskInput = {
   query: string;
+  profile?: ChatProfile;
   topK?: number;
   lang?: string; // adapter expects a language NAME (English/Hungarian/Danish/German)
   drive?: string;
@@ -308,6 +319,7 @@ export async function adapterStatus(): Promise<AdapterStatus> {
       features: Array.isArray(j.features) ? (j.features as string[]) : [],
       locked: Boolean(j.storage_locked ?? j.locked),
       voice: readVoice(j.voice),
+      chatPolicy: j.chat_policy as ChatPolicy | undefined,
     };
   } catch (err) {
     return { ...offline, error: err instanceof Error ? err.message : "adapter unreachable" };
@@ -404,6 +416,7 @@ export async function adapterSubmitJob(input: AdapterAskInput): Promise<AdapterJ
     headers,
     body: JSON.stringify({
       query: input.query,
+      profile: input.profile,
       top_k: input.topK ?? (input.action ? undefined : 5),
       lang: input.lang,
       action: input.action,
@@ -446,6 +459,8 @@ function answerFromJson(j: Record<string, unknown>): AdapterAnswer {
     answer: (j.answer as string) ?? "",
     backend: j.backend as string | undefined,
     action: (j.action as string | undefined) ?? null,
+    profile: j.profile === "hybrid" ? "hybrid" : "grounded",
+    audit_id: j.audit_id as string | undefined,
     confidence: (j.confidence as AdapterConfidence | undefined) ?? undefined,
     files: Array.isArray(j.files)
       ? (j.files as { path: string; mtime: number | null; size: number | null }[])
@@ -829,11 +844,17 @@ export async function adapterDownloadGenerated(input: {
 /** How long the box may take to hand over a document (ws-fs round trip). */
 const DRIVE_FILE_TIMEOUT_MS = 60_000;
 
-/** GET /api/v1/ui/file — the ORIGINAL document, fetched from the ViVeSecBox.
+/** POST /api/v1/ui/file — the ORIGINAL document, fetched from the ViVeSecBox.
  *
  * The AI Box only ever stored the passages it retrieved, so showing the real
  * document means asking the box for it. The adapter re-checks the read scope,
  * so a path outside this request's drives comes back as 403 rather than bytes.
+ *
+ * POST, not GET: embedded in the ViVeSecBox the tunnel drops the query string
+ * of a GET, so `?path=` arrived empty (measured on the demo box: every embedded
+ * call landed as a bare /ui/file -> 400). The path is sent BOTH in the body and
+ * in the query, because which of the two their tunnel preserves is its own
+ * implementation detail; the adapter reads the body first and falls back.
  */
 export async function adapterDriveFile(input: {
   path: string;
@@ -842,12 +863,15 @@ export async function adapterDriveFile(input: {
 }): Promise<{ ok: boolean; blob?: Blob; contentType?: string; error?: string }> {
   const drive = input.drive ?? demoDrive();
   const user = input.user ?? demoUser();
-  const qs = new URLSearchParams({ path: input.path }).toString();
+  const encoded = isEmbedded();
+  const payload = { path: input.path, ...(encoded ? { encode: "base64" } : {}) };
+  const qs = new URLSearchParams(payload).toString();
   let res: Response;
   try {
     res = await apiFetch(`${adapterUrl()}/api/v1/ui/file?${qs}`, {
-      method: "GET",
+      method: "POST",
       headers: vvsHeaders(drive, user),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(DRIVE_FILE_TIMEOUT_MS),
     });
   } catch (err) {
@@ -856,6 +880,21 @@ export async function adapterDriveFile(input: {
   if (!res.ok) {
     const j = await safeJson(res);
     return { ok: false, error: (j.error as string) ?? `HTTP ${res.status}` };
+  }
+  if (encoded) {
+    const document = await safeJson(res);
+    if (document.ok !== true || typeof document.content_b64 !== "string") {
+      return { ok: false, error: "Invalid encoded document response" };
+    }
+    try {
+      const binary = atob(document.content_b64);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const contentType = typeof document.content_type === "string"
+        ? document.content_type : "application/octet-stream";
+      return { ok: true, blob: new Blob([bytes], { type: contentType }), contentType };
+    } catch {
+      return { ok: false, error: "Invalid base64 document content" };
+    }
   }
   return {
     ok: true,

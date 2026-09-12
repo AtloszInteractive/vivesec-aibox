@@ -35,6 +35,7 @@ from chunking import chunk_text  # noqa: E402
 import extract  # noqa: E402
 import query_split  # noqa: E402
 import reaccent  # noqa: E402
+import retrieval
 
 # Shared helpers / constants / exception, single source of truth in store.py.
 from store import (  # noqa: E402
@@ -141,6 +142,26 @@ class SqliteVecStore:
         columns = {row[1] for row in c.execute("PRAGMA table_info(documents)")}
         if "skip_reason" not in columns:
             c.execute("ALTER TABLE documents ADD COLUMN skip_reason TEXT")
+        has_fts = c.execute("SELECT 1 FROM meta WHERE key='fts_ready' AND value='1'").fetchone()
+        c.executescript("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunk_text_fts USING fts5(
+                text, corpus_id, content='chunks', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2');
+            CREATE TRIGGER IF NOT EXISTS chunks_fts_insert AFTER INSERT ON chunks BEGIN
+                INSERT INTO chunk_text_fts(rowid, text, corpus_id) VALUES(new.rowid, new.text, new.corpus_id);
+            END;
+            CREATE TRIGGER IF NOT EXISTS chunks_fts_delete AFTER DELETE ON chunks BEGIN
+                INSERT INTO chunk_text_fts(chunk_text_fts, rowid, text, corpus_id)
+                VALUES('delete', old.rowid, old.text, old.corpus_id);
+            END;
+            CREATE TRIGGER IF NOT EXISTS chunks_fts_update AFTER UPDATE ON chunks BEGIN
+                INSERT INTO chunk_text_fts(chunk_text_fts, rowid, text, corpus_id)
+                VALUES('delete', old.rowid, old.text, old.corpus_id);
+                INSERT INTO chunk_text_fts(rowid, text, corpus_id) VALUES(new.rowid, new.text, new.corpus_id);
+            END;
+        """)
+        if not has_fts:
+            c.execute("INSERT INTO chunk_text_fts(chunk_text_fts) VALUES('rebuild')")
+            c.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('fts_ready', '1')")
         c.commit()
 
     def _load_meta(self):
@@ -498,7 +519,7 @@ class SqliteVecStore:
         return vocabulary
 
     def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000,
-                       corpus_ids=None):
+                       corpus_ids=None, source_paths=None, evidence_chunk_ids=None):
         scope = normalize_corpus_ids(corpus_id, corpus_ids)
         if not scope:
             return [], {"chunk_hits_count": 0, "estimated_tokens": 0}
@@ -518,7 +539,7 @@ class SqliteVecStore:
                 ).fetchone()[0]
             total = sum(totals.values())
 
-            k = max(top_k, 0)
+            k = min(max(top_k, 0), 50)
             if not question or not self._vec_ready or k == 0 or total == 0:
                 return [], {"chunk_hits_count": total, "estimated_tokens": 0}
 
@@ -533,6 +554,21 @@ class SqliteVecStore:
                 return [], {"chunk_hits_count": total, "estimated_tokens": 0}
 
             k = min(k, total)
+            pool_size = min(max(k * 8, 40), 256)
+            marks = ",".join("?" * len(scope))
+            clause = "c.corpus_id IN (%s)" % marks
+            bindings = list(scope)
+            if source_paths:
+                source_clauses = []
+                for source in source_paths[:20]:
+                    source = norm_path(source.replace("\\", "/"))
+                    if "/" in source:
+                        source_clauses.append("lower(d.source_path)=lower(?)")
+                        bindings.append(source)
+                    else:
+                        source_clauses.append("(d.source_path LIKE ? ESCAPE '\\' OR lower(d.source_path)=lower(?))")
+                        bindings.extend(["%/" + _like_escape(source), source])
+                clause += " AND (" + " OR ".join(source_clauses) + ")"
             runs = []
             for qvec in qvecs:
                 blob = sqlite_vec.serialize_float32(qvec)
@@ -540,11 +576,19 @@ class SqliteVecStore:
                 for cid in scope:
                     if not totals[cid]:
                         continue
-                    rows = self._conn.execute(
-                        "SELECT chunk_id, distance FROM chunk_vectors "
-                        "WHERE corpus_id=? AND embedding MATCH ? AND k=? ORDER BY distance",
-                        (cid, blob, min(k, totals[cid])),
-                    ).fetchall()
+                    if source_paths:
+                        rows = self._conn.execute(
+                            "SELECT c.chunk_id, vec_distance_cosine(v.embedding, ?) AS distance "
+                            "FROM chunks c JOIN documents d ON d.doc_id=c.doc_id "
+                            "JOIN chunk_vectors v ON v.rowid=c.vec_rowid WHERE " + clause +
+                            " AND c.corpus_id=? ORDER BY distance LIMIT ?",
+                            [blob] + bindings + [cid, pool_size]).fetchall()
+                    else:
+                        rows = self._conn.execute(
+                            "SELECT chunk_id, distance FROM chunk_vectors "
+                            "WHERE corpus_id=? AND embedding MATCH ? AND k=? ORDER BY distance",
+                            (cid, blob, min(pool_size, totals[cid])),
+                        ).fetchall()
                     for chunk_id, distance in rows:
                         score = 1.0 - float(distance)
                         # Rows arrive best-first, so the first one under the floor
@@ -556,12 +600,33 @@ class SqliteVecStore:
                 # sub-questions themselves are interleaved afterwards, so a
                 # strong corpus cannot take every slot from a sub-question.
                 kept.sort(key=lambda hit: hit[1], reverse=True)
-                runs.append(kept[:k])
-            hits = query_split.interleave(runs, k)
+                runs.append(kept[:pool_size])
+            dense = query_split.interleave(runs, pool_size)
+            dense_scores = dict(dense)
+            query_terms = retrieval.terms(question)
+            lexical = []
+            if query_terms:
+                scope_expression = " OR ".join('"' + cid.replace('"', '""') + '"' for cid in scope)
+                text_expression = " OR ".join('"' + term + '"' for term in query_terms)
+                expression = "corpus_id:(" + scope_expression + ") AND text:(" + text_expression + ")"
+                lexical = [row[0] for row in self._conn.execute(
+                    "SELECT c.chunk_id FROM chunk_text_fts "
+                    "JOIN chunks c ON c.rowid=chunk_text_fts.rowid "
+                    "JOIN documents d ON d.doc_id=c.doc_id WHERE chunk_text_fts MATCH ? AND " +
+                    clause + " ORDER BY bm25(chunk_text_fts, 1.0, 0.0), c.chunk_id LIMIT ?",
+                    [expression] + bindings + [pool_size]).fetchall()]
+            evidence = []
+            for chunk_id in (evidence_chunk_ids or [])[:8]:
+                if self._conn.execute(
+                    "SELECT 1 FROM chunks c JOIN documents d ON d.doc_id=c.doc_id WHERE " +
+                    clause + " AND c.chunk_id=?", bindings + [chunk_id]).fetchone():
+                    evidence.append(chunk_id)
+            hits = retrieval.fuse([chunk_id for chunk_id, _ in dense], lexical, evidence)
 
             contexts = []
             used_tokens = 0
-            for chunk_id, score in hits:
+            seen_text = set()
+            for chunk_id in hits:
                 row = self._conn.execute(
                     "SELECT c.doc_id, c.page_id, c.page_number, c.section_path, c.text, "
                     "c.corpus_id, d.title, d.source_path, d.file, d.mtime, d.size "
@@ -573,9 +638,23 @@ class SqliteVecStore:
                     continue
                 (doc_id, page_id, page_number, section_path, text,
                  chunk_corpus, title, source_path, file_flag, mtime, size) = row
+                text_key = (chunk_corpus, " ".join(text.casefold().split()))
+                if text_key in seen_text:
+                    continue
+                seen_text.add(text_key)
+                score = dense_scores.get(chunk_id)
+                if score is None:
+                    distances = [self._conn.execute(
+                        "SELECT vec_distance_cosine(v.embedding, ?) FROM chunk_vectors v "
+                        "JOIN chunks c ON c.vec_rowid=v.rowid WHERE c.chunk_id=?",
+                        (sqlite_vec.serialize_float32(qvec), chunk_id)).fetchone()
+                        for qvec in qvecs]
+                    score = max((1.0 - distance[0] for distance in distances if distance), default=0.0)
+                if MIN_SCORE_ACTIVE and score < MIN_SCORE:
+                    continue
                 est = _estimate_tokens(text)
                 if contexts and used_tokens + est > max_context_tokens:
-                    break
+                    continue
                 used_tokens += est
                 contexts.append({
                     "chunk_id": chunk_id,
@@ -592,7 +671,7 @@ class SqliteVecStore:
                         "chunk": round(score, 6),
                         "page": 0.0,
                         "doc": 0.0,
-                        "keyword": 0.0,
+                        "keyword": 1.0 if chunk_id in lexical else 0.0,
                     },
                     "metadata": {
                         "file": bool(file_flag),
@@ -600,7 +679,11 @@ class SqliteVecStore:
                         "size": size,
                     },
                 })
-            return contexts, {"chunk_hits_count": total, "estimated_tokens": used_tokens}
+                if len(contexts) >= k:
+                    break
+            return contexts, {"chunk_hits_count": total, "estimated_tokens": used_tokens,
+                              "dense_candidates": len(dense), "lexical_candidates": len(lexical),
+                              "evidence_revalidated": len(evidence), "retrieval": "dense+fts5"}
 
     # ----- whole-document retrieval ------------------------------------------
     def document_context(self, corpus_id, source_path, max_context_tokens=12000):
