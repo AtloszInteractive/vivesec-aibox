@@ -280,7 +280,8 @@ def promote(stage):
     candidate = "vivesec-release-check-" + manifest["stamp"]
     command("docker", "run", "-d", "--name", candidate, "--network", "host", "-e", "PORT=18095",
             "-e", "HOST=127.0.0.1", "-e", "NITRO_HOST=127.0.0.1", "-e",
-            "ADAPTER_URL=" + environment(manifest["old"]["ui"])["ADAPTER_URL"], manifest["images"]["ui"])
+            "ADAPTER_URL=" + environment(manifest["old"]["ui"])["ADAPTER_URL"], manifest["images"]["ui"],
+            *manifest["old"]["ui"]["Config"]["Cmd"])
     try:
         ready("http://127.0.0.1:18095/", stage / "ui-preflight.html")
     finally:
