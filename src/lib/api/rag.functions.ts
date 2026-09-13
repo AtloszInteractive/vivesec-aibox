@@ -321,7 +321,7 @@ export type { AdapterJobStatus };
 // UI offers a download instead.
 // ---------------------------------------------------------------------------
 
-export type SaveFormat = "md" | "txt" | "pdf" | "pptx";
+export type SaveFormat = "md" | "txt" | "pdf" | "docx" | "pptx";
 
 export type SaveResult = {
   ok: boolean;
@@ -338,7 +338,7 @@ export type SaveResult = {
 const saveInput = z.object({
   name: z.string().min(1),
   text: z.string().min(1),
-  format: z.enum(["md", "txt", "pdf", "pptx"]).optional(),
+  format: z.enum(["md", "txt", "pdf", "docx", "pptx"]).optional(),
   title: z.string().optional(),
   drive: z.string().optional(),
 });

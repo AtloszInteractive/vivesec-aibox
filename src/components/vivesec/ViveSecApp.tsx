@@ -4048,7 +4048,7 @@ function SaveToDriveButton({
   text,
   defaultName,
   variant = "subtle",
-  formats = ["pdf", "md"],
+  formats = ["pdf", "docx", "md"],
   defaultFormat,
   title,
 }: {
@@ -4161,6 +4161,7 @@ function SaveToDriveButton({
 
 const FORMAT_LABEL: Record<SaveFormat, string> = {
   pdf: "PDF",
+  docx: "Word (.docx)",
   pptx: "PowerPoint (.pptx)",
   md: "Markdown (.md)",
   txt: "Plain text (.txt)",
@@ -4168,6 +4169,7 @@ const FORMAT_LABEL: Record<SaveFormat, string> = {
 
 const FORMAT_EXT: Record<SaveFormat, string> = {
   pdf: ".pdf",
+  docx: ".docx",
   pptx: ".pptx",
   md: ".md",
   txt: ".txt",
@@ -4597,7 +4599,7 @@ function DeckCard({
             text={deckMarkdown(msg)}
             title={msg.title}
             defaultName={saveName("presentation")}
-            formats={["pptx", "pdf", "md"]}
+            formats={["pptx", "pdf", "docx", "md"]}
           />
         </div>
       </div>

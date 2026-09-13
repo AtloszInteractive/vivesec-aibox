@@ -62,6 +62,33 @@ class ChatPolicyTest(unittest.TestCase):
             self.assertIn("hybrid", backend)
             self.assertIn("NOT verified company evidence", generate.call_args.args[0])
 
+    def test_hybrid_conversation_guidance_preserves_evidence_boundaries(self):
+        history = [{"role": "user", "content": "The meeting is tomorrow; keep it brief."}]
+        for contexts in ([], [{"text": "Project review: owner unassigned.", "source_path": "review.txt"}]):
+            with self.subTest(has_documents=bool(contexts)), patch.object(llm, "GENERATE", "on"), patch.object(
+                llm, "_chat", return_value=("A useful answer.", 0, 0)
+            ) as generate:
+                llm.generate("Help me prepare for the meeting", contexts, history=history,
+                             lang="Hungarian", profile="hybrid")
+                system = generate.call_args.args[0]
+                for rule in (
+                    "Answer clear requests first",
+                    "one or two concrete next steps or options",
+                    "Ask one focused follow-up question only",
+                    "Use details already provided",
+                    "Present recommendations as proposals",
+                    "Do not invent company circumstances",
+                    "Do not force a suggestion or question into every response",
+                    "Respect requests for a short answer or no follow-up questions",
+                    "Only company-specific facts",
+                    "NOT verified company evidence",
+                    "Do not invent citations",
+                    "cannot perform external actions",
+                    "Always answer in Hungarian",
+                ):
+                    self.assertIn(rule, system)
+                self.assertEqual(generate.call_args.kwargs["history"], history)
+
     def test_hybrid_general_question_after_refusal_with_unrelated_documents(self):
         history = [
             {"role": "user", "content": "What is our company's revenue?"},

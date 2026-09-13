@@ -2,10 +2,10 @@
 
 The UI hands us the answer as markdown-ish text; the user picks the format the
 file should land on the drive in. Everything here is PURE STDLIB (the adapter
-image has no pip packages): the PDF is written by hand and the PPTX is an
-OOXML package built with zipfile.
+image has no pip packages): the PDF is written by hand and DOCX/PPTX are
+OOXML packages built with zipfile.
 
-Formats: 'md' (verbatim), 'txt' (markers stripped), 'pdf', 'pptx'.
+Formats: 'md' (verbatim), 'txt' (markers stripped), 'pdf', 'docx', 'pptx'.
 
 PDF caveat carried over from demo-corpus/lib/writers.py: the standard-14 fonts
 use WinAnsi (cp1252), which has no Hungarian o-double-acute / u-double-acute.
@@ -18,14 +18,17 @@ import textwrap
 import zipfile
 from xml.sax.saxutils import escape
 
-FORMATS = ("md", "txt", "pdf", "pptx")
+FORMATS = ("md", "txt", "pdf", "docx", "pptx")
 
-_EXT = {"md": ".md", "txt": ".txt", "pdf": ".pdf", "pptx": ".pptx"}
+_EXT = {"md": ".md", "txt": ".txt", "pdf": ".pdf", "docx": ".docx",
+    "pptx": ".pptx"}
 
 _CONTENT_TYPE = {
     "md": "text/markdown; charset=utf-8",
     "txt": "text/plain; charset=utf-8",
     "pdf": "application/pdf",
+    "docx": ("application/vnd.openxmlformats-officedocument"
+             ".wordprocessingml.document"),
     "pptx": ("application/vnd.openxmlformats-officedocument"
              ".presentationml.presentation"),
 }
@@ -94,6 +97,85 @@ def parse_blocks(text):
         else:
             blocks.append(("", strip_markers(line)))
     return blocks
+
+
+# ---------------------------------------------------------------------------
+# docx (minimal OOXML document)
+# ---------------------------------------------------------------------------
+
+_DOCX_CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+</Types>"""
+
+_DOCX_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+</Relationships>"""
+
+_DOCX_DOCUMENT_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>"""
+
+_DOCX_STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="200" w:after="100"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr></w:style>
+</w:styles>"""
+
+
+def _docx_core(title):
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:title>%s</dc:title><dc:creator>ViVeSec AI</dc:creator>'
+        '</cp:coreProperties>' % escape(title or "Document"))
+
+
+def _docx_paragraph(kind, text):
+    style = {"h1": "Heading1", "h2": "Heading2"}.get(kind)
+    ppr = '<w:pPr><w:pStyle w:val="%s"/></w:pPr>' % style if style else ""
+    clean = text or ""
+    if kind == "" and clean.startswith(("- ", "* ")):
+        clean = "\u2022 " + clean[2:].strip()
+    run_props = '<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/></w:rPr>' if kind == "mono" else ""
+    if not clean:
+        return "<w:p>%s</w:p>" % ppr
+    return ('<w:p>%s<w:r>%s<w:t xml:space="preserve">%s</w:t></w:r></w:p>'
+            % (ppr, run_props, escape(clean)))
+
+
+def render_docx(text, title=""):
+    """Markdown-ish text -> a portable .docx package (bytes)."""
+    import io
+
+    blocks = parse_blocks(text)
+    if title and not any(kind == "h1" for kind, _ in blocks):
+        blocks.insert(0, ("h1", title))
+    body = "".join(_docx_paragraph(kind, value) for kind, value in blocks)
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body>%s<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
+        '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/>'
+        '</w:sectPr></w:body></w:document>' % body)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _DOCX_CONTENT_TYPES)
+        z.writestr("_rels/.rels", _DOCX_RELS)
+        z.writestr("docProps/core.xml", _docx_core(title))
+        z.writestr("word/_rels/document.xml.rels", _DOCX_DOCUMENT_RELS)
+        z.writestr("word/styles.xml", _DOCX_STYLES)
+        z.writestr("word/document.xml", document)
+    return buf.getvalue()
 
 
 _CHART_RE = re.compile(r"^chart\s*[:\-\u2013]\s*(.+)$", re.I)
@@ -663,6 +745,8 @@ def render(text, fmt, title=""):
     fmt = normalize_format(fmt) or "md"
     if fmt == "pdf":
         return render_pdf(text, title=title), fmt
+    if fmt == "docx":
+        return render_docx(text, title=title), fmt
     if fmt == "pptx":
         return render_pptx(text, title=title), fmt
     if fmt == "txt":

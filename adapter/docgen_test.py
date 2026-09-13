@@ -19,13 +19,15 @@ class FormatNameTest(unittest.TestCase):
     def test_aliases_and_unknown(self):
         self.assertEqual("md", docgen.normalize_format("Markdown"))
         self.assertEqual("txt", docgen.normalize_format(".TXT"))
+        self.assertEqual("docx", docgen.normalize_format("DOCX"))
         self.assertEqual("pptx", docgen.normalize_format("pptx"))
-        self.assertIsNone(docgen.normalize_format("docx"))
+        self.assertIsNone(docgen.normalize_format("xlsx"))
         self.assertIsNone(docgen.normalize_format(""))
 
     def test_extension_is_forced_and_not_doubled(self):
         self.assertEqual("memo.pdf", docgen.with_extension("memo.md", "pdf"))
         self.assertEqual("memo.pdf", docgen.with_extension("memo.pdf", "pdf"))
+        self.assertEqual("memo.docx", docgen.with_extension("memo.pdf", "docx"))
         self.assertEqual("deck.pptx", docgen.with_extension("deck", "pptx"))
         self.assertEqual("document.md", docgen.with_extension("  ", "md"))
 
@@ -118,6 +120,40 @@ class PdfTest(unittest.TestCase):
         self.assertIn(b"total \\(net\\) 5", pdf)
 
 
+class DocxTest(unittest.TestCase):
+    def _open(self, blob):
+        return zipfile.ZipFile(io.BytesIO(blob))
+
+    def test_package_has_the_required_parts(self):
+        z = self._open(docgen.render_docx("# Report\n\nbody"))
+        names = set(z.namelist())
+        for part in ("[Content_Types].xml", "_rels/.rels", "docProps/core.xml",
+                     "word/document.xml", "word/styles.xml",
+                     "word/_rels/document.xml.rels"):
+            self.assertIn(part, names)
+        self.assertIsNone(z.testzip())
+
+    def test_headings_bullets_unicode_and_xml_are_preserved(self):
+        z = self._open(docgen.render_docx(
+            "# Vezet\u0151i jelent\u00e9s\n\n## Eredm\u00e9nyek\n- N\u00f6veked\u00e9s < 5% & stabil"))
+        body = z.read("word/document.xml").decode("utf-8")
+        self.assertIn('<w:pStyle w:val="Heading1"/>', body)
+        self.assertIn('<w:pStyle w:val="Heading2"/>', body)
+        self.assertIn("\u2022 N\u00f6veked\u00e9s &lt; 5% &amp; stabil", body)
+        self.assertIn("Vezet\u0151i jelent\u00e9s", body)
+
+    def test_title_is_added_when_text_has_no_main_heading(self):
+        z = self._open(docgen.render_docx("body", title="Decision memo"))
+        body = z.read("word/document.xml").decode("utf-8")
+        self.assertIn("Decision memo", body)
+        self.assertIn("body", body)
+
+    def test_content_type_is_wordprocessingml(self):
+        self.assertEqual(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            docgen.content_type("docx"))
+
+
 class PptxTest(unittest.TestCase):
     def _open(self, blob):
         return zipfile.ZipFile(io.BytesIO(blob))
@@ -206,8 +242,14 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(("hi there", "txt"), (blob.decode("utf-8"), fmt))
 
     def test_unknown_format_falls_back_to_md(self):
-        blob, fmt = docgen.render("x", "docx")
+        blob, fmt = docgen.render("x", "xlsx")
         self.assertEqual(("x", "md"), (blob.decode("utf-8"), fmt))
+
+    def test_docx_dispatches_to_ooxml_renderer(self):
+        blob, fmt = docgen.render("# Report\n\nbody", "docx")
+        self.assertEqual("docx", fmt)
+        self.assertEqual(b"PK", blob[:2])
+        self.assertIn("word/document.xml", zipfile.ZipFile(io.BytesIO(blob)).namelist())
 
     def test_utf8_round_trip_for_md(self):
         blob, _ = docgen.render("\u0151rl\u0151 \u00e1rv\u00edzt\u0171r\u0151", "md")

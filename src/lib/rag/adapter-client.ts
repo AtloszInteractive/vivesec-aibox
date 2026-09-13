@@ -664,7 +664,7 @@ export async function adapterStatusRaw(): Promise<AdapterStatusRaw> {
 export type AdapterSaveInput = {
   name: string;
   text: string;
-  /** Rendered by the adapter (docgen.py): md | txt | pdf | pptx. */
+  /** Rendered by the adapter (docgen.py): md | txt | pdf | docx | pptx. */
   format?: string;
   title?: string;
   drive?: string;

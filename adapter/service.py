@@ -211,6 +211,8 @@ TLS_ENABLED = (os.environ.get("ADAPTER_TLS", "") or "").strip().lower() in ("1",
 # The ViVeSecBox does init over plain HTTP and everything else over mTLS, so one
 # process serves both ports; a second container would fight over the mirror file.
 TLS_PORT = int(os.environ.get("ADAPTER_TLS_PORT", "443"))
+_TLS_SERVER = [None]
+_TLS_LOCK = threading.Lock()
 # Presence-lock enforcement: only meaningful when there is real storage to
 # protect. 'auto' -> enforce iff a LUKS volume is configured; 'on'/'off' override.
 _WD_MODE = (os.environ.get("ADAPTER_WATCHDOG_ENABLED", "auto") or "auto").strip().lower()
@@ -1106,11 +1108,15 @@ class Handler(BaseHTTPRequestHandler):
         except storage.StorageError as e:
             # Init succeeded but the volume could not be opened; the box stays
             # initialized but locked until a later /storage/unlock.
+            if TLS_ENABLED:
+                _ensure_tls_listener()
             self._send(200, {"status": "ok", "ok": True, "initialized": True,
                              "storage_error": str(e),
                              "locked": STORAGE.is_locked()})
             return
         # The ViVeSecBox accepts the commit only on a string "status" == "ok".
+        if TLS_ENABLED:
+            _ensure_tls_listener()
         self._send(200, {"status": "ok", "ok": True, "initialized": True,
                          "locked": STORAGE.is_locked()})
 
@@ -1738,6 +1744,23 @@ class Handler(BaseHTTPRequestHandler):
                          "storage": STORAGE.status()})
 
 
+def _ensure_tls_listener():
+    with _TLS_LOCK:
+        if _TLS_SERVER[0] is not None:
+            return _TLS_SERVER[0]
+        tls_server = ThreadingHTTPServer((HOST, TLS_PORT), Handler)
+        try:
+            tls_server.socket = PROVISIONER.build_server_ssl_context().wrap_socket(
+                tls_server.socket, server_side=True)
+        except BaseException:
+            tls_server.server_close()
+            raise
+        threading.Thread(target=tls_server.serve_forever, daemon=True).start()
+        _TLS_SERVER[0] = tls_server
+        print("  TLS         : mutual (client cert required), TLS 1.2+ on :%d" % TLS_PORT)
+        return tls_server
+
+
 def main():
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     print("ViVeSec AIBox adapter on http://%s:%d" % (HOST, PORT))
@@ -1778,11 +1801,7 @@ def main():
     if TLS_ENABLED:
         if PROVISIONER.is_initialized():
             try:
-                tls_srv = ThreadingHTTPServer((HOST, TLS_PORT), Handler)
-                tls_srv.socket = PROVISIONER.build_server_ssl_context().wrap_socket(
-                    tls_srv.socket, server_side=True)
-                threading.Thread(target=tls_srv.serve_forever, daemon=True).start()
-                print("  TLS         : mutual (client cert required), TLS 1.2+ on :%d" % TLS_PORT)
+                _ensure_tls_listener()
             except OSError as e:
                 print("  TLS         : cannot bind :%d -> %s" % (TLS_PORT, e))
         else:

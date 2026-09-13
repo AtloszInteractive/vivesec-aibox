@@ -417,20 +417,26 @@ def test_init_e2e(rag_base, tmp, work, openssl_bin):
     if not _have_openssl(openssl_bin):
         print("  skip  init e2e test (openssl not available)")
         return
-    port = free_port()
-    base = "http://127.0.0.1:%d" % port
-    pki = os.path.join(tmp, "e2e_pki")
-    env = dict(os.environ)
-    env.update({
-        "ADAPTER_HOST": "127.0.0.1", "ADAPTER_PORT": str(port),
+
+    # Separate ephemeral ports exercise the HTTP-to-mTLS transition.
+    http_port = free_port()
+    mtls_port = free_port()
+    base = "http://127.0.0.1:%d" % http_port
+    pki_dir = os.path.join(tmp, "e2e_pki")
+    process_env = dict(os.environ)
+    process_env.update({
+        "ADAPTER_HOST": "127.0.0.1", "ADAPTER_PORT": str(http_port),
         "RAG_URL": rag_base,
         "ADAPTER_META_PATH": os.path.join(tmp, "e2e_meta.json"),
-        "ADAPTER_PKI_DIR": pki,
+        "ADAPTER_PKI_DIR": pki_dir,
         "ADAPTER_DRIVE_PREFIX": "/storage/drives",
         "ADAPTER_GENERATE": "off",
+        "ADAPTER_TLS": "on",
+        "ADAPTER_TLS_PORT": str(mtls_port),
     })
     proc = subprocess.Popen([PY, os.path.join(HERE, "service.py")],
-                            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            env=process_env, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
     try:
         if not wait_up(base, "/api/v1/status"):
             check("init adapter up", False, "did not start")
@@ -452,6 +458,20 @@ def test_init_e2e(rag_base, tmp, work, openssl_bin):
                            "storage_key": "box-key"})
         check("init commit ok (no client_crt)", cm.get("initialized") is True, cm)
         check("init commit status ok", cm.get("status") == "ok", cm)
+        import ssl
+        tls_context = ssl.create_default_context(cafile=cac)
+        tls_context.check_hostname = False
+        tls_context.load_cert_chain(os.path.join(work, "e2ecli.crt"),
+                                    os.path.join(work, "e2ecli.key"))
+        tls_req = urllib.request.Request(
+            "https://127.0.0.1:%d/api/v1/status" % mtls_port)
+        with urllib.request.urlopen(tls_req, timeout=10,
+                                    context=tls_context) as response:
+            tls_status_code = response.status
+            tls_status = json.loads(response.read().decode("utf-8"))
+        check("TLS listener starts immediately after init commit",
+              tls_status_code == 200 and tls_status.get("ok") is True,
+              tls_status)
         # A second prepare must be refused now that the box is initialized.
         err = None
         try:
@@ -603,6 +623,28 @@ def test_discovery_unit():
     check("ssdp env on builds responder",
           on is not None and on.location == "http://x:8088/api/v1/status", on)
     check("ssdp env uses ViVeTech ST", on is not None and on.st == st, on)
+
+    class OneShotSocket:
+        def sendto(self, _data, _address):
+            pass
+
+        def recvfrom(self, _size):
+            raise OSError("done")
+
+        def close(self):
+            pass
+
+    attempts = []
+
+    def flaky_socket_factory():
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise OSError(19, "No such device")
+        return OneShotSocket()
+
+    retrying = discovery.SsdpResponder(sock_factory=flaky_socket_factory)
+    retrying.run(retry_interval=0)
+    check("ssdp retries boot-time socket failure", len(attempts) == 2, attempts)
 
 
 def test_factory_reset_unit():
@@ -1817,7 +1859,7 @@ def main():
             resp = out.get("resp") or {}
             check("wsfs retry then transferred", resp.get("transferred") is True, out)
 
-            # format rendering: the drive gets a real PDF / PPTX, and the name
+            # format rendering: the drive gets real PDF / DOCX / PPTX bytes, and the name
             # carries the extension of the chosen format (not the UI default).
             t, out = save_async({"name": "memo.md", "text": "# Q4 memo\n\nbody",
                                  "format": "pdf"})
@@ -1831,6 +1873,19 @@ def main():
             t.join(20)
             check("wsfs pdf save reports format",
                   (out.get("resp") or {}).get("format") == "pdf", out)
+
+            t, out = save_async({"name": "memo", "format": "docx",
+                                 "text": "# Q4 memo\n\n- vezet\u0151i d\u00f6nt\u00e9s"})
+            hdr, blob = read_putfile()
+            check("wsfs docx rendered",
+                  hdr.get("name") == "memo.docx" and blob.startswith(b"PK")
+                  and b"word/document.xml" in blob, (hdr, blob[:16]))
+            sock.sendall(_ws.encode_frame(_ws.OP_TEXT, _ws.build_message(
+                {"type": "put-file", "ack": hdr["num"],
+                 "path": "ViveSec/2026/07/memo.docx"}), mask=True))
+            t.join(20)
+            check("wsfs docx save reports format",
+                  (out.get("resp") or {}).get("format") == "docx", out)
 
             t, out = save_async({"name": "deck", "format": "pptx",
                                  "text": "# Deck\n\n## Slide 1: Intro\n- one"})
@@ -1871,7 +1926,7 @@ def main():
                                       {"name": "x", "text": "x"})
         check("save needs VVS-Drive", errs and errs[0] == 400, errs)
         errs = post_json_expect_error(adapter_base, "/api/v1/ui/save",
-                                      {"name": "x", "text": "x", "format": "docx"},
+                                      {"name": "x", "text": "x", "format": "xlsx"},
                                       headers=vvs_h)
         check("save rejects unknown format", errs and errs[0] == 400, errs)
         _, resp = post_json(adapter_base, "/api/v1/ui/save",

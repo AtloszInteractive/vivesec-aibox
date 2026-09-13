@@ -163,13 +163,17 @@ class SsdpResponder:
     def stop(self):
         self._stop.set()
 
-    def run(self, announce_interval=900):
+    def run(self, announce_interval=900, retry_interval=5):
         """Listen for M-SEARCH and reply; re-announce ssdp:alive periodically.
         Blocks until stop(); intended to run on a daemon thread."""
-        try:
-            sock = self._make_socket()
-        except OSError as e:
-            sys.stderr.write("[adapter] SSDP disabled: %s\n" % e)
+        while not self._stop.is_set():
+            try:
+                sock = self._make_socket()
+                break
+            except OSError as e:
+                sys.stderr.write("[adapter] SSDP unavailable, retrying: %s\n" % e)
+                self._stop.wait(retry_interval)
+        else:
             return
         self.announce(sock, "ssdp:alive")
         last_announce = time.time()
