@@ -624,6 +624,17 @@ def test_discovery_unit():
           on is not None and on.location == "http://x:8088/api/v1/status", on)
     check("ssdp env uses ViVeTech ST", on is not None and on.st == st, on)
 
+    dynamic = discovery.from_env({"ADAPTER_DISCOVERY": "on",
+                                  "ADAPTER_DISCOVERY_PORT": "8088"})
+    original_local_ip = discovery.local_ip
+    try:
+        discovery.local_ip = lambda default="127.0.0.1": "10.1.2.3"
+        resolved = dynamic.build_search_response().decode("utf-8")
+    finally:
+        discovery.local_ip = original_local_ip
+    check("ssdp resolves LAN address per message",
+          "LOCATION: http://10.1.2.3:8088/api/v1/status" in resolved, resolved[:200])
+
     class OneShotSocket:
         def sendto(self, _data, _address):
             pass

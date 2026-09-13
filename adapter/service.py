@@ -1787,7 +1787,7 @@ def main():
     # SSDP/UPnP discovery so the ViVeSecBox finds us on the LAN (spec sec 2.5).
     responder = discovery.from_env(default_port=PORT, uuid_dir=PKI_DIR)
     if responder is not None:
-        print("  Discovery   :", "SSDP %s -> %s" % (responder.st, responder.location))
+        print("  Discovery   :", "SSDP %s -> %s" % (responder.st, responder.current_location()))
         threading.Thread(target=responder.run, daemon=True).start()
     else:
         print("  Discovery   : off")

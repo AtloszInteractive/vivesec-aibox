@@ -66,7 +66,8 @@ def stable_uuid(persist_path=None):
 
 class SsdpResponder:
     def __init__(self, st=DEFAULT_ST, usn=None, location="", server=SERVER_STRING,
-                 max_age=1800, group=SSDP_ADDR, port=SSDP_PORT, sock_factory=None):
+                 max_age=1800, group=SSDP_ADDR, port=SSDP_PORT, sock_factory=None,
+                 location_port=None):
         self.st = st
         # The ViVeSecBox stores the *root-device* USN, so the search reply must
         # carry `<udn>::upnp:rootdevice` (justssdp behaviour) while NOTIFY keeps
@@ -75,12 +76,22 @@ class SsdpResponder:
         self.udn = (usn or "uuid:%s" % _uuid.uuid4()).split("::", 1)[0]
         self.usn = "%s::%s" % (self.udn, ROOTDEVICE)
         self.location = location
+        # Without an explicit override the LAN address is resolved per message:
+        # at boot the adapter can start before the interface has an address.
+        self._location_port = location_port
         self.server = server
         self.max_age = int(max_age)
         self.group = group
         self.port = int(port)
         self._sock_factory = sock_factory
         self._stop = threading.Event()
+
+    def current_location(self):
+        if self.location:
+            return self.location
+        if self._location_port is None:
+            return ""
+        return "http://%s:%d/api/v1/status" % (local_ip(), self._location_port)
 
     # -- pure message helpers (unit-testable, no I/O) -----------------------
     def matches(self, st_header):
@@ -96,7 +107,7 @@ class SsdpResponder:
             "HTTP/1.1 200 OK",
             "CACHE-CONTROL: max-age=%d" % self.max_age,
             "EXT: ",
-            "LOCATION: %s" % self.location,
+            "LOCATION: %s" % self.current_location(),
             "SERVER: %s" % self.server,
             "ST: %s" % (st or self.st),
             "USN: %s" % self.usn,
@@ -111,7 +122,7 @@ class SsdpResponder:
             "NOTIFY * HTTP/1.1",
             "HOST: %s:%d" % (self.group, self.port),
             "CACHE-CONTROL: max-age=%d" % self.max_age,
-            "LOCATION: %s" % self.location,
+            "LOCATION: %s" % self.current_location(),
             "SERVER: %s" % self.server,
             "NT: %s" % self.st,
             "NTS: %s" % nts,
@@ -218,11 +229,10 @@ def from_env(env=None, default_port=8080, uuid_dir=None):
     st = env.get("ADAPTER_DISCOVERY_ST", DEFAULT_ST)
     adv_port = int(env.get("ADAPTER_DISCOVERY_PORT", str(default_port)) or default_port)
     location = env.get("ADAPTER_DISCOVERY_LOCATION", "")
-    if not location:
-        location = "http://%s:%d/api/v1/status" % (local_ip(), adv_port)
     max_age = int(env.get("ADAPTER_DISCOVERY_MAXAGE", "1800") or 1800)
     udir = uuid_dir or env.get("ADAPTER_PKI_DIR", "")
     persist = os.path.join(udir, "device_uuid") if udir else None
     dev_uuid = stable_uuid(persist)
     usn = "uuid:%s::%s" % (dev_uuid, ROOTDEVICE)
-    return SsdpResponder(st=st, usn=usn, location=location, max_age=max_age)
+    return SsdpResponder(st=st, usn=usn, location=location, max_age=max_age,
+                         location_port=adv_port)
