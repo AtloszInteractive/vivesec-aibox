@@ -1,0 +1,35 @@
+# ViVeSec AI Box - installation parameters.
+# Copy to install.conf next to 00-install-all.sh and fill in the box-specific values.
+# Shell syntax: KEY=value, no spaces around '=', quote values containing spaces.
+
+# --- Box identity -----------------------------------------------------------
+# Hostname chosen in the Ubuntu OEM wizard (informational, used in the manifest).
+AIBOX_HOSTNAME=aibox-01
+
+# --- Data disk (NVMe) -------------------------------------------------------
+# The installer refuses to touch any device other than /dev/nvme0n1 and verifies
+# model, serial and size before erasing. Read the real values with:
+#   lsblk -dn -o NAME,MODEL,SERIAL,SIZE /dev/nvme0n1
+#   lsblk -bdn -o SIZE /dev/nvme0n1        # size in bytes, this is what goes below
+NVME_DEVICE=/dev/nvme0n1
+NVME_MODEL="AFOX SSD ME300-512GN"
+NVME_SERIAL=CHANGE-ME
+NVME_SIZE_BYTES=512110190592
+
+# --- Runtime ----------------------------------------------------------------
+OLLAMA_VERSION=0.34.0
+EMBED_MODEL=bge-m3:latest
+GEN_MODEL=qwen3.6:35b
+
+# --- Application source -----------------------------------------------------
+# Directory holding the delivered application source tree (must contain
+# adapter/, rag_service/, poc/ and scripts/jetson/Dockerfile.ui-runtime).
+SOURCE_DIR=/home/aibox/vivesec_iabox_app
+
+# Pre-built web UI bundle (.tgz of the .output directory) produced on the build
+# machine. The Jetson does not compile the UI.
+UI_BUNDLE=/home/aibox/ui-output.tgz
+
+# --- Optional ---------------------------------------------------------------
+# Set to 1 to keep going when an individual acceptance check fails (default 0).
+AUDIT_CONTINUE_ON_FAIL=0

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 device="${1:?usage: $0 DEVICE EXPECTED_SERIAL EXPECTED_SIZE_BYTES [--check]}"
-expected_model="AFOX SSD ME300-512GN"
+# Overridable so a later hardware batch can be provisioned without editing this script.
+expected_model="${EXPECTED_NVME_MODEL:-AFOX SSD ME300-512GN}"
 expected_serial="${2:?missing expected serial}"
 expected_size="${3:?missing expected size in bytes}"
 mode="${4:-}"
