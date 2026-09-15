@@ -964,7 +964,9 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("[adapter] %s\n" % (fmt % args))
+        # The peer address distinguishes the local UI from the ViVeSecBox, which
+        # is the only way to tell a failed pairing from a quiet one.
+        sys.stderr.write("[adapter] %s %s\n" % (self.client_address[0], fmt % args))
 
     # -- GET -----------------------------------------------------------------
     def do_GET(self):
