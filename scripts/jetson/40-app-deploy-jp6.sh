@@ -3,6 +3,16 @@ set -euo pipefail
 
 secret_file=/data/app/rag-api-key
 ollama_url=http://127.0.0.1:11434
+# The LAN web UI is a diagnostic surface, not a production entry point: the
+# ViVeSecBox talks to the adapter over mTLS and the embedded UI is served from
+# a separate package. Loopback keeps it off the network; "lan" is for demo use.
+ui_exposure="${AIBOX_UI_EXPOSURE:-loopback}"
+case $ui_exposure in
+  loopback) ui_host=127.0.0.1 ;;
+  lan) ui_host=0.0.0.0 ;;
+  off) ui_host="" ;;
+  *) echo "Unknown AIBOX_UI_EXPOSURE: $ui_exposure (expected loopback|lan|off)" >&2; exit 1 ;;
+esac
 
 [[ $(findmnt -nro SOURCE /data) == /dev/nvme0n1p1 ]] || {
   echo "Expected /data on /dev/nvme0n1p1." >&2
@@ -77,16 +87,21 @@ docker run -d --name vivesec-adapter --network host --restart unless-stopped \
   -v /data/feedback:/data/feedback \
   vivesec-adapter:latest >/dev/null
 
-docker run -d --name vivesec-ui --network host --restart unless-stopped \
-  -e PORT=8080 \
-  -e HOST=0.0.0.0 \
-  -e NITRO_HOST=0.0.0.0 \
-  -e ADAPTER_URL=http://127.0.0.1:80 \
-  -e ADAPTER_DEMO_DRIVE=/storage/drives/aiboxdev/ \
-  -e ADAPTER_DEMO_USER=demo \
-  vivesec-ui:latest >/dev/null
+if [[ -n $ui_host ]]; then
+  ui_args=(-e PORT=8080 -e HOST="$ui_host" -e NITRO_HOST="$ui_host"
+           -e ADAPTER_URL=http://127.0.0.1:80)
+  # The demo identity bypasses authentication, so it is only allowed while the
+  # UI cannot be reached from the network.
+  if [[ $ui_exposure == loopback ]]; then
+    ui_args+=(-e ADAPTER_DEMO_DRIVE=/storage/drives/aiboxdev/ -e ADAPTER_DEMO_USER=demo)
+  fi
+  docker run -d --name vivesec-ui --network host --restart unless-stopped \
+    "${ui_args[@]}" vivesec-ui:latest >/dev/null
+fi
 
-for url in http://127.0.0.1:8090/health http://127.0.0.1:80/api/v1/status http://127.0.0.1:8080/; do
+health_urls=(http://127.0.0.1:8090/health http://127.0.0.1:80/api/v1/status)
+[[ -n $ui_host ]] && health_urls+=(http://127.0.0.1:8080/)
+for url in "${health_urls[@]}"; do
   curl -fsS --retry 20 --retry-connrefused --retry-delay 1 --max-time 10 "$url" >/dev/null
 done
 
@@ -100,4 +115,9 @@ authorized="$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   exit 1
 }
 
-echo "AIBOX_STACK_READY ui=http://$(hostname -I | awk '{print $1}'):8080 rag_auth=ok"
+case $ui_exposure in
+  loopback) ui_report="http://127.0.0.1:8080 (loopback only)" ;;
+  lan) ui_report="http://$(hostname -I | awk '{print $1}'):8080" ;;
+  off) ui_report="disabled" ;;
+esac
+echo "AIBOX_STACK_READY ui=$ui_report rag_auth=ok"
