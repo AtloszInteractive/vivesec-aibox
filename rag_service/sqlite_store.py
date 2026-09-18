@@ -30,7 +30,6 @@ import sqlite_vec
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "poc"))
 import config  # noqa: E402
 import embeddings  # noqa: E402
-from chunking import chunk_text  # noqa: E402
 
 import extract  # noqa: E402
 import query_split  # noqa: E402
@@ -52,6 +51,7 @@ from store import (  # noqa: E402
     _document_chunk_context,
     _document_debug,
     _estimate_tokens,
+    chunk_page,
     index_result,
     norm_path,
     normalize_corpus_ids,
@@ -391,7 +391,7 @@ class SqliteVecStore:
         for (page_number, section_path, page_text) in pages:
             page_id = "%s-p%d" % (doc_id, page_number)
             page_records.append((page_id, page_number, section_path))
-            parts = chunk_text(page_text, config.CHUNK_WORDS, config.CHUNK_OVERLAP)
+            parts = chunk_page(source_path, page_text)
             for ci, part in enumerate(parts):
                 chunk_records.append({
                     "chunk_id": "%s-p%d-c%d" % (doc_id, page_number, ci),

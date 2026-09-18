@@ -10,8 +10,10 @@ cleartext source to disk on our side. (MarkItDown's own converters may buffer
 internally; on the appliance that buffering must land on tmpfs or the LUKS
 volume — a deployment concern, see the project notes.)
 """
+import datetime
 import io
 import os
+import re
 
 # Formats we can decode as text with zero dependencies.
 TEXT_EXTS = {
@@ -21,14 +23,31 @@ TEXT_EXTS = {
 
 # Formats that need MarkItDown to extract text from (office / rich / binary).
 MARKITDOWN_EXTS = {
-    ".pdf", ".docx", ".pptx", ".ppt", ".xlsx", ".xls",
+    ".pdf", ".docx", ".pptx", ".ppt", ".xls",
     ".html", ".htm", ".rtf",
 }
 
-SUPPORTED_EXTS = TEXT_EXTS | MARKITDOWN_EXTS
+# OOXML spreadsheets are read directly with openpyxl (see _extract_workbook):
+# MarkItDown's pandas route rendered every empty cell as the literal "NaN"
+# (27% of all spreadsheet tokens on the demo index), invented "Unnamed: N"
+# headers and flattened every sheet into one page.
+OPENPYXL_EXTS = {".xlsx", ".xlsm"}
+
+# Row-oriented formats: chunked on row boundaries with the header repeated
+# (chunking.chunk_rows) instead of the sliding word window.
+TABULAR_EXTS = OPENPYXL_EXTS | {".csv", ".tsv"}
+
+SUPPORTED_EXTS = TEXT_EXTS | MARKITDOWN_EXTS | OPENPYXL_EXTS
 
 # pdfminer separates pages with a form feed; plain text sources may too.
 PAGE_BREAK = "\f"
+
+# Per-sheet row cap: a 100k-row export would otherwise dominate the corpus.
+SHEET_MAX_ROWS = int(os.environ.get("RAG_SHEET_MAX_ROWS", "5000"))
+
+# Line prefixes of the sheet preamble that chunk_rows repeats in every chunk.
+SHEET_LINE = "Sheet: "
+COLUMNS_LINE = "Columns: "
 
 
 class ExtractionError(Exception):
@@ -92,12 +111,182 @@ def _extract_pdf(raw, path):
     return _extract_markitdown(raw, path)
 
 
+_OPENPYXL = None
+_OPENPYXL_TRIED = False
+
+
+def _openpyxl():
+    global _OPENPYXL, _OPENPYXL_TRIED
+    if not _OPENPYXL_TRIED:
+        _OPENPYXL_TRIED = True
+        try:
+            import openpyxl
+            _OPENPYXL = openpyxl
+        except Exception:
+            _OPENPYXL = None
+    return _OPENPYXL
+
+
+_WS_RE = re.compile(r"\s+")
+_ERROR_VALUES = {"#REF!", "#N/A", "#VALUE!", "#DIV/0!", "#NAME?", "#NULL!", "#NUM!"}
+
+
+def _cell_text(cell):
+    """Human-readable cell value, or None for cells that carry no information."""
+    v = cell.value
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, datetime.datetime):
+        if (v.hour, v.minute, v.second) == (0, 0, 0):
+            return v.date().isoformat()
+        return v.isoformat(sep=" ", timespec="minutes")
+    if isinstance(v, (datetime.date, datetime.time)):
+        return v.isoformat()
+    if isinstance(v, float):
+        fmt = getattr(cell, "number_format", "") or ""
+        if "%" in fmt:
+            return format(v * 100, ".10g") + "%"
+        if v.is_integer() and abs(v) < 1e15:
+            return str(int(v))
+        return format(v, ".10g")
+    if isinstance(v, int):
+        return str(v)
+    s = _WS_RE.sub(" ", str(v)).strip()
+    if not s or s in _ERROR_VALUES:
+        return None
+    return s
+
+
+def _column_letter(idx):
+    letters = ""
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def _pick_header(rows):
+    """Index of the header row among the leading rows, or None.
+
+    The header is the first of the first ten non-empty rows that holds only
+    labels (no numbers/dates) and spans at least half of the widest of them.
+    Title rows and merged-cell banners above it are narrower, so they are left
+    as prose; a header may itself have gaps (unlabelled columns fall back to
+    the column letter).
+    """
+    head = rows[:10]
+    if not head:
+        return None
+    widest = max(len(r) for r in head)
+    if widest < 2:
+        return None
+    for i, row in enumerate(head):
+        if len(row) >= max(2, widest / 2.0) and all(isinstance(v, str) for v in row.values()):
+            return i
+    return None
+
+
+def _sheet_rows(ws):
+    """Non-empty rows of a worksheet as {col_index: raw_value} dicts."""
+    rows = []
+    truncated = 0
+    for row in ws.iter_rows():
+        values = {}
+        for cell in row:
+            text = _cell_text(cell)
+            if text is not None:
+                values[cell.column] = (cell.value, text)
+        if not values:
+            continue
+        if len(rows) >= SHEET_MAX_ROWS:
+            truncated += 1
+            continue
+        rows.append(values)
+    return rows, truncated
+
+
+def _render_sheet(title, rows, truncated):
+    """One worksheet as row records: `Sheet:` line, optional `Columns:` line,
+    then one line per row as `Header: value; Header: value`. Empty cells are
+    simply absent, so a sparse sheet does not turn into a wall of NaN."""
+    raw_rows = [{c: v[0] for c, v in r.items()} for r in rows]
+    text_rows = [{c: v[1] for c, v in r.items()} for r in rows]
+    header_idx = _pick_header(raw_rows)
+    lines = [SHEET_LINE + title]
+    header = {}
+    if header_idx is not None:
+        header = text_rows[header_idx]
+        lines.append(COLUMNS_LINE + " | ".join(header[c] for c in sorted(header)))
+    for i, row in enumerate(text_rows):
+        if i == header_idx:
+            continue
+        if header_idx is None or i < header_idx:
+            lines.append(" | ".join(row[c] for c in sorted(row)))
+            continue
+        parts = []
+        for c in sorted(row):
+            label = header.get(c) or _column_letter(c)
+            parts.append("%s: %s" % (label, row[c]))
+        lines.append("; ".join(parts))
+    if truncated:
+        lines.append("(%d further rows of this sheet were not indexed)" % truncated)
+    return "\n".join(lines)
+
+
+def _extract_workbook(raw, path):
+    """Each worksheet becomes one page (page_number = sheet position,
+    section_path = sheet name) so a citation can name the sheet."""
+    openpyxl = _openpyxl()
+    if openpyxl is None:
+        text = _extract_markitdown(raw, path)
+        return [(1, "root", text.strip())] if text.strip() else []
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception as exc:  # noqa: BLE001 -- corrupt/encrypted workbook
+        raise ExtractionError("openpyxl failed for %s: %s" % (path, exc))
+    pages = []
+    try:
+        for number, ws in enumerate(wb.worksheets, start=1):
+            rows, truncated = _sheet_rows(ws)
+            if not rows:
+                continue
+            pages.append((number, ws.title, _render_sheet(ws.title, rows, truncated)))
+    finally:
+        try:
+            wb.close()
+        except Exception:  # noqa: BLE001
+            pass
+    return pages
+
+
 def ext_of(path):
     return os.path.splitext(path)[1].lower()
 
 
 def is_supported(path):
     return ext_of(path) in SUPPORTED_EXTS
+
+
+def is_tabular(path):
+    return ext_of(path) in TABULAR_EXTS
+
+
+def header_lines(path, text):
+    """How many leading lines of a tabular page are header to repeat per chunk."""
+    ext = ext_of(path)
+    if ext in OPENPYXL_EXTS:
+        n = 0
+        for line in text.split("\n", 2)[:2]:
+            if line.startswith(SHEET_LINE) or line.startswith(COLUMNS_LINE):
+                n += 1
+            else:
+                break
+        return n
+    if ext in (".csv", ".tsv"):
+        return 1
+    return 0
 
 
 def needs_markitdown(path):
@@ -116,6 +305,8 @@ def extractor_available(path):
         return True
     if ext == ".pdf":
         return _pdfminer_extract_text() is not None or _markitdown() is not None
+    if ext in OPENPYXL_EXTS:
+        return _openpyxl() is not None or _markitdown() is not None
     if ext in MARKITDOWN_EXTS:
         return _markitdown() is not None
     return False
@@ -181,10 +372,14 @@ def extract_pages(raw, path):
     during chunking from markdown headings.
     """
     ext = ext_of(path)
+    if not raw:
+        return []
     if ext in TEXT_EXTS:
         text = _decode_text(raw)
     elif ext == ".pdf":
         text = _extract_pdf(raw, path)
+    elif ext in OPENPYXL_EXTS:
+        return _extract_workbook(raw, path)
     elif ext in MARKITDOWN_EXTS:
         text = _extract_markitdown(raw, path)
     else:

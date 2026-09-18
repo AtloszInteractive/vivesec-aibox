@@ -28,10 +28,19 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "poc"))
 import config  # noqa: E402
 import embeddings  # noqa: E402
-from chunking import chunk_text  # noqa: E402
+from chunking import chunk_rows, chunk_text  # noqa: E402
 
 import extract  # noqa: E402
 import reaccent  # noqa: E402
+
+
+def chunk_page(source_path, page_text):
+    """Chunk one page the way its format needs: spreadsheets/CSV on row
+    boundaries with the header repeated, everything else by word window."""
+    if extract.is_tabular(source_path):
+        return chunk_rows(page_text, config.CHUNK_WORDS, config.CHUNK_OVERLAP,
+                          header_lines=extract.header_lines(source_path, page_text))
+    return chunk_text(page_text, config.CHUNK_WORDS, config.CHUNK_OVERLAP)
 
 
 # Size cap: above this a file is registered metadata-only (no content upload).
@@ -456,7 +465,7 @@ class RagStore:
                 "page_number": page_number,
                 "section_path": section_path,
             })
-            parts = chunk_text(page_text, config.CHUNK_WORDS, config.CHUNK_OVERLAP)
+            parts = chunk_page(source_path, page_text)
             for ci, part in enumerate(parts):
                 chunk_records.append({
                     "chunk_id": "%s-p%d-c%d" % (doc_id, page_number, ci),
