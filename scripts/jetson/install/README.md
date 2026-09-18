@@ -37,3 +37,46 @@ with which settings.
 
 `90-acceptance-audit.sh` performs no writes and can be run at any time on a
 live box for a health check. Exit code 0 means every check passed.
+
+## Preparing the delivery package
+
+The installer needs four things on the box. Three of them come straight from
+this repository; the fourth has to be built first.
+
+| Item | Where it comes from |
+| --- | --- |
+| Application source tree | This repository (`adapter/`, `rag_service/`, `poc/`, `scripts/`) |
+| Installation kit | This directory |
+| Installation manual | `docs/ViVeSec_AIBox_Telepitesi_Kezikonyv.md` (+ `.docx`) |
+| **Web UI bundle (`ui-output.tgz`)** | **Built on a workstation - see below** |
+
+### Building the web UI bundle
+
+The Jetson deliberately does not run the web toolchain, so the interface is
+compiled on a workstation and shipped as a tarball. From the repository root:
+
+```bash
+npm install
+python scripts/pack_ui_bundle.py ui-output.tgz --build
+```
+
+`--build` runs `npm run build` first; drop it to pack an existing `.output`.
+The script verifies the archive after writing it and fails if the layout is
+wrong, so a broken bundle never reaches the box.
+
+**The archive layout is fixed:** `.output` must sit at the root of the archive,
+because `10-build-images.sh` extracts the tarball and then expects
+`.output/server/index.mjs`. Packing by hand from inside `.output` produces an
+archive that fails the build phase - this is why the script exists.
+
+Manual equivalent, if the script is not available:
+
+```bash
+npm run build
+tar -czf ui-output.tgz .output      # from the repository root, not from inside .output
+tar -tzf ui-output.tgz | head -3    # expected: .output/ , .output/server/... 
+```
+
+Rebuild the bundle whenever the interface changes - the installation kit has no
+way to detect a stale one.
+
