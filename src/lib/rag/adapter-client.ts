@@ -117,6 +117,29 @@ export type AdapterAskInput = {
   drives?: string[];
   /** Where the request was started; only background runs join the job list. */
   origin?: "chat" | "background";
+  /** Persistent thread the exchange belongs to; absent = the default thread. */
+  conversationId?: string;
+};
+
+/** List-view entry of a persistent conversation thread (F1). */
+export type AdapterConversationSummary = {
+  id: string;
+  title: string;
+  title_source?: "" | "fallback" | "auto" | "user";
+  created_ts: number | null;
+  updated_ts: number | null;
+  turn_count: number;
+};
+
+export type AdapterConversationTurn = {
+  role: "user" | "assistant";
+  content: string;
+  ts?: number;
+  sources?: { chunk_id?: string | null; corpus_id?: string | null; source_path?: string | null }[];
+};
+
+export type AdapterConversation = AdapterConversationSummary & {
+  turns: AdapterConversationTurn[];
 };
 
 export type AdapterJobStatus =
@@ -438,6 +461,7 @@ export async function adapterSubmitJob(input: AdapterAskInput): Promise<AdapterJ
       files: input.files?.length ? input.files : undefined,
       drives: input.drives?.length ? input.drives : undefined,
       origin: input.origin ?? "chat",
+      conversation_id: input.conversationId || undefined,
     }),
     signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
   });
@@ -573,6 +597,87 @@ export function adapterMarkJobSeen(jobId: string, scope: Pick<AdapterAskInput, "
 
 export function adapterCancelJob(jobId: string, scope: Pick<AdapterAskInput, "drive" | "user"> = {}) {
   return adapterJobMutation("cancel", jobId, scope);
+}
+
+// Persistent conversation threads (F1). Every call is a POST with the
+// parameters in the body: the ViVeSecBox tunnel drops query strings. A thread
+// is only visible to the (user, scope, profile) that created it; anything else
+// answers 404, which the UI treats as "fall back to the default thread".
+type ConversationScope = Pick<AdapterAskInput, "drive" | "user" | "profile">;
+
+async function conversationCall(
+  operation: "list" | "create" | "get" | "rename" | "delete",
+  body: Record<string, unknown>,
+  scope: ConversationScope,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const { headers } = jobScope(scope);
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/conversations/${operation}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ...body, profile: scope.profile }),
+    signal: AbortSignal.timeout(FILES_TIMEOUT_MS),
+  });
+  return { status: res.status, body: await safeJson(res) };
+}
+
+/** Null means this box has no conversation store (older adapter build). */
+export async function adapterListConversations(
+  scope: ConversationScope = {},
+): Promise<AdapterConversationSummary[] | null> {
+  const { status, body } = await conversationCall("list", {}, scope);
+  if (status === 404 && typeof body.error === "string" && body.error.startsWith("Not found")) {
+    return null;
+  }
+  if (status >= 400) {
+    throw new AdapterError((body.error as string) ?? `conversations/list HTTP ${status}`, status);
+  }
+  return Array.isArray(body.conversations) ? (body.conversations as AdapterConversationSummary[]) : [];
+}
+
+export async function adapterCreateConversation(
+  scope: ConversationScope = {},
+  title?: string,
+): Promise<AdapterConversation> {
+  const { status, body } = await conversationCall("create", title ? { title } : {}, scope);
+  if (status >= 400 || !body.conversation) {
+    throw new AdapterError((body.error as string) ?? `conversations/create HTTP ${status}`, status);
+  }
+  return body.conversation as AdapterConversation;
+}
+
+/** Null when the id is unknown to this (user, scope, profile) — never throws for 404. */
+export async function adapterGetConversation(
+  conversationId: string,
+  scope: ConversationScope = {},
+): Promise<AdapterConversation | null> {
+  const { status, body } = await conversationCall("get", { conversation_id: conversationId }, scope);
+  if (status === 404) return null;
+  if (status >= 400 || !body.conversation) {
+    throw new AdapterError((body.error as string) ?? `conversations/get HTTP ${status}`, status);
+  }
+  return body.conversation as AdapterConversation;
+}
+
+export async function adapterRenameConversation(
+  conversationId: string,
+  title: string,
+  scope: ConversationScope = {},
+): Promise<void> {
+  const { status, body } = await conversationCall(
+    "rename", { conversation_id: conversationId, title }, scope);
+  if (status >= 400) {
+    throw new AdapterError((body.error as string) ?? `conversations/rename HTTP ${status}`, status);
+  }
+}
+
+export async function adapterDeleteConversation(
+  conversationId: string,
+  scope: ConversationScope = {},
+): Promise<void> {
+  const { status, body } = await conversationCall("delete", { conversation_id: conversationId }, scope);
+  if (status >= 400 && status !== 404) {
+    throw new AdapterError((body.error as string) ?? `conversations/delete HTTP ${status}`, status);
+  }
 }
 
 export async function adapterAsk(input: AdapterAskInput): Promise<AdapterAnswer> {

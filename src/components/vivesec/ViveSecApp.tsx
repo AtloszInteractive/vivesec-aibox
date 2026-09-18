@@ -24,7 +24,12 @@ import {
 import {
   askRag,
   cancelRagJob,
+  conversationTurnResult,
+  createConversation,
+  deleteConversation,
+  getConversation,
   getRagJob,
+  listConversations,
   listDriveChildren,
   listDriveFiles,
   listDrives,
@@ -35,6 +40,7 @@ import {
   markRagJobSeen,
   platformInsight,
   ragHealth,
+  renameConversation,
   saveToDrive,
   sendFeedback,
   submitRagJob,
@@ -42,6 +48,8 @@ import {
   openDriveDocument,
   type DriveInfo,
   type BackgroundJob,
+  type ConversationSummary,
+  type ConversationTurn,
   type GeneratedFile,
   type PlatformInsight,
   type SaveFormat,
@@ -771,6 +779,17 @@ function ViveSecAppInner() {
     ? chosenProfile ?? chatPolicy.default_profile
     : chatPolicy.default_profile;
   const [messageProfiles, setMessageProfiles] = useState<Record<string, ChatProfile>>({});
+  /* ---------- Conversation threads (F1) ----------
+     A thread lives on the box, scoped to (user, drive, profile). `null` is the
+     default thread — the single conversation that existed before threads, so a
+     box without the endpoints behaves exactly as it used to. */
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationsSupported, setConversationsSupported] = useState<boolean | null>(null);
+  const [threadsOpen, setThreadsOpen] = useState(false);
+  const [threadBusy, setThreadBusy] = useState(false);
+  /** Which (profile, drive) the remembered thread was already restored for. */
+  const restoredRef = useRef("");
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobsError, setJobsError] = useState("");
@@ -1428,8 +1447,152 @@ function ViveSecAppInner() {
     };
   }, [boxState, drive]);
 
-  async function cancelBackgroundJob(jobId: string) {
+  /* ---------- Conversation threads ----------
+     The list is per (drive, chat profile), exactly as the box scopes it, so
+     switching either reloads it. A box without the endpoints reports null once
+     and the thread UI stays hidden. */
+  const threadScope = useMemo(
+    () => ({ drive: drive || undefined, profile: chatProfile }),
+    [drive, chatProfile],
+  );
+
+  const refreshConversations = useCallback(async () => {
+    const list = await listConversations(threadScope);
+    setConversationsSupported(list !== null);
+    setConversations(list ?? []);
+    return list;
+  }, [threadScope]);
+
+  /** Replace the chat column with a stored thread (system line + its turns).
+   *  Result-column cards (background jobs) are left alone: they belong to the
+   *  job list, not to a conversation. */
+  const showConversation = useCallback(
+    (turns: ConversationTurn[]) => {
+      const restored: Message[] = [];
+      const profiles: Record<string, ChatProfile> = {};
+      for (const turn of turns) {
+        const id = uid();
+        profiles[id] = chatProfile;
+        const ts = turn.ts ? new Date(turn.ts * 1000).toISOString().slice(11, 16) : nowTs();
+        restored.push(
+          turn.role === "user"
+            ? { id, role: "user", name: senderName, ts, text: turn.content }
+            : buildLiveMessage(id, undefined, "", conversationTurnResult(turn)),
+        );
+      }
+      setMessageProfiles((current) => ({ ...current, ...profiles }));
+      setMessages((current) => [
+        ...current.filter((m) => m.role === "system" || resultIds.has(m.id)),
+        ...restored,
+      ]);
+    },
+    [chatProfile, resultIds, senderName],
+  );
+
+  const openConversation = useCallback(
+    async (id: string | null) => {
+      setThreadsOpen(false);
+      setThreadBusy(true);
+      try {
+        const conversation = id ? await getConversation(id, threadScope) : null;
+        if (id && !conversation) {
+          // Deleted or never visible to this scope: fall back to the default
+          // thread rather than leaving the UI pointing at nothing.
+          toast.error(tm("This conversation is no longer available."));
+          setConversationId(null);
+          void refreshConversations();
+          showConversation([]);
+          return;
+        }
+        setConversationId(id);
+        showConversation(conversation?.turns ?? []);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : tm("The conversation could not be opened."));
+      } finally {
+        setThreadBusy(false);
+      }
+    },
+    [refreshConversations, showConversation, threadScope, tm],
+  );
+
+  async function newConversation() {
+    setThreadsOpen(false);
+    setThreadBusy(true);
     try {
+      const created = await createConversation(threadScope);
+      setConversationId(created.id);
+      showConversation([]);
+      await refreshConversations();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tm("The conversation could not be started."));
+    } finally {
+      setThreadBusy(false);
+    }
+  }
+
+  async function renameThread(id: string, current: string) {
+    const title = window.prompt(tm("Rename conversation"), current);
+    if (title === null || !title.trim()) return;
+    try {
+      await renameConversation(id, title.trim(), threadScope);
+      await refreshConversations();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tm("The conversation could not be renamed."));
+    }
+  }
+
+  async function deleteThread(id: string) {
+    if (!window.confirm(tm("Delete this conversation? This cannot be undone."))) return;
+    try {
+      await deleteConversation(id, threadScope);
+      if (id === conversationId) {
+        setConversationId(null);
+        showConversation([]);
+      }
+      await refreshConversations();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tm("The conversation could not be deleted."));
+    }
+  }
+
+  // Load the thread list for the active (drive, profile) and restore the last
+  // thread the user had open there — but only if the box still lists it. The
+  // remembered id is only written back AFTER this ran, otherwise the initial
+  // `conversationId === null` would erase it before it could be read.
+  useEffect(() => {
+    if (!drive || boxState !== "online") return;
+    let cancelled = false;
+    const storageKey = `vivesec_conversation:${chatProfile}:${drive}`;
+    void refreshConversations()
+      .then((list) => {
+        if (cancelled || restoredRef.current === storageKey) return;
+        restoredRef.current = storageKey;
+        if (!list) return;
+        const saved = window.localStorage.getItem(storageKey);
+        if (saved && saved !== "default" && list.some((c) => c.id === saved)) {
+          void openConversation(saved);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setConversationsSupported(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // openConversation/refreshConversations both derive from threadScope.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drive, boxState, chatProfile]);
+
+  useEffect(() => {
+    if (!drive) return;
+    const storageKey = `vivesec_conversation:${chatProfile}:${drive}`;
+    if (restoredRef.current !== storageKey) return;
+    window.localStorage.setItem(storageKey, conversationId ?? "default");
+  }, [conversationId, chatProfile, drive]);
+
+  const activeConversation = conversations.find((c) => c.id === conversationId) ?? null;
+
+  async function cancelBackgroundJob(jobId: string) {    try {
       const response = await cancelRagJob(jobId, drive || undefined);
       setBackgroundJobs((jobs) =>
         jobs.map((job) =>
@@ -1509,6 +1672,9 @@ function ViveSecAppInner() {
       extra: extras?.extra || undefined,
       files: extras?.files?.length ? extras.files : undefined,
       drives: selectedDrives.length ? selectedDrives : undefined,
+      // Quick actions are standalone commands and keep using the default
+      // thread; only chat turns belong to the conversation on screen.
+      conversationId: pane === "chat" && conversationId ? conversationId : undefined,
     };
     if (pane === "results" && jobsSupported === true) {
       try {
@@ -1571,6 +1737,13 @@ function ViveSecAppInner() {
       const fileHits = action === "search" && term ? await searchFileNames(term) : undefined;
       const full = buildLiveMessage(loadingId, action, label, res, fileHits, query);
       setMessages((all) => all.map((m) => (m.id === loadingId ? full : m)));
+      // The turn may have created or re-titled the thread on the box. The
+      // model-made title lands a few seconds after the answer, hence the
+      // second look.
+      if (pane === "chat" && conversationsSupported) {
+        void refreshConversations();
+        window.setTimeout(() => void refreshConversations(), 5_000);
+      }
     } catch (err) {
       // No mock fallback: the failure is shown as a failure.
       const detail = err instanceof Error ? err.message : "error";
@@ -1960,6 +2133,97 @@ function ViveSecAppInner() {
                 <div className="hidden xl:block text-xs text-white/55">
                   Encrypted channel · Edge inference only
                 </div>
+                {conversationsSupported && (
+                  <div className="relative flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setThreadsOpen((v) => !v)}
+                      disabled={threadBusy || boxState !== "online"}
+                      aria-expanded={threadsOpen}
+                      className="inline-flex min-h-8 max-w-[15rem] items-center gap-1.5 rounded-md border border-white/10 px-2 text-[11px] text-white/70 transition hover:bg-white/10 disabled:opacity-50"
+                      title={tm("Conversations")}
+                    >
+                      <List className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                      <span className="truncate">
+                        {activeConversation?.title ||
+                          tm(conversationId ? "Untitled conversation" : "Current conversation")}
+                      </span>
+                      <ChevronDown
+                        className={`h-3 w-3 shrink-0 text-white/45 transition-transform ${threadsOpen ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void newConversation()}
+                      disabled={threadBusy || boxState !== "online"}
+                      className="inline-flex min-h-8 items-center gap-1 rounded-md border border-white/10 px-2 text-[11px] text-white/70 transition hover:bg-white/10 disabled:opacity-50"
+                      title={tm("New conversation")}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">{tm("New conversation")}</span>
+                    </button>
+                    {threadsOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setThreadsOpen(false)} />
+                        <div
+                          role="dialog"
+                          aria-label={tm("Conversations")}
+                          className="absolute left-0 top-full z-50 mt-2 max-h-80 w-80 overflow-y-auto rounded-xl border border-white/10 bg-[#23272B] py-1 shadow-2xl shadow-black/60"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => void openConversation(null)}
+                            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition hover:bg-white/5 ${conversationId === null ? "bg-white/[0.06] text-white" : "text-white/70"}`}
+                          >
+                            {tm("Current conversation")}
+                          </button>
+                          {conversations
+                            .filter((c) => c.id !== "default")
+                            .map((c) => (
+                              <div
+                                key={c.id}
+                                className={`group flex items-center gap-1 px-1 ${c.id === conversationId ? "bg-white/[0.06]" : ""}`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => void openConversation(c.id)}
+                                  className="min-w-0 flex-1 px-2 py-2 text-left"
+                                >
+                                  <div className="truncate text-[12px] text-white">
+                                    {c.title || tm("Untitled conversation")}
+                                  </div>
+                                  <div className="text-[10.5px] text-white/45">
+                                    {c.turn_count} {tm("turns")}
+                                  </div>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void renameThread(c.id, c.title)}
+                                  className="rounded p-1 text-white/45 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                                  title={tm("Rename conversation")}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteThread(c.id)}
+                                  className="rounded p-1 text-white/45 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                                  title={tm("Delete conversation")}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          {conversations.filter((c) => c.id !== "default").length === 0 && (
+                            <div className="px-3 py-2 text-[11px] text-white/45">
+                              {tm("No saved conversations yet.")}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {chatPolicy.allow_switch && <div role="group" aria-label={tm("Chat profile")} className="flex shrink-0 items-center rounded-md border border-white/10 p-0.5">
                   {(["grounded", "hybrid"] as const).map((profile) => (
                     <button

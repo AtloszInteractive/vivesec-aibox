@@ -15,7 +15,12 @@ import {
   adapterAsk,
   adapterCancelJob,
   adapterChildren,
+  adapterCreateConversation,
+  adapterDeleteConversation,
   adapterDemoConfig,
+  adapterGetConversation,
+  adapterListConversations,
+  adapterRenameConversation,
   adapterSession,
   adapterDownloadGenerated,
   adapterDriveFile,
@@ -37,6 +42,9 @@ import {
   driveRoot,
   type AdapterAction,
   type AdapterAnswer,
+  type AdapterConversation,
+  type AdapterConversationSummary,
+  type AdapterConversationTurn,
   type AdapterJobStatus,
   type AdapterJobSummary,
   type AdapterVoice,
@@ -173,6 +181,9 @@ const askInput = z.object({
   // Search scope selection. Narrows the drives the box already granted; the
   // adapter refuses anything wider with a 403.
   drives: z.array(z.string()).optional(),
+  // Persistent thread (F1); omitted = the default thread, i.e. the pre-thread
+  // behaviour. Unknown ids answer 404.
+  conversationId: z.string().optional(),
 });
 
 export async function askRag({ data }: { data: z.input<typeof askInput> }): Promise<RagAskResult> {
@@ -203,6 +214,7 @@ export async function askRag({ data }: { data: z.input<typeof askInput> }): Prom
       extra: data.extra,
       files: data.files,
       drives: data.drives,
+      conversationId: data.conversationId,
       topK: data.action ? undefined : 5,
     });
 
@@ -281,6 +293,7 @@ function adapterInput(data: z.input<typeof askInput>) {
     extra: data.extra,
     files: data.files,
     drives: data.drives,
+    conversationId: data.conversationId,
     topK: data.action ? undefined : 5,
   };
 }
@@ -313,6 +326,64 @@ export async function cancelRagJob(jobId: string, drive?: string): Promise<Recor
 }
 
 export type { AdapterJobStatus };
+
+// ---------------------------------------------------------------------------
+// F1 — Persistent conversation threads. Scoped to (user, drive, profile) on
+// the box; the UI only ever sees its own. `null` from the list call means the
+// box predates threads, and the UI keeps the single default conversation.
+// ---------------------------------------------------------------------------
+
+export type ConversationSummary = AdapterConversationSummary;
+export type Conversation = AdapterConversation;
+export type ConversationTurn = AdapterConversationTurn;
+
+type ConversationScope = { drive?: string; profile?: ChatProfile };
+
+export function listConversations(scope: ConversationScope): Promise<ConversationSummary[] | null> {
+  return adapterListConversations(scope);
+}
+
+export function createConversation(scope: ConversationScope, title?: string): Promise<Conversation> {
+  return adapterCreateConversation(scope, title);
+}
+
+export function getConversation(id: string, scope: ConversationScope): Promise<Conversation | null> {
+  return adapterGetConversation(id, scope);
+}
+
+export function renameConversation(id: string, title: string, scope: ConversationScope): Promise<void> {
+  return adapterRenameConversation(id, title, scope);
+}
+
+export function deleteConversation(id: string, scope: ConversationScope): Promise<void> {
+  return adapterDeleteConversation(id, scope);
+}
+
+/** A stored assistant turn rendered as an answer card. The history is kept
+ *  footer-free and without the confidence block, so a restored card carries
+ *  the text and the cited sources only — never a recomputed score. */
+export function conversationTurnResult(turn: ConversationTurn): RagAskResult {
+  const citations: RagCitation[] = (turn.sources ?? [])
+    .filter((source) => source.source_path || source.chunk_id)
+    .map((source, index) => ({
+      rank: index + 1,
+      source: source.source_path ?? source.chunk_id ?? "document",
+      fileId: source.source_path ?? undefined,
+      chunk: 0,
+      score: 0,
+      label: baseName(source.source_path),
+      snippet: "",
+    }));
+  return {
+    ok: true,
+    answer: turn.content,
+    mode: "aibox",
+    backend: "conversation",
+    sources: Array.from(new Set(citations.map((c) => c.label))),
+    citations,
+    refused: !turn.content.trim(),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // C7 — Save steps: persist a generated answer to the ViVeSecBox drive over the

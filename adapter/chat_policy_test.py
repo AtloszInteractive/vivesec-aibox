@@ -189,7 +189,9 @@ class ProfilePipelineTest(unittest.TestCase):
         self.model = patch.object(llm, "_chat", return_value=("General advice: 42 examples.", 0, 0))
         self.generate = self.model.start()
         self.addCleanup(self.model.stop)
-        for target, value in (("GENERATE", "on"),):
+        # Thread titling would call the mocked model from a daemon thread and
+        # race the call_args assertions below; it has its own tests.
+        for target, value in (("GENERATE", "on"), ("TITLES", False)):
             guard = patch.object(llm, target, value)
             guard.start()
             self.addCleanup(guard.stop)

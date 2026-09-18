@@ -420,6 +420,44 @@ def condense(question, history, lang=None):
     return line, False
 
 
+# Thread titles (F1). Deliberately tiny: a non-reasoning, short-budget call
+# fired after the answer, so it never sits in front of anyone's question.
+TITLES = (os.environ.get("ADAPTER_CONVERSATION_TITLES", "on") or "on").strip().lower() != "off"
+TITLE_TIMEOUT = float(os.environ.get("ADAPTER_TITLE_TIMEOUT", "30") or 30)
+_TITLE_INSTRUCTION = (
+    "Give this conversation a title of 3 to 7 words in the language of the "
+    "user's message. Name the topic, not the answer. No quotes, no trailing "
+    "punctuation, no explanation -- reply with the title only."
+)
+_TITLE_MAX_WORDS = 10
+_TITLE_SOURCE_CHARS = 600
+
+
+def title(question, answer=None, lang=None):
+    """Short thread title from the first exchange, or None when generation is
+    off/unreachable or the model returned nothing usable. Never raises."""
+    if not TITLES or not (question or "").strip():
+        return None
+    if GENERATE == "off" or (GENERATE == "auto" and not _ollama_up()):
+        return None
+    body = "USER: %s" % (question or "").strip()[:_TITLE_SOURCE_CHARS]
+    if (answer or "").strip():
+        body += "\nASSISTANT: %s" % answer.strip()[:_TITLE_SOURCE_CHARS]
+    system = _TITLE_INSTRUCTION
+    if lang:
+        system += " Write the title in %s." % lang
+    try:
+        content, _, _ = _chat(system, body, timeout=TITLE_TIMEOUT, stream=False,
+                              num_predict=24)
+    except Exception:  # noqa: BLE001
+        return None
+    line = next((l.strip() for l in (content or "").splitlines() if l.strip()), "")
+    line = line.strip('"\'`*#').rstrip(".!;:,").strip()
+    if not line or len(line.split()) > _TITLE_MAX_WORDS:
+        return None
+    return line
+
+
 def build_context(contexts):
     """Render the RAG contexts as a citation-tagged block and the parallel
     citation list returned to the UI."""
@@ -442,10 +480,10 @@ def build_context(contexts):
 
 
 def _chat(system, user, history=None, timeout=600, num_ctx=None,
-          cancel_event=None, progress_callback=None, stream=None):
+          cancel_event=None, progress_callback=None, stream=None, num_predict=None):
     options = {"temperature": TEMPERATURE}
-    if NUM_PREDICT:
-        options["num_predict"] = NUM_PREDICT
+    if num_predict or NUM_PREDICT:
+        options["num_predict"] = num_predict or NUM_PREDICT
     ctx = num_ctx or NUM_CTX
     if ctx:
         options["num_ctx"] = ctx

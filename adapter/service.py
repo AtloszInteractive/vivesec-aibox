@@ -70,6 +70,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import confidence  # noqa: E402
+import conversations  # noqa: E402
 import corpus  # noqa: E402
 import discovery  # noqa: E402
 import docgen  # noqa: E402
@@ -611,7 +612,8 @@ def _file_search(req_scope, pattern):
 
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
-            progress_callback=None, req_scope=None, profile="grounded"):
+            progress_callback=None, req_scope=None, profile="grounded",
+            conversation_id=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -638,7 +640,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     if not lang:
         lang = llm.detect_lang(query) or None
     corpus_id = req_scope.corpus_id
-    history = (SESSIONS.history(user, session_scope)
+    history = (SESSIONS.history(user, session_scope, conversation_id)
                if history_snapshot is None
                else [dict(turn) for turn in history_snapshot])
     document = None
@@ -748,7 +750,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                     "source_path": context.get("source_path")}
                    for position, context in enumerate(contexts, 1)
                    if str(position) in cited and context.get("chunk_id")]
-        SESSIONS.record(user, session_scope, query, answer, sources=sources)
+        stored = SESSIONS.record(user, session_scope, query, answer, sources=sources,
+                                 conversation_id=conversation_id)
+        if stored == 1:
+            _title_thread(user, session_scope, conversation_id, query, answer, lang)
     # Spec (C6): mandatory "Adatkontroll & Audit Info" footer + audit id on
     # every displayed output; band message (+ degraded metrics on amber).
     aid = confidence.audit_id(user, drive, query, answer or "")
@@ -781,6 +786,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         result["retrieval_query"] = retrieval_query
     if document is not None:
         result["document"] = document
+    if conversation_id:
+        result["conversation_id"] = conversation_id
     # Keep the trace so a later /ui/feedback rating can be stored WITH what the
     # box actually retrieved and answered (audit id = the join key).
     TRACES.put(aid, {
@@ -794,6 +801,24 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         "citations": citations, "hits": hits,
     })
     return result
+
+
+def _title_thread(user, session_scope, conversation_id, question, answer, lang):
+    """Name a thread after its first exchange. The deterministic fallback is
+    already stored by record(); the model's version replaces it from a daemon
+    thread so the answer is never delayed by it (chat-priority, no queue)."""
+    if not llm.TITLES:
+        return
+
+    def work():
+        try:
+            made = llm.title(question, answer, lang)
+            if made:
+                SESSIONS.set_title(user, session_scope, conversation_id, made, source="auto")
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write("[adapter] conversation title failed: %s\n" % e)
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
@@ -810,7 +835,8 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
         code, payload = 200, _answer(user, drive, query, top_k, lang, action,
                                      mode, files, params, agent, history_snapshot,
                                      cancel_event, progress, req_scope,
-                                     (job.get("request") or {}).get("profile", "grounded"))
+                                     (job.get("request") or {}).get("profile", "grounded"),
+                                     (job.get("request") or {}).get("conversation_id") or None)
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -832,6 +858,10 @@ def _maintenance_loop():
             SESSIONS.sweep()
         except Exception as e:  # noqa: BLE001
             sys.stderr.write("[adapter] session sweep failed: %s\n" % e)
+        try:
+            SESSIONS.retire()
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write("[adapter] conversation retention failed: %s\n" % e)
         try:
             JOBS.sweep()
         except Exception as e:  # noqa: BLE001
@@ -1029,6 +1059,11 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/jobs/get": self._jobs_get,
                 "/api/v1/ui/jobs/seen": self._jobs_seen,
                 "/api/v1/ui/jobs/cancel": self._jobs_cancel,
+                "/api/v1/ui/conversations/list": self._conversations_list,
+                "/api/v1/ui/conversations/create": self._conversations_create,
+                "/api/v1/ui/conversations/get": self._conversations_get,
+                "/api/v1/ui/conversations/rename": self._conversations_rename,
+                "/api/v1/ui/conversations/delete": self._conversations_delete,
                 "/api/v1/ui/save": self._save,
                 "/api/v1/ui/file": self._drive_file_post,
                 "/api/v1/ui/feedback": self._feedback,
@@ -1249,6 +1284,21 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": str(error)})
         return None
 
+    def _conversation_for(self, payload, user, req_scope, profile):
+        """The thread a /ui/query or /ui/ask addresses: the body's optional
+        `conversation_id`, validated against the caller's (user, scope, profile)
+        namespace. Returns None for the default thread, the id when it exists,
+        or False after sending 404 -- an id from another scope or user does not
+        exist as far as this caller is concerned (fail-closed, like jobs)."""
+        conversation_id = str(payload.get("conversation_id") or "").strip()
+        if not conversation_id or conversation_id == conversations.DEFAULT_ID:
+            return None
+        session_scope = chat_policy.history_scope(req_scope.session_scope, profile)
+        if not SESSIONS.exists(user, session_scope, conversation_id):
+            self._send(404, {"ok": False, "error": "unknown conversation_id"})
+            return False
+        return conversation_id
+
     def _query(self):
         if self._locked_guard():
             return
@@ -1262,7 +1312,11 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, parsed[5])
         if profile is None:
             return
-        self._send(200, _answer(*parsed, req_scope=req_scope, profile=profile))
+        conversation_id = self._conversation_for(payload, parsed[0], req_scope, profile)
+        if conversation_id is False:
+            return
+        self._send(200, _answer(*parsed, req_scope=req_scope, profile=profile,
+                                conversation_id=conversation_id))
 
     # -- async UI channel: submit a job, then long-poll for it (spec sec 2.4) -
     def _ask(self):
@@ -1280,7 +1334,11 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, parsed[5])
         if profile is None:
             return
-        history_snapshot = SESSIONS.history(user, chat_policy.history_scope(req_scope.session_scope, profile))
+        conversation_id = self._conversation_for(payload, user, req_scope, profile)
+        if conversation_id is False:
+            return
+        history_snapshot = SESSIONS.history(
+            user, chat_policy.history_scope(req_scope.session_scope, profile), conversation_id)
         # Where the request was STARTED decides where its result belongs: a chat
         # question answers in the conversation, a quick action in the job list.
         origin = (str(payload.get("origin") or "chat")).strip().lower()
@@ -1290,7 +1348,8 @@ class Handler(BaseHTTPRequestHandler):
                    "action": parsed[5], "mode": parsed[6], "files": parsed[7],
                    "params": parsed[8], "agent": parsed[9],
                    "scope_drives": list(req_scope.drive_roots),
-                   "origin": origin, "history": history_snapshot, "profile": profile}
+                   "origin": origin, "history": history_snapshot, "profile": profile,
+                   "conversation_id": conversation_id}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
         heavy = action is not None and not (action == "search" and mode == "files")
@@ -1309,7 +1368,8 @@ class Handler(BaseHTTPRequestHandler):
                              daemon=True).start()
         self._send(202, {"ok": True, "job_id": job_id, "status": "pending",
                          "job_status": "queued",
-                         "queue_position": queue_position})
+                         "queue_position": queue_position,
+                         "conversation_id": conversation_id})
 
     def _poll(self):
         payload = self._read_json()
@@ -1415,6 +1475,88 @@ class Handler(BaseHTTPRequestHandler):
         self._send(409, {"ok": False, "job_id": job_id,
                          "status": job.get("status"),
                          "error": "only queued jobs can be cancelled"})
+
+    # -- conversations: persistent threads per (user, scope, profile) (F1) ----
+    # All POST with the parameters in the body: the ViVeSecBox tunnel drops the
+    # query string (measured 2026-09-10). An id that belongs to another user,
+    # scope or profile is reported as unknown (404), never as forbidden.
+    def _conversation_scope(self, payload):
+        """(user, history scope) of the caller for the thread endpoints, or None
+        after the error was sent. The profile namespaces the scope exactly as
+        it does for the chat history (chat_policy.history_scope)."""
+        if self._locked_guard():
+            return None
+        identity = self._read_vvs()
+        if identity is None:
+            return None
+        user, drive = identity
+        req_scope = self._scope_for(user, drive, payload)
+        if req_scope is None:
+            return None
+        profile = self._profile_for(payload, None)
+        if profile is None:
+            return None
+        return user, chat_policy.history_scope(req_scope.session_scope, profile)
+
+    @staticmethod
+    def _conversation_id_of(payload):
+        conversation_id = str(payload.get("conversation_id") or "").strip()
+        return conversation_id if conversations.valid_id(conversation_id) else ""
+
+    def _conversations_list(self):
+        payload = self._read_json()
+        owner = self._conversation_scope(payload)
+        if owner is None:
+            return
+        self._send(200, {"ok": True, "conversations": SESSIONS.list(*owner)})
+
+    def _conversations_create(self):
+        payload = self._read_json()
+        owner = self._conversation_scope(payload)
+        if owner is None:
+            return
+        title = str(payload.get("title") or "").strip()
+        created = SESSIONS.create(owner[0], owner[1], title=title or None)
+        self._send(200, {"ok": True, "conversation": created})
+
+    def _conversations_get(self):
+        payload = self._read_json()
+        owner = self._conversation_scope(payload)
+        if owner is None:
+            return
+        conversation = SESSIONS.get(owner[0], owner[1], self._conversation_id_of(payload))
+        if conversation is None:
+            self._send(404, {"ok": False, "error": "unknown conversation_id"})
+            return
+        self._send(200, {"ok": True, "conversation": conversation})
+
+    def _conversations_rename(self):
+        payload = self._read_json()
+        owner = self._conversation_scope(payload)
+        if owner is None:
+            return
+        title = " ".join(str(payload.get("title") or "").split())
+        if not title:
+            self._send(400, {"ok": False, "error": "Missing 'title'"})
+            return
+        conversation_id = self._conversation_id_of(payload)
+        if not conversation_id or not SESSIONS.exists(owner[0], owner[1], conversation_id):
+            self._send(404, {"ok": False, "error": "unknown conversation_id"})
+            return
+        renamed = SESSIONS.rename(owner[0], owner[1], conversation_id, title)
+        self._send(200, {"ok": True, "conversation_id": renamed["id"],
+                         "title": renamed["title"]})
+
+    def _conversations_delete(self):
+        payload = self._read_json()
+        owner = self._conversation_scope(payload)
+        if owner is None:
+            return
+        conversation_id = self._conversation_id_of(payload)
+        if not conversation_id or not SESSIONS.delete(owner[0], owner[1], conversation_id):
+            self._send(404, {"ok": False, "error": "unknown conversation_id"})
+            return
+        self._send(200, {"ok": True, "conversation_id": conversation_id})
 
     # -- ws-fs: AIBox -> ViVeSecBox file-save channel (aibox_more3 sec 1) -----
     def _read_vvs(self):
