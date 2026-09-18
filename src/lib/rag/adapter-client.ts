@@ -335,21 +335,26 @@ async function fetchSession(): Promise<SessionInfo> {
     const res = await apiFetch(`${adapterUrl()}/api/v1/ui/init`, {
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
-    if (!res.ok) return { drive: "", user: "" };
+    if (!res.ok) throw new AdapterError(`ui/init HTTP ${res.status}`, res.status);
     const j = await safeJson(res);
     return {
       drive: typeof j.drive === "string" ? j.drive : "",
       user: typeof j.user === "string" ? j.user : "",
     };
-  } catch {
-    return { drive: "", user: "" };
+  } catch (err) {
+    // A failed handshake must not be remembered: the box being unreachable at
+    // page load would otherwise pin the session to "no drive" for good, and
+    // every drive-bound feature would stay dead after the connection returns.
+    sessionRequest = null;
+    throw err;
   }
 }
 
 /**
  * GET /api/v1/ui/init — VVS handshake. The browser never sees the VVS-Drive and
  * VVS-User headers the box injects, so this is the only way it learns which
- * drive it is bound to and who is signed in. Stable per page load, so cached.
+ * drive it is bound to and who is signed in. Cached once it has succeeded;
+ * a failure is retried on the next call.
  */
 export function adapterSession(): Promise<SessionInfo> {
   sessionRequest ??= fetchSession();
@@ -506,7 +511,12 @@ export async function adapterListJobs(
   const { headers } = jobScope(scope);
   const res = await apiFetch(`${adapterUrl()}/api/v1/ui/jobs`, { headers });
   const body = await safeJson(res);
-  if (res.status === 404) return null;
+  // Only the adapter's own 404 means "this box has no job store". A 404 from
+  // an intermediary (tunnel / proxy while the box is unreachable) is a
+  // transient failure and must not switch background jobs off for the session.
+  if (res.status === 404 && typeof body.error === "string" && body.error.startsWith("Not found")) {
+    return null;
+  }
   if (!res.ok) throw new AdapterError((body.error as string) ?? `ui/jobs HTTP ${res.status}`, res.status);
   return Array.isArray(body.jobs) ? (body.jobs as AdapterJobSummary[]) : [];
 }

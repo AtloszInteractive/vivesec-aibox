@@ -831,9 +831,15 @@ function ViveSecAppInner() {
   const [scopeDrives, setScopeDrives] = useState<ScopeDrive[]>([]);
   const [selectedDrives, setSelectedDrives] = useState<string[]>([]);
 
+  // The drive binding comes from the box (/ui/init). If the box was unreachable
+  // when the page loaded, keep asking whenever it is reachable again: every
+  // drive-bound feature (file panel, scope, jobs) waits on this value.
   useEffect(() => {
+    if (drive || boxState === "offline") return;
+    let cancelled = false;
     listDrives()
       .then((d) => {
+        if (cancelled) return;
         setDrivePicker(d.picker);
         setDrives(d.drives);
         const saved =
@@ -842,8 +848,13 @@ function ViveSecAppInner() {
           !!p && (!d.drives.length || d.drives.some((x) => x.path === p));
         setDrive(d.picker && known(saved) ? (saved as string) : d.current);
       })
-      .catch(() => setDrive(""));
-  }, []);
+      .catch(() => {
+        if (!cancelled) setDrive("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drive, boxState]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("vivesec_scope");
@@ -1102,10 +1113,19 @@ function ViveSecAppInner() {
   const senderName = userName || t.youLabel;
 
   useEffect(() => {
+    if (userName || boxState === "offline") return;
+    let cancelled = false;
     sessionUser()
-      .then(setUserName)
-      .catch(() => setUserName(""));
-  }, []);
+      .then((name) => {
+        if (!cancelled) setUserName(name);
+      })
+      .catch(() => {
+        if (!cancelled) setUserName("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userName, boxState]);
 
   /* ---------- Send / commands ---------- */
   function pushUser(text: string) {
