@@ -130,6 +130,8 @@ const M: Record<string, Tri> = {
   "Rename conversation": ["Beszélgetés átnevezése", "Omdøb samtale", "Unterhaltung umbenennen"],
   "Delete conversation": ["Beszélgetés törlése", "Slet samtale", "Unterhaltung löschen"],
   "Untitled conversation": ["Névtelen beszélgetés", "Samtale uden titel", "Unbenannte Unterhaltung"],
+  "Conversation name": ["A beszélgetés neve", "Samtalens navn", "Name der Unterhaltung"],
+  "Save": ["Mentés", "Gem", "Speichern"],
   "No saved conversations yet.": ["Még nincs mentett beszélgetés.", "Der er endnu ingen gemte samtaler.", "Noch keine gespeicherten Unterhaltungen."],
   "turns": ["kör", "runder", "Runden"],
   "Delete this conversation? This cannot be undone.": ["Törlöd ezt a beszélgetést? A művelet nem vonható vissza.", "Vil du slette denne samtale? Handlingen kan ikke fortrydes.", "Diese Unterhaltung löschen? Das kann nicht rückgängig gemacht werden."],

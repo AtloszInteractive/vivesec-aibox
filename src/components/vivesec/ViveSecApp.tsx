@@ -788,6 +788,9 @@ function ViveSecAppInner() {
   const [conversationsSupported, setConversationsSupported] = useState<boolean | null>(null);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [threadBusy, setThreadBusy] = useState(false);
+  const [threadDialog, setThreadDialog] = useState<
+    { mode: "rename" | "delete"; id: string; title: string } | null
+  >(null);
   /** Which (profile, drive) the remembered thread was already restored for. */
   const restoredRef = useRef("");
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
@@ -1530,9 +1533,9 @@ function ViveSecAppInner() {
     }
   }
 
-  async function renameThread(id: string, current: string) {
-    const title = window.prompt(tm("Rename conversation"), current);
-    if (title === null || !title.trim()) return;
+  async function renameThread(id: string, title: string) {
+    setThreadDialog(null);
+    if (!title.trim()) return;
     try {
       await renameConversation(id, title.trim(), threadScope);
       await refreshConversations();
@@ -1542,7 +1545,7 @@ function ViveSecAppInner() {
   }
 
   async function deleteThread(id: string) {
-    if (!window.confirm(tm("Delete this conversation? This cannot be undone."))) return;
+    setThreadDialog(null);
     try {
       await deleteConversation(id, threadScope);
       if (id === conversationId) {
@@ -2198,7 +2201,10 @@ function ViveSecAppInner() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => void renameThread(c.id, c.title)}
+                                  onClick={() => {
+                                    setThreadsOpen(false);
+                                    setThreadDialog({ mode: "rename", id: c.id, title: c.title });
+                                  }}
                                   className="rounded p-1 text-white/45 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
                                   title={tm("Rename conversation")}
                                 >
@@ -2206,7 +2212,10 @@ function ViveSecAppInner() {
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => void deleteThread(c.id)}
+                                  onClick={() => {
+                                    setThreadsOpen(false);
+                                    setThreadDialog({ mode: "delete", id: c.id, title: c.title });
+                                  }}
                                   className="rounded p-1 text-white/45 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
                                   title={tm("Delete conversation")}
                                 >
@@ -2915,11 +2924,111 @@ function ViveSecAppInner() {
           onClose={() => setExplorerOpen(false)}
         />
       )}
+      {threadDialog && (
+        <ThreadDialog
+          mode={threadDialog.mode}
+          title={threadDialog.title}
+          onCancel={() => setThreadDialog(null)}
+          onConfirm={(value) =>
+            void (threadDialog.mode === "rename"
+              ? renameThread(threadDialog.id, value)
+              : deleteThread(threadDialog.id))
+          }
+        />
+      )}
     </DriveContext.Provider>
   );
 }
 
 /* ---------- Subcomponents ---------- */
+
+/** Rename / delete a conversation. In-app rather than window.prompt/confirm:
+ *  embedded in the ViVeSecBox iframe a native dialog is the host page's, not
+ *  ours, and it cannot be localized or styled. */
+function ThreadDialog({
+  mode,
+  title,
+  onCancel,
+  onConfirm,
+}: {
+  mode: "rename" | "delete";
+  title: string;
+  onCancel: () => void;
+  onConfirm: (value: string) => void;
+}) {
+  const { tm } = useLang();
+  const [value, setValue] = useState(title);
+  const renaming = mode === "rename";
+  const disabled = renaming && !value.trim();
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
+        style={{ backgroundColor: "#1B1F22" }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onCancel();
+          if (e.key === "Enter" && !disabled) onConfirm(value);
+        }}
+      >
+        <div className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
+          {renaming ? (
+            <Pencil className="h-4 w-4" style={{ color: LIME }} />
+          ) : (
+            <AlertTriangle className="h-4 w-4 text-rose-300" />
+          )}
+          {tm(renaming ? "Rename conversation" : "Delete conversation")}
+        </div>
+
+        {renaming ? (
+          <>
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+              {tm("Conversation name")}
+            </label>
+            <input
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+            />
+          </>
+        ) : (
+          <p className="mb-4 text-[13px] text-white/75">
+            {tm("Delete this conversation? This cannot be undone.")}
+            <span className="mt-2 block truncate text-white/50">
+              {title || tm("Untitled conversation")}
+            </span>
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/5"
+          >
+            {tm("Cancel")}
+          </button>
+          <button
+            autoFocus={!renaming}
+            onClick={() => onConfirm(value)}
+            disabled={disabled}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${renaming ? "" : "bg-rose-400 text-[#15181B]"}`}
+            style={renaming ? { backgroundColor: LIME, color: "#15181B" } : undefined}
+          >
+            {tm(renaming ? "Save" : "Delete conversation")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function LanguageSelector() {
   const { lang, setLang } = useLang();
