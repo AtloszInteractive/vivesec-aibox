@@ -794,7 +794,11 @@ function ViveSecAppInner() {
   /** Which (profile, drive) the remembered thread was already restored for. */
   const restoredRef = useRef("");
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
+  // Non-null means the results column shows that one run instead of the list.
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [jobFilter, setJobFilter] = useState<"all" | "active" | "new">("all");
+  const [jobSearch, setJobSearch] = useState("");
+  const [earlierJobsOpen, setEarlierJobsOpen] = useState(false);
   const [jobsError, setJobsError] = useState("");
   const [jobsSupported, setJobsSupported] = useState<boolean | null>(null);
   const jobsSupportedRef = useRef<boolean | null>(null);
@@ -1016,10 +1020,40 @@ function ViveSecAppInner() {
   const unseenBackgroundJobs = backgroundJobs.filter(
     (job) => job.status === "done" && !job.seen_ts,
   ).length;
-  const visibleResultMessages = resultMessages.filter(
-    (message) =>
-      !message.id.startsWith("job-") || message.id === `job-${selectedJobId ?? ""}`,
+  // The results column is a master-detail view: either the list of runs, or a
+  // single opened result. Job cards exist only in the detail view; cards from
+  // foreground quick actions stay under the list.
+  const inlineResultMessages = resultMessages.filter(
+    (message) => !message.id.startsWith("job-"),
   );
+  const selectedJob = backgroundJobs.find((job) => job.job_id === selectedJobId) ?? null;
+  const selectedJobMessage =
+    resultMessages.find((message) => message.id === `job-${selectedJobId ?? ""}`) ?? null;
+  const jobGroups = useMemo(() => {
+    const needle = jobSearch.trim().toLowerCase();
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const todayTs = midnight.getTime() / 1000;
+    const active: BackgroundJob[] = [];
+    const today: BackgroundJob[] = [];
+    const earlier: BackgroundJob[] = [];
+    for (const job of backgroundJobs) {
+      if (needle && !(job.query ?? "").toLowerCase().includes(needle)) continue;
+      const running = job.status === "queued" || job.status === "running";
+      if (jobFilter === "active" && !running) continue;
+      if (jobFilter === "new" && !(job.status === "done" && !job.seen_ts)) continue;
+      if (running) active.push(job);
+      else if ((job.finished ?? job.created ?? 0) >= todayTs) today.push(job);
+      else earlier.push(job);
+    }
+    return { active, today, earlier, total: active.length + today.length + earlier.length };
+  }, [backgroundJobs, jobFilter, jobSearch]);
+  // Headings only help when there is more than one group to tell apart.
+  const jobGroupHeadings =
+    [jobGroups.active.length, jobGroups.today.length, jobGroups.earlier.length].filter(Boolean)
+      .length > 1;
+  const earlierJobsVisible =
+    earlierJobsOpen || (!jobGroups.active.length && !jobGroups.today.length);
   const lastResultId = resultMessages[resultMessages.length - 1]?.id ?? null;
 
   const scrollResultIntoView = useCallback((id: string) => {
@@ -1391,12 +1425,11 @@ function ViveSecAppInner() {
         jobsSupportedRef.current = true;
         setJobsSupported(true);
         setBackgroundJobs(jobs);
-        setSelectedJobId((current) => {
-          if (current && jobs.some((job) => job.job_id === current && job.status === "done")) {
-            return current;
-          }
-          return jobs.find((job) => job.status === "done")?.job_id ?? null;
-        });
+        // The list stays the landing view; only a click opens a run. Keep the
+        // open one open, and fall back to the list if it disappeared.
+        setSelectedJobId((current) =>
+          current && jobs.some((job) => job.job_id === current) ? current : null,
+        );
         setJobsError("");
         for (const job of jobs) {
           if (job.status !== "done" || hydratedJobsRef.current.has(job.job_id)) continue;
@@ -1420,11 +1453,9 @@ function ViveSecAppInner() {
               restored.job.query,
             );
             markResult(messageId);
-            setSelectedJobId((current) => current ?? job.job_id);
             setMessages((current) =>
               current.some((item) => item.id === messageId) ? current : [...current, message],
             );
-            await markRagJobSeen(job.job_id, drive);
           } catch {
             hydratedJobsRef.current.delete(job.job_id);
           }
@@ -1594,6 +1625,103 @@ function ViveSecAppInner() {
   }, [conversationId, chatProfile, drive]);
 
   const activeConversation = conversations.find((c) => c.id === conversationId) ?? null;
+
+  /** Opening a finished run is what marks it read — the "new" dot belongs to
+   *  the user, not to the hydration that happens in the background. */
+  function openJob(jobId: string) {
+    setSelectedJobId(jobId);
+    setBackgroundJobs((jobs) =>
+      jobs.map((job) =>
+        job.job_id === jobId && !job.seen_ts ? { ...job, seen_ts: Date.now() / 1000 } : job,
+      ),
+    );
+    resultScrollRef.current?.scrollTo({ top: 0 });
+    void markRagJobSeen(jobId, drive || undefined).catch(() => {});
+  }
+
+  function jobGroupHeading(label: string, count: number) {
+    return (
+      <div className="px-1 py-2 text-[10px] font-semibold uppercase tracking-wide text-white/30">
+        {label} · {count}
+      </div>
+    );
+  }
+
+  function renderJobRow(job: BackgroundJob) {
+    const running = job.status === "queued" || job.status === "running";
+    const unseen = job.status === "done" && !job.seen_ts;
+    const status = job.cancel_requested
+      ? tm("Cancel requested")
+      : job.status === "queued" && job.queue_position
+        ? `${tm("Queued")} · ${job.queue_position}`
+        : tm(
+            job.status === "running"
+              ? "Running"
+              : job.status === "done"
+                ? "Completed"
+                : job.status === "cancelled"
+                  ? "Cancelled"
+                  : job.status === "interrupted"
+                    ? "Interrupted"
+                    : "Failed",
+          );
+    return (
+      <div key={job.job_id} className="flex min-h-12 items-center gap-1 py-1">
+        <button
+          disabled={job.status !== "done"}
+          onClick={() => openJob(job.job_id)}
+          className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left transition disabled:cursor-default ${
+            job.status === "done" ? "hover:bg-white/5" : ""
+          }`}
+        >
+          <div className="grid h-7 w-7 shrink-0 place-items-center">
+            {running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-lime-300" />
+            ) : job.status === "done" ? (
+              <Check className="h-3.5 w-3.5 text-lime-300" />
+            ) : (
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <div className={`truncate text-[12px] ${unseen ? "text-white" : "text-white/80"}`}>
+                {job.query || tm("Background task")}
+              </div>
+              {unseen && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: LIME }}
+                  title={tm("new")}
+                />
+              )}
+            </div>
+            <div className="text-[10.5px] text-white/40">{status}</div>
+            {job.status === "running" && (job.progress_tokens ?? 0) > 0 && (
+              <div className="text-[10px] text-lime-200/60">
+                {job.progress_tokens} {tm("tokens")} · {job.progress_chars ?? 0} {tm("chars")}
+              </div>
+            )}
+          </div>
+          {job.status === "done" && (
+            <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-white/35">
+              {tm("Open")}
+              <ChevronRight className="h-3.5 w-3.5" />
+            </span>
+          )}
+        </button>
+        {running && !job.cancel_requested && (
+          <button
+            onClick={() => void cancelBackgroundJob(job.job_id)}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white"
+            title={tm("Cancel job")}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  }
 
   async function cancelBackgroundJob(jobId: string) {    try {
       const response = await cancelRagJob(jobId, drive || undefined);
@@ -2574,27 +2702,66 @@ function ViveSecAppInner() {
               }`}
             >
               <div className="flex items-center gap-2 border-b border-white/5 px-4 py-2.5">
-                <button
-                  onClick={() => setMobilePane("chat")}
-                  className="grid h-7 w-7 place-items-center rounded-md hover:bg-white/10 lg:hidden"
-                  aria-label={tm("Conversation")}
-                >
-                  <ArrowLeft className="h-4 w-4 text-white/60" />
-                </button>
-                <Zap className="h-4 w-4" style={{ color: LIME }} />
-                <div className="text-sm font-medium">{tm("Quick actions")}</div>
-                <div className="ml-auto text-[11px] text-white/40">
-                  {unseenBackgroundJobs > 0
-                    ? `${unseenBackgroundJobs} ${tm("new")}`
-                    : activeBackgroundJobs > 0
-                      ? `${activeBackgroundJobs} ${tm("active")}`
-                      : resultMessages.length > 0
-                        ? resultMessages.length
-                        : ""}
-                </div>
+                {selectedJobId ? (
+                  <>
+                    <button
+                      onClick={() => setSelectedJobId(null)}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-white/10"
+                      aria-label={tm("Back to tasks")}
+                      title={tm("Back to tasks")}
+                    >
+                      <ArrowLeft className="h-4 w-4 text-white/60" />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">
+                        {selectedJob?.query || tm("Background result")}
+                      </div>
+                      <div className="text-[10.5px] text-white/40">{tm("Completed")}</div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedJobId(null)}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-white/10"
+                      aria-label={tm("Close")}
+                    >
+                      <X className="h-4 w-4 text-white/50" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setMobilePane("chat")}
+                      className="grid h-7 w-7 place-items-center rounded-md hover:bg-white/10 lg:hidden"
+                      aria-label={tm("Conversation")}
+                    >
+                      <ArrowLeft className="h-4 w-4 text-white/60" />
+                    </button>
+                    <Zap className="h-4 w-4" style={{ color: LIME }} />
+                    <div className="text-sm font-medium">{tm("Quick actions")}</div>
+                    {unseenBackgroundJobs > 0 || activeBackgroundJobs > 0 ? (
+                      <button
+                        onClick={() => {
+                          setJobFilter(unseenBackgroundJobs > 0 ? "new" : "active");
+                          resultScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="ml-auto rounded-full border border-white/10 bg-white/[0.06] px-2 py-0.5 text-[11px] text-white/70 transition hover:bg-white/10"
+                      >
+                        {unseenBackgroundJobs > 0
+                          ? `${unseenBackgroundJobs} ${tm("new")}`
+                          : `${activeBackgroundJobs} ${tm("active")}`}
+                      </button>
+                    ) : (
+                      <div className="ml-auto text-[11px] text-white/40">
+                        {resultMessages.length > 0 ? resultMessages.length : ""}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
 
-              {/* Action launcher — the agent decides which quick actions exist */}
+              {/* Action launcher — the agent decides which quick actions exist.
+                Hidden while a result is open so reading gets the whole column;
+                the back arrow in the header brings it right back. */}
+              {!selectedJobId && (
               <div className="shrink-0 border-b border-white/5 p-3">
                 <div className="grid grid-cols-2 gap-1.5 xl:grid-cols-3">
                   {(() => {
@@ -2677,11 +2844,41 @@ function ViveSecAppInner() {
                   />
                 )}
               </div>
+              )}
 
               <div
                 ref={resultScrollRef}
                 className="vvs-scroll min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4"
               >
+                {selectedJobId ? (
+                  <div className="mx-auto max-w-2xl">
+                    {selectedJobMessage ? (
+                      <div data-result-id={selectedJobMessage.id} className="scroll-mt-2">
+                        <MessageView
+                          msg={selectedJobMessage}
+                          onToggleAction={(aid) => toggleAction(selectedJobMessage.id, aid)}
+                          onCitation={openCitation}
+                          onUpdateSlide={(sid, patch) =>
+                            updateSlide(selectedJobMessage.id, sid, patch)
+                          }
+                          onEdit={(patch) => patchMessage(selectedJobMessage.id, patch)}
+                          onOpenFile={openFile}
+                        />
+                      </div>
+                    ) : (
+                      <div className="mt-10 flex flex-col items-center gap-2 text-[12px] text-white/40">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {tm("Loading the result…")}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setSelectedJobId(null)}
+                      className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] text-white/70 transition hover:bg-white/10"
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" /> {tm("Back to tasks")}
+                    </button>
+                  </div>
+                ) : (
                 <div className="mx-auto flex max-w-2xl flex-col gap-5">
                   {(backgroundJobs.length > 0 || jobsError || jobsSupported === false) && (
                     <div className="border-b border-white/10 pb-3">
@@ -2690,6 +2887,9 @@ function ViveSecAppInner() {
                           className={`h-3.5 w-3.5 ${activeBackgroundJobs ? "animate-spin" : ""}`}
                         />
                         {tm("Background jobs")}
+                        <span className="ml-auto font-normal normal-case text-white/30">
+                          {jobGroups.total}
+                        </span>
                       </div>
                       {jobsError && <div className="mb-2 text-[11px] text-rose-300">{jobsError}</div>}
                       {jobsSupported === false && (
@@ -2699,90 +2899,98 @@ function ViveSecAppInner() {
                           )}
                         </div>
                       )}
-                      <div className="divide-y divide-white/5 border-y border-white/5">
-                        {backgroundJobs.map((job) => {
-                          const active = job.status === "queued" || job.status === "running";
-                          const status =
-                            job.cancel_requested
-                              ? tm("Cancel requested")
-                              : job.status === "queued" && job.queue_position
-                              ? `${tm("Queued")} · ${job.queue_position}`
-                              : tm(
-                                  job.status === "running"
-                                    ? "Running"
-                                    : job.status === "done"
-                                      ? "Completed"
-                                      : job.status === "cancelled"
-                                        ? "Cancelled"
-                                        : job.status === "interrupted"
-                                          ? "Interrupted"
-                                          : "Failed",
-                                );
-                          return (
-                            <div
-                              key={job.job_id}
-                              className="flex min-h-12 items-center gap-1 py-1"
+                      {/* Filters and search only earn their space once the list
+                        is long enough to need them. */}
+                      {(backgroundJobs.length > 3 || jobFilter !== "all") && (
+                        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                          {(
+                            [
+                              ["all", "All", backgroundJobs.length],
+                              ["active", "Active", activeBackgroundJobs],
+                              ["new", "New", unseenBackgroundJobs],
+                            ] as const
+                          ).map(([key, label, count]) => (
+                            <button
+                              key={key}
+                              onClick={() => setJobFilter(key)}
+                              disabled={key !== "all" && count === 0 && jobFilter !== key}
+                              className={`rounded-full border px-2 py-0.5 text-[10.5px] transition disabled:opacity-30 ${
+                                jobFilter === key
+                                  ? "border-white/30 bg-white/[0.1] text-white/85"
+                                  : "border-white/10 bg-white/[0.03] text-white/55 hover:bg-white/10"
+                              }`}
                             >
-                              <button
-                                disabled={job.status !== "done"}
-                                onClick={() => setSelectedJobId(job.job_id)}
-                                className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left transition disabled:cursor-default ${
-                                  selectedJobId === job.job_id
-                                    ? "bg-white/10"
-                                    : job.status === "done"
-                                      ? "hover:bg-white/5"
-                                      : ""
-                                }`}
-                              >
-                                <div className="grid h-7 w-7 shrink-0 place-items-center">
-                                  {active ? (
-                                    <Loader2 className="h-3.5 w-3.5 animate-spin text-lime-300" />
-                                  ) : job.status === "done" ? (
-                                    <Check className="h-3.5 w-3.5 text-lime-300" />
-                                  ) : (
-                                    <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
-                                  )}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="truncate text-[12px] text-white/80">
-                                    {job.query || tm("Background task")}
-                                  </div>
-                                  <div className="text-[10.5px] text-white/40">{status}</div>
-                                  {job.status === "running" && (job.progress_tokens ?? 0) > 0 && (
-                                    <div className="text-[10px] text-lime-200/60">
-                                      {job.progress_tokens} {tm("tokens")} · {job.progress_chars ?? 0}{" "}
-                                      {tm("chars")}
-                                    </div>
-                                  )}
-                                </div>
-                                {job.status === "done" && (
-                                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-white/30" />
-                                )}
-                              </button>
-                              {(job.status === "queued" || job.status === "running") &&
-                                !job.cancel_requested && (
-                                <button
-                                  onClick={() => void cancelBackgroundJob(job.job_id)}
-                                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white"
-                                  title={tm("Cancel job")}
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              )}
+                              {tm(label)} {count > 0 ? count : ""}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {backgroundJobs.length > 8 && (
+                        <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/10 bg-black/25 px-2 py-1.5">
+                          <Search className="h-3.5 w-3.5 shrink-0 text-white/35" />
+                          <input
+                            value={jobSearch}
+                            onChange={(e) => setJobSearch(e.target.value)}
+                            placeholder={tm("Filter tasks")}
+                            className="min-w-0 flex-1 bg-transparent text-[12px] text-white placeholder:text-white/35 outline-none"
+                          />
+                          {jobSearch && (
+                            <button
+                              onClick={() => setJobSearch("")}
+                              className="shrink-0 text-white/40 hover:text-white"
+                              aria-label={tm("Cancel")}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {jobGroups.total === 0 ? (
+                        <div className="py-3 text-center text-[11.5px] text-white/35">
+                          {tm("No task matches the filter.")}
+                        </div>
+                      ) : (
+                        <div className="border-y border-white/5">
+                          {jobGroups.active.length > 0 && (
+                            <div className="divide-y divide-white/5">
+                              {jobGroupHeadings && jobGroupHeading(tm("In progress"), jobGroups.active.length)}
+                              {jobGroups.active.map(renderJobRow)}
                             </div>
-                          );
-                        })}
-                      </div>
+                          )}
+                          {jobGroups.today.length > 0 && (
+                            <div className="divide-y divide-white/5">
+                              {jobGroupHeadings && jobGroupHeading(tm("Today"), jobGroups.today.length)}
+                              {jobGroups.today.map(renderJobRow)}
+                            </div>
+                          )}
+                          {jobGroups.earlier.length > 0 && (
+                            <div className="divide-y divide-white/5">
+                              <button
+                                onClick={() => setEarlierJobsOpen((v) => !v)}
+                                className="flex w-full items-center gap-1.5 px-1 py-2 text-[10px] font-semibold uppercase tracking-wide text-white/30 transition hover:text-white/60"
+                              >
+                                {earlierJobsVisible ? (
+                                  <ChevronDown className="h-3 w-3" />
+                                ) : (
+                                  <ChevronRight className="h-3 w-3" />
+                                )}
+                                {tm("Earlier")} · {jobGroups.earlier.length}
+                              </button>
+                              {earlierJobsVisible && jobGroups.earlier.map(renderJobRow)}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
-                  {visibleResultMessages.length === 0 && backgroundJobs.length === 0 ? (
+                  {inlineResultMessages.length === 0 && backgroundJobs.length === 0 ? (
                     <div className="mx-auto mt-10 max-w-xs text-center text-[12px] leading-relaxed text-white/40">
                       {tm(
                         "Pick a quick action above — the generated documents, decks and search results appear here.",
                       )}
                     </div>
                   ) : (
-                    visibleResultMessages.map((m) => (
+                    inlineResultMessages.map((m) => (
                       <div key={m.id} data-result-id={m.id} className="scroll-mt-2">
                         <MessageView
                           msg={m}
@@ -2796,6 +3004,7 @@ function ViveSecAppInner() {
                     ))
                   )}
                 </div>
+                )}
               </div>
             </section>
 
