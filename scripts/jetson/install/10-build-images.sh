@@ -41,8 +41,15 @@ cd "$source_dir"
 tag_previous vivesec-adapter
 docker build -f adapter/Dockerfile -t vivesec-adapter:latest adapter
 
+# The repository-root .dockerignore (written for the UI image) excludes poc/,
+# so the rag image is built from a staging tree holding exactly its two inputs.
+rag_stage="${RAG_STAGE:-/data/app/rag-src}"
+rm -rf "$rag_stage"
+install -d -m 0755 "$rag_stage"
+cp -a "$source_dir/poc" "$source_dir/rag_service" "$rag_stage/"
+find "$rag_stage" -name '__pycache__' -type d -prune -exec rm -rf {} +
 tag_previous vivesec-rag
-docker build -f rag_service/Dockerfile -t vivesec-rag:latest .
+docker build -f "$rag_stage/rag_service/Dockerfile" -t vivesec-rag:latest "$rag_stage"
 
 # The Jetson never runs the web toolchain: the bundle arrives pre-built.
 rm -rf "$ui_stage"

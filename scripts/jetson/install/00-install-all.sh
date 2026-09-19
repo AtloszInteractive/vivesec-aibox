@@ -21,7 +21,7 @@ STATE_DIR=/var/lib/aibox-install
 LOG_DIR=/var/log/aibox-install
 STATE_FILE="$STATE_DIR/completed-phases"
 
-PHASES=(nvme base base-verify storage ollama models models-verify images deploy stack-verify audit)
+PHASES=(nvme base base-verify harden storage ollama models models-verify images deploy stack-verify audit)
 
 config_file="$SCRIPT_DIR/install.conf"
 mode=run
@@ -43,8 +43,13 @@ Usage: sudo bash 00-install-all.sh [options]
   --resume        Skip phases already recorded as completed
   -h, --help      This help
 
-Phases: nvme base base-verify storage ollama models models-verify images
-        deploy stack-verify audit
+Phases: nvme base base-verify harden storage ollama models models-verify
+        images deploy stack-verify audit
+
+The harden phase needs TS_AUTH_KEY in the environment (pass it on the sudo
+command line: sudo TS_AUTH_KEY=tskey-auth-... bash 00-install-all.sh) and
+AIBOX_ADMIN_KEYS_FILE in install.conf. It blocks until a NEW key-based SSH
+login is confirmed with 05-harden-host.sh --confirm-ssh.
 USAGE
 }
 
@@ -121,6 +126,15 @@ phase_base_verify() {
   bash "$JETSON_DIR/verify-jp6-base.sh"
 }
 
+phase_harden() {
+  AIBOX_HOSTNAME="$AIBOX_HOSTNAME" \
+  AIBOX_SSH_USER="${AIBOX_SSH_USER:-aibox}" \
+  AIBOX_ADMIN_KEYS_FILE="${AIBOX_ADMIN_KEYS_FILE:-}" \
+  AIBOX_REMOTE_ACCESS="${AIBOX_REMOTE_ACCESS:-tailscale}" \
+  AIBOX_TS_TAGS="${AIBOX_TS_TAGS:-tag:aibox}" \
+    bash "$SCRIPT_DIR/05-harden-host.sh"
+}
+
 phase_storage() {
   bash "$JETSON_DIR/30-app-storage-jp6.sh"
 }
@@ -153,6 +167,8 @@ phase_stack_verify() {
 phase_audit() {
   AUDIT_CONTINUE_ON_FAIL="${AUDIT_CONTINUE_ON_FAIL:-0}" \
   AIBOX_HOSTNAME="$AIBOX_HOSTNAME" \
+  AIBOX_SSH_USER="${AIBOX_SSH_USER:-aibox}" \
+  AIBOX_REMOTE_ACCESS="${AIBOX_REMOTE_ACCESS:-tailscale}" \
   OLLAMA_VERSION="$OLLAMA_VERSION" \
   EMBED_MODEL="$EMBED_MODEL" \
   GEN_MODEL="$GEN_MODEL" \
@@ -176,6 +192,12 @@ if [[ $mode == check ]]; then
     [[ -e "$SOURCE_DIR/$required" ]] || die "Missing from SOURCE_DIR: $required"
   done
   [[ -r $UI_BUNDLE ]] || die "Missing UI bundle: $UI_BUNDLE"
+  log "Preflight: host hardening inputs"
+  [[ -n ${AIBOX_ADMIN_KEYS_FILE:-} ]] || die "AIBOX_ADMIN_KEYS_FILE missing from $config_file (administrators' SSH public keys)."
+  AIBOX_ADMIN_KEYS_FILE="$AIBOX_ADMIN_KEYS_FILE" AIBOX_SSH_USER="${AIBOX_SSH_USER:-aibox}" \
+    bash "$SCRIPT_DIR/05-harden-host.sh" --check
+  [[ ${AIBOX_REMOTE_ACCESS:-tailscale} != tailscale || -n ${TS_AUTH_KEY:-} || -r ${TS_AUTH_KEY_FILE:-/nonexistent} ]] || \
+    log "TS_AUTH_KEY / TS_AUTH_KEY_FILE is not set - the harden phase will install Tailscale but cannot join the tailnet."
   log "Preflight: platform"
   if findmnt -nro SOURCE /data >/dev/null 2>&1; then
     bash "$JETSON_DIR/10b-base-jp6.sh" --check

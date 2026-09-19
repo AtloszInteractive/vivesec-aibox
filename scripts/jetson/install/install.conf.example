@@ -30,6 +30,21 @@ SOURCE_DIR=/home/aibox/vivesec_iabox_app
 # machine. The Jetson does not compile the UI.
 UI_BUNDLE=/home/aibox/ui-output.tgz
 
+# --- Host hardening and remote access ---------------------------------------
+# File with the administrators' SSH public keys (one per line, ed25519 or
+# ed25519-sk/FIDO2). Installed root-owned; password login is disabled after a
+# NEW key-based login is confirmed (05-harden-host.sh --confirm-ssh).
+AIBOX_ADMIN_KEYS_FILE=/home/aibox/admin_keys.pub
+# Login user the hardening applies to (the OEM wizard user).
+AIBOX_SSH_USER=aibox
+# Remote administration channel: tailscale (default) or none.
+# The Tailscale auth key is NOT stored here - pass it on the command line:
+#   sudo TS_AUTH_KEY=tskey-auth-... bash 00-install-all.sh
+# Generate it in the admin console as pre-authorized + tagged (tag:aibox), and
+# disable key expiry for the node afterwards (the audit checks this).
+AIBOX_REMOTE_ACCESS=tailscale
+AIBOX_TS_TAGS=tag:aibox
+
 # --- Optional ---------------------------------------------------------------
 # Set to 1 to keep going when an individual acceptance check fails (default 0).
 AUDIT_CONTINUE_ON_FAIL=0

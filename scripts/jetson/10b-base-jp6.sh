@@ -95,4 +95,12 @@ docker_root_actual="$(docker info --format '{{.DockerRootDir}}')"
   exit 1
 }
 
+# Factory default is MODE_30W, which halves LLM generation speed. Switching to
+# MAXN (mode 0) changes the core count, so nvpmodel insists on rebooting right
+# away - that is left to the operator (the audit enforces the result):
+#   printf 'YES\n' | sudo nvpmodel -m 0     # reboots immediately
+if ! nvpmodel -q 2>/dev/null | grep -q '^NV Power Mode: MAXN'; then
+  echo "POWER_MODE_NOT_MAXN current=$(nvpmodel -q 2>/dev/null | head -n 1) -> run: printf 'YES\\n' | sudo nvpmodel -m 0"
+fi
+
 echo "JP6_BASE_INSTALLED docker_root=$docker_root_actual"

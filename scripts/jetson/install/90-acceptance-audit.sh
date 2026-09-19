@@ -23,6 +23,10 @@ expected_embed_model="${EMBED_MODEL:-bge-m3:latest}"
 expected_gen_model="${GEN_MODEL:-qwen3.6:35b}"
 box_name="${AIBOX_HOSTNAME:-$(hostname)}"
 min_free_gb="${AUDIT_MIN_FREE_GB:-50}"
+ssh_user="${AIBOX_SSH_USER:-aibox}"
+remote_access="${AIBOX_REMOTE_ACCESS:-tailscale}"
+# Tailscale addresses (CGNAT 100.64/10 + its IPv6 ULA) are not "the network".
+tailnet_regex='^(100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|\[fd7a:115c:a1e0:)'
 
 pass_count=0
 fail_count=0
@@ -58,6 +62,9 @@ check l4t_release \
   'head -n 1 /etc/nv_tegra_release | grep -E "# R36 .*REVISION: 4\.4"'
 check architecture \
   '[[ $(dpkg --print-architecture) == arm64 ]] && dpkg --print-architecture'
+# 30W mode halves generation speed (~15 vs ~35 tok/s on qwen3.6:35b).
+check power_mode_maxn \
+  'nvpmodel -q 2>/dev/null | grep -E "^NV Power Mode: MAXN"'
 
 echo
 echo "-- Container runtime ----------------------------------------------------"
@@ -142,7 +149,7 @@ echo "-- Pairing, discovery and exposure --------------------------------------"
 check device_identity \
   "docker exec vivesec-adapter test -s $pki_dir/device_uuid && docker exec vivesec-adapter sh -c 'cut -c1-8 $pki_dir/device_uuid' | sed 's/^/uuid starts with /'"
 check pairing_state \
-  "if [[ -s $pki_dir/ca.crt && -s $pki_dir/server.crt ]]; then echo 'PAIRED (certificate installed)'; elif [[ -s $pki_dir/server.key ]]; then echo 'PENDING (key generated, awaiting pairing)'; else echo 'no key material'; exit 1; fi"
+  "if [[ -s $pki_dir/ca.crt && -s $pki_dir/server.crt ]]; then echo 'PAIRED (certificate installed)'; elif [[ -s $pki_dir/server.key ]]; then echo 'PENDING (key generated, awaiting pairing)'; elif [[ -s $pki_dir/device_uuid ]]; then echo 'UNPAIRED (identity ready, key is generated at the first init/prepare)'; else echo 'no device identity'; exit 1; fi"
 check mutual_tls_port \
   "listening=\$(ss -lnt | awk '{print \$4}' | grep -cE ':443\$'); if [[ -s $pki_dir/ca.crt ]]; then [[ \$listening -ge 1 ]] && echo '443 open (box is paired)'; else [[ \$listening -eq 0 ]] && echo '443 closed until pairing (expected)'; fi"
 check discovery_listener \
@@ -152,7 +159,33 @@ check ui_http \
 check ui_not_on_network \
   'ss -lnt | awk "{print \$4}" | grep -E ":8080$" | grep -qv "^127\." && { echo "8080 is reachable from the network - the LAN UI must stay on loopback"; exit 1; }; echo "8080 is not reachable from the network"'
 check no_unexpected_listeners \
-  'unexpected=$(ss -lnt | awk "NR > 1 {print \$4}" | grep -vE "^(127\.|\[::1\]:)" | grep -oE "[0-9]+$" | sort -u | grep -vE "^(22|80|443)$" | tr "\n" " "); [[ -z ${unexpected// /} ]] && echo "only 22, 80 and 443 are reachable from the network" || { echo "unexpected open ports: $unexpected"; exit 1; }'
+  "unexpected=\$(ss -lnt | awk 'NR > 1 {print \$4}' | grep -vE '^(127\\.|\\[::1\\]:)' | grep -vE '$tailnet_regex' | grep -oE '[0-9]+\$' | sort -u | grep -vE '^(22|80|443)\$' | tr '\\n' ' '); [[ -z \${unexpected// /} ]] && echo 'only 22, 80 and 443 are reachable from the network (tailnet addresses excluded)' || { echo \"unexpected open ports: \$unexpected\"; exit 1; }"
+
+echo
+echo "-- Host hardening and remote access -------------------------------------"
+check ssh_service_active \
+  'systemctl is-active ssh.service 2>/dev/null || systemctl is-active sshd.service'
+check ssh_password_login_disabled \
+  'sshd -T | grep -Eq "^passwordauthentication no" && sshd -T | grep -Eq "^kbdinteractiveauthentication no" && echo "password and keyboard-interactive login disabled"'
+check ssh_root_login_disabled \
+  'sshd -T | grep -E "^permitrootlogin no"'
+check ssh_admin_keys_root_owned \
+  "f=/etc/ssh/authorized_keys.d/$ssh_user; [[ \$(stat -c %U:%a \$f) == root:644 ]] && n=\$(grep -cE '^(ssh-|sk-|ecdsa-)' \$f) && [[ \$n -ge 1 ]] && sshd -T | grep -Eq '^authorizedkeysfile /etc/ssh/authorized_keys.d/%u\$' && echo \"\$n admin key(s), root-owned, sole key source\""
+if [[ $remote_access == tailscale ]]; then
+  check tailscale_service_enabled \
+    'systemctl is-enabled tailscaled && systemctl is-active tailscaled'
+  check tailscale_online \
+    "tailscale status --json | jq -er 'select(.BackendState == \"Running\") | .Self.DNSName'"
+  check tailscale_key_expiry_disabled \
+    "if tailscale status --json | jq -e '.Self.KeyExpiry == null' >/dev/null; then echo 'key expiry disabled'; else echo \"key expires \$(tailscale status --json | jq -r .Self.KeyExpiry) - disable expiry for this node in the admin console\"; exit 1; fi"
+  check tailscale_no_routes_no_exit_node \
+    "tailscale debug prefs | jq -e '((.ExitNodeID // \"\") == \"\") and ((.ExitNodeIP // \"\") == \"\") and ((.AdvertiseRoutes // []) | length == 0) and ((.RouteAll // false) == false) and ((.CorpDNS // false) == false)' >/dev/null && echo 'no exit node, no routes, no MagicDNS (pairing-safe)'"
+else
+  check remote_access_policy \
+    "echo 'remote access explicitly set to $remote_access'"
+fi
+check default_route_on_lan \
+  "r=\$(ip -o route get 203.0.113.1); dev=\$(sed -nE 's/.* dev ([^ ]+).*/\\1/p' <<<\"\$r\"); src=\$(sed -nE 's/.* src ([^ ]+).*/\\1/p' <<<\"\$r\"); [[ \$dev != tailscale0 ]] && ! grep -qE '$tailnet_regex' <<<\"\$src\" && echo \"via \$dev src \$src (SSDP LOCATION stays on the LAN)\""
 
 echo
 echo "-------------------------------------------------------------------------"

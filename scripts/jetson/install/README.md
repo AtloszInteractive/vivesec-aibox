@@ -13,10 +13,22 @@ cp install.conf.example install.conf   # fill in the box-specific values
 nano install.conf
 
 sudo bash 00-install-all.sh --check    # preflight, changes nothing
-sudo bash 00-install-all.sh            # full installation
+sudo TS_AUTH_KEY=tskey-auth-... bash 00-install-all.sh   # full installation
 sudo bash 00-install-all.sh --resume   # continue after a failure
 sudo bash 00-install-all.sh --list     # list the phases
 ```
+
+The `harden` phase disables password SSH login and joins the box to the
+Tailscale tailnet for remote administration. It **blocks** until a new
+key-based login is confirmed from a second terminal:
+
+```bash
+ssh -o PasswordAuthentication=no aibox@<box-ip>
+sudo bash ~/vivesec_iabox_app/scripts/jetson/install/05-harden-host.sh --confirm-ssh
+```
+
+Without confirmation within the grace window (15 min) the hardening reverts
+itself and the phase fails. `--rollback-ssh` removes it manually.
 
 ## Files
 
@@ -24,6 +36,7 @@ sudo bash 00-install-all.sh --list     # list the phases
 | --- | --- |
 | `install.conf.example` | Parameter template - copy to `install.conf` and edit |
 | `00-install-all.sh` | Phase orchestrator, logging and resume handling |
+| `05-harden-host.sh` | Key-only SSH (root-owned admin keys) + Tailscale remote access, pairing-safe |
 | `10-build-images.sh` | Builds the three application images, keeps rollback tags |
 | `20-pull-models.sh` | Downloads the embedding and generation models |
 | `90-acceptance-audit.sh` | Read-only handover audit, one PASS/FAIL line per check |
