@@ -3,6 +3,7 @@ import base64
 import json
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -126,6 +127,39 @@ class SchedulerHttpTest(unittest.TestCase):
                                      {"job_id": first["job_id"]})
         self.assertEqual((code, running["status"], running.get("cancel_requested")),
                  (202, "running", True))
+
+    def test_delete_removes_finished_jobs_only(self):
+        code, job = self.request("/api/v1/ui/ask",
+                                 {"action": "report", "query": "deletable",
+                                  "origin": "background"})
+        self.assertEqual(code, 202)
+        job_id = job["job_id"]
+        self.assertTrue(self.started.wait(1))
+
+        # A running job must be cancelled first: removing its file would leave
+        # the worker writing into nothing.
+        code, refused = self.request("/api/v1/ui/jobs/delete", {"job_id": job_id})
+        self.assertEqual(code, 409)
+        self.assertIn("cancel", refused["error"])
+
+        self.release.set()
+        for _ in range(50):
+            if service.JOBS.get("queue-user", "/storage/drives/finance/",
+                                job_id)["status"] == "done":
+                break
+            time.sleep(0.02)
+
+        code, deleted = self.request("/api/v1/ui/jobs/delete", {"job_id": job_id})
+        self.assertEqual((code, deleted["deleted"]), (200, True))
+        code, listing = self.request("/api/v1/ui/jobs", method="GET")
+        self.assertNotIn(job_id, [item["job_id"] for item in listing["jobs"]])
+
+        # Gone for good, and an id outside the caller's scope is unknown.
+        code, again = self.request("/api/v1/ui/jobs/delete", {"job_id": job_id})
+        self.assertEqual((code, again["error"]), (404, "unknown job_id"))
+        code, traversal = self.request("/api/v1/ui/jobs/delete",
+                                       {"job_id": "../escape"})
+        self.assertEqual(code, 400)
 
 
 if __name__ == "__main__":

@@ -42,8 +42,18 @@ class JobStore:
     def _scope_dir(self, user, drive):
         return os.path.join(self.root, session_key(user, drive))
 
+    @staticmethod
+    def _safe_id(job_id):
+        """The id arrives from the client, so it must stay one file name inside
+        the scope directory -- never a path that escapes it."""
+        name = str(job_id or "")
+        if not name or name.startswith(".") or os.path.basename(name) != name \
+                or "/" in name or "\\" in name:
+            raise ValueError("invalid job_id")
+        return name
+
     def _path(self, user, drive, job_id):
-        return os.path.join(self._scope_dir(user, drive), job_id + ".json")
+        return os.path.join(self._scope_dir(user, drive), self._safe_id(job_id) + ".json")
 
     def _write(self, path, job):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -157,6 +167,25 @@ class JobStore:
 
     def request_cancel(self, user, drive, job_id):
         return self.update(user, drive, job_id, cancel_requested=True)
+
+    def delete(self, user, drive, job_id):
+        """Drop one finished job from the scope. Returns "deleted", "active"
+        when the job is still queued or running (removing the file would leave
+        the worker writing into nothing), or None when the caller's scope has
+        no such job -- unknown rather than forbidden, like the other handlers.
+        """
+        if not self.root or not job_id:
+            return None
+        with self._lock:
+            path = self._path(user, drive, job_id)
+            job = self._read(path)
+            if not job or job.get("user") != (user or "") or job.get("drive") != (drive or ""):
+                return None
+            if job.get("status") not in _TERMINAL:
+                return "active"
+            os.remove(path)
+            self._events.pop(job_id, None)
+            return "deleted"
 
     def recover_interrupted(self):
         if not self.root:

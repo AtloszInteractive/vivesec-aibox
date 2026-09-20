@@ -576,7 +576,7 @@ export async function adapterGetJob(
 }
 
 async function adapterJobMutation(
-  operation: "seen" | "cancel",
+  operation: "seen" | "cancel" | "delete",
   jobId: string,
   scope: Pick<AdapterAskInput, "drive" | "user"> = {},
 ): Promise<Record<string, unknown>> {
@@ -597,6 +597,12 @@ export function adapterMarkJobSeen(jobId: string, scope: Pick<AdapterAskInput, "
 
 export function adapterCancelJob(jobId: string, scope: Pick<AdapterAskInput, "drive" | "user"> = {}) {
   return adapterJobMutation("cancel", jobId, scope);
+}
+
+/** Drop a finished run from the job list. The box refuses (409) while the job
+ *  is still queued or running -- cancel it first. */
+export function adapterDeleteJob(jobId: string, scope: Pick<AdapterAskInput, "drive" | "user"> = {}) {
+  return adapterJobMutation("delete", jobId, scope);
 }
 
 // Persistent conversation threads (F1). Every call is a POST with the

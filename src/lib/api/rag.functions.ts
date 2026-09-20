@@ -17,6 +17,7 @@ import {
   adapterChildren,
   adapterCreateConversation,
   adapterDeleteConversation,
+  adapterDeleteJob,
   adapterDemoConfig,
   adapterGetConversation,
   adapterListConversations,
@@ -323,6 +324,10 @@ export async function markRagJobSeen(jobId: string, drive?: string): Promise<voi
 
 export async function cancelRagJob(jobId: string, drive?: string): Promise<Record<string, unknown>> {
   return adapterCancelJob(jobId, { drive });
+}
+
+export async function deleteRagJob(jobId: string, drive?: string): Promise<void> {
+  await adapterDeleteJob(jobId, { drive });
 }
 
 export type { AdapterJobStatus };

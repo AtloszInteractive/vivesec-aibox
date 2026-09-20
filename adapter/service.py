@@ -1059,6 +1059,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/jobs/get": self._jobs_get,
                 "/api/v1/ui/jobs/seen": self._jobs_seen,
                 "/api/v1/ui/jobs/cancel": self._jobs_cancel,
+                "/api/v1/ui/jobs/delete": self._jobs_delete,
                 "/api/v1/ui/conversations/list": self._conversations_list,
                 "/api/v1/ui/conversations/create": self._conversations_create,
                 "/api/v1/ui/conversations/get": self._conversations_get,
@@ -1475,6 +1476,23 @@ class Handler(BaseHTTPRequestHandler):
         self._send(409, {"ok": False, "job_id": job_id,
                          "status": job.get("status"),
                          "error": "only queued jobs can be cancelled"})
+
+    def _jobs_delete(self):
+        payload = self._read_json()
+        identity = self._read_vvs()
+        if identity is None:
+            return
+        user, drive = identity
+        job_id = payload.get("job_id") or ""
+        outcome = JOBS.delete(user, drive, job_id)
+        if outcome is None:
+            self._send(404, {"ok": False, "error": "unknown job_id"})
+            return
+        if outcome == "active":
+            self._send(409, {"ok": False, "job_id": job_id,
+                             "error": "cancel the job before deleting it"})
+            return
+        self._send(200, {"ok": True, "job_id": job_id, "deleted": True})
 
     # -- conversations: persistent threads per (user, scope, profile) (F1) ----
     # All POST with the parameters in the body: the ViVeSecBox tunnel drops the

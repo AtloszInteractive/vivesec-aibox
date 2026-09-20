@@ -27,6 +27,7 @@ import {
   conversationTurnResult,
   createConversation,
   deleteConversation,
+  deleteRagJob,
   getConversation,
   getRagJob,
   listConversations,
@@ -114,6 +115,7 @@ import {
   Download,
   ThumbsUp,
   ThumbsDown,
+  Trash2,
 } from "lucide-react";
 
 /* ---------- Types ---------- */
@@ -799,6 +801,9 @@ function ViveSecAppInner() {
   const [jobFilter, setJobFilter] = useState<"all" | "active" | "new">("all");
   const [jobSearch, setJobSearch] = useState("");
   const [earlierJobsOpen, setEarlierJobsOpen] = useState(false);
+  // Deleting a result is irreversible, so the row asks once; a native confirm()
+  // would belong to the embedding host and could not be localised.
+  const [confirmDeleteJobId, setConfirmDeleteJobId] = useState<string | null>(null);
   const [jobsError, setJobsError] = useState("");
   const [jobsSupported, setJobsSupported] = useState<boolean | null>(null);
   const jobsSupportedRef = useRef<boolean | null>(null);
@@ -1630,6 +1635,7 @@ function ViveSecAppInner() {
    *  the user, not to the hydration that happens in the background. */
   function openJob(jobId: string) {
     setSelectedJobId(jobId);
+    setConfirmDeleteJobId(null);
     setBackgroundJobs((jobs) =>
       jobs.map((job) =>
         job.job_id === jobId && !job.seen_ts ? { ...job, seen_ts: Date.now() / 1000 } : job,
@@ -1637,6 +1643,29 @@ function ViveSecAppInner() {
     );
     resultScrollRef.current?.scrollTo({ top: 0 });
     void markRagJobSeen(jobId, drive || undefined).catch(() => {});
+  }
+
+  /** Drop a finished run for good: the box removes the stored job, the UI
+   *  forgets the hydrated card so a later sync cannot bring it back. */
+  async function deleteJob(jobId: string) {
+    setConfirmDeleteJobId(null);
+    try {
+      await deleteRagJob(jobId, drive || undefined);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tm("The task could not be deleted."));
+      return;
+    }
+    hydratedJobsRef.current.delete(jobId);
+    setBackgroundJobs((jobs) => jobs.filter((job) => job.job_id !== jobId));
+    setSelectedJobId((current) => (current === jobId ? null : current));
+    const messageId = `job-${jobId}`;
+    setMessages((all) => all.filter((message) => message.id !== messageId));
+    setResultIds((prev) => {
+      if (!prev.has(messageId)) return prev;
+      const next = new Set(prev);
+      next.delete(messageId);
+      return next;
+    });
   }
 
   function jobGroupHeading(label: string, count: number) {
@@ -1719,6 +1748,32 @@ function ViveSecAppInner() {
             <X className="h-3.5 w-3.5" />
           </button>
         )}
+        {!running &&
+          (confirmDeleteJobId === job.job_id ? (
+            <span className="flex shrink-0 items-center gap-1">
+              <button
+                onClick={() => void deleteJob(job.job_id)}
+                className="rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-[10.5px] font-semibold text-rose-100 transition hover:bg-rose-500/25"
+              >
+                {tm("Delete")}
+              </button>
+              <button
+                onClick={() => setConfirmDeleteJobId(null)}
+                className="rounded-md px-1.5 py-1 text-[10.5px] text-white/50 transition hover:bg-white/10 hover:text-white"
+              >
+                {tm("Cancel")}
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmDeleteJobId(job.job_id)}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/35 transition hover:bg-white/10 hover:text-rose-200"
+              title={tm("Delete task")}
+              aria-label={tm("Delete task")}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          ))}
       </div>
     );
   }
