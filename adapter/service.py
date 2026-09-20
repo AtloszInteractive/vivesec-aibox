@@ -79,6 +79,7 @@ import feedback  # noqa: E402
 import filestore  # noqa: E402
 import jobstore  # noqa: E402
 import llm  # noqa: E402
+import named_files  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -654,7 +655,9 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         retrieval_query, chat_only = llm.condense(query, history, lang)
     source_paths = [str(source) for source in (files or []) if source]
     if not source_paths and action is None:
-        source_paths = llm.source_files(query)
+        # Regex names stop at whitespace; the mirror knows the real basenames.
+        source_paths = named_files.resolve(MIRROR, req_scope.drive_roots, query,
+                                           fallback=llm.source_files(query))
     evidence_ids = []
     if action is None and not source_paths:
         from session import followup_evidence
