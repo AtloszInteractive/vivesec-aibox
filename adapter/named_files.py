@@ -30,20 +30,22 @@ def _mentioned(question_cf, basename):
     return False
 
 
-def resolve(mirror, drive_roots, question, fallback=None):
+def resolve(mirror, drive_roots, question, fallback=None, visible=None):
     """Return drive-absolute paths of the files the question names.
 
     Mirror matches win (longest basename first, so "Q1 report v2.xlsx" beats
     "report v2.xlsx"); regex names from `fallback` that no mirror file
     explains are kept so a file the mirror has not seen yet still narrows the
-    search the old way. Capped at MAX_FILES."""
+    search the old way. Capped at MAX_FILES. `visible(path)` hides files the
+    caller may not see (E03); the RAG filters the fallback names itself."""
     question_cf = (question or "").casefold()
     if not question_cf.strip():
         return list(fallback or [])[:MAX_FILES]
     matches = []
     seen = set()
     for root in drive_roots or []:
-        for meta in mirror.find(root, "", files_only=True, limit=_SCAN_LIMIT):
+        for meta in mirror.find(root, "", files_only=True, limit=_SCAN_LIMIT,
+                                visible=visible):
             path = meta.get("path") or ""
             if path in seen:
                 continue

@@ -27,15 +27,16 @@ import {
   adapterDriveFile,
   adapterDriveFiles,
   adapterFeedback,
+  adapterFolderChildren,
   adapterGeneratedFiles,
   adapterGetJob,
+  adapterInsight,
   adapterListJobs,
   adapterMarkJobSeen,
   adapterSave,
   adapterScope,
   adapterSpeak,
   adapterStatus,
-  adapterStatusRaw,
   adapterSubmitJob,
   adapterTranscribe,
   AdapterJobContinuesError,
@@ -577,8 +578,8 @@ export type DriveFileInfo = {
 };
 export type DriveEntryInfo = DriveFileInfo & { file: boolean };
 
-/** Reject anything outside the drive: /index/get/children itself is the box
- *  sync endpoint and carries no ACL, so the scope check has to happen here. */
+/** Reject anything outside the drive early. The adapter checks the scope and
+ *  the file/folder ACL itself (/ui/files/children); this only saves a call. */
 function withinDrive(path: string, drive: string): boolean {
   const root = drive.replace(/\/+$/, "");
   const p = path.replace(/\/+$/, "");
@@ -597,7 +598,7 @@ export async function listDriveChildren({
     return { ok: false, entries: [], error: "path outside the drive" };
   }
   try {
-    const entries = await adapterChildren(path);
+    const entries = await adapterFolderChildren(drive, path);
     return {
       ok: true,
       entries: entries.map((e) => ({
@@ -720,64 +721,37 @@ export async function platformInsight(): Promise<PlatformInsight> {
     },
   };
   try {
-    const st = await adapterStatusRaw();
-
-    // Per-drive rollup from the metadata mirror (no model, no content read).
-    const perDrive: { name: string; files: number; bytes: number }[] = [];
-    const byExt = new Map<string, { files: number; bytes: number }>();
-    let totalBytes = 0;
-    let drives = 0;
-    try {
-      const roots = (await adapterChildren(driveRoot())).filter((c) => !c.file);
-      drives = roots.length;
-      for (const root of roots) {
-        const name = root.path.split("/").filter(Boolean).pop() ?? root.path;
-        const entries = (await adapterDriveFiles(`${root.path}/`)).entries.filter((e) => e.file);
-        let bytes = 0;
-        for (const e of entries) {
-          const size = e.size ?? 0;
-          bytes += size;
-          const ext = (e.path.split("/").pop() ?? "").split(".").pop()?.toLowerCase() ?? "";
-          const key = ext && ext.length <= 5 ? ext : "other";
-          const acc = byExt.get(key) ?? { files: 0, bytes: 0 };
-          acc.files += 1;
-          acc.bytes += size;
-          byExt.set(key, acc);
-        }
-        totalBytes += bytes;
-        perDrive.push({ name, files: entries.length, bytes });
-      }
-    } catch {
-      // Drive rollup is best-effort: the status counters below still stand.
-    }
-
+    // The caller's own view (E03): counts cover only drives, folders and files
+    // this user may see. No model is involved and no content is read.
+    const st = await adapterInsight(adapterDefaultDrive());
     const idx = st.index ?? {};
+    const drives = st.drives ?? [];
     return {
       ok: true,
       box: {
-        drives: drives || null,
-        files: st.mirror?.files ?? null,
-        folders: st.mirror?.directories ?? null,
-        dataSizeBytes: totalBytes || null,
-        storageMode: st.storage?.mode ?? null,
+        drives: drives.length || null,
+        files: st.files ?? null,
+        folders: st.folders ?? null,
+        dataSizeBytes: st.bytes || null,
+        storageMode: st.storage_mode ?? null,
         wsFsConnected: st.ws_fs?.connected ?? null,
         // Not reported by the box today — the card must say so.
         users: null,
         messages: null,
         lastBackupTime: null,
         lastBackupSize: null,
-        perDrive: perDrive.sort((a, b) => b.files - a.files),
-        types: Array.from(byExt.entries())
-          .map(([ext, v]) => ({ ext, ...v }))
+        perDrive: drives
+          .map((d) => ({ name: d.name, files: d.files, bytes: d.bytes }))
           .sort((a, b) => b.files - a.files),
+        types: (st.types ?? []).map((t) => ({ ext: t.ext, files: t.files, bytes: t.bytes })),
       },
       ai: {
         documents: idx.documents ?? null,
         pages: idx.pages ?? null,
         chunks: idx.chunks ?? null,
-        corpora: idx.corpora ?? null,
+        corpora: drives.length || null,
         activeSessions: st.sessions?.active ?? null,
-        generatedFiles: st.files?.files ?? null,
+        generatedFiles: st.generated_files ?? null,
         features: st.features?.length ? st.features.join(", ") : null,
         watchdogSeconds: st.watchdog_seconds ?? null,
         // No telemetry endpoint for these yet.

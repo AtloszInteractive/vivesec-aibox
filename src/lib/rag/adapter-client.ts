@@ -704,7 +704,9 @@ export async function adapterAsk(input: AdapterAskInput): Promise<AdapterAnswer>
   throw new AdapterJobContinuesError(submitted.jobId);
 }
 
-/** POST /api/v1/index/get/children — mirror listing for one directory. */
+/** POST /api/v1/index/get/children — the box sync read (no identity, no ACL).
+ *  Only the demo drive picker uses it, for the drive names under the root; the
+ *  demo proxy refuses any other path. Folder browsing is adapterFolderChildren. */
 export type MirrorEntry = {
   path: string;
   file: boolean;
@@ -753,33 +755,59 @@ export async function adapterDriveFiles(
 }
 
 /**
- * The full status document (adapter/service.py status_payload). `adapterStatus`
- * reduces this to a readiness flag; the platform insight view needs the real
- * counters (index/mirror/sessions/storage), so it reads the raw payload.
+ * POST /api/v1/ui/files/children — one folder of the drive. The adapter applies
+ * the caller's identity, drive scope and file/folder ACL (E03); a folder the
+ * caller may not see answers 404 like a missing one.
  */
-export type AdapterStatusRaw = {
+export async function adapterFolderChildren(drive: string, path: string): Promise<MirrorEntry[]> {
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/files/children`, {
+    method: "POST",
+    headers: vvsHeaders(drive, demoUser()),
+    body: JSON.stringify({ path }),
+    signal: AbortSignal.timeout(FILES_TIMEOUT_MS),
+  });
+  const j = await safeJson(res);
+  if (!res.ok) {
+    throw new AdapterError(
+      (j.error as string) ?? `ui/files/children HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return Array.isArray(j.entries) ? (j.entries as MirrorEntry[]) : [];
+}
+
+/**
+ * GET /api/v1/ui/insight — the system view of THIS caller: drive, file and
+ * index counts over what the caller may see (E03). The box-wide counters of
+ * /api/v1/status are only reported to the ViVeSecBox itself.
+ */
+export type AdapterInsight = {
   ok?: boolean;
-  features?: string[];
-  storage_locked?: boolean;
-  presence_lost?: boolean;
-  watchdog_seconds?: number;
-  storage?: { mode?: string; locked?: boolean; mounted?: boolean };
-  sessions?: { active?: number; idle_seconds?: number; max_turns?: number };
+  drives?: { path: string; name: string; files: number; folders: number; bytes: number }[];
+  types?: { ext: string; files: number; bytes: number }[];
+  files?: number;
+  folders?: number;
+  bytes?: number;
+  truncated?: boolean;
+  index?: { documents?: number; pages?: number; chunks?: number; skipped?: number } | null;
+  generated_files?: number;
+  storage_mode?: string;
   ws_fs?: { connected?: boolean };
-  files?: { enabled?: boolean; sessions?: number; files?: number };
-  mirror?: { documents?: number; files?: number; directories?: number };
-  index?: { documents?: number; pages?: number; chunks?: number; corpora?: number; error?: string };
+  features?: string[];
+  watchdog_seconds?: number;
+  sessions?: { active?: number | null };
 };
 
-export async function adapterStatusRaw(): Promise<AdapterStatusRaw> {
-  const res = await apiFetch(`${adapterUrl()}/api/v1/status`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
+export async function adapterInsight(drive: string): Promise<AdapterInsight> {
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/insight`, {
+    headers: vvsHeaders(drive, demoUser()),
     signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
   });
-  if (!res.ok) throw new AdapterError(`status HTTP ${res.status}`, res.status);
-  return (await safeJson(res)) as AdapterStatusRaw;
+  const j = await safeJson(res);
+  if (!res.ok) {
+    throw new AdapterError((j.error as string) ?? `ui/insight HTTP ${res.status}`, res.status);
+  }
+  return j as AdapterInsight;
 }
 
 // ---------------------------------------------------------------------------

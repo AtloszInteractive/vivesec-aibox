@@ -21,8 +21,11 @@ ViVeSecBox ──ViVeSec v2──▶ adapter ──RAG contract──▶ rag_ser
 | `POST /api/v1/index/upsert/directory`          | `POST /index/upsert/directory`          |
 | `POST /api/v1/index/upsert/file/check`         | `POST /index/upsert/file/check`         |
 | `POST /api/v1/index/upsert/file/content/{tok}` | `POST /index/upsert/file/content/{tok}` |
+| `POST /api/v1/index/upsert/acl`                | `POST /index/acl/update` (E03)          |
 | `POST /api/v1/index/drop/tree`                 | `POST /index/drop/tree`                 |
 | `POST /api/v1/ui/query`                        | `POST /rag/search_context`              |
+| `POST /api/v1/ui/files/children`               | *(mirror, scope + ACL; E03)*            |
+| `GET  /api/v1/ui/insight`                      | `POST /rag/scope_stats` (E03)           |
 | `POST /api/v1/storage/unlock`                  | *(stub until LUKS/init wired)*          |
 
 Key translation decisions:
@@ -123,7 +126,8 @@ reads transitive group membership and the app role assignments of
 id) is the lookup key. Results are cached for `ADAPTER_DIRECTORY_TTL_SECONDS`;
 when the directory is unreachable and the entry has expired, the user has **no**
 groups. `GET /api/v1/ui/init` returns `identity` (`source`, `upn`, `groups`,
-`roles`, `directory.error`); access decisions on groups belong to E03.
+`roles`, `directory.error`, and since E03 `clearance` and `acl`); the groups and
+roles drive the document ACL described below.
 
 **Plain-HTTP scope.** `ADAPTER_HTTP_SCOPE=pairing` limits the plain-HTTP
 listener, for network peers, to `/`, `/api/v1/status`, `/api/v1/version`,
@@ -135,8 +139,9 @@ reverse proxy (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host` or
 network peer, so the LAN demo UI does not work in the pairing scope. Default
 `full`; an unknown value means `pairing`. Only enable it on a box whose
 ViVeSecBox has paired and uses mTLS (`ADAPTER_TLS=on`). The box-hosted UI
-server relays only `/api/v1/ui/*`, `status`, `version`, `ui-version` and
-`index/get/children`.
+server relays only `/api/v1/ui/*`, `status`, `version` and `ui-version`; the
+`index/get/children` sync read only for the demo drive picker
+(`ADAPTER_DEMO_DRIVE_PICKER=1`) and only for the drive root.
 
 **User lifecycle** (`lifecycle.py`). The ViVeSecBox reports directory events:
 
@@ -155,6 +160,93 @@ is persisted atomically in `ADAPTER_LIFECYCLE_PATH` (deploy scripts:
 `/data/adapter/lifecycle.json`; empty keeps it in memory). An unreadable state
 file refuses every user request with `503` until repaired. A factory reset
 clears it.
+
+## File, folder and room ACL (E03)
+
+The drive scope decides which drives (corpora) a request may search; `acl.py`
+decides which documents inside them the caller may see. It is the single
+implementation of that rule: the RAG stores the flattened result per document
+and filters **inside** its queries, and every adapter path that names a file
+asks the same policy. Covered: retrieval (dense, keyword and follow-up
+evidence), `#analyze`, `#search files`, file names in a question, the folder
+listing (`POST /api/v1/ui/files/children`), the original-file download
+(`/api/v1/ui/file`), the per-user system view (`GET /api/v1/ui/insight`), the
+hit count of a search, background jobs, and the drive list of `/ui/scope` (a
+room the ACL hides is not offered).
+
+**Model.** Principals are `user:<id>`, `group:<id>`, `role:<value>` and
+`everyone`, compared case-insensitively; the caller's principals are the
+`VVS-User` id, the UPN and, from `ADAPTER_DIRECTORY`, the groups and roles. A
+room (drive root), folder or file may carry
+
+```json
+{"allow": ["group:<id>", "role:<value>"], "deny": ["user:<id>"],
+ "inherit": true, "classification": "confidential"}
+```
+
+- **Deny first**: a deny on any level of the path hides the document.
+- **Allow** lists inherit downwards; the nearest level that defines one
+  decides. `inherit: false` stops the parent allow list (with no allow list of
+  its own, nobody sees the subtree); denies always inherit.
+- No allow list anywhere on the path = everyone who may reach the drive sees it
+  (the pre-E03 behaviour). Without any ACL data the box behaves as before.
+- **Classification** `public < internal < confidential <
+  strictly_confidential < personal` (Hungarian aliases accepted): the highest
+  level on the path, `ADAPTER_ACL_DEFAULT_CLASSIFICATION` when none is set. A
+  user sees documents up to their clearance (`ADAPTER_ACL_DEFAULT_CLEARANCE`,
+  or the highest mapping that matches in the rules file).
+- Fail-closed: a malformed ACL hides its subtree, an unknown classification is
+  the highest level, an unusable rules file hides everything, and when the
+  group membership is unknown (directory `off` or failing) a group/role allow
+  never matches and any group/role deny hides the document.
+
+**Sources.** (a) The ViVeSecBox sync, **proposed contract** until agreed: an
+optional `acl` object on `POST /api/v1/index/upsert/directory` and
+`.../file/check`, and `POST /api/v1/index/upsert/acl {path, acl}` for a
+permission change without new content. A missing `acl` key keeps the stored
+ACL, `"acl": null` clears it. The ACLs are kept in the mirror beside the
+entries; `/index/get*` answer exactly as before. (b) The administrator rules
+file `ADAPTER_ACL_RULES`:
+
+```json
+{"paths": {"/storage/drives/finance": {"deny": ["role:intern"]},
+           "/storage/drives/finance/board": {"classification": "strictly_confidential"}},
+ "clearance": {"default": "internal", "role:board": "strictly_confidential"},
+ "default_classification": "internal"}
+```
+
+When both define the same node, allow lists intersect, denies add up and the
+higher classification wins. The file is re-read when it changes.
+
+**Keeping the RAG in line.** A sync call sends the flattened ACL with the
+document; a changed folder or file ACL is pushed for the whole subtree
+(`/index/acl/update`, metadata only, nothing is re-embedded). At start-up,
+after a rules-file change and after a failed push the adapter resyncs every
+document (`_acl_loop`, every 30 s until it succeeds). Meanwhile the adapter
+re-checks every context the RAG returns and drops what the policy hides, so
+a lagging copy cannot leak content. Counts are only exact once the resync is
+done. A corpus with hidden chunks is ranked with a filtered exact scan instead
+of the partitioned KNN, so its query cost grows with the corpus size.
+
+**Status and admin.** `/api/v1/status` reports the corpus-wide `index` and
+`mirror` counters only to the trusted channel (mTLS or a direct loopback
+caller); the UI uses `/api/v1/ui/insight`. The effective permission of a user:
+
+```http
+POST /api/v1/admin/acl/effective     (mutual TLS or a direct, non-relayed
+                                      loopback caller only, else 403)
+{"user": "lars", "upn": "<optional>", "groups": ["<what-if>"], "roles": [],
+ "paths": ["/storage/drives/finance/hr/a.pdf"], "under": "/storage/drives/finance"}
+```
+
+returns the principals, the clearance, whether the membership is known, and per
+path the decision, its reason and the contributing rules; `under` counts the
+visible and hidden files of a subtree. Without `groups`/`roles` the configured
+directory is asked. The drive scope is decided per request and is not part of
+it. An administration UI for this view belongs to E12.
+
+`ADAPTER_ACL=off` disables the document ACL (diagnostics only; the drive scope
+still applies); an unknown value means `enforce`.
 
 ## Customer Chat Profiles
 
@@ -291,5 +383,7 @@ quick-action regression before customer rollout.
 
 ```powershell
 python adapter/smoke_test.py        # boots RAG + adapter, 20 checks
+cd adapter; python -m unittest acl_negative_test   # E03 negative suite: real RAG
+                                                   # (both backends), mocked model
 python sim/vivesecbox_sim.py sync   # drive the adapter with the real simulator
 ```

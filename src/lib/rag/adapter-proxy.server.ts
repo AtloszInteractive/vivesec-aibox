@@ -19,12 +19,10 @@ const encodeDrive = (drive: string) => Buffer.from(drive, "utf-8").toString("bas
 // Only what the UI itself calls is relayed. Box-only endpoints (pairing, sync,
 // storage unlock, identity lifecycle, ws-fs) must never become reachable from
 // the network just because this server talks to the adapter over loopback.
-const RELAYED_EXACT = new Set([
-  "/api/v1/status",
-  "/api/v1/version",
-  "/api/v1/ui-version",
-  "/api/v1/index/get/children",
-]);
+const RELAYED_EXACT = new Set(["/api/v1/status", "/api/v1/version", "/api/v1/ui-version"]);
+// The box sync read carries no identity and no ACL (E03). It is relayed only for
+// the demo drive picker, and only for the drive root, i.e. the drive names.
+const CHILDREN_PATH = "/api/v1/index/get/children";
 const isRelayed = (pathname: string) => {
   const path = pathname.replace(/\/+$/, "");
   return RELAYED_EXACT.has(path) || path.startsWith("/api/v1/ui/");
@@ -63,7 +61,22 @@ export async function handleAdapterProxy(request: Request): Promise<Response | n
     return json({ drive: DEMO_DRIVE(), driveRoot: DRIVE_ROOT(), picker: PICKER() });
   }
 
-  if (!isRelayed(url.pathname)) {
+  const pathname = url.pathname.replace(/\/+$/, "");
+  let pickerBody: ArrayBuffer | undefined;
+  if (pathname === CHILDREN_PATH && PICKER() && request.method === "POST") {
+    pickerBody = await request.arrayBuffer();
+    let asked = "";
+    try {
+      asked = String(
+        (JSON.parse(new TextDecoder().decode(pickerBody)) as { path?: unknown }).path ?? "",
+      );
+    } catch {
+      asked = "";
+    }
+    if (asked.replace(/\/+$/, "") !== DRIVE_ROOT().replace(/\/+$/, "")) {
+      return json({ ok: false, error: `Not found: ${url.pathname}` }, 404);
+    }
+  } else if (!isRelayed(url.pathname)) {
     return json({ ok: false, error: `Not found: ${url.pathname}` }, 404);
   }
 
@@ -84,7 +97,10 @@ export async function handleAdapterProxy(request: Request): Promise<Response | n
 
   const target = `${ADAPTER_URL()}${url.pathname}${url.search}`;
   const body =
-    request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
+    pickerBody ??
+    (request.method === "GET" || request.method === "HEAD"
+      ? undefined
+      : await request.arrayBuffer());
 
   try {
     const res = await fetch(target, { method: request.method, headers, body });

@@ -2,6 +2,86 @@
   "schema": 1,
   "parameters": [
     {
+      "name": "ADAPTER_ACL",
+      "component": "adapter",
+      "category": "security",
+      "type": "enum",
+      "default": "enforce",
+      "allowed": "enforce | off",
+      "fail_safe": "Unset or empty is enforce; unknown values fall back to enforce with a warning. off is for diagnostics only: it disables file, folder and room ACLs and classification (the drive scope still applies).",
+      "impact": "Document-level access control (E03): filtering of retrieval, file names, folder listing, download and the per-user system view.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "enforce",
+        "off"
+      ]
+    },
+    {
+      "name": "ADAPTER_ACL_DEFAULT_CLASSIFICATION",
+      "component": "adapter",
+      "category": "security",
+      "type": "enum",
+      "default": "internal",
+      "allowed": "public | internal | confidential | strictly_confidential | personal (Hungarian aliases accepted)",
+      "fail_safe": "Unknown values fall back to personal (the highest level) with a warning, which hides documents from users without the matching clearance.",
+      "impact": "Classification of a document whose path carries none.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "public",
+        "internal",
+        "confidential",
+        "strictly_confidential",
+        "personal",
+        "nyilvanos",
+        "belso",
+        "bizalmas",
+        "szigoruan_bizalmas",
+        "szemelyes_adat"
+      ]
+    },
+    {
+      "name": "ADAPTER_ACL_DEFAULT_CLEARANCE",
+      "component": "adapter",
+      "category": "security",
+      "type": "enum",
+      "default": "internal",
+      "allowed": "public | internal | confidential | strictly_confidential | personal (Hungarian aliases accepted)",
+      "fail_safe": "Unknown values fall back to public (the lowest level) with a warning.",
+      "impact": "Clearance of a user who has no mapping in the rules file; a user sees documents up to this level.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "public",
+        "internal",
+        "confidential",
+        "strictly_confidential",
+        "personal",
+        "nyilvanos",
+        "belso",
+        "bizalmas",
+        "szigoruan_bizalmas",
+        "szemelyes_adat"
+      ]
+    },
+    {
+      "name": "ADAPTER_ACL_RULES",
+      "component": "adapter",
+      "category": "security",
+      "type": "path",
+      "default": "",
+      "allowed": "path of a JSON rules file (paths, clearance, default_classification)",
+      "fail_safe": "Empty means no administrator rules. A configured file that is missing, unreadable or malformed denies every document until it is fixed; a malformed single rule denies its subtree.",
+      "impact": "Administrator ACLs for rooms (drive roots) and folders, document classification and user clearance by user, group or role. Re-read on change; the RAG copy is resynced automatically.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "ADAPTER_AGENT",
       "component": "adapter",
       "category": "chat",
@@ -793,6 +873,19 @@
       "allowed": "claim name",
       "fail_safe": "Empty uses sub; a token without the claim is rejected.",
       "impact": "Claim holding the stable user id (must equal VVS-User when both are sent).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_INSIGHT_SCAN_LIMIT",
+      "component": "adapter",
+      "category": "limits",
+      "type": "int",
+      "default": "200000",
+      "allowed": "positive integer",
+      "fail_safe": "A non-integer value stops the adapter at start-up; a drive with more entries is reported as truncated.",
+      "impact": "Mirror entries one /api/v1/ui/insight call walks per drive.",
       "change": "restart",
       "secret": false,
       "internal": false

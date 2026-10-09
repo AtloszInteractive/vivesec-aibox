@@ -15,9 +15,16 @@ Contract summary:
             POST /index/upsert/file/content        (single-step, content_b64)
             POST /ingest
             POST /index/rebuild
+            POST /index/acl/update                 (E03: ACL only, no re-embedding)
   delete    POST /index/drop/tree
   retrieval POST /rag/search_context
+            POST /rag/document_context
+            POST /rag/scope_stats                  (E03: per-caller counts)
             POST /tools/rag_search_context_tool
+
+Access control (E03): sync calls may carry a flattened document `acl`, and
+retrieval calls an `access` filter (see access.py). The filter is applied in
+the store queries themselves; without `access` nothing is filtered.
 
 Auth: optional X-API-Key (env RAG_API_KEY). When unset the service runs open
 (it is only reachable through the adapter, never exposed externally).
@@ -34,6 +41,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import access as access_filter  # noqa: E402
 import build_info  # noqa: E402
 from store import (  # noqa: E402
     MIN_SCORE,
@@ -115,6 +123,26 @@ class Handler(BaseHTTPRequestHandler):
     def _tenant(self, body):
         return body.get("tenant_id") or DEFAULT_TENANT
 
+    @staticmethod
+    def _doc_acl(raw):
+        try:
+            return access_filter.parse_doc_acl(raw)
+        except ValueError as e:
+            raise HttpError(400, str(e))
+
+    @staticmethod
+    def _access(body):
+        try:
+            return access_filter.parse_access(body.get("access"))
+        except ValueError as e:
+            raise HttpError(400, str(e))
+
+    def _metadata(self, body):
+        metadata = body.get("metadata")
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        metadata["acl"] = self._doc_acl(metadata.get("acl", body.get("acl")))
+        return metadata
+
     def log_message(self, fmt, *args):  # silence default stderr spam
         return
 
@@ -166,6 +194,8 @@ class Handler(BaseHTTPRequestHandler):
             "/ingest": self._ingest,
             "/index/rebuild": self._rebuild,
             "/index/drop/tree": self._drop_tree,
+            "/index/acl/update": self._acl_update,
+            "/rag/scope_stats": self._scope_stats,
             "/index/skipped": self._skipped,
             "/rag/search_context": self._search_context,
             "/rag/document_context": self._document_context,
@@ -190,8 +220,26 @@ class Handler(BaseHTTPRequestHandler):
         path = body.get("path")
         if not corpus_id or not path:
             raise HttpError(400, "corpus_id and path are required")
-        res = STORE.upsert_directory(corpus_id, self._tenant(body), path)
+        res = STORE.upsert_directory(corpus_id, self._tenant(body), path,
+                                     acl=self._doc_acl(body.get("acl")))
         self._ok(**res)
+
+    def _acl_update(self):
+        body = self._read_json()
+        corpus_id = body.get("corpus_id")
+        entries = body.get("entries")
+        if not corpus_id or not isinstance(entries, list) or len(entries) > 5000:
+            raise HttpError(400, "corpus_id and a list of at most 5000 entries are required")
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("path") or entry.get("acl") is None:
+                raise HttpError(400, "every entry needs a path and an acl")
+            self._doc_acl(entry.get("acl"))
+        self._ok(**STORE.update_acl(corpus_id, self._tenant(body), entries))
+
+    def _scope_stats(self):
+        body = self._read_json()
+        scope = normalize_corpus_ids(body.get("corpus_id"), body.get("corpus_ids"))
+        self._ok(stats=STORE.scope_stats(scope, self._access(body)))
 
     def _upsert_check(self):
         body = self._read_json()
@@ -206,6 +254,7 @@ class Handler(BaseHTTPRequestHandler):
             body.get("size"),
             body.get("mtime"),
             body.get("head"),
+            acl=self._doc_acl(body.get("acl")),
         )
         if token is None:
             self._ok(token=None, reason=reason)
@@ -236,7 +285,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             raise HttpError(400, "content_b64 is not valid base64")
         res = STORE.ingest_content(
-            corpus_id, self._tenant(body), path, body.get("title"), raw, body.get("metadata"),
+            corpus_id, self._tenant(body), path, body.get("title"), raw, self._metadata(body),
         )
         self._ok(**res)
 
@@ -248,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
         if not corpus_id or not path or text is None:
             raise HttpError(400, "corpus_id, path and text are required")
         res = STORE.ingest_text(
-            corpus_id, self._tenant(body), path, body.get("title"), text, body.get("metadata"),
+            corpus_id, self._tenant(body), path, body.get("title"), text, self._metadata(body),
         )
         self._ok(**res)
 
@@ -291,6 +340,7 @@ class Handler(BaseHTTPRequestHandler):
                         or any(not isinstance(item, str) or not item.strip() for item in value)):
                     raise HttpError(400, key + " must be a bounded list of nonempty strings")
                 options[key] = value
+        options["access"] = self._access(body)
         contexts, debug = STORE.search_context(scope, question, top_k, max_tokens, **options)
         out = {"contexts": contexts}
         if body.get("include_debug"):
@@ -308,7 +358,8 @@ class Handler(BaseHTTPRequestHandler):
         if not corpus_id or not source_path:
             raise HttpError(400, "corpus_id and source_path are required")
         max_tokens = int(body.get("max_context_tokens") or 12000)
-        contexts, document = STORE.document_context(corpus_id, source_path, max_tokens)
+        contexts, document = STORE.document_context(corpus_id, source_path, max_tokens,
+                                                    access=self._access(body))
         self._ok(contexts=contexts, document=document)
 
 

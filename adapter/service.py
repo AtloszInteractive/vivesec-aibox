@@ -12,6 +12,7 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/index/upsert/directory       {path}
     POST /api/v1/index/upsert/file/check      {path,size,mtime,head[,content_type]}
     POST /api/v1/index/upsert/file/content/{token}   (body = raw file bytes)
+    POST /api/v1/index/upsert/acl             {path,acl}       (E03, ACL only)
     POST /api/v1/index/drop/tree              {path,keep_exact}
     POST /api/v1/ui/query                     {query,top_k}  + VVS-Drive/VVS-User
     POST /api/v1/ui/ask                       {query,top_k}  -> {job_id}  (async)
@@ -20,10 +21,14 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/ui/feedback                  {audit_id,rating[,reason,comment]}
     GET  /api/v1/ui/files                     (session-stored generated files)
     GET  /api/v1/ui/files/download?name=...   (tunnel download fallback)
+    POST /api/v1/ui/files/children            {path}  (folder listing, scope + ACL)
+    GET  /api/v1/ui/insight                   (system view over what the caller sees)
     POST /api/v1/ui/stt                       {audio_b64,content_type,lang} -> {text}
     POST /api/v1/ui/tts                       {text,lang} -> audio bytes
     POST /api/v1/storage/unlock              {storage_key}
     POST /api/v1/identity/lifecycle          {event,user[,upn,reason,event_id]}
+                                              (mutual TLS or loopback only)
+    POST /api/v1/admin/acl/effective         {user[,upn,groups,roles,paths,under]}
                                               (mutual TLS or loopback only)
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
@@ -34,6 +39,11 @@ Identity (E02): every user endpoint resolves its caller through identity.py
 (optional signed assertion in VVS-Identity, ADAPTER_IDENTITY_MODE) and refuses
 users locked by a lifecycle event (lifecycle.py). ADAPTER_HTTP_SCOPE=pairing
 limits the plain-HTTP listener to status/version/pairing for network peers.
+
+Access control (E03): acl.py decides which documents inside the drive scope a
+caller may see (file/folder/room allow and deny lists, classification). The
+RAG stores the flattened ACL per document and filters inside its queries; the
+filename search, folder listing, download and system view ask the same policy.
 
 Agentic queries are multi-turn: the conversation for a (VVS-User, VVS-Drive)
 pair is kept in memory and spilled to disk on inactivity (session.py). /ui/query
@@ -78,6 +88,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import acl  # noqa: E402
 import build_info  # noqa: E402
 import confidence  # noqa: E402
 import conversations  # noqa: E402
@@ -130,9 +141,11 @@ ANALYZE_MAX_CHARS = int(os.environ.get("ADAPTER_ANALYZE_MAX_CHARS", "100000"))
 # was starved of context window.
 ANALYZE_MIN_ANSWER_CHARS = int(
     os.environ.get("ADAPTER_ANALYZE_MIN_ANSWER_CHARS", "120"))
-# Cap on `#search files:` hits. Browsing goes through /index/get/children, so
+# Cap on `#search files:` hits. Browsing goes through /ui/files/children, so
 # this only bounds the flat filename lookup.
 FILE_SEARCH_LIMIT = int(os.environ.get("ADAPTER_FILE_SEARCH_LIMIT", "2000"))
+# Upper bound of mirror entries one /ui/insight call walks per drive.
+INSIGHT_SCAN_LIMIT = int(os.environ.get("ADAPTER_INSIGHT_SCAN_LIMIT", "200000"))
 UI_VERSION = (os.environ.get("ADAPTER_UI_VERSION", "latest") or "latest").strip()
 
 
@@ -321,6 +334,128 @@ def identity_settings():
     return dict(IDENTITY.settings(), http_scope=HTTP_SCOPE,
                 directory=DIRECTORY.settings(), lifecycle=LIFECYCLE.stats())
 
+
+# Document-level access control (E03). One policy, evaluated against the sync
+# ACLs kept in the mirror; the RAG keeps the flattened result per document and
+# applies the caller's access inside its queries.
+ACL = acl.Policy.from_env()
+# `generation` counts incremental ACL pushes: a full resync that overlapped
+# one may have re-sent an older ACL, so it does not mark itself complete.
+_ACL_SYNC = {"fingerprint": None, "generation": 0}
+_ACL_SYNC_LOCK = threading.Lock()
+_ACL_GENERATION_LOCK = threading.Lock()
+# Incremental pushes compute and send under one lock, so a later change is
+# never overtaken by an earlier push that computed before it.
+_ACL_PUSH_LOCK = threading.Lock()
+ACL_PUSH_BATCH = 1000
+
+
+def _access_of(caller):
+    """The access context of a caller; a directory error leaves the group
+    membership unknown, which acl.py treats fail-closed."""
+    if caller is None:
+        return ACL.access_for(None, None, None)
+    return ACL.access_for(caller.user, caller.upn, DIRECTORY.lookup(caller))
+
+
+def _visible(access):
+    """`path -> bool` for one request."""
+    return ACL.checker(access, MIRROR.acl_of)
+
+
+def _flat_acl(path):
+    return ACL.effective(path, MIRROR.acl_of).as_rag()
+
+
+def _push_acl(paths):
+    """Send the flattened ACL of `paths` to the RAG (metadata only, nothing is
+    re-embedded), grouped per corpus. Returns the number of updated docs."""
+    cache = {}
+    groups = {}
+    for path in paths:
+        try:
+            corpus_id = corpus.corpus_id_of_path(path)
+        except ValueError:
+            continue
+        groups.setdefault(corpus_id, []).append(
+            {"path": path, "acl": ACL.effective(path, MIRROR.acl_of, cache).as_rag()})
+    updated = 0
+    for corpus_id, entries in groups.items():
+        for start in range(0, len(entries), ACL_PUSH_BATCH):
+            res = rag_post_json("/index/acl/update", {
+                "corpus_id": corpus_id, "tenant_id": TENANT_ID,
+                "entries": entries[start:start + ACL_PUSH_BATCH]})
+            updated += int(res.get("updated") or 0)
+    return updated
+
+
+def _acl_resync(force=False):
+    """Align every document's ACL in the RAG with the policy. Runs at start-up,
+    after a rules-file change and after a failed incremental push; until it
+    succeeds, the per-result check in _answer keeps answers safe."""
+    with _ACL_SYNC_LOCK:
+        fingerprint = ACL.fingerprint()
+        if not force and _ACL_SYNC["fingerprint"] == fingerprint:
+            return None
+        with _ACL_GENERATION_LOCK:
+            generation = _ACL_SYNC["generation"]
+        updated = _push_acl(MIRROR.paths_under(corpus.norm(corpus.DRIVE_PREFIX)))
+        with _ACL_GENERATION_LOCK:
+            if _ACL_SYNC["generation"] == generation:
+                _ACL_SYNC["fingerprint"] = fingerprint
+            else:
+                # An incremental push ran meanwhile; this pass may have sent an
+                # ACL computed before it. Stay incomplete: the loop runs again.
+                _ACL_SYNC["fingerprint"] = None
+        sys.stderr.write("[adapter] acl: resynced %d document ACL(s)\n" % updated)
+        return updated
+
+
+def _acl_resync_needed():
+    """Make the next _acl_loop pass a full resync (and void a running one)."""
+    with _ACL_GENERATION_LOCK:
+        _ACL_SYNC["generation"] += 1
+        _ACL_SYNC["fingerprint"] = None
+
+
+def _acl_changed(path):
+    """A node ACL changed: push it and everything below it. A failed push
+    schedules a full resync instead of failing the sync call."""
+    with _ACL_GENERATION_LOCK:
+        _ACL_SYNC["generation"] += 1
+    try:
+        with _ACL_PUSH_LOCK:
+            _push_acl(MIRROR.paths_under(path))
+    except Exception as e:  # noqa: BLE001
+        _acl_resync_needed()
+        sys.stderr.write("[adapter] acl push failed (%s): full resync scheduled\n" % e)
+
+
+def _visible_contexts(contexts, access):
+    """Second line of defence. The RAG already filtered, but its copy of the
+    ACL can lag the mirror (rules edited, push pending): a context the policy
+    hides is dropped here and logged."""
+    if access is None or not access.enforced:
+        return contexts
+    check = _visible(access)
+    kept = []
+    for context in contexts:
+        if check(context.get("source_path") or ""):
+            kept.append(context)
+        else:
+            sys.stderr.write("[adapter] acl: dropped a context the RAG returned (stale ACL)\n")
+    return kept
+
+
+def _acl_loop():
+    """Retry the ACL resync until the RAG is reachable, then follow changes."""
+    while True:
+        try:
+            _acl_resync()
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write("[adapter] acl resync failed: %s\n" % e)
+        time.sleep(30)
+
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
 SESSIONS = session.SessionManager.from_env()
@@ -375,8 +510,12 @@ JOBS = jobstore.JobStore.from_env()
 JOB_QUEUE_MAX = int(os.environ.get("ADAPTER_JOB_QUEUE_MAX", "5") or 5)
 
 
-def status_payload():
+def status_payload(trusted=True):
     """Build the ViVeSecBox readiness/status response.
+
+    The corpus-wide counters (index, mirror) describe documents a given user
+    may not see, so they are only included for the trusted channel (mTLS or a
+    process on the box). A user's view of the box is /api/v1/ui/insight.
 
     ui-ready : the box may forward user queries (adapter up + RAG reachable +
                storage unlocked).
@@ -423,7 +562,8 @@ def status_payload():
             "identity": identity_settings(),
             "version": version_block(rag_build),
             "paired": PROVISIONER.is_initialized(),
-            "mirror": MIRROR.stats(), "index": index}
+            "acl": ACL.settings(),
+            **({"mirror": MIRROR.stats(), "index": index} if trusted else {})}
 
 
 _BUILD_FIELDS = ("version", "commit", "dirty", "tagged", "label", "built_at")
@@ -700,17 +840,20 @@ def parse_action(payload, query):
     return action, mode, q
 
 
-def _file_search(req_scope, pattern):
+def _file_search(req_scope, pattern, access=None):
     """#search files: — filename lookup over the metadata mirror, across every
     drive in scope (spec F7 UX 2.A). No LLM involved; deterministic. The
-    active drive is searched first, so it keeps its share of a capped result."""
+    active drive is searched first, so it keeps its share of a capped result.
+    Hidden files are filtered before the cap, so the count never includes
+    them (E03)."""
     budget = FILE_SEARCH_LIMIT + 1
     matches = []
+    visible = _visible(access) if access is not None else None
     for root in req_scope.drive_roots:
         if len(matches) >= budget:
             break
         matches.extend(MIRROR.find(root, pattern, files_only=True,
-                                   limit=budget - len(matches)))
+                                   limit=budget - len(matches), visible=visible))
     truncated = len(matches) > FILE_SEARCH_LIMIT
     if truncated:
         matches = matches[:FILE_SEARCH_LIMIT]
@@ -727,7 +870,7 @@ def _file_search(req_scope, pattern):
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
             progress_callback=None, req_scope=None, profile="grounded",
-            conversation_id=None):
+            conversation_id=None, access=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -744,11 +887,14 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     detected hallucination (ungrounded number) suppresses the answer."""
     if req_scope is None:
         req_scope = scope.resolve(drive)
+    if access is None:
+        # No directory lookup here: group membership stays unknown (fail-closed).
+        access = ACL.access_for(user, None, None)
     if action is not None:
         profile = "grounded"
     session_scope = chat_policy.history_scope(req_scope.session_scope, profile)
     if action == "search" and mode == "files":
-        return {**_file_search(req_scope, query), "profile": "grounded"}
+        return {**_file_search(req_scope, query, access), "profile": "grounded"}
     # The UI never sends `lang`: detect it from the question so the guard, the
     # refusal and the audit footer speak the user's language.
     if not lang:
@@ -770,7 +916,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     if not source_paths and action is None:
         # Regex names stop at whitespace; the mirror knows the real basenames.
         source_paths = named_files.resolve(MIRROR, req_scope.drive_roots, query,
-                                           fallback=llm.source_files(query))
+                                           fallback=llm.source_files(query),
+                                           visible=_visible(access))
     evidence_ids = []
     if action is None and not source_paths:
         from session import followup_evidence
@@ -794,7 +941,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         res = rag_post_json("/rag/document_context",
                             {"corpus_id": target_corpus, "tenant_id": TENANT_ID,
                              "source_path": corpus.norm(target),
-                             "max_context_tokens": ANALYZE_MAX_CONTEXT_TOKENS})
+                             "max_context_tokens": ANALYZE_MAX_CONTEXT_TOKENS,
+                             "access": access.as_rag()})
         contexts = res.get("contexts", [])
         document = res.get("document") or {}
         contexts, document = _fit_analyze_window(contexts, document)
@@ -808,8 +956,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "max_context_tokens": MAX_CONTEXT_TOKENS,
                              "source_paths": source_paths,
                              "evidence_chunk_ids": evidence_ids,
+                             "access": access.as_rag(),
                              "include_debug": True})
         contexts = res.get("contexts", [])
+    contexts = _visible_contexts(contexts, access)
     hits = []
     for i, c in enumerate(contexts, 1):
         snippet = " ".join((c.get("text") or "")[:200].split())
@@ -950,13 +1100,18 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
     # The request headers are long gone by the time a queued job runs, so the
     # scope travels with the job record instead of being re-derived.
     req_scope = scope.rebuild(drive, (job.get("request") or {}).get("scope_drives"))
+    # Like the scope, the access context is the one of the submitting request;
+    # a record without one (older build) gets the fail-closed minimum.
+    access = (acl.Access.from_dict((job.get("request") or {}).get("access"))
+              or ACL.access_for(user, None, None))
     progress = lambda chars, tokens: JOBS.progress(user, drive, job_id, chars, tokens)
     try:
         code, payload = 200, _answer(user, drive, query, top_k, lang, action,
                                      mode, files, params, agent, history_snapshot,
                                      cancel_event, progress, req_scope,
                                      (job.get("request") or {}).get("profile", "grounded"),
-                                     (job.get("request") or {}).get("conversation_id") or None)
+                                     (job.get("request") or {}).get("conversation_id") or None,
+                                     access=access)
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -1176,6 +1331,12 @@ class Handler(BaseHTTPRequestHandler):
         self._caller = caller
         return caller
 
+    def _access(self):
+        """The caller's access context, resolved once per request."""
+        if getattr(self, "_access_ctx", None) is None:
+            self._access_ctx = _access_of(getattr(self, "_caller", None))
+        return self._access_ctx
+
     def _authenticate_optional_drive(self):
         """Identity check for endpoints that touch no drive data (voice)."""
         drive = None
@@ -1192,10 +1353,11 @@ class Handler(BaseHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         path = path.rstrip("/")
         self._caller = None
+        self._access_ctx = None
         if self._http_scope_guard("GET", path):
             return
         if path == "/api/v1/status":
-            self._send(200, status_payload())
+            self._send(200, status_payload(self._trusted_channel()))
             return
         if path == "/api/v1/version":
             self._send(200, version_payload())
@@ -1221,6 +1383,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/ui/jobs":
             self._jobs_list()
             return
+        if path == "/api/v1/ui/insight":
+            self._ui_insight()
+            return
         if path == FILES_DOWNLOAD_PATH:
             self._files_download(query)
             return
@@ -1238,6 +1403,7 @@ class Handler(BaseHTTPRequestHandler):
         # route matching -- otherwise POST /ui/file?path=... would 404.
         path, _, self._post_query = self.path.partition("?")
         self._caller = None
+        self._access_ctx = None
         if self._http_scope_guard("POST", path.rstrip("/")):
             return
         try:
@@ -1251,6 +1417,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/index/get/children": self._get_children,
                 "/api/v1/index/upsert/directory": self._upsert_dir,
                 "/api/v1/index/upsert/file/check": self._check,
+                "/api/v1/index/upsert/acl": self._upsert_acl,
                 "/api/v1/index/drop/tree": self._drop_tree,
                 "/api/v1/ui/query": self._query,
                 "/api/v1/ui/ask": self._ask,
@@ -1266,11 +1433,13 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/conversations/delete": self._conversations_delete,
                 "/api/v1/ui/save": self._save,
                 "/api/v1/ui/file": self._drive_file_post,
+                "/api/v1/ui/files/children": self._ui_children,
                 "/api/v1/ui/feedback": self._feedback,
                 "/api/v1/ui/stt": self._stt,
                 "/api/v1/ui/tts": self._tts,
                 "/api/v1/storage/unlock": self._unlock,
                 "/api/v1/identity/lifecycle": self._identity_lifecycle,
+                "/api/v1/admin/acl/effective": self._admin_acl_effective,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -1288,7 +1457,7 @@ class Handler(BaseHTTPRequestHandler):
     # -- diff-sync reads (served from the mirror) ----------------------------
     def _status(self):
         self._read_json()  # tolerate (and ignore) an optional request body
-        self._send(200, status_payload())
+        self._send(200, status_payload(self._trusted_channel()))
 
     def _version(self):
         self._read_json()
@@ -1304,6 +1473,7 @@ class Handler(BaseHTTPRequestHandler):
         user, drive = vvs
         caller = self._caller
         info = DIRECTORY.lookup(caller)
+        self._access_ctx = ACL.access_for(caller.user, caller.upn, info)
         # The embedded UI cannot learn its drive any other way: the box injects
         # VVS-Drive as a header and the browser never sees it.
         self._send(200, {"ok": True, "accepted": True,
@@ -1313,7 +1483,9 @@ class Handler(BaseHTTPRequestHandler):
                                       "groups": list(info.groups),
                                       "roles": list(info.roles),
                                       "directory": {"source": info.source,
-                                                    "error": info.error}}})
+                                                    "error": info.error},
+                                      "clearance": acl.level_name(self._access_ctx.clearance),
+                                      "acl": ACL.mode}})
 
     # -- mTLS provisioning (HTTP-only bootstrap; spec sec 1) -----------------
     def _init_prepare(self):
@@ -1385,11 +1557,49 @@ class Handler(BaseHTTPRequestHandler):
         payload = self._read_json()
         path = payload.get("path", "")
         corpus_id = corpus.corpus_id_of_path(path)
-        rag_post_json("/index/upsert/directory",
-                      {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
-                       "path": path, "metadata": {"file": False}})
+        changed = self._store_sync_acl(payload, path)
+        try:
+            rag_post_json("/index/upsert/directory",
+                          {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
+                           "path": path, "metadata": {"file": False},
+                           "acl": _flat_acl(path)})
+        except Exception:
+            if changed:
+                # A retry finds the mirror unchanged and would skip the push.
+                _acl_resync_needed()
+            raise
         MIRROR.upsert(path, file=False, mtime=None, size=None)
+        if changed:
+            _acl_changed(path)
         self._send(200, {"ok": True})
+
+    def _store_sync_acl(self, payload, path):
+        """Keep the node ACL a sync call carried (E03). A missing `acl` key
+        leaves the stored one alone -- today's ViVeSecBox never sends it --
+        and `"acl": null` clears it. True when the stored ACL changed."""
+        if not isinstance(payload, dict) or "acl" not in payload:
+            return False
+        node = acl.canonical(payload.get("acl"))
+        if node is not None and node.get("invalid"):
+            sys.stderr.write("[adapter] acl: malformed ACL for %r -> subtree hidden\n" % path)
+        return MIRROR.set_acl(path, node)
+
+    def _upsert_acl(self):
+        """ACL-only sync (proposed contract): a permission change on an
+        unchanged file or folder, without re-uploading any content."""
+        if self._locked_guard():
+            return
+        payload = self._read_json()
+        path = corpus.norm(str(payload.get("path") or ""))
+        corpus.corpus_id_of_path(path)
+        if any(part == ".." for part in path.split("/")):
+            raise ValueError("path must not contain '..'")
+        if "acl" not in payload:
+            raise ValueError("Missing 'acl'")
+        changed = self._store_sync_acl(payload, path)
+        if changed:
+            _acl_changed(path)
+        self._send(200, {"ok": True, "changed": changed})
 
     def _check(self):
         if self._locked_guard():
@@ -1400,16 +1610,28 @@ class Handler(BaseHTTPRequestHandler):
         mtime = payload.get("mtime")
         corpus_id = corpus.corpus_id_of_path(path)
         content_type = resolve_content_type(path, payload.get("head"), payload.get("content_type"))
-        res = rag_post_json("/index/upsert/file/check",
-                            {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
-                             "path": path, "size": size, "mtime": mtime,
-                             "content_type": content_type,
-                             "head": payload.get("head")})
+        changed = self._store_sync_acl(payload, path)
+        flat = _flat_acl(path)
+        try:
+            res = rag_post_json("/index/upsert/file/check",
+                                {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
+                                 "path": path, "size": size, "mtime": mtime,
+                                 "content_type": content_type,
+                                 "head": payload.get("head"),
+                                 "acl": flat})
+        except Exception:
+            if changed:
+                _acl_resync_needed()
+            raise
         # Per ViVeSec v2: record the file metadata regardless of the token.
         MIRROR.upsert(path, file=True, mtime=mtime, size=size)
+        if changed:
+            # The indexed copy keeps its old ACL until the content arrives.
+            _acl_changed(path)
         token = res.get("token")
         if token:
-            _TOKEN_PATHS[token] = path
+            # The token carries `flat` into the index; _content re-checks it.
+            _TOKEN_PATHS[token] = (path, flat)
         self._send(200, {"ok": True, "token": token, "reason": res.get("reason")})
 
     def _content(self, token):
@@ -1417,7 +1639,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         raw = self._read_raw()
         res = rag_post_raw("/index/upsert/file/content/" + token, raw)
-        _TOKEN_PATHS.pop(token, None)
+        pending = _TOKEN_PATHS.pop(token, None)
+        if pending is not None and _flat_acl(pending[0]) != pending[1]:
+            # The ACL changed between the check and the upload: the commit just
+            # wrote the older one, so the current one goes in after it.
+            _acl_changed(pending[0])
         self._send(200, {"ok": True, "chunks": res.get("chunks"),
                          "doc_id": res.get("doc_id"), "pages": res.get("pages")})
 
@@ -1521,7 +1747,7 @@ class Handler(BaseHTTPRequestHandler):
         if conversation_id is False:
             return
         self._send(200, _answer(*parsed, req_scope=req_scope, profile=profile,
-                                conversation_id=conversation_id))
+                                conversation_id=conversation_id, access=self._access()))
 
     # -- async UI channel: submit a job, then long-poll for it (spec sec 2.4) -
     def _ask(self):
@@ -1554,7 +1780,8 @@ class Handler(BaseHTTPRequestHandler):
                    "params": parsed[8], "agent": parsed[9],
                    "scope_drives": list(req_scope.drive_roots),
                    "origin": origin, "history": history_snapshot, "profile": profile,
-                   "conversation_id": conversation_id}
+                   "conversation_id": conversation_id,
+                   "access": self._access().to_dict()}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
         heavy = action is not None and not (action == "search" and mode == "files")
@@ -1944,14 +2171,98 @@ class Handler(BaseHTTPRequestHandler):
             return
         user, drive = vvs
         resolved = _resolve_scope(self.headers, user, drive, self._caller)
+        visible = _visible(self._access())
         self._send(200, {
             "ok": True,
             "active_drive": resolved.active_root,
             "source": resolved.source,
+            # A room the ACL hides is not offered; the active drive always is,
+            # it is where the ViVeSecBox put the user.
             "drives": [{"path": root,
                         "name": root.rsplit("/", 1)[-1],
                         "active": root == resolved.active_root}
-                       for root in resolved.drive_roots]})
+                       for root in resolved.drive_roots
+                       if root == resolved.active_root or visible(root)]})
+
+    def _ui_children(self):
+        """Folder listing for the UI (E03). Unlike the /index/get/children
+        sync read it checks the identity, the drive scope and the ACL; a folder
+        the caller may not see answers exactly like a missing one."""
+        vvs = self._read_vvs()
+        if vvs is None:
+            return
+        user, drive = vvs
+        payload = self._read_json()
+        req_scope = _resolve_scope(self.headers, user, drive, self._caller)
+        raw = str(payload.get("path") or "").strip()
+        path = corpus.norm(raw) if raw else req_scope.active_root
+        if not req_scope.contains_path(path):
+            self._send(403, {"ok": False, "error": "path outside the request scope"})
+            return
+        visible = _visible(self._access())
+        if not visible(path):
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        entries = MIRROR.get_children(path, visible=visible)
+        entries.sort(key=lambda entry: (bool(entry.get("file")), entry.get("path") or ""))
+        self._send(200, {"ok": True, "path": path, "entries": entries})
+
+    def _ui_insight(self):
+        """The system view of ONE caller: drive, file and index counts over
+        what this caller may see (E03). Operational values without document
+        content (features, watchdog, storage mode) are box-wide."""
+        vvs = self._read_vvs()
+        if vvs is None:
+            return
+        user, drive = vvs
+        req_scope = _resolve_scope(self.headers, user, drive, self._caller)
+        access = self._access()
+        visible = _visible(access)
+        drives, types = [], {}
+        totals = {"files": 0, "folders": 0, "bytes": 0}
+        truncated = False
+        corpus_ids = []
+        for root, corpus_id in zip(req_scope.drive_roots, req_scope.corpus_ids):
+            if root != req_scope.active_root and not visible(root):
+                continue
+            corpus_ids.append(corpus_id)
+            entries = MIRROR.find(root, "", files_only=False,
+                                  limit=INSIGHT_SCAN_LIMIT, visible=visible)
+            truncated = truncated or len(entries) >= INSIGHT_SCAN_LIMIT
+            row = {"path": root, "name": root.rsplit("/", 1)[-1],
+                   "files": 0, "folders": 0, "bytes": 0}
+            for entry in entries:
+                if not entry.get("file"):
+                    row["folders"] += 1
+                    continue
+                size = entry.get("size") or 0
+                row["files"] += 1
+                row["bytes"] += size
+                name = (entry.get("path") or "").rsplit("/", 1)[-1]
+                ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+                key = ext if ext and len(ext) <= 5 else "other"
+                bucket = types.setdefault(key, {"ext": key, "files": 0, "bytes": 0})
+                bucket["files"] += 1
+                bucket["bytes"] += size
+            for key in totals:
+                totals[key] += row[key]
+            drives.append(row)
+        index = None
+        try:
+            index = rag_post_json("/rag/scope_stats", {
+                "corpus_ids": corpus_ids, "tenant_id": TENANT_ID,
+                "access": access.as_rag()}).get("stats")
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write("[adapter] insight: scope stats unavailable: %s\n" % e)
+        self._send(200, {
+            "ok": True, "drives": drives, "truncated": truncated,
+            "types": sorted(types.values(), key=lambda t: -t["files"]),
+            "index": index, "generated_files": len(FILES.list(user, drive)),
+            "storage_mode": STORAGE.status().get("mode"),
+            "ws_fs": {"connected": WSFS.connected()},
+            "features": FEATURES, "watchdog_seconds": WATCHDOG_SECONDS,
+            "sessions": {"active": SESSIONS.stats().get("active")},
+            **totals})
 
     def _files_download(self, query):
         vvs = self._read_vvs()
@@ -2017,6 +2328,10 @@ class Handler(BaseHTTPRequestHandler):
         if not req_scope.contains_path(path):
             self._send(403, {"ok": False,
                              "error": "file outside the request scope"})
+            return
+        if not ACL.allows(path, self._access(), MIRROR.acl_of):
+            # Same answer as a file the box does not have (E03).
+            self._send(404, {"ok": False, "error": "not-found"})
             return
         try:
             header, content = WSFS.get_file(user, path, timeout=GETFILE_TIMEOUT)
@@ -2157,6 +2472,58 @@ class Handler(BaseHTTPRequestHandler):
                          % (result["user"], payload.get("event"), result["state"], cancelled))
         self._send(200, dict(result, ok=True, cancelled_jobs=cancelled))
 
+    def _admin_acl_effective(self):
+        """Effective permission of a user (E03): principals, clearance and the
+        decision, with its reason, for the given paths. `groups`/`roles` in
+        the body replace the directory lookup (what-if check). The drive-level
+        scope is decided per request by the ViVeSecBox and is not part of it.
+        Trusted channel only: it reveals ACLs and folder names."""
+        if not self._trusted_channel():
+            self._send(403, {"ok": False,
+                             "error": "available over mutual TLS or on the box only"})
+            return
+        payload = self._read_json()
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        user = str(payload.get("user") or "").strip()
+        if not user:
+            raise ValueError("Missing 'user'")
+        upn = str(payload.get("upn") or "").strip() or None
+        if "groups" in payload or "roles" in payload:
+            groups, roles = payload.get("groups") or [], payload.get("roles") or []
+            if not isinstance(groups, list) or not isinstance(roles, list):
+                raise ValueError("'groups' and 'roles' must be lists")
+            info = directory.DirectoryInfo("override", [str(g) for g in groups],
+                                           [str(r) for r in roles])
+        else:
+            info = DIRECTORY.lookup(identity.Identity(user, "admin", upn=upn))
+        access = ACL.access_for(user, upn, info)
+        out = {"ok": True, "user": user, "upn": upn,
+               "principals": list(access.principals),
+               "clearance": acl.level_name(access.clearance),
+               "membership": {"known": access.membership_known, "source": info.source,
+                              "error": info.error},
+               "policy": ACL.settings(),
+               "paths": [ACL.explain(p, access, MIRROR.acl_of) for p in _admin_paths(payload)]}
+        under = str(payload.get("under") or "").strip()
+        if under:
+            visible = _visible(access)
+            files = MIRROR.find(corpus.norm(under), "", files_only=True,
+                                limit=INSIGHT_SCAN_LIMIT)
+            shown = sum(1 for entry in files if visible(entry.get("path") or ""))
+            out["under"] = {"path": corpus.norm(under), "files": len(files),
+                            "visible": shown, "hidden": len(files) - shown}
+        self._send(200, out)
+
+
+def _admin_paths(payload):
+    paths = payload.get("paths")
+    if paths is None:
+        paths = [payload["path"]] if payload.get("path") else []
+    if not isinstance(paths, list) or len(paths) > 200:
+        raise ValueError("'paths' must be a list of at most 200 paths")
+    return [str(p) for p in paths if p]
+
 
 def _ensure_tls_listener():
     with _TLS_LOCK:
@@ -2196,6 +2563,10 @@ def main():
         ident["mode"], ident["header"], ",".join(ident["keys"]) or "none",
         DIRECTORY.source, HTTP_SCOPE))
     print("  Lifecycle   :", LIFECYCLE.path or "(in-memory: events are lost on restart)")
+    acl_settings = ACL.settings()
+    print("  Access (ACL):", "mode=%s rules=%s default classification=%s clearance=%s" % (
+        acl_settings["mode"], ACL.rules_path or "none",
+        acl_settings["default_classification"], acl_settings["default_clearance"]))
     print("  Provisioning:", "%s | TLS=%s" % (
         "initialized" if PROVISIONER.is_initialized() else "not initialized",
         "on" if TLS_ENABLED else "off"))
@@ -2228,6 +2599,7 @@ def main():
     if WATCHDOG_ENFORCES:
         threading.Thread(target=_watchdog_loop, daemon=True).start()
     threading.Thread(target=_maintenance_loop, daemon=True).start()
+    threading.Thread(target=_acl_loop, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -81,6 +81,15 @@ class ScopeBoundaryTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.scope.corpus_id_for_path(escape)
 
+    def test_dot_and_empty_segments_are_not_canonical(self):
+        # The box resolves `/a/./b` to `/a/b`; accepting it would let a path
+        # string dodge the folder ACLs keyed on the canonical form (E03).
+        for path in ("/storage/drives/finance/./q2/report.pdf",
+                     "/storage/drives/finance//q2/report.pdf",
+                     "/storage/drives/finance/q2/./report.pdf"):
+            self.assertFalse(self.scope.contains_path(path), path)
+        self.assertTrue(self.scope.contains_path("/storage/drives/finance/q2/"))
+
     def test_non_drive_paths_are_outside(self):
         self.assertFalse(self.scope.contains_path("/etc/passwd"))
         self.assertFalse(self.scope.contains_path(""))

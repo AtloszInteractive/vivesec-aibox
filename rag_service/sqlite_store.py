@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import config  # noqa: E402
 import embeddings  # noqa: E402
 
+import access as access_filter  # noqa: E402
 import extract  # noqa: E402
 import query_split  # noqa: E402
 import reaccent  # noqa: E402
@@ -142,6 +143,20 @@ class SqliteVecStore:
         columns = {row[1] for row in c.execute("PRAGMA table_info(documents)")}
         if "skip_reason" not in columns:
             c.execute("ALTER TABLE documents ADD COLUMN skip_reason TEXT")
+        # E03: the flattened ACL. Rows indexed before it existed read as
+        # unrestricted at the query's default classification.
+        if "acl_restricted" not in columns:
+            c.execute("ALTER TABLE documents ADD COLUMN acl_restricted INTEGER")
+        if "classification" not in columns:
+            c.execute("ALTER TABLE documents ADD COLUMN classification INTEGER")
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS doc_acl (
+                doc_id TEXT,
+                effect TEXT,
+                principal TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_doc_acl_doc ON doc_acl(doc_id, effect, principal);
+        """)
         has_fts = c.execute("SELECT 1 FROM meta WHERE key='fts_ready' AND value='1'").fetchone()
         c.executescript("""
             CREATE VIRTUAL TABLE IF NOT EXISTS chunk_text_fts USING fts5(
@@ -253,13 +268,83 @@ class SqliteVecStore:
             (corpus_id, tenant_id, self._backend),
         )
 
+    # ----- access control (E03) ----------------------------------------------
+    def _acl_snapshot(self, doc_id):
+        return self._conn.execute(
+            "SELECT acl_restricted, classification FROM documents WHERE doc_id=?",
+            (doc_id,)).fetchone()
+
+    def _write_acl(self, doc_id, acl, previous=None):
+        """Store a document's flattened ACL. Without a new one the row keeps
+        what it had: a re-upload that does not repeat the ACL must not drop
+        it (the INSERT OR REPLACE of the document row would otherwise)."""
+        if acl is None:
+            if previous is not None:
+                self._conn.execute(
+                    "UPDATE documents SET acl_restricted=?, classification=? WHERE doc_id=?",
+                    (previous[0], previous[1], doc_id))
+            return
+        self._conn.execute("DELETE FROM doc_acl WHERE doc_id=?", (doc_id,))
+        rows = ([(doc_id, "allow", p) for p in acl["allow"]]
+                + [(doc_id, "deny", p) for p in acl["deny"]])
+        if rows:
+            self._conn.executemany(
+                "INSERT INTO doc_acl(doc_id, effect, principal) VALUES(?,?,?)", rows)
+        self._conn.execute(
+            "UPDATE documents SET acl_restricted=?, classification=? WHERE doc_id=?",
+            (1 if acl["restricted"] else 0, acl["classification"], doc_id))
+
+    def update_acl(self, corpus_id, tenant_id, entries):
+        """Replace the ACL of already known documents (metadata only, nothing
+        is re-embedded). Unknown paths are counted, not created."""
+        parsed = [(norm_path(entry["path"]), access_filter.parse_doc_acl(entry["acl"]))
+                  for entry in entries]
+        updated = missing = 0
+        with self._lock:
+            for path, acl in parsed:
+                doc_id = _doc_id(tenant_id, corpus_id, path)
+                if self._acl_snapshot(doc_id) is None:
+                    missing += 1
+                    continue
+                self._write_acl(doc_id, acl)
+                updated += 1
+            self._conn.commit()
+        return {"updated": updated, "missing": missing}
+
+    def _excluded(self, corpus_id, acl_sql, acl_params):
+        """Does the access filter hide any searchable chunk of this corpus?"""
+        return self._conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM chunks c JOIN documents d ON d.doc_id=c.doc_id "
+            "WHERE c.corpus_id=? AND c.vec_rowid IS NOT NULL AND NOT (" + acl_sql + "))",
+            [corpus_id] + acl_params).fetchone()[0] == 1
+
+    def scope_stats(self, corpus_ids, access=None):
+        """Counts over what the caller may see -- the per-user system view."""
+        scope = list(corpus_ids or [])
+        if not scope:
+            return {"documents": 0, "pages": 0, "chunks": 0, "skipped": 0}
+        acl_sql, acl_params = access_filter.sql_clause(access)
+        marks = ",".join("?" * len(scope))
+        where = "d.corpus_id IN (%s) AND d.file=1 AND %s" % (marks, acl_sql)
+        params = scope + acl_params
+        with self._lock:
+            documents, pages, skipped = self._conn.execute(
+                "SELECT COUNT(*), IFNULL(SUM(d.pages), 0), "
+                "IFNULL(SUM(CASE WHEN d.skip_reason IS NOT NULL THEN 1 ELSE 0 END), 0) "
+                "FROM documents d WHERE " + where, params).fetchone()
+            chunks = self._conn.execute(
+                "SELECT COUNT(*) FROM chunks c JOIN documents d ON d.doc_id=c.doc_id WHERE "
+                + where, params).fetchone()[0]
+        return {"documents": documents, "pages": pages, "chunks": chunks, "skipped": skipped}
+
     # ----- directory ---------------------------------------------------------
-    def upsert_directory(self, corpus_id, tenant_id, path):
+    def upsert_directory(self, corpus_id, tenant_id, path, acl=None):
         path = norm_path(path)
         doc_id = _doc_id(tenant_id, corpus_id, path)
         with self._lock:
             self._ensure_corpus(corpus_id, tenant_id)
             self._delete_doc_rows(doc_id)
+            previous = self._acl_snapshot(doc_id)
             self._conn.execute(
                 "INSERT OR REPLACE INTO documents("
                 "doc_id, corpus_id, tenant_id, source_path, title, file, mtime, size, "
@@ -267,28 +352,29 @@ class SqliteVecStore:
                 (doc_id, corpus_id, tenant_id, path, os.path.basename(path) or path,
                  0, None, None, 0, 0, 1),
             )
+            self._write_acl(doc_id, acl, previous)
             self._conn.commit()
         return {"doc_id": doc_id, "file": False, "source_path": path}
 
     # ----- two-step file sync ------------------------------------------------
-    def check(self, corpus_id, tenant_id, path, size, mtime, head_b64):
+    def check(self, corpus_id, tenant_id, path, size, mtime, head_b64, acl=None):
         path = norm_path(path)
         if not extract.is_supported(path):
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "unsupported_type")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "unsupported_type", acl)
             return None, "unsupported_type"
         if size is not None and size <= 0:
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "empty_content")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "empty_content", acl)
             return None, "empty_content"
         if size is not None and size > MAX_CONTENT_BYTES:
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "too_large")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "too_large", acl)
             return None, "too_large"
         head = _decode_head(head_b64)
         if extract.ext_of(path) in extract.TEXT_EXTS and b"\x00" in head:
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "invalid_content")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "invalid_content", acl)
             return None, "invalid_content"
         if not extract.extractor_available(path):
             self._store_meta_only(corpus_id, tenant_id, path, size, mtime,
-                                  "extractor_unavailable")
+                                  "extractor_unavailable", acl)
             return None, "extractor_unavailable"
         import hashlib
         token = hashlib.sha1(
@@ -302,14 +388,16 @@ class SqliteVecStore:
                 "title": os.path.basename(path) or path,
                 "size": size,
                 "mtime": mtime,
+                "acl": acl,
                 "expires_at": time.time() + self.token_ttl_seconds,
             }
         return token, None
 
-    def _store_meta_only(self, corpus_id, tenant_id, path, size, mtime, reason=None):
+    def _store_meta_only(self, corpus_id, tenant_id, path, size, mtime, reason=None, acl=None):
         doc_id = _doc_id(tenant_id, corpus_id, path)
         with self._lock:
             self._ensure_corpus(corpus_id, tenant_id)
+            previous = self._acl_snapshot(doc_id)
             self._conn.execute(
                 "INSERT OR REPLACE INTO documents("
                 "doc_id, corpus_id, tenant_id, source_path, title, file, mtime, size, "
@@ -317,6 +405,7 @@ class SqliteVecStore:
                 (doc_id, corpus_id, tenant_id, path, os.path.basename(path) or path,
                  1, mtime, size, 0, 0, 0, reason),
             )
+            self._write_acl(doc_id, acl, previous)
             self._conn.commit()
 
     def commit_content(self, token, raw):
@@ -338,6 +427,7 @@ class SqliteVecStore:
             pages=pages,
             mtime=meta["mtime"],
             size=meta["size"],
+            acl=meta.get("acl"),
         )
 
     # ----- direct ingest -----------------------------------------------------
@@ -352,6 +442,7 @@ class SqliteVecStore:
             pages=pages,
             mtime=metadata.get("mtime"),
             size=metadata.get("size"),
+            acl=metadata.get("acl"),
         )
 
     def ingest_content(self, corpus_id, tenant_id, path, title, raw, metadata):
@@ -365,6 +456,7 @@ class SqliteVecStore:
             pages=pages,
             mtime=metadata.get("mtime"),
             size=metadata.get("size"),
+            acl=metadata.get("acl"),
         )
 
     # ----- core indexing -----------------------------------------------------
@@ -383,7 +475,8 @@ class SqliteVecStore:
         self._conn.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
         self._conn.execute("DELETE FROM pages WHERE doc_id=?", (doc_id,))
 
-    def _index_document(self, corpus_id, tenant_id, source_path, title, pages, mtime, size):
+    def _index_document(self, corpus_id, tenant_id, source_path, title, pages, mtime, size,
+                        acl=None):
         doc_id = _doc_id(tenant_id, corpus_id, source_path)
         page_records = []
         chunk_records = []
@@ -443,6 +536,7 @@ class SqliteVecStore:
             # the operator can see it exists, but not counted as indexed -- it
             # is not searchable, and the reason is what drives the OCR backlog.
             skip_reason = None if chunk_records else EMPTY_EXTRACTION_WARNING
+            previous = self._acl_snapshot(doc_id)
             self._conn.execute(
                 "INSERT OR REPLACE INTO documents("
                 "doc_id, corpus_id, tenant_id, source_path, title, file, mtime, size, "
@@ -451,6 +545,9 @@ class SqliteVecStore:
                  len(page_records), len(chunk_records), 1 if chunk_records else 0,
                  skip_reason),
             )
+            # Same transaction as the chunks: a search never sees the new
+            # chunks without the ACL that guards them.
+            self._write_acl(doc_id, acl, previous)
             self._conn.commit()
         return index_result(doc_id, page_records, chunk_records, source_path, size)
 
@@ -480,6 +577,7 @@ class SqliteVecStore:
                 ).fetchone()[0]
                 self._delete_doc_rows(doc_id)
                 self._conn.execute("DELETE FROM documents WHERE doc_id=?", (doc_id,))
+                self._conn.execute("DELETE FROM doc_acl WHERE doc_id=?", (doc_id,))
                 deleted_docs += 1
             # Drop the corpus registration if it is now empty.
             remaining = self._conn.execute(
@@ -498,33 +596,49 @@ class SqliteVecStore:
         }
 
     # ----- retrieval ---------------------------------------------------------
-    def _vocabulary(self, corpus_ids):
-        """The scope's accented words, rebuilt when any of its corpora change."""
+    def _vocabulary(self, corpus_ids, acl_sql="1", acl_params=(), acl_key=None):
+        """The scope's accented words, rebuilt when any of its corpora change.
+
+        When the access filter hides part of the scope, the vocabulary is
+        built from the visible chunks only: a word that exists only in a
+        hidden document must not steer the query repair."""
         scope = tuple(corpus_ids)
         marks = ",".join("?" * len(scope))
+        where = "c.corpus_id IN (%s) AND %s" % (marks, acl_sql)
+        params = list(scope) + list(acl_params)
+        source = "chunks c JOIN documents d ON d.doc_id=c.doc_id"
         signature = self._conn.execute(
-            "SELECT COUNT(*), IFNULL(MAX(rowid), 0) FROM chunks "
-            "WHERE corpus_id IN (%s)" % marks,
-            scope,
+            "SELECT COUNT(*), IFNULL(MAX(c.rowid), 0) FROM " + source + " WHERE " + where,
+            params,
         ).fetchone()
-        cached = self._vocabularies.get(scope)
+        key = (scope, acl_key)
+        cached = self._vocabularies.get(key)
         if cached is not None and cached[0] == signature:
             return cached[1]
         rows = self._conn.execute(
-            "SELECT text FROM chunks WHERE corpus_id IN (%s) LIMIT ?" % marks,
-            scope + (REACCENT_MAX_CHUNKS,),
+            "SELECT c.text FROM " + source + " WHERE " + where + " LIMIT ?",
+            params + [REACCENT_MAX_CHUNKS],
         )
         vocabulary = reaccent.build(text for (text,) in rows)
-        self._vocabularies[scope] = (signature, vocabulary)
+        if acl_key is not None and len(self._vocabularies) >= 64:
+            # Per-caller vocabularies are bounded; the unfiltered ones stay.
+            for stale in [k for k in self._vocabularies if k[1] is not None][:16]:
+                self._vocabularies.pop(stale, None)
+        self._vocabularies[key] = (signature, vocabulary)
         return vocabulary
 
     def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000,
-                       corpus_ids=None, source_paths=None, evidence_chunk_ids=None):
+                       corpus_ids=None, source_paths=None, evidence_chunk_ids=None,
+                       access=None):
         scope = normalize_corpus_ids(corpus_id, corpus_ids)
         if not scope:
             return [], {"chunk_hits_count": 0, "estimated_tokens": 0}
+        # E03: the access filter is part of every query below (dense, lexical,
+        # evidence, counts), never a post-filter over the results.
+        acl_sql, acl_params = access_filter.sql_clause(access)
         with self._lock:
             totals = {}
+            filtered = {}
             for cid in scope:
                 tenant = "default"
                 row = self._conn.execute(
@@ -534,9 +648,13 @@ class SqliteVecStore:
                     tenant = row[0]
                 self._corpus_embedding_guard(cid, tenant)
                 totals[cid] = self._conn.execute(
-                    "SELECT COUNT(*) FROM chunks WHERE corpus_id=? AND vec_rowid IS NOT NULL",
-                    (cid,),
+                    "SELECT COUNT(*) FROM chunks c JOIN documents d ON d.doc_id=c.doc_id "
+                    "WHERE c.corpus_id=? AND c.vec_rowid IS NOT NULL AND " + acl_sql,
+                    [cid] + acl_params,
                 ).fetchone()[0]
+                # The partitioned KNN cannot take the filter, so a corpus with
+                # hidden chunks is ranked with the filtered exact scan instead.
+                filtered[cid] = access is not None and self._excluded(cid, acl_sql, acl_params)
             total = sum(totals.values())
 
             k = min(max(top_k, 0), 50)
@@ -545,7 +663,14 @@ class SqliteVecStore:
 
             queries = query_split.split_question(question)
             if REACCENT_ACTIVE:
-                vocabulary = self._vocabulary(scope)
+                if any(filtered.values()):
+                    vocabulary = self._vocabulary(
+                        scope, acl_sql, acl_params,
+                        tuple(sorted(access["principals"])) + (
+                            access["clearance"], access["membership_known"],
+                            access["default_classification"]))
+                else:
+                    vocabulary = self._vocabulary(scope)
                 queries = [vocabulary.repair(q) for q in queries]
             # The question is embedded ONCE for the whole scope: the embedding
             # is the expensive step, the per-partition scan is not.
@@ -569,6 +694,9 @@ class SqliteVecStore:
                         source_clauses.append("(d.source_path LIKE ? ESCAPE '\\' OR lower(d.source_path)=lower(?))")
                         bindings.extend(["%/" + _like_escape(source), source])
                 clause += " AND (" + " OR ".join(source_clauses) + ")"
+            if access is not None:
+                clause += " AND " + acl_sql
+                bindings.extend(acl_params)
             runs = []
             for qvec in qvecs:
                 blob = sqlite_vec.serialize_float32(qvec)
@@ -576,7 +704,7 @@ class SqliteVecStore:
                 for cid in scope:
                     if not totals[cid]:
                         continue
-                    if source_paths:
+                    if source_paths or filtered[cid]:
                         rows = self._conn.execute(
                             "SELECT c.chunk_id, vec_distance_cosine(v.embedding, ?) AS distance "
                             "FROM chunks c JOIN documents d ON d.doc_id=c.doc_id "
@@ -683,10 +811,11 @@ class SqliteVecStore:
                     break
             return contexts, {"chunk_hits_count": total, "estimated_tokens": used_tokens,
                               "dense_candidates": len(dense), "lexical_candidates": len(lexical),
-                              "evidence_revalidated": len(evidence), "retrieval": "dense+fts5"}
+                              "evidence_revalidated": len(evidence), "retrieval": "dense+fts5",
+                              "access_filter": access is not None}
 
     # ----- whole-document retrieval ------------------------------------------
-    def document_context(self, corpus_id, source_path, max_context_tokens=12000):
+    def document_context(self, corpus_id, source_path, max_context_tokens=12000, access=None):
         """Every chunk of ONE document, in reading order.
 
         Deliberately NOT a search: when the user points at a file and asks for
@@ -697,16 +826,18 @@ class SqliteVecStore:
         """
         target = norm_path(source_path or "")
         base = target.rsplit("/", 1)[-1]
-        columns = ("SELECT doc_id, title, source_path, file, mtime, size "
-                   "FROM documents WHERE corpus_id=? AND file=1")
+        # A hidden document is answered exactly like a missing one.
+        acl_sql, acl_params = access_filter.sql_clause(access)
+        columns = ("SELECT d.doc_id, d.title, d.source_path, d.file, d.mtime, d.size "
+                   "FROM documents d WHERE d.corpus_id=? AND d.file=1 AND " + acl_sql)
         with self._lock:
             row = self._conn.execute(
-                columns + " AND source_path=?", (corpus_id, target)).fetchone()
+                columns + " AND d.source_path=?", [corpus_id] + acl_params + [target]).fetchone()
             if row is None and base:
                 row = self._conn.execute(
-                    columns + " AND source_path LIKE ? ESCAPE '\\' "
-                    "ORDER BY LENGTH(source_path) LIMIT 1",
-                    (corpus_id, "%/" + _like_escape(base))).fetchone()
+                    columns + " AND d.source_path LIKE ? ESCAPE '\\' "
+                    "ORDER BY LENGTH(d.source_path) LIMIT 1",
+                    [corpus_id] + acl_params + ["%/" + _like_escape(base)]).fetchone()
             if row is None:
                 return [], _document_debug(None, 0, 0, 0)
             doc_id, title, sp, file_flag, mtime, size = row

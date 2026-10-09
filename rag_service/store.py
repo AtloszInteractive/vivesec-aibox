@@ -30,6 +30,7 @@ import config  # noqa: E402
 import embeddings  # noqa: E402
 from chunking import chunk_rows, chunk_text  # noqa: E402
 
+import access as access_filter  # noqa: E402
 import extract  # noqa: E402
 import reaccent  # noqa: E402
 
@@ -318,11 +319,48 @@ class RagStore:
                 break
 
     # ----- directory ---------------------------------------------------------
-    def upsert_directory(self, corpus_id, tenant_id, path):
+    def _acl_for(self, doc_id, acl):
+        """A new ACL, or the one the document already had (lock held)."""
+        if acl is not None:
+            return acl
+        return (self._docs.get(doc_id) or {}).get("acl")
+
+    def update_acl(self, corpus_id, tenant_id, entries):
+        parsed = [(norm_path(entry["path"]), access_filter.parse_doc_acl(entry["acl"]))
+                  for entry in entries]
+        updated = missing = 0
+        with self._lock:
+            for path, acl in parsed:
+                doc = self._docs.get(_doc_id(tenant_id, corpus_id, path))
+                if doc is None:
+                    missing += 1
+                    continue
+                doc["acl"] = acl
+                updated += 1
+            self._persist()
+        return {"updated": updated, "missing": missing}
+
+    def scope_stats(self, corpus_ids, access=None):
+        scope = set(corpus_ids or [])
+        out = {"documents": 0, "pages": 0, "chunks": 0, "skipped": 0}
+        with self._lock:
+            for doc_id, doc in self._docs.items():
+                if doc.get("corpus_id") not in scope or not doc.get("file", True):
+                    continue
+                if not access_filter.doc_allowed(doc.get("acl"), access):
+                    continue
+                out["documents"] += 1
+                out["pages"] += len(self._pages.get(doc_id, []))
+                out["chunks"] += len(self._chunks.get(doc_id, []))
+                out["skipped"] += 1 if doc.get("skip_reason") else 0
+        return out
+
+    def upsert_directory(self, corpus_id, tenant_id, path, acl=None):
         path = norm_path(path)
         doc_id = _doc_id(tenant_id, corpus_id, path)
         with self._lock:
             self._corpora.setdefault(corpus_id, {"tenant_id": tenant_id, "embedding": self._backend})
+            acl = self._acl_for(doc_id, acl)
             self._docs[doc_id] = {
                 "doc_id": doc_id,
                 "corpus_id": corpus_id,
@@ -334,6 +372,7 @@ class RagStore:
                 "size": None,
                 "pages": 0,
                 "chunks": 0,
+                "acl": acl,
             }
             self._pages[doc_id] = []
             self._chunks[doc_id] = []
@@ -341,7 +380,7 @@ class RagStore:
         return {"doc_id": doc_id, "file": False, "source_path": path}
 
     # ----- two-step file sync ------------------------------------------------
-    def check(self, corpus_id, tenant_id, path, size, mtime, head_b64):
+    def check(self, corpus_id, tenant_id, path, size, mtime, head_b64, acl=None):
         """Register file metadata, decide whether content upload is required.
 
         Returns (token, reason). token is None when the file should be skipped;
@@ -350,22 +389,22 @@ class RagStore:
         """
         path = norm_path(path)
         if not extract.is_supported(path):
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "unsupported_type")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "unsupported_type", acl)
             return None, "unsupported_type"
         if size is not None and size <= 0:
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "empty_content")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "empty_content", acl)
             return None, "empty_content"
         if size is not None and size > MAX_CONTENT_BYTES:
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "too_large")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "too_large", acl)
             return None, "too_large"
         head = _decode_head(head_b64)
         if extract.ext_of(path) in extract.TEXT_EXTS and b"\x00" in head:
             # A text format carrying NUL bytes is binary/corrupt, not text.
-            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "invalid_content")
+            self._store_meta_only(corpus_id, tenant_id, path, size, mtime, "invalid_content", acl)
             return None, "invalid_content"
         if not extract.extractor_available(path):
             self._store_meta_only(corpus_id, tenant_id, path, size, mtime,
-                                  "extractor_unavailable")
+                                  "extractor_unavailable", acl)
             return None, "extractor_unavailable"
         token = hashlib.sha1(
             ("%s|%s|%s|%s" % (corpus_id, path, size, mtime)).encode("utf-8")
@@ -378,14 +417,16 @@ class RagStore:
                 "title": os.path.basename(path) or path,
                 "size": size,
                 "mtime": mtime,
+                "acl": acl,
                 "expires_at": time.time() + self.token_ttl_seconds,
             }
         return token, None
 
-    def _store_meta_only(self, corpus_id, tenant_id, path, size, mtime, reason=None):
+    def _store_meta_only(self, corpus_id, tenant_id, path, size, mtime, reason=None, acl=None):
         doc_id = _doc_id(tenant_id, corpus_id, path)
         with self._lock:
             self._corpora.setdefault(corpus_id, {"tenant_id": tenant_id, "embedding": self._backend})
+            acl = self._acl_for(doc_id, acl)
             self._docs[doc_id] = {
                 "doc_id": doc_id,
                 "corpus_id": corpus_id,
@@ -399,6 +440,7 @@ class RagStore:
                 "chunks": 0,
                 "indexed": False,
                 "skip_reason": reason,
+                "acl": acl,
             }
             self._pages.setdefault(doc_id, [])
             self._chunks.setdefault(doc_id, [])
@@ -423,6 +465,7 @@ class RagStore:
             pages=pages,
             mtime=meta["mtime"],
             size=meta["size"],
+            acl=meta.get("acl"),
         )
 
     # ----- direct ingest -----------------------------------------------------
@@ -437,6 +480,7 @@ class RagStore:
             pages=pages,
             mtime=metadata.get("mtime"),
             size=metadata.get("size"),
+            acl=metadata.get("acl"),
         )
 
     def ingest_content(self, corpus_id, tenant_id, path, title, raw, metadata):
@@ -450,10 +494,12 @@ class RagStore:
             pages=pages,
             mtime=metadata.get("mtime"),
             size=metadata.get("size"),
+            acl=metadata.get("acl"),
         )
 
     # ----- core indexing -----------------------------------------------------
-    def _index_document(self, corpus_id, tenant_id, source_path, title, pages, mtime, size):
+    def _index_document(self, corpus_id, tenant_id, source_path, title, pages, mtime, size,
+                        acl=None):
         doc_id = _doc_id(tenant_id, corpus_id, source_path)
         page_records = []
         chunk_records = []
@@ -507,6 +553,7 @@ class RagStore:
                 # OCR backlog.
                 "indexed": bool(chunk_records),
                 "skip_reason": None if chunk_records else EMPTY_EXTRACTION_WARNING,
+                "acl": self._acl_for(doc_id, acl),
             }
             self._pages[doc_id] = page_records
             self._chunks[doc_id] = chunk_records
@@ -551,23 +598,30 @@ class RagStore:
         }
 
     # ----- retrieval ---------------------------------------------------------
-    def _vocabulary(self, corpus_ids):
-        """The scope's accented words, rebuilt when any of its corpora change."""
+    def _vocabulary(self, corpus_ids, access=None):
+        """The scope's accented words, rebuilt when any of its corpora change.
+        Only visible documents contribute (E03)."""
         scope = tuple(corpus_ids)
         texts = [
             ch["text"]
             for doc_id, doc in self._docs.items() if doc.get("corpus_id") in scope
+            and access_filter.doc_allowed(doc.get("acl"), access)
             for ch in self._chunks.get(doc_id, [])
         ]
-        cached = self._vocabularies.get(scope)
+        key = (scope, None if access is None else json.dumps(access, sort_keys=True))
+        cached = self._vocabularies.get(key)
         if cached is not None and cached[0] == len(texts):
             return cached[1]
         vocabulary = reaccent.build(texts[:REACCENT_MAX_CHUNKS])
-        self._vocabularies[scope] = (len(texts), vocabulary)
+        if access is not None and len(self._vocabularies) >= 64:
+            for stale in [k for k in self._vocabularies if k[1] is not None][:16]:
+                self._vocabularies.pop(stale, None)
+        self._vocabularies[key] = (len(texts), vocabulary)
         return vocabulary
 
     def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000,
-                       corpus_ids=None, source_paths=None, evidence_chunk_ids=None):
+                       corpus_ids=None, source_paths=None, evidence_chunk_ids=None,
+                       access=None):
         import retrieval
         scope = normalize_corpus_ids(corpus_id, corpus_ids)
         if not scope or not question or top_k <= 0:
@@ -576,13 +630,15 @@ class RagStore:
             for cid in scope:
                 self._corpus_embedding_guard(cid, self._corpora.get(cid, {}).get("tenant_id", "default"))
             if question and REACCENT_ACTIVE:
-                question = self._vocabulary(scope).repair(question)
+                question = self._vocabulary(scope, access).repair(question)
             qvec = self._embed([question])[0] if question else None
             candidates = []
             for doc_id, doc in self._docs.items():
                 if doc.get("corpus_id") not in scope:
                     continue
                 if not retrieval.match_source(doc.get("source_path"), source_paths):
+                    continue
+                if not access_filter.doc_allowed(doc.get("acl"), access):
                     continue
                 for ch in self._chunks.get(doc_id, []):
                     if not ch.get("vector"):
@@ -654,7 +710,7 @@ class RagStore:
                           "evidence_revalidated": len(evidence), "retrieval": "dense+lexical"}
 
     # ----- whole-document retrieval ------------------------------------------
-    def document_context(self, corpus_id, source_path, max_context_tokens=12000):
+    def document_context(self, corpus_id, source_path, max_context_tokens=12000, access=None):
         """Every chunk of ONE document, in reading order.
 
         This is deliberately NOT a search: when the user points at a file and
@@ -669,6 +725,8 @@ class RagStore:
             exact, suffix = None, None
             for doc in self._docs.values():
                 if doc.get("corpus_id") != corpus_id or not doc.get("file", True):
+                    continue
+                if not access_filter.doc_allowed(doc.get("acl"), access):
                     continue
                 sp = norm_path(doc.get("source_path") or "")
                 if sp == target:

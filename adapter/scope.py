@@ -31,8 +31,11 @@ SOURCE_TOKEN = "token"
 
 
 def _escapes(path):
-    """True when a path uses '..' to climb out of the drive it names."""
-    return any(part == ".." for part in (path or "").split("/"))
+    """True when a path is not canonical: '..' climbs out of the drive it
+    names, and '.' or an empty segment would let the same file be named by a
+    string the ACL rules do not match."""
+    parts = corpus.norm(path or "").split("/")
+    return any(part in ("", ".", "..") for part in parts[1:])
 
 
 def decode_other_drives(raw):
