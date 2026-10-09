@@ -37,10 +37,10 @@ itself and the phase fails. `--rollback-ssh` removes it manually.
 | `install.conf.example` | Parameter template - copy to `install.conf` and edit |
 | `00-install-all.sh` | Phase orchestrator, logging and resume handling |
 | `05-harden-host.sh` | Key-only SSH (root-owned admin keys) + Tailscale remote access, pairing-safe |
-| `10-build-images.sh` | Builds the three application images, keeps rollback tags |
+| `10-build-images.sh` | Builds the three application images, keeps rollback tags, stamps and labels the release version and refuses a UI bundle of another release |
 | `20-pull-models.sh` | Downloads the embedding and generation models |
 | `90-acceptance-audit.sh` | Read-only handover audit, one PASS/FAIL line per check |
-| `95-manifest.sh` | Writes `/data/app/MANIFEST.txt`, the delivery record |
+| `95-manifest.sh` | Writes `/data/app/MANIFEST.txt`, the delivery record, and `/data/app/MANIFEST.json`, the machine-readable release manifest of the box (`scripts/release/box_manifest.py`) |
 
 The orchestrator drives the existing phase scripts in `scripts/jetson/`
 (`10b-base-jp6.sh`, `20-ollama-jp6.sh`, `30-app-storage-jp6.sh`,
@@ -92,4 +92,16 @@ tar -tzf ui-output.tgz | head -3    # expected: .output/ , .output/server/...
 
 Rebuild the bundle whenever the interface changes - the installation kit has no
 way to detect a stale one.
+
+### Release version
+
+Every delivery is one release with one calendar version (`YY.MM.N`, the
+repository `VERSION` file) on the adapter, the RAG service and the UI; the
+release procedure is in `scripts/release/README.md`. Build the UI bundle from
+the same release as the source tree: `10-build-images.sh` reads
+`.output/public/version.json` from the bundle and stops if its version differs
+from the source tree's. When the source tree is delivered without `.git`, stamp
+it on the build machine first (`python scripts/release/build_info.py stamp`) so
+the commit travels with it. All parameters the box accepts are listed in
+`CONFIGURATION.md` in the repository root.
 

@@ -5,6 +5,7 @@
 //     error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -33,6 +34,72 @@ const EMBED_SPA = process.env.VIVESEC_SPA === "1" || buildMode === "embed";
 if (EMBED_SPA) process.env.NODE_ENV ||= "production";
 
 const EMBED_BASE = process.env.VIVESEC_BASE ?? "";
+
+// Release identity (E01): the same record scripts/release/build_info.py stamps
+// into the adapter and RAG images, so every component reports one calendar
+// version (YY.MM.N) and one source commit. Keep the label rule in sync with
+// that script: a release is a clean tree at tag v<VERSION>, anything else is
+// <VERSION>-dev[+<commit>[.dirty]].
+function git(...args: string[]): string | null {
+  try {
+    return execFileSync("git", args, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function readBuildInfo() {
+  const version = fs.readFileSync(path.resolve(process.cwd(), "VERSION"), "utf-8").trim();
+  if (!/^\d{2}\.(0[1-9]|1[0-2])\.(0|[1-9]\d*)$/.test(version)) {
+    throw new Error(`VERSION must be YY.MM.N (e.g. 26.10.1), got "${version}"`);
+  }
+  const commit = git("rev-parse", "HEAD");
+  const dirty = commit ? Boolean(git("status", "--porcelain", "--untracked-files=no")) : null;
+  const tagged = commit
+    ? (git("tag", "--points-at", "HEAD") ?? "").split(/\s+/).includes(`v${version}`)
+    : false;
+  const label =
+    tagged && !dirty && commit
+      ? version
+      : `${version}-dev${commit ? `+${commit.slice(0, 7)}${dirty ? ".dirty" : ""}` : ""}`;
+  return {
+    schema: 1,
+    version,
+    commit,
+    dirty,
+    tagged,
+    label,
+    built_at: new Date().toISOString().replace(/\.\d+Z$/, "Z"),
+  };
+}
+
+const BUILD_INFO = readBuildInfo();
+
+// Ships the record as version.json beside the client assets (.output/public for
+// the SSR build, dist/client for the embed bundle) so a deployed bundle can be
+// identified without loading the app.
+const versionJsonAsset = {
+  name: "aibox-version-json",
+  generateBundle(this: {
+    environment?: { name: string };
+    emitFile: (file: { type: "asset"; fileName: string; source: string }) => string;
+  }) {
+    if (this.environment && this.environment.name !== "client") return;
+    this.emitFile({
+      type: "asset",
+      fileName: "version.json",
+      source: `${JSON.stringify(BUILD_INFO, null, 2)}\n`,
+    });
+  },
+};
+
+const versionVite = {
+  define: { __AIBOX_BUILD__: JSON.stringify(BUILD_INFO) },
+  plugins: [versionJsonAsset],
+};
 
 // TanStack Start overwrites the router basepath during hydration with a constant
 // it inlines at build time, which would discard whatever the app resolved at
@@ -80,13 +147,14 @@ export default defineConfig({
   ...(EMBED_SPA
     ? {
         vite: EMBED_BASE
-          ? { base: EMBED_BASE }
+          ? { ...versionVite, base: EMBED_BASE }
           : {
+              ...versionVite,
               experimental: portableAssetUrls,
-              plugins: [runtimeRouterBasepath],
+              plugins: [runtimeRouterBasepath, ...versionVite.plugins],
             },
       }
-    : {}),
+    : { vite: versionVite }),
   // Build a Node server bundle (.output/server/index.mjs) so the app can run in a
   // container on Google Cloud Run. The Node preset honours the PORT env var that
   // Cloud Run injects (defaults to 8080).

@@ -14,6 +14,8 @@
 //   ADAPTER_DEMO_DRIVE  default VVS-Drive path (default /storage/drives/finance/)
 //   ADAPTER_DEMO_USER   default VVS-User id (default demo)
 
+import { readBoxVersion, type BoxVersion } from "../build-info";
+
 export type ChatProfile = "grounded" | "hybrid";
 export type ChatPolicy = {
   policy: "locked_grounded" | "locked_hybrid" | "selectable_grounded" | "selectable_hybrid";
@@ -75,6 +77,8 @@ export type AdapterStatus = {
   locked: boolean;
   voice: AdapterVoice;
   chatPolicy?: ChatPolicy;
+  /** Release identity of the box (E01); null when the adapter predates it. */
+  version?: BoxVersion | null;
   error?: string;
 };
 
@@ -343,6 +347,7 @@ export async function adapterStatus(): Promise<AdapterStatus> {
       locked: Boolean(j.storage_locked ?? j.locked),
       voice: readVoice(j.voice),
       chatPolicy: j.chat_policy as ChatPolicy | undefined,
+      version: readBoxVersion(j.version),
     };
   } catch (err) {
     return { ...offline, error: err instanceof Error ? err.message : "adapter unreachable" };

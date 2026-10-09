@@ -10,7 +10,11 @@ Usage:
   python scripts/pack_ui_bundle.py [output.tgz] [--build]
 
   --build   run `npm run build` first (otherwise an existing .output is packed)
+
+The bundle carries .output/public/version.json (the release identity written by
+vite.config.ts); 10-build-images.sh labels the UI image from it.
 """
+import json
 import os
 import subprocess
 import sys
@@ -70,6 +74,11 @@ def main():
         print("ERROR: .output/%s is missing from the archive" % ENTRYPOINT.replace(os.sep, "/"))
         return 1
     print("layout OK: .output at the archive root, entrypoint present")
+    if ".output/public/version.json" not in names:
+        print("ERROR: .output/public/version.json is missing - rebuild with the current vite.config.ts")
+        return 1
+    with open(os.path.join(SOURCE, "public", "version.json"), encoding="utf-8") as handle:
+        print("ui version: %s" % json.load(handle).get("label"))
     return 0
 
 

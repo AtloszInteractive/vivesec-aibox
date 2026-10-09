@@ -68,3 +68,11 @@ docs/
 *.njsproj
 *.sln
 *.sw?
+
+# Build identity stamped by scripts/release/build_info.py (never committed)
+adapter/build_info.json
+rag_service/build_info.json
+# Local fleet inventory and generated release manifests / UI bundles
+scripts/release/fleet.json
+release-manifest-*.json
+ui-output*.tgz

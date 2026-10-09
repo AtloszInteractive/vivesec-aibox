@@ -34,6 +34,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_info  # noqa: E402
 from store import (  # noqa: E402
     MIN_SCORE,
     REACCENT_ACTIVE,
@@ -124,6 +125,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/health":
                 return self._ok(
                     status="ok",
+                    version=build_info.BUILD,
                     embedding=STORE.embedding_info(),
                     vector_backend=VECTOR_BACKEND,
                     min_score=MIN_SCORE,
@@ -132,7 +134,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/ready":
                 return self._ok(ready=True)
             if path == "/stats":
-                return self._ok(stats=STORE.stats())
+                return self._ok(stats=STORE.stats(), version=build_info.BUILD)
             raise HttpError(404, "not found")
         except HttpError as e:
             self._fail(e.status, e.error)

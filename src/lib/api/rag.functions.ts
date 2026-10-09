@@ -52,6 +52,7 @@ import {
   type ChatProfile,
   type ChatPolicy,
 } from "../rag/adapter-client";
+import type { BoxVersion } from "../build-info";
 
 export type { ChatProfile, ChatPolicy } from "../rag/adapter-client";
 
@@ -129,6 +130,7 @@ export type RagHealth = {
   /** On-box speech engines; absent/false means the box has no voice backend. */
   voice?: AdapterVoice;
   chatPolicy?: ChatPolicy;
+  version?: BoxVersion | null;
   error?: string;
 };
 
@@ -146,6 +148,7 @@ export async function ragHealth(): Promise<RagHealth> {
       embed_backend: status.features.join(", ") || "basic",
       voice: status.voice,
       chatPolicy: status.chatPolicy,
+      version: status.version ?? null,
       mode: status.uiReady
         ? "aibox-adapter (/api/v1/ui)"
         : status.locked

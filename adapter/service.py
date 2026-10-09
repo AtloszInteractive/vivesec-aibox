@@ -69,6 +69,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_info  # noqa: E402
 import confidence  # noqa: E402
 import conversations  # noqa: E402
 import corpus  # noqa: E402
@@ -326,8 +327,11 @@ def status_payload():
         _WD_ARMED[0] = True
     index = {}
     rag_ok = False
+    rag_build = None
     try:
-        index = rag_get("/stats").get("stats", {})
+        stats = rag_get("/stats")
+        index = stats.get("stats", {})
+        rag_build = stats.get("version")
         rag_ok = True
     except Exception:  # noqa: BLE001
         index = {"error": "rag unavailable"}
@@ -353,7 +357,48 @@ def status_payload():
             "files": FILES.stats(),
             "voice": voice.status(),
             "chat_policy": chat_policy.settings(),
+            "version": version_block(rag_build),
+            "paired": PROVISIONER.is_initialized(),
             "mirror": MIRROR.stats(), "index": index}
+
+
+_BUILD_FIELDS = ("version", "commit", "dirty", "tagged", "label", "built_at")
+
+
+def _public_build(info):
+    if not isinstance(info, dict):
+        return None
+    return {key: info.get(key) for key in _BUILD_FIELDS}
+
+
+def version_block(rag_build):
+    """Release identity of the box (E01): one calendar version and one source
+    commit expected across adapter and RAG. `consistent` is False whenever the
+    RAG is unreachable or runs a different build than the adapter, which is how
+    a partial redeploy shows up."""
+    adapter = _public_build(build_info.BUILD)
+    rag = _public_build(rag_build)
+    consistent = bool(rag and adapter["version"] and rag["version"] == adapter["version"]
+                     and rag["commit"] == adapter["commit"])
+    return {"release": adapter["label"], "version": adapter["version"],
+            "commit": adapter["commit"], "consistent": consistent,
+            "ui_version": UI_VERSION,
+            "components": {"adapter": adapter, "rag": rag}}
+
+
+def version_payload():
+    """Read-only release and pairing summary for fleet overviews. Unlike
+    status_payload it never counts as a ViVeSecBox presence poll, so polling it
+    cannot keep the presence watchdog from locking the storage."""
+    rag_build = None
+    try:
+        rag_build = rag_get("/health", timeout=5).get("version")
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "version": version_block(rag_build),
+            "paired": PROVISIONER.is_initialized(),
+            "ws_fs": {"connected": WSFS.connected()},
+            "storage_locked": STORAGE.is_locked() or _PRESENCE_LOST[0]}
 
 
 def _watchdog_loop():
@@ -893,14 +938,14 @@ def rag_post_raw(path, raw):
     return _rag_call(req)
 
 
-def rag_get(path):
+def rag_get(path, timeout=600):
     req = urllib.request.Request(RAG_URL + path, method="GET", headers=_rag_headers())
-    return _rag_call(req)
+    return _rag_call(req, timeout)
 
 
-def _rag_call(req):
+def _rag_call(req, timeout=600):
     try:
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
@@ -1008,6 +1053,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/status":
             self._send(200, status_payload())
             return
+        if path == "/api/v1/version":
+            self._send(200, version_payload())
+            return
         if path == "/api/v1/init/prepare":
             self._init_prepare()
             return
@@ -1050,6 +1098,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._content(path[len(CONTENT_PREFIX):])
             route = {
                 "/api/v1/status": self._status,
+                "/api/v1/version": self._version,
                 "/api/v1/init/commit": self._init_commit,
                 "/api/v1/index/get": self._get_doc,
                 "/api/v1/index/get/children": self._get_children,
@@ -1092,6 +1141,10 @@ class Handler(BaseHTTPRequestHandler):
     def _status(self):
         self._read_json()  # tolerate (and ignore) an optional request body
         self._send(200, status_payload())
+
+    def _version(self):
+        self._read_json()
+        self._send(200, version_payload())
 
     def _ui_version(self):
         self._send_text(200, UI_VERSION)

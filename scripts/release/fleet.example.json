@@ -1,0 +1,7 @@
+{
+  "boxes": [
+    {"name": "aibox-01", "ssh": "aibox@aibox-01"},
+    {"name": "aibox-02", "ssh": "aibox@aibox-02", "adapter_port": 80, "ui_port": 8080},
+    {"name": "lab-box", "url": "http://192.0.2.10", "ui_url": "http://192.0.2.10:8080"}
+  ]
+}

@@ -58,6 +58,7 @@ import {
   type ChatProfile,
   type ChatPolicy,
 } from "@/lib/api/rag.functions";
+import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
 import { useVoice } from "./use-voice";
 import {
   ArrowLeft,
@@ -772,6 +773,9 @@ function ViveSecAppInner() {
      composer accepts input, so the user is never shown a fabricated answer. */
   const [boxState, setBoxState] = useState<"probing" | "online" | "offline">("probing");
   const [boxDetail, setBoxDetail] = useState<string>("");
+  // Release identity of the box (E01). undefined = not probed yet; null = the
+  // adapter predates version reporting.
+  const [boxVersion, setBoxVersion] = useState<BoxVersion | null | undefined>(undefined);
   const [liveBusy, setLiveBusy] = useState(false);
   const [chatPolicy, setChatPolicy] = useState<ChatPolicy>({
     policy: "locked_grounded", default_profile: "grounded", allow_switch: false,
@@ -819,6 +823,7 @@ function ViveSecAppInner() {
       setBoxState(h.ok ? "online" : "offline");
       setBoxDetail(h.ok ? (h.mode ?? "") : (h.error ?? ""));
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
+      if (h.ok) setBoxVersion(h.version ?? null);
       if (h.ok) {
         const policy = h.chatPolicy;
         setChatPolicy(policy && ["locked_hybrid", "selectable_grounded", "selectable_hybrid"].includes(policy.policy)
@@ -2746,6 +2751,32 @@ function ViveSecAppInner() {
                 </div>
                 <div className="mx-auto mt-1.5 flex max-w-3xl items-center justify-center gap-1.5 text-[10px] text-white/35">
                   <Lock className="h-3 w-3" /> {t.encryptedFooter}
+                  {/* Release identity (E01): hover shows the UI and AI Box versions. */}
+                  {(() => {
+                    const differs = boxVersion !== undefined && versionDiffers(UI_BUILD, boxVersion);
+                    const details = [
+                      `${tm("UI version")}: ${UI_BUILD.label}`,
+                      `${tm("AI Box version")}: ${
+                        boxVersion === undefined ? "…" : (boxVersion?.release ?? tm("not reported"))
+                      }`,
+                      ...(boxVersion && !boxVersion.consistent
+                        ? [tm("AI Box components run different builds")]
+                        : []),
+                      ...(differs && boxVersion?.consistent
+                        ? [tm("The UI and the AI Box run different versions")]
+                        : []),
+                    ].join("\n");
+                    return (
+                      <span
+                        className="inline-flex min-w-0 items-center gap-1 truncate"
+                        title={details}
+                        aria-label={details}
+                      >
+                        · v{UI_BUILD.label}
+                        {differs && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-300/80" />}
+                      </span>
+                    );
+                  })()}
                 </div>
               </div>
             </main>

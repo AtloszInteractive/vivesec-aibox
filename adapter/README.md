@@ -15,6 +15,7 @@ ViVeSecBox ──ViVeSec v2──▶ adapter ──RAG contract──▶ rag_ser
 | ViVeSec v2 front (exposed)                     | RAG contract back (called)              |
 | ---------------------------------------------- | --------------------------------------- |
 | `GET  /api/v1/status`                          | `GET /stats` (+ watchdog, mirror stats) |
+| `GET  /api/v1/version`                         | `GET /health` (release identity only)   |
 | `POST /api/v1/index/get`                       | *(served from the local mirror)*        |
 | `POST /api/v1/index/get/children`              | *(served from the local mirror)*        |
 | `POST /api/v1/index/upsert/directory`          | `POST /index/upsert/directory`          |
@@ -54,6 +55,32 @@ $env:ADAPTER_PORT="8088"; $env:RAG_URL="http://127.0.0.1:8090"; python adapter/s
 | `ADAPTER_META_PATH`          | *(in-memory)*           | mirror JSON path (persist)       |
 | `ADAPTER_WATCHDOG_SECONDS`   | `90`                    | status watchdog window           |
 | `ADAPTER_MAX_CONTEXT_TOKENS` | `4000`                  | query context budget             |
+
+This table lists the most common settings only. Every parameter, with its
+default, allowed range, fail-safe behaviour and impact, is in the configuration
+register: [`CONFIGURATION.md`](../CONFIGURATION.md), generated from
+`scripts/release/config_registry.json`. A new environment variable must be added
+there; `scripts/release/release_test.py` fails otherwise.
+
+## Release identity
+
+The adapter reports the release it was built from (E01). The build stamps
+`adapter/build_info.json` (git-ignored) with the calendar version from the
+repository `VERSION` file (`YY.MM.N`) and the git commit; see
+[`scripts/release/README.md`](../scripts/release/README.md).
+
+- `/api/v1/status` carries `version` (`release`, `version`, `commit`,
+  `consistent`, `ui_version`, `components.adapter`, `components.rag`) and
+  `paired`. `consistent` is false when the RAG runs a different build or is
+  unreachable, which is how a partial redeploy shows.
+- `GET|POST /api/v1/version` returns the same `version` block plus `paired`,
+  `ws_fs.connected` and `storage_locked`. Unlike `/status` it is **not** a
+  ViVeSecBox presence poll, so monitoring (the fleet overview, the box manifest)
+  never keeps the presence watchdog from locking the storage.
+- An unstamped dev checkout reports `<VERSION>-dev`; a missing or malformed
+  stamp reports `unknown` and never stops the service.
+- `ADAPTER_UI_VERSION` / `GET /api/v1/ui-version` is unrelated: it tells the
+  ViVeSecBox which embedded UI bundle path (`latest` or a version) to load.
 
 ## Customer Chat Profiles
 
@@ -178,7 +205,8 @@ are not read by the legacy grounded session keys. Review/export hybrid results
 before a binary rollback if continued old-UI access to them is required.
 
 Focused tests (from the adapter directory):
-`python -m unittest chat_policy_test llm_stream_test`.
+`python -m unittest chat_policy_test llm_stream_test`, and for the release
+identity `python -m unittest version_http_test`.
 The HTTP tests use isolated temporary stores and mocked RAG/model responses;
 they prove routing, ACL boundaries, history separation, audit and job behavior,
 not real-model factual accuracy. Real-model acceptance must cover all supported

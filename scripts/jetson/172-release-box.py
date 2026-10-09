@@ -113,10 +113,14 @@ def run_helper(stage, manifest, kind, mode, container):
 
 
 def pack(destination):
+    # The release identity (E01) travels inside the archive: the stamped files
+    # are git-ignored, so they are added explicitly after stamping.
+    subprocess.check_call([sys.executable, "scripts/release/build_info.py", "stamp"])
+    stamped = {"adapter/build_info.json", "rag_service/build_info.json"}
     paths = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard",
                                      "--", "adapter", "rag_service", "poc"]).decode("utf-8").split("\0")
     with tarfile.open(destination, "w:gz") as archive:
-        for path in sorted(set(paths) - {""}):
+        for path in sorted((set(paths) | stamped) - {""}):
             if Path(path).is_file():
                 archive.add(path, arcname=path)
     print("SOURCE_SHA256=" + hashlib.sha256(Path(destination).read_bytes()).hexdigest())
@@ -145,7 +149,19 @@ def prepare(source_archive, ui_archive):
         assert not host["Privileged"]
     assert environment(old["rag"]).get("RAG_STORE_BACKEND") == "sqlite"
     fingerprint = hashlib.sha256(Path(source_archive).read_bytes()).hexdigest()
-    manifest = {"stamp": stamp, "source_sha256": fingerprint,
+    # Release identity (E01): adapter and RAG come from the stamped source tree,
+    # the UI from its bundle. One release = one version, so a UI bundle built for
+    # another release is refused, as 10-build-images.sh does.
+    source_build = json.loads((build / "adapter" / "build_info.json").read_text())
+    ui_version_file = build / ".output" / "public" / "version.json"
+    assert ui_version_file.is_file(), "The UI bundle carries no version.json"
+    ui_build = json.loads(ui_version_file.read_text())
+    assert ui_build.get("version") == source_build["version"], \
+        "UI bundle version %s does not match the source release %s" % (ui_build.get("version"), source_build["version"])
+    builds = {kind: {"version": entry.get("label") or "", "commit": entry.get("commit") or ""}
+              for kind, entry in (("adapter", source_build), ("rag", source_build), ("ui", ui_build))}
+    version = source_build["label"]
+    manifest = {"stamp": stamp, "source_sha256": fingerprint, "version": version, "builds": builds,
                 "ui_sha256": hashlib.sha256(Path(ui_archive).read_bytes()).hexdigest(),
                 "old": old, "images": {}, "renamed": [], "new": [], "state": "preparing"}
     persist(stage, manifest)
@@ -154,7 +170,8 @@ def prepare(source_archive, ui_archive):
         dockerfile = "FROM " + old[kind]["Image"] + "\nWORKDIR /app\n"
         for directory in copied:
             dockerfile += "RUN rm -rf /app/" + directory + "\nCOPY " + directory + " /app/" + directory + "\n"
-        dockerfile += "LABEL vivesec.source-sha256=" + fingerprint + "\n"
+        dockerfile += ("LABEL vivesec.source-sha256=" + fingerprint + " vivesec.version=" + json.dumps(builds[kind]["version"])
+                       + " vivesec.commit=" + json.dumps(builds[kind]["commit"]) + "\n")
         if kind == "adapter":
             dockerfile += "ENV ADAPTER_CHAT_POLICY=locked_hybrid\n"
         (build / "Dockerfile").write_text(dockerfile, encoding="utf-8")
@@ -186,7 +203,11 @@ def recreate(stage, manifest, kind):
         env["ADAPTER_DEMO_DRIVE_PICKER"] = "0"
     config["Env"] = [key + "=" + value for key, value in env.items()]
     config["Image"] = manifest["images"][kind]
-    config["Labels"] = {**(config.get("Labels") or {}), "vivesec.source-sha256": manifest["source_sha256"]}
+    # Labels given at create time override the image's, and the old container's
+    # labels still name the previous release, so the identity is set explicitly.
+    builds = manifest.get("builds", {}).get(kind, {})
+    config["Labels"] = {**(config.get("Labels") or {}), "vivesec.source-sha256": manifest["source_sha256"],
+                        **{"vivesec." + key: value for key, value in builds.items()}}
     config["HostConfig"] = json.loads(json.dumps(old["HostConfig"]))
     if kind == "ui":
         config["HostConfig"]["Binds"] = [
@@ -203,6 +224,9 @@ def check(stage, manifest):
     ready("http://127.0.0.1:%s/api/v1/status" % env["ADAPTER_PORT"], stage / "status.json")
     status = json.loads((stage / "status.json").read_text())
     assert status.get("ok") and status["chat_policy"]["policy"] == "locked_hybrid"
+    if manifest.get("version"):
+        assert status["version"]["release"] == manifest["version"] and status["version"]["consistent"], \
+            "Running build does not match the release"
     rag_env = environment(manifest["old"]["rag"])
     headers = {"X-API-Key": rag_env.get("RAG_API_KEY", "")}
     for endpoint in ("health", "stats"):

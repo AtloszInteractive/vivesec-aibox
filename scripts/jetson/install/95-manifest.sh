@@ -5,12 +5,23 @@
 # model ids and the fingerprint of the delivered source tree. Written to
 # /data/app/MANIFEST.txt so the state at handover can be proved later.
 #
+# The machine-readable release manifest (E01) goes next to it as MANIFEST.json:
+# release version per component, image version labels, model digests, the
+# non-secret runtime configuration checked against the configuration register,
+# pairing state and the release's compatibility checks
+# (scripts/release/box_manifest.py).
+#
 #   SOURCE_DIR=/home/aibox/vivesec_iabox_app bash 95-manifest.sh
 set -euo pipefail
 
 source_dir="${SOURCE_DIR:-}"
 box_name="${AIBOX_HOSTNAME:-$(hostname)}"
 output="${MANIFEST_PATH:-/data/app/MANIFEST.txt}"
+json_output="${output%.txt}.json"
+kit_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+AIBOX_HOSTNAME="$box_name" python3 "$kit_dir/../../release/box_manifest.py" --out "$json_output"
+release_label=$(python3 -c 'import json, sys; print((json.load(open(sys.argv[1])).get("release") or {}).get("release", "unknown"))' "$json_output")
 
 tree_fingerprint() {
   local directory=$1
@@ -22,7 +33,9 @@ tree_fingerprint() {
 {
   echo "ViVeSec AI Box - delivery manifest"
   echo "box:          $box_name"
+  echo "release:      $release_label"
   echo "generated:    $(date -Is)"
+  echo "json:         $json_output"
   echo
   echo "[platform]"
   echo "l4t:          $(head -n 1 /etc/nv_tegra_release)"
@@ -35,9 +48,10 @@ tree_fingerprint() {
   echo
   echo "[images]"
   for image in vivesec-rag vivesec-adapter vivesec-ui; do
-    printf '%-18s %s  created=%s\n' "$image:latest" \
+    printf '%-18s %s  created=%s version=%s\n' "$image:latest" \
       "$(docker image inspect --format '{{.Id}}' "$image:latest")" \
-      "$(docker image inspect --format '{{.Created}}' "$image:latest")"
+      "$(docker image inspect --format '{{.Created}}' "$image:latest")" \
+      "$(docker image inspect --format '{{index .Config.Labels "vivesec.version"}}' "$image:latest")"
   done
   echo
   echo "[rollback tags]"
@@ -62,4 +76,4 @@ tree_fingerprint() {
 } > "$output"
 
 chmod 0644 "$output"
-echo "AIBOX_MANIFEST_WRITTEN path=$output"
+echo "AIBOX_MANIFEST_WRITTEN path=$output json=$json_output release=$release_label"

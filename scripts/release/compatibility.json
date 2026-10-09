@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "_comment": "Compatibility conditions of this release (E01). Maintained by hand: update it in the same commit that changes a contract, a model or the platform. Copied into every release manifest and checked on the box by box_manifest.py.",
+  "components": {
+    "same_version": ["adapter", "rag", "ui"],
+    "note": "adapter, RAG service and both UI forms (SSR server and embed bundle) of one release carry the same calendar version."
+  },
+  "contracts": {
+    "vivesecbox_api": "ViVeSec v2 (/api/v1/*), status keys ui_ready/fs_ready (legacy dash keys kept)",
+    "rag_contract": "drive_sync_api_spec (index/upsert, index/drop/tree, rag/search_context, rag/document_context)",
+    "embed_ui": "the embed bundle reaches the box only through the versioned /api/v1 contract; a newer UI must work against an older box of the same contract"
+  },
+  "platform": {
+    "hardware": "NVIDIA Jetson AGX Orin 64 GB",
+    "jetpack": "6",
+    "l4t": "R36.4.4",
+    "ollama_min": "0.34.0"
+  },
+  "models": {
+    "generation": "qwen3.6:35b",
+    "embedding": "bge-m3",
+    "embedding_dimensions": 1024,
+    "context_window": 65536,
+    "note": "The index is valid only with the embedding model it was built with; changing it requires a full reindex."
+  },
+  "data": {
+    "rag_index": "sqlite + sqlite-vec (RAG_STORE_BACKEND=sqlite)",
+    "reindex_required": false,
+    "migration": "none"
+  }
+}

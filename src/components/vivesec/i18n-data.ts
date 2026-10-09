@@ -117,6 +117,12 @@ const M: Record<string, Tri> = {
   "Connecting to the AI Box…": ["Kapcsolódás az AI Boxhoz…", "Forbinder til AI Box…", "Verbindung zur AI Box…"],
   "Connected to the AI Box": ["Csatlakoztatva az AI Boxhoz", "Forbundet til AI Box", "Mit der AI Box verbunden"],
   "AI Box unreachable — click to retry": ["Az AI Box nem érhető el — kattints az újrapróbáláshoz", "AI Box kan ikke nås — klik for at prøve igen", "AI Box nicht erreichbar — zum erneuten Versuch klicken"],
+  // ---- E01: release identity (footer version tooltip) ----
+  "UI version": ["Felület verziója", "Brugerfladens version", "Version der Oberfläche"],
+  "AI Box version": ["AI Box verziója", "AI Box-version", "AI-Box-Version"],
+  "not reported": ["nem jelenti", "ikke oplyst", "nicht gemeldet"],
+  "AI Box components run different builds": ["Az AI Box összetevői eltérő buildet futtatnak", "AI Box-komponenterne kører forskellige builds", "Die Komponenten der AI Box laufen mit unterschiedlichen Builds"],
+  "The UI and the AI Box run different versions": ["A felület és az AI Box eltérő verziót futtat", "Brugerfladen og AI Box kører forskellige versioner", "Oberfläche und AI Box laufen mit unterschiedlichen Versionen"],
   "AI Box unreachable — no answer can be produced.": ["Az AI Box nem érhető el — nem készíthető válasz.", "AI Box kan ikke nås — der kan ikke laves noget svar.", "AI Box nicht erreichbar — es kann keine Antwort erzeugt werden."],
   "The AI Box did not answer this question.": ["Az AI Box nem válaszolt erre a kérdésre.", "AI Box svarede ikke på dette spørgsmål.", "Die AI Box hat diese Frage nicht beantwortet."],
   "Retry": ["Újra", "Prøv igen", "Erneut"],

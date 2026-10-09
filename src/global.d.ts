@@ -4,6 +4,8 @@
 declare global {
   // eslint-disable-next-line no-var
   var frameSocketFetcher: typeof fetch | undefined;
+  /** Release identity injected by vite.config.ts (see src/lib/build-info.ts). */
+  const __AIBOX_BUILD__: import("./lib/build-info").BuildInfo;
 }
 
 export {};
