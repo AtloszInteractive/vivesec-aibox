@@ -59,6 +59,20 @@ class HeavyScheduler:
                 return "running"
             return "missing"
 
+    def cancel_user(self, users):
+        """Drop every queued job of the given user ids and interrupt the one
+        running for them, if any. Returns how many items were affected."""
+        users = {u for u in users if u}
+        with self._condition:
+            dropped = [item for item in self._queue if item["user"] in users]
+            for item in dropped:
+                self._queue.remove(item)
+            count = len(dropped)
+            if self._running and self._running["user"] in users:
+                self._running["cancel_event"].set()
+                count += 1
+            return count
+
     def position(self, job_id, user, drive):
         user = user or ""
         drive = drive or ""

@@ -278,6 +278,9 @@ function vvsHeaders(drive: string, user: string): Record<string, string> {
     "Content-Type": "application/json",
     "VVS-Drive": encodeDrive(drive),
     "VVS-User": user,
+    // Relayed on behalf of a browser: the adapter must not treat it as a
+    // process on the box (see adapter-proxy.server.ts).
+    "X-Forwarded-Host": "box-ui",
   };
 }
 

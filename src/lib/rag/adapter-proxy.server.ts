@@ -16,6 +16,20 @@ const PICKER = () => (process.env.ADAPTER_DEMO_DRIVE_PICKER ?? "") === "1";
 
 const encodeDrive = (drive: string) => Buffer.from(drive, "utf-8").toString("base64url");
 
+// Only what the UI itself calls is relayed. Box-only endpoints (pairing, sync,
+// storage unlock, identity lifecycle, ws-fs) must never become reachable from
+// the network just because this server talks to the adapter over loopback.
+const RELAYED_EXACT = new Set([
+  "/api/v1/status",
+  "/api/v1/version",
+  "/api/v1/ui-version",
+  "/api/v1/index/get/children",
+]);
+const isRelayed = (pathname: string) => {
+  const path = pathname.replace(/\/+$/, "");
+  return RELAYED_EXACT.has(path) || path.startsWith("/api/v1/ui/");
+};
+
 // Hop-by-hop headers belong to one connection and must not be relayed. `expect`
 // is the one that actually bites: any client sending `Expect: 100-continue`
 // (curl does it automatically above 1 KB, which the voice upload always is)
@@ -49,6 +63,10 @@ export async function handleAdapterProxy(request: Request): Promise<Response | n
     return json({ drive: DEMO_DRIVE(), driveRoot: DRIVE_ROOT(), picker: PICKER() });
   }
 
+  if (!isRelayed(url.pathname)) {
+    return json({ ok: false, error: `Not found: ${url.pathname}` }, 404);
+  }
+
   // The drive picker is a demo affordance, so the hint is only honoured when it
   // is explicitly enabled; otherwise the configured drive always wins.
   const hinted = PICKER() ? request.headers.get("X-Demo-Drive") : null;
@@ -60,6 +78,9 @@ export async function handleAdapterProxy(request: Request): Promise<Response | n
   for (const h of HOP_BY_HOP) headers.delete(h);
   headers.set("VVS-Drive", encodeDrive(drive));
   headers.set("VVS-User", DEMO_USER());
+  // Marks the call as relayed: the adapter must not mistake it for a process on
+  // the box just because it arrives over loopback.
+  headers.set("X-Forwarded-Host", url.host || "unknown");
 
   const target = `${ADAPTER_URL()}${url.pathname}${url.search}`;
   const body =

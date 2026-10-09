@@ -82,6 +82,80 @@ repository `VERSION` file (`YY.MM.N`) and the git commit; see
 - `ADAPTER_UI_VERSION` / `GET /api/v1/ui-version` is unrelated: it tells the
   ViVeSecBox which embedded UI bundle path (`latest` or a version) to load.
 
+## Identity, directory and lifecycle (E02)
+
+The ViVeSecBox owns users and login; the adapter verifies what it is told and
+fails closed. Every switch below defaults to today's behaviour, so a box keeps
+working with a ViVeSecBox that does not send signed assertions yet. Each
+parameter is listed in [`CONFIGURATION.md`](../CONFIGURATION.md).
+
+**Signed identity assertion** (`identity.py`). `ADAPTER_IDENTITY_MODE`:
+
+| Value | Behaviour |
+| --- | --- |
+| `off` (default) | `VVS-User` is used as sent; tokens are ignored |
+| `verify` | a token in `VVS-Identity` must be valid; without one the header identity is used |
+| `require` | every user endpoint needs a valid token, otherwise `401` |
+| anything else | treated as `require` |
+
+The token is a compact JWT signed with HS256 (secret from
+`ADAPTER_IDENTITY_HS256_SECRET_FILE`, at least 32 bytes) or RS256 (public keys
+from `ADAPTER_IDENTITY_JWKS_FILE`, RSA of 2048 bits or more, reloaded when the
+file changes), restricted by `ADAPTER_IDENTITY_ALGORITHMS`; `alg=none` is always
+rejected. `exp` is mandatory and the lifetime is capped by
+`ADAPTER_IDENTITY_MAX_TTL_SECONDS`; `iss`, `aud` and `scope`/`scp` are checked
+when configured. Binding: the user claim (`sub` by default) must equal
+`VVS-User`, a `drive` claim must equal `VVS-Drive`, a `sid` claim must equal
+`VVS-Session`. A `drives` claim replaces the unsigned `VVS-Other-Drives` header
+as the source of the extra drives. `upn`/`preferred_username`/`email`,
+`groups` and `roles` are read when present. A rejected request gets a generic
+`identity not accepted`; the reason is logged.
+
+**Groups and roles** (`directory.py`). `ADAPTER_DIRECTORY=off|token|entra`
+(unknown means `off`). `token` uses the claims of a verified token; `entra`
+reads transitive group membership and the app role assignments of
+`ADAPTER_ENTRA_RESOURCE_ID` from Microsoft Graph with client credentials
+(`ADAPTER_ENTRA_TENANT_ID`, `ADAPTER_ENTRA_CLIENT_ID`,
+`ADAPTER_ENTRA_CLIENT_SECRET_FILE`). Admin-consented application permissions:
+`User.Read.All` + `GroupMember.Read.All` for groups with their names, plus
+`Directory.Read.All` when roles are resolved (`ADAPTER_ENTRA_RESOURCE_ID` set);
+`Directory.Read.All` alone covers both. The UPN (or an e-mail-shaped user
+id) is the lookup key. Results are cached for `ADAPTER_DIRECTORY_TTL_SECONDS`;
+when the directory is unreachable and the entry has expired, the user has **no**
+groups. `GET /api/v1/ui/init` returns `identity` (`source`, `upn`, `groups`,
+`roles`, `directory.error`); access decisions on groups belong to E03.
+
+**Plain-HTTP scope.** `ADAPTER_HTTP_SCOPE=pairing` limits the plain-HTTP
+listener, for network peers, to `/`, `/api/v1/status`, `/api/v1/version`,
+`/api/v1/ui-version`, `/api/v1/init/prepare` and `/api/v1/init/commit`;
+everything else answers `403` and must use the mTLS listener. Direct loopback
+callers (on-box scripts) are not restricted. A request relayed by a local
+reverse proxy (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host` or
+`X-Real-IP`; the box-hosted UI always sets `X-Forwarded-Host`) counts as a
+network peer, so the LAN demo UI does not work in the pairing scope. Default
+`full`; an unknown value means `pairing`. Only enable it on a box whose
+ViVeSecBox has paired and uses mTLS (`ADAPTER_TLS=on`). The box-hosted UI
+server relays only `/api/v1/ui/*`, `status`, `version`, `ui-version` and
+`index/get/children`.
+
+**User lifecycle** (`lifecycle.py`). The ViVeSecBox reports directory events:
+
+```http
+POST /api/v1/identity/lifecycle      (mutual TLS or a direct, non-relayed
+                                      loopback caller only, else 403)
+{"event": "deleted|suspended|revoked|reinstated", "user": "<VVS-User id>",
+ "upn": "<optional>", "reason": "<optional>", "event_id": "<optional>"}
+```
+
+A locked user (matched by user id or UPN) gets `403 user access locked` on
+every user endpoint, so their threads, jobs and generated files are
+unreachable; their queued and running jobs are cancelled. Nothing is deleted.
+`reinstated` lifts `suspended`/`revoked`; `deleted` is final (`409`). The state
+is persisted atomically in `ADAPTER_LIFECYCLE_PATH` (deploy scripts:
+`/data/adapter/lifecycle.json`; empty keeps it in memory). An unreadable state
+file refuses every user request with `503` until repaired. A factory reset
+clears it.
+
 ## Customer Chat Profiles
 
 One adapter/UI build supports four deployment policies. Set

@@ -41,6 +41,7 @@ docker run -d --name vivesec-adapter --network host --restart unless-stopped \
   -e ADAPTER_GEN_MODEL=qwen2.5:14b \
   -e ADAPTER_GENERATE=auto \
   -e ADAPTER_META_PATH=/data/adapter/meta.json \
+  -e ADAPTER_LIFECYCLE_PATH=/data/adapter/lifecycle.json \
   -e ADAPTER_PKI_DIR=/data/pki \
   -e ADAPTER_FILES_DIR=/data/generated \
   -e ADAPTER_SESSION_DIR=/data/sessions \

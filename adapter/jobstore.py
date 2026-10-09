@@ -168,6 +168,35 @@ class JobStore:
     def request_cancel(self, user, drive, job_id):
         return self.update(user, drive, job_id, cancel_requested=True)
 
+    def cancel_user(self, users, reason="user access locked"):
+        """Stop every active job of the given user ids, across all drives (a
+        lifecycle lock). Queued jobs are cancelled outright; running ones get
+        cancel_requested, the scheduler interrupts the generation itself.
+        Returns the number of jobs touched."""
+        if not self.root:
+            return 0
+        users = {u for u in users if u}
+        touched = 0
+        with self._lock:
+            for base, _dirs, files in os.walk(self.root):
+                for name in files:
+                    if not name.endswith(".json"):
+                        continue
+                    path = os.path.join(base, name)
+                    job = self._read(path)
+                    if not job or job.get("user") not in users:
+                        continue
+                    if job.get("status") == "queued":
+                        job.update(status="cancelled", finished=time.time(), error=reason)
+                        self._events.setdefault(job.get("job_id"), threading.Event()).set()
+                    elif job.get("status") == "running":
+                        job.update(cancel_requested=True)
+                    else:
+                        continue
+                    self._write(path, job)
+                    touched += 1
+        return touched
+
     def delete(self, user, drive, job_id):
         """Drop one finished job from the scope. Returns "deleted", "active"
         when the job is still queued or running (removing the file would leave

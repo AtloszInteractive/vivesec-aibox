@@ -60,6 +60,7 @@ docker run -d --name vivesec-adapter --network host --restart unless-stopped \
   -e ADAPTER_TENANT_ID=default \
   -e ADAPTER_DRIVE_PREFIX=/storage/drives \
   -e ADAPTER_META_PATH=/data/adapter/meta.json \
+  -e ADAPTER_LIFECYCLE_PATH=/data/adapter/lifecycle.json \
   -e ADAPTER_PKI_DIR=/data/pki \
   -e ADAPTER_FILES_DIR=/data/generated \
   -e ADAPTER_SESSION_DIR=/data/sessions \

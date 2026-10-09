@@ -27,6 +27,7 @@ SOURCE_LIST = "list"
 SOURCE_HEADER = "header"
 SOURCE_ENTITLEMENTS = "entitlements"
 SOURCE_ALL_DRIVES = "all-drives"
+SOURCE_TOKEN = "token"
 
 
 def _escapes(path):
@@ -248,10 +249,15 @@ def rebuild(active_drive, drive_roots, source=None):
 
 
 def resolve_request(active_drive, other_drives_header=None, user="",
-                    entitlements=None, all_drives=None, on_warning=None):
-    """Resolve one request's scope in the documented priority order: the box
-    header, then the entitlements file, then every known drive (demo only),
-    then the active drive alone.
+                    entitlements=None, all_drives=None, on_warning=None,
+                    asserted_drives=None):
+    """Resolve one request's scope in the documented priority order: the
+    drives asserted by a verified identity token, then the box header, then
+    the entitlements file, then every known drive (demo only), then the active
+    drive alone.
+
+    A signed assertion is authoritative: when it lists drives -- even none --
+    the unsigned header and the local fallbacks are not consulted.
 
     A malformed header is logged and DROPPED instead of failing the request.
     The header can only ever widen the scope, so ignoring it falls back to
@@ -260,6 +266,10 @@ def resolve_request(active_drive, other_drives_header=None, user="",
     """
     warn = on_warning or (lambda _message: None)
     candidates, source = [], None
+    if asserted_drives is not None:
+        candidates = [str(p) for p in asserted_drives if p]
+        source = SOURCE_TOKEN
+        other_drives_header, entitlements, all_drives = None, None, None
     if other_drives_header:
         try:
             candidates = decode_other_drives(other_drives_header)

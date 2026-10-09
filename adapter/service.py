@@ -23,10 +23,17 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/ui/stt                       {audio_b64,content_type,lang} -> {text}
     POST /api/v1/ui/tts                       {text,lang} -> audio bytes
     POST /api/v1/storage/unlock              {storage_key}
+    POST /api/v1/identity/lifecycle          {event,user[,upn,reason,event_id]}
+                                              (mutual TLS or loopback only)
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
 knows when it may forward user queries (ui-ready) and start sync (fs-ready).
+
+Identity (E02): every user endpoint resolves its caller through identity.py
+(optional signed assertion in VVS-Identity, ADAPTER_IDENTITY_MODE) and refuses
+users locked by a lifecycle event (lifecycle.py). ADAPTER_HTTP_SCOPE=pairing
+limits the plain-HTTP listener to status/version/pairing for network peers.
 
 Agentic queries are multi-turn: the conversation for a (VVS-User, VVS-Drive)
 pair is kept in memory and spilled to disk on inactivity (session.py). /ui/query
@@ -56,9 +63,11 @@ externally; this adapter is the only thing in front of it.
 """
 import json
 import base64
+import ipaddress
 import mimetypes
 import os
 import re
+import ssl
 import sys
 import threading
 import time
@@ -73,12 +82,15 @@ import build_info  # noqa: E402
 import confidence  # noqa: E402
 import conversations  # noqa: E402
 import corpus  # noqa: E402
+import directory  # noqa: E402
 import discovery  # noqa: E402
 import docgen  # noqa: E402
 import factory_reset  # noqa: E402
 import feedback  # noqa: E402
 import filestore  # noqa: E402
+import identity  # noqa: E402
 import jobstore  # noqa: E402
+import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
 import provision  # noqa: E402
@@ -251,12 +263,63 @@ def _known_drive_roots():
             for entry in MIRROR.get_children(prefix) if not entry.get("file")]
 
 
-def _resolve_scope(headers, user, drive):
+def _resolve_scope(headers, user, drive, caller=None):
+    asserted = caller.drives if caller is not None else None
     return scope.resolve_request(
         drive, headers.get(scope.HEADER_OTHER_DRIVES), user,
         entitlements=ENTITLEMENTS,
         all_drives=_known_drive_roots if SCOPE_ALL_DRIVES else None,
-        on_warning=lambda message: sys.stderr.write("[adapter] scope: %s\n" % message))
+        on_warning=lambda message: sys.stderr.write("[adapter] scope: %s\n" % message),
+        asserted_drives=asserted)
+
+
+# Identity (E02). The ViVeSecBox owns users; the box verifies what it is told.
+IDENTITY = identity.Verifier.from_env()
+DIRECTORY = directory.from_env()
+LIFECYCLE = lifecycle.LifecycleStore.from_env()
+
+HTTP_SCOPE_FULL = "full"
+HTTP_SCOPE_PAIRING = "pairing"
+# What a network peer may reach over plain HTTP in the pairing scope: the
+# ViVeSecBox needs status and init before it holds a client certificate, and
+# the fleet overview reads the version. Everything else waits for mutual TLS.
+PAIRING_ROUTES = frozenset([
+    ("GET", ""), ("GET", "/api/v1/status"), ("POST", "/api/v1/status"),
+    ("GET", "/api/v1/version"), ("POST", "/api/v1/version"),
+    ("GET", "/api/v1/ui-version"),
+    ("GET", "/api/v1/init/prepare"), ("POST", "/api/v1/init/commit"),
+])
+
+
+def _parse_http_scope(raw):
+    value = (raw or "").strip().lower()
+    if not value:
+        return HTTP_SCOPE_FULL
+    if value in (HTTP_SCOPE_FULL, HTTP_SCOPE_PAIRING):
+        return value
+    sys.stderr.write("[adapter] unknown ADAPTER_HTTP_SCOPE %r -> %s\n"
+                     % (raw, HTTP_SCOPE_PAIRING))
+    return HTTP_SCOPE_PAIRING
+
+
+HTTP_SCOPE = _parse_http_scope(os.environ.get("ADAPTER_HTTP_SCOPE"))
+# Set by a reverse proxy on a relayed request (the box-hosted UI sets
+# X-Forwarded-Host); such a request is not a local process even on loopback.
+_FORWARDED_HEADERS = ("Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Real-IP")
+
+
+def _user_locked(*users):
+    """Lifecycle state of a user ('deleted'/'suspended'/'revoked'), None when
+    active; 'unavailable' when the persisted state cannot be read."""
+    try:
+        return LIFECYCLE.state_of(users)
+    except lifecycle.LifecycleUnavailable:
+        return "unavailable"
+
+
+def identity_settings():
+    return dict(IDENTITY.settings(), http_scope=HTTP_SCOPE,
+                directory=DIRECTORY.settings(), lifecycle=LIFECYCLE.stats())
 
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
@@ -357,6 +420,7 @@ def status_payload():
             "files": FILES.stats(),
             "voice": voice.status(),
             "chat_policy": chat_policy.settings(),
+            "identity": identity_settings(),
             "version": version_block(rag_build),
             "paired": PROVISIONER.is_initialized(),
             "mirror": MIRROR.stats(), "index": index}
@@ -456,6 +520,10 @@ def factory_reset_action():
         sys.stderr.write("[adapter] factory reset: removed %d generated files\n" % n)
     except Exception as e:  # noqa: BLE001
         sys.stderr.write("[adapter] factory reset file purge failed: %s\n" % e)
+    try:
+        LIFECYCLE.purge()
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("[adapter] factory reset lifecycle purge failed: %s\n" % e)
     try:
         rag_post_json("/index/rebuild", {"clear": True})
     except Exception as e:  # noqa: BLE001
@@ -872,6 +940,10 @@ def _title_thread(user, session_scope, conversation_id, question, answer, lang):
 def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
                 files=None, params=None, agent=None, history_snapshot=None,
                 cancel_event=None):
+    # A lifecycle lock may arrive while the job waits in the queue.
+    if _user_locked(user):
+        JOBS.finish(user, drive, job_id, 499, {"ok": False, "error": "user access locked"})
+        return
     if JOBS.start(user, drive, job_id) is None:
         return
     job = JOBS.get(user, drive, job_id) or {}
@@ -1046,10 +1118,82 @@ class Handler(BaseHTTPRequestHandler):
         # is the only way to tell a failed pairing from a quiet one.
         sys.stderr.write("[adapter] %s %s\n" % (self.client_address[0], fmt % args))
 
+    # -- channel and identity (E02) --------------------------------------------
+    def _peer_is_loopback(self):
+        host = (self.client_address or ("",))[0] or ""
+        try:
+            address = ipaddress.ip_address(host.split("%", 1)[0])
+        except ValueError:
+            return False
+        mapped = getattr(address, "ipv4_mapped", None)
+        return (mapped or address).is_loopback
+
+    def _is_mutual_tls(self):
+        return isinstance(self.connection, ssl.SSLSocket)
+
+    def _trusted_channel(self):
+        """The mTLS listener (client certificate already verified by the TLS
+        layer) or a process on the box calling directly -- never a request a
+        local reverse proxy relayed from the network."""
+        return self._is_mutual_tls() or (self._peer_is_loopback() and not self._forwarded())
+
+    def _forwarded(self):
+        """A loopback request relayed by a local reverse proxy (the box-hosted
+        UI marks every relayed call) really comes from somebody else."""
+        return any(self.headers.get(name) for name in _FORWARDED_HEADERS)
+
+    def _http_scope_guard(self, method, path):
+        """Refuse a non-pairing endpoint to a network peer on plain HTTP when
+        ADAPTER_HTTP_SCOPE=pairing. Returns True when the request must stop."""
+        if HTTP_SCOPE != HTTP_SCOPE_PAIRING or self._trusted_channel():
+            return False
+        if (method, path) in PAIRING_ROUTES:
+            return False
+        self._send(403, {"ok": False, "error": "endpoint available over mutual TLS only"})
+        return True
+
+    def _authenticate(self, drive=None):
+        """The caller of this request, or None after the refusal was sent.
+
+        The client gets a generic message; the reason goes to the log so a
+        probe cannot tell a bad signature from an expired token.
+        """
+        try:
+            caller = IDENTITY.resolve(self.headers, drive)
+        except identity.IdentityError as e:
+            sys.stderr.write("[adapter] identity rejected from %s: %s\n"
+                             % (self.client_address[0], e.reason))
+            self._send(e.status, {"ok": False, "error": "identity not accepted"})
+            return None
+        state = _user_locked(*caller.keys())
+        if state == "unavailable":
+            sys.stderr.write("[adapter] lifecycle state unavailable -> refusing users\n")
+            self._send(503, {"ok": False, "error": "user lifecycle state unavailable"})
+            return None
+        if state:
+            self._send(403, {"ok": False, "error": "user access locked"})
+            return None
+        self._caller = caller
+        return caller
+
+    def _authenticate_optional_drive(self):
+        """Identity check for endpoints that touch no drive data (voice)."""
+        drive = None
+        raw_drive = self.headers.get("VVS-Drive")
+        if raw_drive:
+            try:
+                drive = corpus.decode_vvs_drive(raw_drive)
+            except ValueError:
+                drive = None
+        return self._authenticate(drive)
+
     # -- GET -----------------------------------------------------------------
     def do_GET(self):
         path, _, query = self.path.partition("?")
         path = path.rstrip("/")
+        self._caller = None
+        if self._http_scope_guard("GET", path):
+            return
         if path == "/api/v1/status":
             self._send(200, status_payload())
             return
@@ -1093,6 +1237,9 @@ class Handler(BaseHTTPRequestHandler):
         # A query string on a POST is legitimate, so it must not take part in
         # route matching -- otherwise POST /ui/file?path=... would 404.
         path, _, self._post_query = self.path.partition("?")
+        self._caller = None
+        if self._http_scope_guard("POST", path.rstrip("/")):
+            return
         try:
             if path.startswith(CONTENT_PREFIX):
                 return self._content(path[len(CONTENT_PREFIX):])
@@ -1123,6 +1270,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/stt": self._stt,
                 "/api/v1/ui/tts": self._tts,
                 "/api/v1/storage/unlock": self._unlock,
+                "/api/v1/identity/lifecycle": self._identity_lifecycle,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -1154,11 +1302,18 @@ class Handler(BaseHTTPRequestHandler):
         if vvs is None:
             return
         user, drive = vvs
+        caller = self._caller
+        info = DIRECTORY.lookup(caller)
         # The embedded UI cannot learn its drive any other way: the box injects
         # VVS-Drive as a header and the browser never sees it.
         self._send(200, {"ok": True, "accepted": True,
                          "drive": drive, "user": user,
-                         "session": self.headers.get("VVS-Session", "")})
+                         "session": self.headers.get("VVS-Session", ""),
+                         "identity": {"source": caller.source, "upn": caller.upn,
+                                      "groups": list(info.groups),
+                                      "roles": list(info.roles),
+                                      "directory": {"source": info.source,
+                                                    "error": info.error}}})
 
     # -- mTLS provisioning (HTTP-only bootstrap; spec sec 1) -----------------
     def _init_prepare(self):
@@ -1290,21 +1445,14 @@ class Handler(BaseHTTPRequestHandler):
         async UI paths. Returns (user, drive, query, top_k, lang, action, mode,
         files, params, agent) or None (after having sent the appropriate
         400)."""
-        raw_drive = self.headers.get("VVS-Drive")
-        if not raw_drive:
-            self._send(400, {"ok": False, "error": "Missing VVS-Drive header"})
+        vvs = self._read_vvs()
+        if vvs is None:
             return None
-        try:
-            drive = corpus.decode_vvs_drive(raw_drive)
-        except ValueError as e:
-            self._send(400, {"ok": False, "error": str(e)})
-            return None
+        user, drive = vvs
         query = (payload.get("query") or payload.get("question") or "").strip()
         if not query:
             self._send(400, {"ok": False, "error": "Missing 'query'"})
             return None
-        user = self.headers.get("VVS-User", "")
-        _log_new_identity(user, drive, raw_drive)
         action, mode, query = parse_action(payload, query)
         if action in _BARE_QUERY and not query:
             # bare "#action": still retrievable — aim at the task's material.
@@ -1322,7 +1470,7 @@ class Handler(BaseHTTPRequestHandler):
         """Resolved scope, narrowed by the body's optional `drives` list.
         Returns None after sending 403 when the client named a drive it was
         not entitled to -- the selection may only ever narrow."""
-        resolved = _resolve_scope(self.headers, user, drive)
+        resolved = _resolve_scope(self.headers, user, drive, self._caller)
         requested = payload.get("drives")
         if not isinstance(requested, list) or not requested:
             return resolved
@@ -1645,7 +1793,10 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             self._send(400, {"ok": False, "error": str(e)})
             return None
-        user = self.headers.get("VVS-User", "")
+        caller = self._authenticate(drive)
+        if caller is None:
+            return None
+        user = caller.user
         _log_new_identity(user, drive, raw_drive)
         return user, drive
 
@@ -1792,7 +1943,7 @@ class Handler(BaseHTTPRequestHandler):
         if vvs is None:
             return
         user, drive = vvs
-        resolved = _resolve_scope(self.headers, user, drive)
+        resolved = _resolve_scope(self.headers, user, drive, self._caller)
         self._send(200, {
             "ok": True,
             "active_drive": resolved.active_root,
@@ -1862,7 +2013,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "Missing 'path'"})
             return
         path = corpus.norm(raw_path)
-        req_scope = _resolve_scope(self.headers, user, drive)
+        req_scope = _resolve_scope(self.headers, user, drive, self._caller)
         if not req_scope.contains_path(path):
             self._send(403, {"ok": False,
                              "error": "file outside the request scope"})
@@ -1904,6 +2055,8 @@ class Handler(BaseHTTPRequestHandler):
         the normal /ui/ask path, so voice input changes nothing downstream:
         same retrieval, same grounding, same citations."""
         payload = self._read_json()
+        if self._authenticate_optional_drive() is None:
+            return
         raw_b64 = payload.get("audio_b64") or ""
         if not raw_b64:
             self._send(400, {"ok": False, "error": "Missing 'audio_b64'"})
@@ -1929,6 +2082,8 @@ class Handler(BaseHTTPRequestHandler):
         """Answer text -> spoken audio. Returns the audio bytes directly so the
         UI can hand the blob straight to an <audio> element."""
         payload = self._read_json()
+        if self._authenticate_optional_drive() is None:
+            return
         text = str(payload.get("text") or "").strip()
         if not text:
             self._send(400, {"ok": False, "error": "Missing 'text'"})
@@ -1960,6 +2115,47 @@ class Handler(BaseHTTPRequestHandler):
             _WD_ARMED[0] = True
         self._send(200, {"ok": True, "locked": STORAGE.is_locked(),
                          "storage": STORAGE.status()})
+
+    # -- user lifecycle events (E02) -----------------------------------------
+    def _identity_lifecycle(self):
+        """Receive a deletion / suspension / revocation (or reinstatement)
+        from the ViVeSecBox. Only the mTLS channel or the box itself may send
+        one: on plain HTTP anybody could lock a user out, or reinstate one."""
+        if not self._trusted_channel():
+            self._send(403, {"ok": False,
+                             "error": "lifecycle events are accepted over mutual TLS only"})
+            return
+        payload = self._read_json()
+        if not isinstance(payload, dict):
+            self._send(400, {"ok": False, "error": "expected a JSON object"})
+            return
+        try:
+            result = LIFECYCLE.apply(payload.get("event"), payload.get("user"),
+                                     payload.get("upn"), payload.get("reason"),
+                                     payload.get("event_id"))
+        except lifecycle.LifecycleError as e:
+            self._send(e.status, {"ok": False, "error": str(e)})
+            return
+        except lifecycle.LifecycleUnavailable as e:
+            self._send(503, {"ok": False, "error": str(e)})
+            return
+        except OSError as e:
+            # A lock is already enforced in memory; only the persistence failed.
+            sys.stderr.write("[adapter] lifecycle state not persisted: %s\n" % e)
+            self._send(500, {"ok": False, "error": "lifecycle state could not be persisted"})
+            return
+        keys = [k for k in (result["user"], result["upn"]) if k]
+        cancelled = 0
+        if result["state"] != "active":
+            HEAVY_SCHEDULER.cancel_user(keys)
+            cancelled = JOBS.cancel_user(keys)
+        forget = getattr(DIRECTORY, "forget", None)
+        if forget:
+            for key in keys:
+                forget(key)
+        sys.stderr.write("[adapter] lifecycle: user=%r event=%s -> %s (%d job(s) stopped)\n"
+                         % (result["user"], payload.get("event"), result["state"], cancelled))
+        self._send(200, dict(result, ok=True, cancelled_jobs=cancelled))
 
 
 def _ensure_tls_listener():
@@ -1995,6 +2191,11 @@ def main():
         scope.HEADER_OTHER_DRIVES,
         ENTITLEMENTS.path if ENTITLEMENTS else "off",
         "ON (demo, no per-user filter)" if SCOPE_ALL_DRIVES else "off"))
+    ident = IDENTITY.settings()
+    print("  Identity    :", "mode=%s header=%s keys=%s | directory=%s | HTTP scope=%s" % (
+        ident["mode"], ident["header"], ",".join(ident["keys"]) or "none",
+        DIRECTORY.source, HTTP_SCOPE))
+    print("  Lifecycle   :", LIFECYCLE.path or "(in-memory: events are lost on restart)")
     print("  Provisioning:", "%s | TLS=%s" % (
         "initialized" if PROVISIONER.is_initialized() else "not initialized",
         "on" if TLS_ENABLED else "off"))
