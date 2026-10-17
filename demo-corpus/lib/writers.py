@@ -105,13 +105,13 @@ _DOCX_STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </w:styles>"""
 
 
-def _docx_core(title: str) -> str:
+def _docx_core(title: str, creator: str) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/">'
-        "<dc:title>%s</dc:title><dc:creator>Voltara Energy Group</dc:creator>"
-        "</cp:coreProperties>" % escape(title)
+        "<dc:title>%s</dc:title><dc:creator>%s</dc:creator>"
+        "</cp:coreProperties>" % (escape(title), escape(creator))
     )
 
 
@@ -122,7 +122,8 @@ def _docx_paragraph(text: str, style: str | None = None) -> str:
     return '<w:p>%s<w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>' % (ppr, escape(text))
 
 
-def write_docx(path: str, title: str, blocks: list[tuple[str, str]]) -> int:
+def write_docx(path: str, title: str, blocks: list[tuple[str, str]],
+               creator: str = "Voltara Energy Group") -> int:
     """blocks: list of (kind, text) where kind is 'h1' | 'h2' | 'p' | ''."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     style_map = {"h1": "Heading1", "h2": "Heading2"}
@@ -138,7 +139,7 @@ def write_docx(path: str, title: str, blocks: list[tuple[str, str]]) -> int:
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", _DOCX_CONTENT_TYPES)
         z.writestr("_rels/.rels", _DOCX_RELS)
-        z.writestr("docProps/core.xml", _docx_core(title))
+        z.writestr("docProps/core.xml", _docx_core(title, creator))
         z.writestr("word/_rels/document.xml.rels", _DOCX_DOC_RELS)
         z.writestr("word/styles.xml", _DOCX_STYLES)
         z.writestr("word/document.xml", document)
