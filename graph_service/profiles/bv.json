@@ -1,0 +1,51 @@
+{
+  "id": "bv",
+  "version": 1,
+  "name": {"en": "Corrections and law enforcement", "hu": "Büntetés-végrehajtás és rendészet", "da": "Kriminalforsorg og retshåndhævelse", "de": "Justizvollzug und Strafverfolgung"},
+  "description": "People, institutions, cells, visits, calls, transfers and incidents. Hungarian identifier formats. Shows connections; it never scores or predicts individuals.",
+  "entity_subtypes": [
+    {"id": "inmate", "type": "person", "label": {"en": "Inmate", "hu": "Fogvatartott", "da": "Indsat", "de": "Gefangener"}},
+    {"id": "visitor", "type": "person", "label": {"en": "Visitor", "hu": "Látogató", "da": "Besøgende", "de": "Besucher"}},
+    {"id": "staff", "type": "person", "label": {"en": "Staff member", "hu": "Munkatárs", "da": "Medarbejder", "de": "Mitarbeiter"}},
+    {"id": "institution", "type": "place", "label": {"en": "Institution", "hu": "Intézet", "da": "Institution", "de": "Anstalt"}},
+    {"id": "cell", "type": "place", "label": {"en": "Cell", "hu": "Zárka", "da": "Celle", "de": "Haftraum"}},
+    {"id": "address", "type": "place", "label": {"en": "Address", "hu": "Cím", "da": "Adresse", "de": "Adresse"}},
+    {"id": "phone", "type": "identifier", "label": {"en": "Phone number", "hu": "Telefonszám", "da": "Telefonnummer", "de": "Telefonnummer"}},
+    {"id": "id_card", "type": "identifier", "label": {"en": "Identity card number", "hu": "Személyi igazolvány száma", "da": "ID-kortnummer", "de": "Ausweisnummer"}},
+    {"id": "vehicle_plate", "type": "identifier", "label": {"en": "Licence plate", "hu": "Forgalmi rendszám", "da": "Nummerplade", "de": "Kennzeichen"}},
+    {"id": "bank_account", "type": "identifier", "label": {"en": "Bank account", "hu": "Bankszámlaszám", "da": "Bankkonto", "de": "Bankkonto"}},
+    {"id": "case_number", "type": "identifier", "label": {"en": "Case number", "hu": "Ügyszám", "da": "Sagsnummer", "de": "Aktenzeichen"}},
+    {"id": "email", "type": "identifier", "label": {"en": "E-mail address", "hu": "E-mail-cím", "da": "E-mailadresse", "de": "E-Mail-Adresse"}},
+    {"id": "incident", "type": "event", "label": {"en": "Incident", "hu": "Rendkívüli esemény", "da": "Hændelse", "de": "Vorfall"}},
+    {"id": "meeting", "type": "event", "label": {"en": "Meeting", "hu": "Találkozó", "da": "Møde", "de": "Treffen"}}
+  ],
+  "identifier_patterns": [
+    {"id": "phone_hu", "subtype": "phone", "label": {"en": "Hungarian phone number", "hu": "Magyar telefonszám", "da": "Ungarsk telefonnummer", "de": "Ungarische Telefonnummer"}, "regex": "(?<![\\d+])(?:\\+36|06)[ /-]?(?:1|[2-9]\\d)[ /-]?\\d{3}[ /-]?\\d{3,4}(?!\\d)", "normalize": "phone_hu"},
+    {"id": "id_card_hu", "subtype": "id_card", "label": {"en": "Hungarian identity card", "hu": "Magyar személyi igazolvány", "da": "Ungarsk ID-kort", "de": "Ungarischer Personalausweis"}, "regex": "\\b\\d{6}[A-Z]{2}\\b", "normalize": "upper"},
+    {"id": "plate_hu", "subtype": "vehicle_plate", "label": {"en": "Hungarian licence plate", "hu": "Magyar rendszám", "da": "Ungarsk nummerplade", "de": "Ungarisches Kennzeichen"}, "regex": "\\b(?:[A-Z]{3}-\\d{3}|[A-Z]{2} ?[A-Z]{2}-\\d{3})\\b", "normalize": "nospace_upper"},
+    {"id": "bank_account_hu", "subtype": "bank_account", "label": {"en": "Hungarian bank account", "hu": "Magyar bankszámlaszám", "da": "Ungarsk bankkonto", "de": "Ungarisches Bankkonto"}, "regex": "\\b\\d{8}-\\d{8}(?:-\\d{8})?\\b", "normalize": "digits"},
+    {"id": "case_number", "subtype": "case_number", "label": {"en": "Case or file number", "hu": "Ügy- vagy iktatószám", "da": "Sags- eller journalnummer", "de": "Akten- oder Geschäftszeichen"}, "regex": "\\b[A-Z]{1,4}-\\d{4}/\\d{1,6}\\b", "normalize": "upper"},
+    {"id": "email", "subtype": "email", "label": {"en": "E-mail address", "hu": "E-mail-cím", "da": "E-mailadresse", "de": "E-Mail-Adresse"}, "regex": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "normalize": "lower"}
+  ],
+  "relation_types": [
+    {"id": "PLACED_IN", "label": {"en": "Placed in", "hu": "Elhelyezve", "da": "Anbragt i", "de": "Untergebracht in"}, "from": ["person"], "to": ["place"], "presence": true, "synonyms": ["elhelyezés", "elhelyezve", "befogadás"]},
+    {"id": "TRANSFERRED_TO", "label": {"en": "Transferred to", "hu": "Átszállítva", "da": "Overført til", "de": "Verlegt nach"}, "from": ["person"], "to": ["place"], "synonyms": ["átszállítom", "átszállítás", "áthelyezés"]},
+    {"id": "VISITED", "label": {"en": "Visited", "hu": "Meglátogatta", "da": "Besøgte", "de": "Besuchte"}, "from": ["person"], "to": ["person"], "synonyms": ["látogatás", "meglátogatta", "látogató"]},
+    {"id": "CALLED", "label": {"en": "Called", "hu": "Felhívta", "da": "Ringede til", "de": "Rief an"}, "from": ["person"], "to": ["identifier", "person"], "synonyms": ["hívott szám", "telefonált", "felhívta"]},
+    {"id": "INVOLVED_IN", "label": {"en": "Involved in", "hu": "Érintett", "da": "Involveret i", "de": "Beteiligt an"}, "from": ["person"], "to": ["event"], "presence": true, "synonyms": ["érintett", "jelen volt", "részt vett"]},
+    {"id": "WORKS_FOR", "label": {"en": "Works for", "hu": "Alkalmazottja", "da": "Ansat hos", "de": "Arbeitet für"}, "from": ["person"], "to": ["organization"], "synonyms": ["alkalmazott", "munkakör", "dolgozik"]},
+    {"id": "RELATIVE_OF", "label": {"en": "Relative of", "hu": "Rokona", "da": "Slægtning til", "de": "Verwandt mit"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["testvére", "élettársa", "házastársa", "anyja", "unokatestvére", "nagybátyja", "kapcsolattartó"]},
+    {"id": "MET", "label": {"en": "Met", "hu": "Találkozott", "da": "Mødtes med", "de": "Traf"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["találkozott", "egyeztetett"]},
+    {"id": "USES", "holding": true, "label": {"en": "Uses", "hu": "Használja", "da": "Bruger", "de": "Nutzt"}, "from": ["person", "organization"], "to": ["identifier", "object"], "synonyms": ["használja", "üzemben tartó", "használó", "birtokában", "gépjárművel érkezett"]},
+    {"id": "OWNS", "holding": true, "label": {"en": "Owns", "hu": "Tulajdonosa", "da": "Ejer", "de": "Besitzt"}, "from": ["person", "organization"], "to": ["identifier", "object", "place"], "synonyms": ["céges gépjármű", "tulajdonában"]},
+    {"id": "RESIDES_AT", "holding": true, "label": {"en": "Address", "hu": "Lakcíme / székhelye", "da": "Adresse", "de": "Anschrift"}, "from": ["person", "organization"], "to": ["place"], "synonyms": ["lakcím", "székhely"]},
+    {"id": "LOCATED_AT", "label": {"en": "Was at", "hu": "Tartózkodott", "da": "Var på", "de": "War in"}, "from": ["person"], "to": ["place"], "presence": true, "synonyms": ["címen", "tartózkodott"]},
+    {"id": "PART_OF", "label": {"en": "Part of", "hu": "Része", "da": "Del af", "de": "Teil von"}, "from": ["place", "organization"], "to": ["place", "organization"], "synonyms": []}
+  ],
+  "resolution": {
+    "person": {"strong_keys": ["id_card"], "match_fields": ["name", "dob", "mother_name", "birthplace"], "auto_merge": 0.97, "review": 0.7},
+    "organization": {"strong_keys": [], "match_fields": ["name", "address"], "auto_merge": 0.95, "review": 0.75},
+    "place": {"strong_keys": [], "match_fields": ["name"], "auto_merge": 0.97, "review": 0.8}
+  },
+  "cooccurrence": {"window": "sentence", "max_entities": 12}
+}

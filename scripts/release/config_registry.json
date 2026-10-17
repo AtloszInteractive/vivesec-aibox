@@ -2373,6 +2373,89 @@
       "change": "install",
       "secret": false,
       "internal": false
+    },
+    {
+      "name": "GRAPH_HOST",
+      "component": "graph",
+      "category": "network",
+      "type": "string",
+      "default": "127.0.0.1",
+      "allowed": "bind host/address",
+      "fail_safe": "Invalid bind addresses raise OSError when the service starts.",
+      "impact": "Graph service bind address; keep it on loopback or an internal network (the adapter is the only caller).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_PORT",
+      "component": "graph",
+      "category": "network",
+      "type": "int",
+      "default": "8095",
+      "allowed": "1-65535",
+      "fail_safe": "Unset uses the code default; non-integer values raise ValueError and abort startup.",
+      "impact": "Graph service TCP port.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "min": 1,
+      "max": 65535
+    },
+    {
+      "name": "GRAPH_API_KEY",
+      "component": "graph",
+      "category": "security",
+      "type": "secret",
+      "default": null,
+      "allowed": "non-empty API key or empty",
+      "fail_safe": "Empty disables API-key enforcement (acceptable only on loopback); non-empty values must match exactly.",
+      "impact": "API key the adapter must send in X-API-Key.",
+      "change": "restart",
+      "secret": true,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_PROFILE",
+      "component": "graph",
+      "category": "retrieval",
+      "type": "string",
+      "default": "generic",
+      "allowed": "bundled template id (generic, bv, manufacturing) or a profile .json path",
+      "fail_safe": "A missing or invalid profile stops the service at startup; there is no silent fallback.",
+      "impact": "Profile used when no administrator profile has been saved yet.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_PROFILE_PATH",
+      "component": "graph",
+      "category": "storage",
+      "type": "path",
+      "default": "",
+      "allowed": "file path or empty",
+      "fail_safe": "Empty keeps administrator profile changes in memory only (lost on restart); an invalid saved file stops the service at startup.",
+      "impact": "Where the administrator's profile is saved (previous version kept as .prev); takes precedence over GRAPH_PROFILE.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_STORE",
+      "component": "graph",
+      "category": "storage",
+      "type": "enum",
+      "default": "memory",
+      "allowed": "memory",
+      "fail_safe": "Any other value stops the service at startup (the Neo4j store is not wired yet).",
+      "impact": "Graph store backend; memory is not persistent.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "memory"
+      ]
     }
   ]
 }

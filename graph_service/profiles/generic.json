@@ -1,0 +1,35 @@
+{
+  "id": "generic",
+  "version": 1,
+  "name": {"en": "General", "hu": "Általános", "da": "Generel", "de": "Allgemein"},
+  "description": "Core types only: people, organisations, places, identifiers, events and objects with general-purpose relations. Works on unknown data; refine it into an industry profile.",
+  "entity_subtypes": [
+    {"id": "phone", "type": "identifier", "label": {"en": "Phone number", "hu": "Telefonszám", "da": "Telefonnummer", "de": "Telefonnummer"}},
+    {"id": "email", "type": "identifier", "label": {"en": "E-mail address", "hu": "E-mail-cím", "da": "E-mailadresse", "de": "E-Mail-Adresse"}},
+    {"id": "iban", "type": "identifier", "label": {"en": "Bank account (IBAN)", "hu": "Bankszámla (IBAN)", "da": "Bankkonto (IBAN)", "de": "Bankkonto (IBAN)"}},
+    {"id": "address", "type": "place", "label": {"en": "Address", "hu": "Cím", "da": "Adresse", "de": "Adresse"}}
+  ],
+  "identifier_patterns": [
+    {"id": "phone_intl", "subtype": "phone", "label": {"en": "Phone number", "hu": "Telefonszám", "da": "Telefonnummer", "de": "Telefonnummer"}, "regex": "(?<![\\d+])\\+\\d{2,3}[ /-]?\\d{1,3}[ /-]?\\d{3}[ /-]?\\d{3,4}(?!\\d)", "normalize": "digits"},
+    {"id": "email", "subtype": "email", "label": {"en": "E-mail address", "hu": "E-mail-cím", "da": "E-mailadresse", "de": "E-Mail-Adresse"}, "regex": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "normalize": "lower"},
+    {"id": "iban", "subtype": "iban", "label": {"en": "IBAN", "hu": "IBAN", "da": "IBAN", "de": "IBAN"}, "regex": "\\b[A-Z]{2}\\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\\b", "normalize": "nospace_upper"}
+  ],
+  "relation_types": [
+    {"id": "WORKS_FOR", "label": {"en": "Works for", "hu": "Alkalmazottja", "da": "Ansat hos", "de": "Arbeitet für"}, "from": ["person"], "to": ["organization"], "synonyms": ["employee of", "alkalmazott", "munkatársa", "dolgozik"]},
+    {"id": "MEMBER_OF", "label": {"en": "Member of", "hu": "Tagja", "da": "Medlem af", "de": "Mitglied von"}, "from": ["person", "organization"], "to": ["organization"], "synonyms": ["tag", "tagja"]},
+    {"id": "RELATIVE_OF", "label": {"en": "Relative of", "hu": "Rokona", "da": "Slægtning til", "de": "Verwandt mit"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["testvére", "élettársa", "házastársa", "anyja", "apja", "unokatestvére"]},
+    {"id": "MET", "label": {"en": "Met", "hu": "Találkozott", "da": "Mødtes med", "de": "Traf"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["találkozott", "egyeztetett", "megbeszélést tartott"]},
+    {"id": "CONTACTED", "label": {"en": "Contacted", "hu": "Kapcsolatba lépett", "da": "Kontaktede", "de": "Kontaktierte"}, "from": ["person", "organization"], "to": ["person", "organization", "identifier"], "synonyms": ["felhívta", "telefonált", "írt neki", "e-mailt küldött"]},
+    {"id": "USES", "holding": true, "label": {"en": "Uses", "hu": "Használja", "da": "Bruger", "de": "Nutzt"}, "from": ["person", "organization"], "to": ["identifier", "object"], "synonyms": ["használja", "üzemben tartója"]},
+    {"id": "OWNS", "holding": true, "label": {"en": "Owns", "hu": "Tulajdonosa", "da": "Ejer", "de": "Besitzt"}, "from": ["person", "organization"], "to": ["object", "identifier", "organization", "place"], "synonyms": ["tulajdonában", "tulajdonosa"]},
+    {"id": "RESIDES_AT", "holding": true, "label": {"en": "Address", "hu": "Lakcíme / székhelye", "da": "Adresse", "de": "Anschrift"}, "from": ["person", "organization"], "to": ["place"], "synonyms": ["lakik", "lakcíme", "székhelye"]},
+    {"id": "LOCATED_AT", "label": {"en": "Was at", "hu": "Tartózkodott", "da": "Var på", "de": "War in"}, "from": ["person", "organization", "object"], "to": ["place"], "presence": true, "synonyms": ["tartózkodott", "jelen volt"]},
+    {"id": "PARTICIPATED_IN", "label": {"en": "Took part in", "hu": "Részt vett", "da": "Deltog i", "de": "Nahm teil an"}, "from": ["person", "organization"], "to": ["event"], "presence": true, "synonyms": ["részt vett", "érintett"]},
+    {"id": "PART_OF", "label": {"en": "Part of", "hu": "Része", "da": "Del af", "de": "Teil von"}, "from": ["organization", "place", "object"], "to": ["organization", "place", "object"], "synonyms": ["része", "leányvállalata"]}
+  ],
+  "resolution": {
+    "person": {"strong_keys": [], "match_fields": ["name", "dob", "mother_name", "birthplace"], "auto_merge": 0.95, "review": 0.7},
+    "organization": {"strong_keys": [], "match_fields": ["name", "address"], "auto_merge": 0.95, "review": 0.75}
+  },
+  "cooccurrence": {"window": "sentence", "max_entities": 25}
+}

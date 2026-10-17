@@ -160,6 +160,17 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `VIVESEC_PORT` | `8000` |  | 1-65535 | restart | TCP port for legacy PoC HTTP bridge. | Unset uses the code default; non-integer values raise ValueError and abort startup/import. |
 | `VIVESEC_REPEAT_PENALTY` | `1.15` |  | positive repeat_penalty (not enforced) | restart | Repeat penalty sent by PoC generation layer. | Unset or empty uses the code default; non-float values raise ValueError and abort startup/import. |
 
+## Graph service
+
+| Parameter | Default | Image | Allowed | Change | Impact | Invalid value |
+| --- | --- | --- | --- | --- | --- | --- |
+| `GRAPH_API_KEY` (secret) | *unset* |  | non-empty API key or empty | restart | API key the adapter must send in X-API-Key. | Empty disables API-key enforcement (acceptable only on loopback); non-empty values must match exactly. |
+| `GRAPH_HOST` | `127.0.0.1` |  | bind host/address | restart | Graph service bind address; keep it on loopback or an internal network (the adapter is the only caller). | Invalid bind addresses raise OSError when the service starts. |
+| `GRAPH_PORT` | `8095` |  | 1-65535 | restart | Graph service TCP port. | Unset uses the code default; non-integer values raise ValueError and abort startup. |
+| `GRAPH_PROFILE` | `generic` |  | bundled template id (generic, bv, manufacturing) or a profile .json path | restart | Profile used when no administrator profile has been saved yet. | A missing or invalid profile stops the service at startup; there is no silent fallback. |
+| `GRAPH_PROFILE_PATH` | *unset* |  | file path or empty | restart | Where the administrator's profile is saved (previous version kept as .prev); takes precedence over GRAPH_PROFILE. | Empty keeps administrator profile changes in memory only (lost on restart); an invalid saved file stops the service at startup. |
+| `GRAPH_STORE` | `memory` |  | memory | restart | Graph store backend; memory is not persistent. | Any other value stops the service at startup (the Neo4j store is not wired yet). |
+
 ## Shared (several components)
 
 | Parameter | Default | Image | Allowed | Change | Impact | Invalid value |

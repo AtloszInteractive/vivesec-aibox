@@ -21,7 +21,7 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 REGISTRY_PATH = os.path.join(HERE, "config_registry.json")
 DOC_PATH = os.path.join(ROOT, "CONFIGURATION.md")
 
-COMPONENTS = ("adapter", "rag", "shared", "ui", "ui-build", "install")
+COMPONENTS = ("adapter", "rag", "graph", "shared", "ui", "ui-build", "install")
 CATEGORIES = {"network", "security", "scope", "storage", "model", "retrieval", "generation",
               "chat", "jobs", "sync", "files", "voice", "discovery", "pairing", "limits",
               "install", "build", "dev"}
@@ -29,15 +29,15 @@ TYPES = {"int", "float", "bool", "enum", "string", "path", "url", "list", "secre
 CHANGES = {"install", "restart", "reindex"}
 REQUIRED = ("name", "component", "category", "type", "default", "allowed", "fail_safe",
             "impact", "change", "secret", "internal")
-SOURCE_DIRS = ("adapter", "rag_service", "poc")
-PARAM_RE = re.compile(r"""["']((?:ADAPTER|RAG|VIVESEC|OLLAMA)_[A-Z0-9_]+)["']""")
+SOURCE_DIRS = ("adapter", "rag_service", "graph_service", "poc")
+PARAM_RE = re.compile(r"""["']((?:ADAPTER|RAG|GRAPH|VIVESEC|OLLAMA)_[A-Z0-9_]+)["']""")
 # String literals that match the pattern but are not environment variables.
 NOT_PARAMETERS = {"ollama_running", "vivesec_data"}
 DOCKERFILES = {"adapter": "adapter/Dockerfile", "rag": "rag_service/Dockerfile"}
 INSTALL_CONF = "scripts/jetson/install/install.conf.example"
 # Prefixes the runtime validator treats as ours: an unregistered name with one
 # of these is almost certainly a typo that silently leaves a default in force.
-OWN_PREFIXES = ("ADAPTER_", "RAG_", "VIVESEC_")
+OWN_PREFIXES = ("ADAPTER_", "RAG_", "GRAPH_", "VIVESEC_")
 TRUE_STRINGS = {"1", "true", "yes", "on"}
 FALSE_STRINGS = {"0", "false", "no", "off", ""}
 
@@ -198,7 +198,8 @@ def _cell(value):
 
 def render(registry=None):
     registry = registry or load()
-    titles = {"adapter": "Adapter", "rag": "RAG service", "shared": "Shared (several components)",
+    titles = {"adapter": "Adapter", "rag": "RAG service", "graph": "Graph service",
+              "shared": "Shared (several components)",
               "ui": "Web UI server", "ui-build": "Web UI build", "install": "Installation kit"}
     lines = [
         "# Configuration register",
