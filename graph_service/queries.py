@@ -7,6 +7,7 @@ hint at hidden nodes or edges.
 """
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections import Counter, deque
 
@@ -14,6 +15,9 @@ from model import IDENTIFIER, ORGANIZATION, PERSON
 
 MAX_HOPS = 8
 MAX_RESULTS = 500
+# A name's last word may carry a case ending in the question ("Kovács Jánoshoz").
+MAX_SUFFIX = 5
+MIN_NAME_CHARS = 4
 
 
 def fold(text: str) -> str:
@@ -42,6 +46,42 @@ def find_entities(view, text: str, types=None, limit: int = 20) -> list[dict]:
             hits.append((-best, -n["mentions"], n["label"], n))
     hits.sort(key=lambda h: h[:3])
     return [h[3] for h in hits[:max(1, min(limit, MAX_RESULTS))]]
+
+
+def mentioned_entities(view, text: str, patterns=(), types=None, limit: int = 10) -> list[dict]:
+    """Visible entities a free-text question names, in order of appearance.
+
+    Names match word by word (accent- and case-insensitive); the last word may
+    carry a short ending, the others must match exactly. Identifiers are found
+    with the profile's patterns and looked up by normalized value.
+    `patterns`: [(subtype, compiled regex, normalizer)].
+    """
+    tokens = [(m.start(), m.group(0)) for m in re.finditer(r"\w+", fold(text))]
+    words_at = [w for _, w in tokens]
+    prefixes = {w[:k] for w in words_at for k in range(3, len(w) + 1)}
+    found: dict[str, tuple[int, int, dict]] = {}
+    for n in view.nodes(types):
+        for name in {n["label"], *n["aliases"]}:
+            words = fold(name).split()
+            if not words or len(" ".join(words)) < MIN_NAME_CHARS or words[-1] not in prefixes:
+                continue
+            size = len(words)
+            for i in range(len(words_at) - size + 1):
+                window = words_at[i:i + size]
+                last = window[-1]
+                if window[:-1] == words[:-1] and last.startswith(words[-1]) \
+                        and len(last) - len(words[-1]) <= MAX_SUFFIX:
+                    pos = tokens[i][0]
+                    if n["id"] not in found or (-size, pos) < found[n["id"]][:2]:
+                        found[n["id"]] = (-size, pos, n)
+                    break
+    for subtype, rx, normalizer in patterns:
+        for m in rx.finditer(text):
+            node = view.node("id:%s:%s" % (subtype, normalizer(m.group(0))))
+            if node is not None and node["id"] not in found:
+                found[node["id"]] = (-9, m.start(), node)
+    ordered = sorted(found.values(), key=lambda x: (x[1], x[0]))
+    return [n for _, _, n in ordered[:max(1, min(limit, MAX_RESULTS))]]
 
 
 def shortest_path(view, a: str, b: str, max_hops: int = 6) -> dict | None:

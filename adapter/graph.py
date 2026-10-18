@@ -31,8 +31,8 @@ GRAPH_EXTS = frozenset((
     ".txt", ".md", ".markdown", ".text", ".csv", ".tsv", ".json", ".log", ".rst", ".yaml",
     ".yml", ".ini", ".xml", ".pdf", ".docx", ".pptx", ".ppt", ".xls", ".html", ".htm", ".rtf",
     ".xlsx", ".xlsm"))
-QUERIES = frozenset(("find", "entity", "path", "common", "copresence", "shared", "timeline",
-                     "neighborhood", "communities", "ranking"))
+QUERIES = frozenset(("find", "mentioned", "entity", "path", "common", "copresence",
+                     "shared", "timeline", "neighborhood", "communities", "ranking"))
 RECENT = 200
 
 

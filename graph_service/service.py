@@ -11,7 +11,7 @@ request and sends it with every query (corpus_ids + access).
            POST /graph/entity/merge
   extract  POST /ingest/document (bytes, extracted in the background)  /ingest/status
            POST /review/list  /review/decide (possible same-person pairs)
-  queries  POST /query/find  /query/entity  /query/path  /query/common
+  queries  POST /query/find  /query/mentioned  /query/entity  /query/path  /query/common
            POST /query/copresence  /query/shared  /query/timeline
            POST /query/neighborhood  /query/communities  /query/ranking
 
@@ -29,6 +29,7 @@ import base64
 import binascii
 import json
 import os
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -135,6 +136,16 @@ def _run_query(state: State, view, name: str, body: dict) -> dict:
         types = _types(body, "types", CORE_TYPES)
         return {"entities": queries.find_entities(view, text, set(types),
                                                   _int(body, "limit", 20, 1, 200))}
+    if name == "mentioned":
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 4000:
+            raise HttpError(400, "text is required (at most 4000 characters)")
+        patterns = [(p["subtype"], re.compile(p["regex"]),
+                     lambda v, n=p["normalize"]: domain_profile.normalize_value(v, n))
+                    for p in state.profile["identifier_patterns"]]
+        types = _types(body, "types", CORE_TYPES)
+        return {"entities": queries.mentioned_entities(view, text, patterns, set(types),
+                                                       _int(body, "limit", 10, 1, 50))}
     if name == "entity":
         node = view.node(_id(body, "id"))
         if node is None:

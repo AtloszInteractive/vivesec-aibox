@@ -128,6 +128,16 @@ class IngestWorkerTest(unittest.TestCase):
         self.assertEqual(1, out["dropped"])
         self.assertEqual(["d2"], sorted(store.documents))
 
+    def test_entities_named_in_a_question(self):
+        self.ingest_both()
+        out = self.post("/query/mentioned", {"corpus_ids": ["c2"],
+                                             "text": "Mikor találkozott Kovács Jánossal Nagy Éva?"})
+        self.assertEqual(["Kovács János", "Nagy Éva"], [e["label"] for e in out["entities"]])
+        self.assertEqual(["/c2/d2.txt"],
+                         [d["source_path"] for d in out["documents"].values()])
+        out = self.post("/query/mentioned", {"corpus_ids": ["c2"], "text": "Kovácsné jött"})
+        self.assertEqual([], out["entities"])
+
     def test_disabled_extraction_answers_503(self):
         self.state.worker = None
         with self.assertRaises(service.HttpError) as ctx:

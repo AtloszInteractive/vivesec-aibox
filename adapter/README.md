@@ -398,6 +398,13 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `access` itself (the client's own values are overwritten). Every document an
   answer cites is re-checked against the current policy; a hidden one (the
   graph's ACL copy lags) fails the call with 503 and schedules a resync.
+- **Chat**: a plain question (no quick action) that names entities the graph
+  knows (`/query/mentioned`: names with Hungarian case endings, identifier
+  patterns) gets the path between the first two and their direct relations as
+  extra contexts (`graph_context.py`), each with its verbatim quote, document
+  and page, ahead of the RAG excerpts; the response carries `graph`
+  `{entities, facts}`. Facts whose documents the caller may not see are dropped.
+  `ADAPTER_GRAPH_CHAT=off` disables it; a graph error never blocks the answer.
 - **Progress**: `POST /api/v1/ui/graph/status` lists only files the caller may
   see; queue sizes and totals are box-wide numbers.
 - **Review and profile**: `/api/v1/ui/graph/review/list` (scoped),

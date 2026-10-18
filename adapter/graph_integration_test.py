@@ -283,6 +283,26 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertIn(PUBLIC, paths)
         self.assertNotIn(HIDDEN, paths)
 
+    def test_chat_gets_graph_facts_within_the_callers_access(self):
+        import llm
+
+        def echo(query, contexts, **_kw):
+            return "\n".join(c.get("text") or "" for c in contexts) or "NO-CONTEXT", "echo"
+
+        with patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False), \
+                patch.object(llm, "condense", lambda q, h, lang=None: (q, False)):
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Kivel találkozott Kovács János?"}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertEqual(["Kovács János"], out["graph"]["entities"])
+            self.assertRegex(out["answer"], r"Kovács János -- \w+ -- Nagy Éva")
+            self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+            self.assertIn(PUBLIC, {h["path"] for h in out["hits"]})
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Kivel találkozott Titkos Tamás?"}, user="hanna")
+            self.assertIn("Titkos Tamás", out["answer"])
+            self.assertIn(HIDDEN, {h["path"] for h in out["hits"]})
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

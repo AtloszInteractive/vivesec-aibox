@@ -102,6 +102,7 @@ import factory_reset  # noqa: E402
 import feedback  # noqa: E402
 import filestore  # noqa: E402
 import graph  # noqa: E402
+import graph_context  # noqa: E402
 import gpu_gate  # noqa: E402
 import identity  # noqa: E402
 import jobstore  # noqa: E402
@@ -469,6 +470,11 @@ GRAPH_FORWARD = graph.Forwarder.from_env(GRAPH, _flat_acl)
 # nobody through the UI.
 GRAPH_ADMINS = frozenset(u.strip().casefold() for u in
                          os.environ.get("ADAPTER_GRAPH_ADMINS", "").split(",") if u.strip())
+# Plain chat questions get the graph's relations among the named entities;
+# only an explicit off disables it.
+GRAPH_CHAT = (os.environ.get("ADAPTER_GRAPH_CHAT", "on").strip().lower() != "off")
+GRAPH_FACTS = graph_context.GraphFacts(
+    lambda: GRAPH, max_facts=max(1, int(os.environ.get("ADAPTER_GRAPH_CHAT_FACTS", "12") or 12)))
 
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
@@ -974,6 +980,18 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "include_debug": True})
         contexts = res.get("contexts", [])
     contexts = _visible_contexts(contexts, access)
+    graph_info = None
+    if action is None and not chat_only and GRAPH_CHAT and GRAPH.enabled:
+        check = _visible(access)
+        try:
+            facts, graph_info = GRAPH_FACTS.contexts(
+                retrieval_query,
+                {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
+                lambda path: req_scope.contains_path(path) and check(path), lang)
+            contexts = facts + contexts
+        except graph.GraphError as e:
+            # The answer still comes from the documents; the graph is an extra.
+            sys.stderr.write("[adapter] graph facts unavailable: %s\n" % e)
     hits = []
     for i, c in enumerate(contexts, 1):
         snippet = " ".join((c.get("text") or "")[:200].split())
@@ -1066,6 +1084,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         result["retrieval_query"] = retrieval_query
     if document is not None:
         result["document"] = document
+    if graph_info is not None:
+        result["graph"] = graph_info
     if conversation_id:
         result["conversation_id"] = conversation_id
     # Keep the trace so a later /ui/feedback rating can be stored WITH what the

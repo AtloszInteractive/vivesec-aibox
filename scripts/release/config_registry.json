@@ -2798,6 +2798,36 @@
       "change": "restart",
       "secret": false,
       "internal": false
+    },
+    {
+      "name": "ADAPTER_GRAPH_CHAT",
+      "component": "adapter",
+      "category": "chat",
+      "type": "enum",
+      "default": "on",
+      "allowed": "on | off",
+      "values": [
+        "on",
+        "off"
+      ],
+      "fail_safe": "Only an explicit off disables it; a graph error leaves the answer to the documents.",
+      "impact": "With GRAPH_URL set, plain chat questions that name known entities get their graph relations (with quotes and sources) as extra context.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_GRAPH_CHAT_FACTS",
+      "component": "adapter",
+      "category": "chat",
+      "type": "int",
+      "default": "12",
+      "allowed": "integer >= 1",
+      "fail_safe": "More facts use more of the model's context window.",
+      "impact": "Most graph relations added to one chat question.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
     }
   ]
 }
