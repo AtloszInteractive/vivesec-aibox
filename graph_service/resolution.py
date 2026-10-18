@@ -59,6 +59,8 @@ class Resolver:
         self.by_initial: dict[str, set[str]] = {}
         self.by_key: dict[str, set[str]] = {}
         self.review: list[dict] = []
+        self._pending: set[str] = set()
+        self._pending_n = 0
 
     def strong_key_subtypes(self) -> set[str]:
         return set((self.rules.get("person") or {}).get("strong_keys") or [])
@@ -179,9 +181,22 @@ class Resolver:
                 target = scored[0][2]
                 self.remember_person(target, ent.names, attrs, keys)
                 return target
-            for score, why, pid in scored:
-                if score >= review:
+            # Review pairs go to the best-scoring earlier people, and to people that
+            # are themselves waiting for review only when nobody else fits: one
+            # same-name person mentioned in ten notes gives ten pairs, not 45.
+            if len(self.review) != self._pending_n:  # review may be refilled from outside
+                self._pending = {item["a"] for item in self.review}
+                self._pending_n = len(self.review)
+            pending = self._pending
+            candidates = [s for s in scored if s[0] >= review]
+            settled = [s for s in candidates if s[2] not in pending]
+            candidates = settled or candidates
+            best = candidates[0][0] if candidates else 0.0
+            for score, why, pid in candidates:
+                if score == best:
                     self.review.append({"a": new_id, "b": pid, "score": score, "reason": why,
                                         "doc_id": doc_id, "names": sorted(ent.names)})
+                    self._pending.add(new_id)
+                    self._pending_n += 1
             self.remember_person(new_id, ent.names, attrs, keys)
             return new_id

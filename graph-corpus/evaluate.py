@@ -10,6 +10,8 @@ Reports, over the documents that were processed:
                     endpoints within the document that states them.
 Precision counts every extracted relation the key does not hold as wrong, so
 it is a lower bound: a correct relation the generator did not plan also counts.
+Relations to identifiers the key does not model at all (ID cards) are not
+judged and reported separately.
 """
 from __future__ import annotations
 
@@ -130,6 +132,9 @@ def main() -> int:
                 doc_incident[d] = r["b"]
     per_type = defaultdict(Counter)
     per_kind = defaultdict(Counter)
+    unjudged = Counter()
+    known_values = {normalize_value(v, "phone_hu") for v in idx["phones"]} | {
+        normalize_value(v, "nospace_upper") for v in idx["plates"]}
     for k, it in processed.items():
         if k in scanned and it["stats"]["text"] != "ocr":
             continue
@@ -139,6 +144,13 @@ def main() -> int:
         got = [(r["type"], _endpoint_of_extracted(r["a"], ent_pid, doc_incident.get(k)),
                 _endpoint_of_extracted(r["b"], ent_pid, doc_incident.get(k)))
                for r in it["payload"]["relations"] if r["type"] != "CO_MENTIONED"]
+        judged = []
+        for g in got:
+            if any(e[0] == "val" and e[1] not in known_values for e in g[1:]):
+                unjudged[g[0]] += 1
+            else:
+                judged.append(g)
+        got = judged
         used = set()
         for t, a, b in gold:
             hit = next((i for i, (gt, ga, gb) in enumerate(got) if i not in used and gt == t
@@ -183,6 +195,8 @@ def main() -> int:
         tot.update(c)
     print("ALL relations: recall %s  precision %s" % (pct(tot["found"], tot["gold"]),
                                                       pct(tot["correct"], tot["extracted"])))
+    if unjudged:
+        print("not judged (identifiers outside the key): %s" % dict(unjudged))
     return 0
 
 

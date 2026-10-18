@@ -185,24 +185,29 @@ def _mapping_schema(profile: dict) -> dict:
 
 def _mapping_prompt(profile: dict) -> str:
     subtypes = "; ".join("%s (%s)" % (s["id"], s["type"]) for s in profile["entity_subtypes"])
-    rels = "\n".join("- %s: %s -> %s. %s" % (r["id"], "/".join(r["from"]), "/".join(r["to"]),
-                                             r["label"]["en"])
-                     for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
+    rels = "\n".join("- %s: %s -> %s. %s%s" % (
+        r["id"], "/".join(r["from"]), "/".join(r["to"]), r["label"]["en"],
+        (" Typical wording: " + ", ".join(r["synonyms"][:8])) if r["synonyms"] else "")
+        for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
     return (
         "You map the columns of a table to a knowledge graph. You see the header and sample "
         "rows; the same mapping is applied to every row.\n"
         "For EVERY column give one entry with `column` = the header text exactly and a role:\n"
         "- entity: the cell names a person, organization, place, identifier (phone, ID card, "
-        "plate, account, case number) or object; give entity_type and, if one fits, subtype "
-        "from: " + subtypes + "\n"
-        "- attribute: a property of the entity in column `of` (attribute: one of "
-        + ", ".join(ATTRIBUTE_KEYS) + ")\n"
+        "plate, account, case number) or object; give entity_type and a subtype from the list "
+        "only when the header or the cells show it: " + subtypes + "\n"
+        "- attribute: a property of the person in column `of`: birth_date, birth_place, "
+        "mother_name (the mother's name is an attribute, NOT a separate person), id_number "
+        "(personal ID number). Birth dates are always attributes, never ignore.\n"
         "- date / end_date: when the row's relations happened / ended\n"
         "- relation_label: free text describing the relation of the row (e.g. kinship)\n"
         "- ignore: anything else (durations, counts, remarks, serial numbers)\n"
-        "Then list the relations each row states between entity columns (`from`/`to` are "
+        "Then list the relations EVERY row states between entity columns (`from`/`to` are "
         "column headers), using only these types:\n" + rels + "\n"
-        "Use RELATED_TO only when none fits. Return JSON only."
+        "A register without a date column (subscribers, vehicles, residents) states who holds "
+        "or uses a phone, vehicle, document or address, not calls or visits. Do not add a "
+        "relation that holds only for some rows (e.g. kinship when a relation_label column "
+        "says acquaintance in other rows). Use RELATED_TO only when none fits. Return JSON only."
     )
 
 

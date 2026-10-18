@@ -134,6 +134,12 @@ class ResolverTest(unittest.TestCase):
         self.assertNotEqual(self.first, other)
         self.assertEqual([(other, self.first)], [(x["a"], x["b"]) for x in self.r.review])
 
+    def test_repeated_name_only_mentions_pair_with_the_settled_person(self):
+        later = [self.r.resolve("d%d" % i, person(["Kovács János"])) for i in range(10, 15)]
+        self.assertEqual(5, len(self.r.review))
+        self.assertEqual({self.first}, {x["b"] for x in self.r.review})
+        self.assertEqual(later, [x["a"] for x in self.r.review])
+
     def test_same_id_number_merges_even_with_a_typo(self):
         a = self.r.resolve("d4", person(["Tóth Ádám"], id_number="123456AB"))
         self.assertEqual(a, self.r.resolve("d5", person(["Tóht Ádám"], id_number="123456AB")))
