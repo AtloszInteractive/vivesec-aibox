@@ -1,0 +1,6 @@
+# Graph service runtime dependencies.
+#
+# The memory store and the HTTP layer are stdlib-only. The Neo4j driver is
+# needed only with GRAPH_STORE=neo4j (Apache-2.0; the Neo4j server itself is
+# Community Edition, GPLv3, run as a separate container).
+neo4j>=5.20,<6

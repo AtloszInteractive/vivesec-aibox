@@ -185,39 +185,80 @@ class MemoryGraphStore:
                     "mentions": len(self.mentions), "relations": len(self.relations)}
 
 
-class MemoryView:
-    """The part of the graph one caller may see, computed per request."""
+class GraphView:
+    """The part of the graph one caller may see, computed per request.
 
-    def __init__(self, store: MemoryGraphStore, scope, include_weak: bool):
-        self.s = store
+    Backends only fetch raw records (_load_*); every visibility decision is
+    made here, so the memory and the Neo4j store cannot drift apart."""
+
+    def __init__(self, scope, include_weak: bool):
+        self.scope = scope
         self.include_weak = include_weak
-        with store._lock:
-            self.docs = {d for d, doc in store.documents.items() if scope.allows(doc)}
+        self._doc_ok: dict[str, bool] = {}
+        self._docs: dict[str, Document] = {}
         self._node_cache: dict[str, dict | None] = {}
 
+    # backend hooks ---------------------------------------------------------
+    def _load_documents(self, doc_ids: list[str]) -> dict[str, Document]:
+        raise NotImplementedError
+
+    def _load_nodes(self, eids: list[str]) -> dict[str, tuple[Entity, list[Mention]]]:
+        raise NotImplementedError
+
+    def _load_relations_of(self, eid: str) -> list[Relation]:
+        raise NotImplementedError
+
+    def _iter_entity_ids(self, types=None):
+        raise NotImplementedError
+
+    def _iter_relations(self):
+        raise NotImplementedError
+
+    # shared logic ----------------------------------------------------------
+    def _check_docs(self, doc_ids) -> None:
+        missing = sorted({d for d in doc_ids if d not in self._doc_ok})
+        if not missing:
+            return
+        found = self._load_documents(missing)
+        for d in missing:
+            doc = found.get(d)
+            self._doc_ok[d] = doc is not None and self.scope.allows(doc)
+            if self._doc_ok[d]:
+                self._docs[d] = doc
+
+    def prefetch(self, eids) -> None:
+        missing = sorted({e for e in eids if e not in self._node_cache})
+        if not missing:
+            return
+        loaded = self._load_nodes(missing)
+        self._check_docs({m.doc_id for _, ms in loaded.values() for m in ms}
+                         | {a.doc_id for e, _ in loaded.values() for a in e.attributes})
+        for eid in missing:
+            self._node_cache[eid] = self._build_node(*loaded[eid]) if eid in loaded else None
+
+    def _build_node(self, e: Entity, mentions: list[Mention]) -> dict | None:
+        if e.status != "active":
+            return None
+        mentions = [m for m in mentions if self._doc_ok.get(m.doc_id)]
+        attrs = [a for a in e.attributes if self._doc_ok.get(a.doc_id)]
+        if not mentions and not attrs:
+            return None
+        surfaces = Counter(m.text for m in mentions)
+        name = [a.value for a in attrs if a.name == "name"]
+        label = surfaces.most_common(1)[0][0] if surfaces else (name[0] if name else e.id)
+        return {"id": e.id, "type": e.type, "subtype": e.subtype, "label": label,
+                "aliases": sorted(surfaces), "mentions": len(mentions),
+                "documents": sorted({m.doc_id for m in mentions} | {a.doc_id for a in attrs}),
+                "attributes": [{"name": a.name, "value": a.value, "doc_id": a.doc_id,
+                                "page": a.page} for a in attrs]}
+
     def node(self, eid: str) -> dict | None:
-        if eid in self._node_cache:
-            return self._node_cache[eid]
-        e = self.s.entities.get(eid)
-        out = None
-        if e is not None and e.status == "active":
-            mentions = [self.s.mentions[m] for m in self.s._mentions_of.get(eid, ())
-                        if self.s.mentions[m].doc_id in self.docs]
-            attrs = [a for a in e.attributes if a.doc_id in self.docs]
-            if mentions or attrs:
-                surfaces = Counter(m.text for m in mentions)
-                name = [a.value for a in attrs if a.name == "name"]
-                label = surfaces.most_common(1)[0][0] if surfaces else (name[0] if name else e.id)
-                out = {"id": e.id, "type": e.type, "subtype": e.subtype, "label": label,
-                       "aliases": sorted(surfaces), "mentions": len(mentions),
-                       "documents": sorted({m.doc_id for m in mentions} | {a.doc_id for a in attrs}),
-                       "attributes": [{"name": a.name, "value": a.value, "doc_id": a.doc_id,
-                                       "page": a.page} for a in attrs]}
-        self._node_cache[eid] = out
-        return out
+        if eid not in self._node_cache:
+            self.prefetch([eid])
+        return self._node_cache[eid]
 
     def _edge(self, r: Relation) -> dict | None:
-        evidence = [ev for ev in r.evidence if ev.doc_id in self.docs]
+        evidence = [ev for ev in r.evidence if self._doc_ok.get(ev.doc_id)]
         if not evidence:
             return None
         weak = all(ev.method in WEAK_METHODS for ev in evidence)
@@ -232,29 +273,71 @@ class MemoryView:
                               "method": ev.method, "confidence": ev.confidence}
                              for ev in evidence]}
 
+    def _edges(self, rels: list[Relation]) -> list[dict]:
+        self._check_docs({ev.doc_id for r in rels for ev in r.evidence})
+        self.prefetch({x for r in rels for x in (r.a, r.b)})
+        return [e for r in sorted(rels, key=lambda r: r.id) if (e := self._edge(r))]
+
     def edges_of(self, eid: str) -> list[dict]:
         if self.node(eid) is None:
             return []
-        out = []
-        for rid in sorted(self.s._rels_of.get(eid, ())):
-            r = self.s.relations.get(rid)
-            if r is not None and (edge := self._edge(r)):
-                out.append(edge)
-        return out
+        return self._edges(self._load_relations_of(eid))
 
     def nodes(self, types=None):
-        for eid in sorted(self.s.entities):
-            n = self.node(eid)
+        batch = []
+        for eid in self._iter_entity_ids(types):
+            batch.append(eid)
+            if len(batch) >= 1000:
+                yield from self._emit(batch, types)
+                batch = []
+        yield from self._emit(batch, types)
+
+    def _emit(self, batch, types):
+        self.prefetch(batch)
+        for eid in batch:
+            n = self._node_cache[eid]
             if n and (types is None or n["type"] in types):
                 yield n
 
     def edges(self):
-        for rid in sorted(self.s.relations):
-            if edge := self._edge(self.s.relations[rid]):
-                yield edge
+        batch = []
+        for r in self._iter_relations():
+            batch.append(r)
+            if len(batch) >= 1000:
+                yield from self._edges(batch)
+                batch = []
+        yield from self._edges(batch)
 
     def document(self, doc_id: str) -> Document | None:
-        return self.s.documents.get(doc_id) if doc_id in self.docs else None
+        self._check_docs([doc_id])
+        return self._docs.get(doc_id)
+
+
+class MemoryView(GraphView):
+    def __init__(self, store: MemoryGraphStore, scope, include_weak: bool):
+        super().__init__(scope, include_weak)
+        self.s = store
+
+    def _load_documents(self, doc_ids):
+        return {d: self.s.documents[d] for d in doc_ids if d in self.s.documents}
+
+    def _load_nodes(self, eids):
+        out = {}
+        for eid in eids:
+            e = self.s.entities.get(eid)
+            if e is not None:
+                out[eid] = (e, [self.s.mentions[m] for m in self.s._mentions_of.get(eid, ())])
+        return out
+
+    def _load_relations_of(self, eid):
+        return [self.s.relations[r] for r in self.s._rels_of.get(eid, ()) if r in self.s.relations]
+
+    def _iter_entity_ids(self, types=None):
+        return [e.id for e in sorted(self.s.entities.values(), key=lambda e: e.id)
+                if types is None or e.type in types]
+
+    def _iter_relations(self):
+        return [self.s.relations[r] for r in sorted(self.s.relations)]
 
 
 def evidence_from_dict(raw: dict) -> Evidence:

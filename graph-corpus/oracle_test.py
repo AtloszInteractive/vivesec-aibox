@@ -22,6 +22,10 @@ from visibility import Scope  # noqa: E402
 
 class OracleGraphTest(unittest.TestCase):
     @classmethod
+    def make_store(cls):
+        return MemoryGraphStore()
+
+    @classmethod
     def setUpClass(cls):
         w = world.build(90, 11)
         docs = Renderer(w, 11).render_all()
@@ -34,7 +38,7 @@ class OracleGraphTest(unittest.TestCase):
                            "corpus_id": corpus, "source_path": source, "kind": d.kind}
         cls.corpora = sorted({m["corpus_id"] for m in meta.values()})
         profile = domain_profile.load("bv")
-        cls.store = MemoryGraphStore()
+        cls.store = cls.make_store()
         for body in oracle.payloads(cls.key, meta):
             cls.store.put_document(*parse_document_payload(body, profile))
         cls.view = cls.store.view(Scope(cls.corpora))
@@ -90,6 +94,26 @@ class OracleGraphTest(unittest.TestCase):
         found = queries.communities(self.view)
         self.assertTrue(found)
         self.assertTrue(all(c["size"] >= 2 for c in found))
+
+
+NEO4J_URI = os.environ.get("GRAPH_TEST_NEO4J_URI", "")
+NEO4J_PASSWORD_FILE = os.environ.get("GRAPH_TEST_NEO4J_PASSWORD_FILE", "")
+
+
+@unittest.skipUnless(NEO4J_URI and NEO4J_PASSWORD_FILE, "GRAPH_TEST_NEO4J_URI not set (wipes the graph)")
+class Neo4jOracleGraphTest(OracleGraphTest):
+    @classmethod
+    def make_store(cls):
+        from neo4j_store import Neo4jGraphStore
+
+        with open(NEO4J_PASSWORD_FILE, encoding="utf-8") as f:
+            store = Neo4jGraphStore(NEO4J_URI, "neo4j", f.read().strip())
+        store.wipe()
+        return store
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.store.close()
 
 
 if __name__ == "__main__":

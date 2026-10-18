@@ -15,7 +15,8 @@ request and sends it with every query (corpus_ids + access).
 Env: GRAPH_HOST (127.0.0.1), GRAPH_PORT (8095), GRAPH_API_KEY (unset = open,
 loopback only), GRAPH_PROFILE (template id or file, default "generic"),
 GRAPH_PROFILE_PATH (where the administrator's profile is saved),
-GRAPH_STORE ("memory"; "neo4j" follows).
+GRAPH_STORE ("memory" for tests and demos, "neo4j" for persistent use with
+GRAPH_NEO4J_URI / _USER / _DATABASE and the password in GRAPH_NEO4J_PASSWORD_FILE).
 """
 from __future__ import annotations
 
@@ -237,11 +238,26 @@ def make_handler(state: State):
     return Handler
 
 
+def make_store(kind: str):
+    if kind == "memory":
+        return MemoryGraphStore()
+    if kind == "neo4j":
+        from neo4j_store import Neo4jGraphStore
+
+        password_file = os.environ.get("GRAPH_NEO4J_PASSWORD_FILE", "")
+        if not password_file:
+            raise SystemExit("GRAPH_STORE=neo4j needs GRAPH_NEO4J_PASSWORD_FILE")
+        with open(password_file, encoding="utf-8") as f:
+            password = f.read().strip()
+        return Neo4jGraphStore(os.environ.get("GRAPH_NEO4J_URI", "bolt://127.0.0.1:7687"),
+                               os.environ.get("GRAPH_NEO4J_USER", "neo4j"), password,
+                               os.environ.get("GRAPH_NEO4J_DATABASE", "neo4j"))
+    raise SystemExit("GRAPH_STORE must be memory or neo4j, not %r" % kind)
+
+
 def main():
     store_kind = os.environ.get("GRAPH_STORE", "memory")
-    if store_kind != "memory":
-        raise SystemExit("GRAPH_STORE=%s is not available yet" % store_kind)
-    state = State(MemoryGraphStore(), initial_profile())
+    state = State(make_store(store_kind), initial_profile())
     httpd = ThreadingHTTPServer((HOST, PORT), make_handler(state))
     print("graph_service on %s:%d profile=%s v%d store=%s" % (
         HOST, PORT, state.profile["id"], state.profile["version"], store_kind), flush=True)

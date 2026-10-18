@@ -2447,15 +2447,68 @@
       "category": "storage",
       "type": "enum",
       "default": "memory",
-      "allowed": "memory",
-      "fail_safe": "Any other value stops the service at startup (the Neo4j store is not wired yet).",
-      "impact": "Graph store backend; memory is not persistent.",
+      "allowed": "memory | neo4j",
+      "fail_safe": "Any other value stops the service at startup.",
+      "impact": "Graph store backend: memory (tests and demos, not persistent) or neo4j (persistent).",
       "change": "restart",
       "secret": false,
       "internal": false,
       "values": [
-        "memory"
+        "memory",
+        "neo4j"
       ]
+    },
+    {
+      "name": "GRAPH_NEO4J_URI",
+      "component": "graph",
+      "category": "storage",
+      "type": "url",
+      "default": "bolt://127.0.0.1:7687",
+      "allowed": "bolt:// or neo4j:// URL",
+      "fail_safe": "Unreachable or wrong URIs stop the service at startup.",
+      "impact": "Neo4j server used when GRAPH_STORE=neo4j; keep it on loopback or an internal network.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_NEO4J_USER",
+      "component": "graph",
+      "category": "security",
+      "type": "string",
+      "default": "neo4j",
+      "allowed": "Neo4j user name",
+      "fail_safe": "A wrong user stops the service at startup (authentication error).",
+      "impact": "Neo4j user when GRAPH_STORE=neo4j.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_NEO4J_PASSWORD_FILE",
+      "component": "graph",
+      "category": "security",
+      "type": "path",
+      "default": "",
+      "allowed": "file path",
+      "fail_safe": "Missing with GRAPH_STORE=neo4j stops the service at startup; the password is never put in the environment or logs.",
+      "impact": "File holding the Neo4j password.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_NEO4J_DATABASE",
+      "component": "graph",
+      "category": "storage",
+      "type": "string",
+      "default": "neo4j",
+      "allowed": "database name (Community: neo4j)",
+      "fail_safe": "An unknown database makes every request fail.",
+      "impact": "Neo4j database used by the graph service.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
     }
   ]
 }

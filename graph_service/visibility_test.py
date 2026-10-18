@@ -21,8 +21,11 @@ def person(eid, name):
 
 
 class VisibilityTest(unittest.TestCase):
+    def make_store(self):
+        return MemoryGraphStore()
+
     def setUp(self):
-        s = MemoryGraphStore()
+        s = self.make_store()
         # d1 (open): X met Y.  d2 (restricted to anna): Y met Z, and Z's alias.
         s.put_document(Document("d1", "c1", "/a/d1.pdf"),
                        [person("X", "Kiss Ádám"), person("Y", "Nagy Béla")],
