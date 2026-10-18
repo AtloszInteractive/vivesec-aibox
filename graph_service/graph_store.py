@@ -11,6 +11,7 @@ visible mentions, so a name seen only in a hidden document never leaks.
 from __future__ import annotations
 
 import threading
+import unicodedata
 from collections import Counter
 
 from model import AttributeValue, Document, Entity, Evidence, Mention, Relation, WEAK_METHODS
@@ -18,6 +19,11 @@ from model import AttributeValue, Document, Entity, Evidence, Mention, Relation,
 
 class StoreError(ValueError):
     pass
+
+
+def _words(text: str) -> list[str]:
+    folded = unicodedata.normalize("NFD", text.casefold())
+    return "".join(c for c in folded if unicodedata.category(c) != "Mn").split()
 
 
 def _rel_key(r: Relation) -> tuple:
@@ -42,6 +48,24 @@ class MemoryGraphStore:
         self._doc_rels: dict[str, set[str]] = {}
         self._doc_attr_entities: dict[str, set[str]] = {}
         self._by_path: dict[tuple[str, str], str] = {}  # (corpus_id, source_path) -> doc_id
+        self._name_words: dict[str, Counter] = {}  # folded mention word -> entity id counts
+
+    def _index_mention(self, m: Mention, sign: int) -> None:
+        for word in set(_words(m.text)):
+            counts = self._name_words.setdefault(word, Counter())
+            counts[m.entity_id] += sign
+            if counts[m.entity_id] <= 0:
+                del counts[m.entity_id]
+                if not counts:
+                    del self._name_words[word]
+
+    def entities_with_words(self, words) -> set[str]:
+        """Ids of entities one of whose mentions contains any of `words` (folded)."""
+        with self._lock:
+            out = set()
+            for word in words:
+                out.update(self._name_words.get(word, ()))
+            return out
 
     def doc_ids_by_path(self, corpus_id: str, path: str, tree: bool = False,
                         keep_exact: bool = False) -> list[str]:
@@ -71,6 +95,7 @@ class MemoryGraphStore:
                 self.mentions[m.id] = m
                 self._mentions_of.setdefault(m.entity_id, set()).add(m.id)
                 self._doc_mentions.setdefault(m.doc_id, set()).add(m.id)
+                self._index_mention(m, 1)
             for r in relations:
                 self.relations[r.id] = r
                 self._rel_by_key[_rel_key(r)] = r.id
@@ -101,6 +126,7 @@ class MemoryGraphStore:
                 self.mentions[m.id] = m
                 self._mentions_of.setdefault(m.entity_id, set()).add(m.id)
                 self._doc_mentions.setdefault(doc.doc_id, set()).add(m.id)
+                self._index_mention(m, 1)
             for r in relations:
                 if r.a not in self.entities or r.b not in self.entities:
                     raise StoreError("relation %s connects unknown entities" % r.id)
@@ -152,6 +178,7 @@ class MemoryGraphStore:
                 m = self.mentions.pop(mid, None)
                 if m is not None:
                     self._mentions_of.get(m.entity_id, set()).discard(mid)
+                    self._index_mention(m, -1)
                     touched.add(m.entity_id)
             for eid in self._doc_attr_entities.pop(doc_id, set()):
                 e = self.entities.get(eid)
@@ -199,7 +226,9 @@ class MemoryGraphStore:
             if k.type != d.type:
                 raise StoreError("cannot merge %s into %s" % (d.type, k.type))
             for mid in self._mentions_of.pop(drop, set()):
+                self._index_mention(self.mentions[mid], -1)
                 self.mentions[mid].entity_id = keep
+                self._index_mention(self.mentions[mid], 1)
                 self._mentions_of.setdefault(keep, set()).add(mid)
             seen = {(a.name, a.value, a.doc_id) for a in k.attributes}
             k.attributes += [a for a in d.attributes if (a.name, a.value, a.doc_id) not in seen]
@@ -305,6 +334,10 @@ class GraphView:
             self.prefetch([eid])
         return self._node_cache[eid]
 
+    def name_candidates(self, words) -> set[str] | None:
+        """Entity ids that may carry one of these name words; None: unknown, scan all."""
+        return None
+
     def _edge(self, r: Relation) -> dict | None:
         evidence = [ev for ev in r.evidence if self._doc_ok.get(ev.doc_id)]
         if not evidence:
@@ -378,6 +411,9 @@ class MemoryView(GraphView):
     def __init__(self, store: MemoryGraphStore, scope, include_weak: bool):
         super().__init__(scope, include_weak)
         self.s = store
+
+    def name_candidates(self, words) -> set[str] | None:
+        return self.s.entities_with_words(words)
 
     def _load_documents(self, doc_ids):
         return {d: self.s.documents[d] for d in doc_ids if d in self.s.documents}

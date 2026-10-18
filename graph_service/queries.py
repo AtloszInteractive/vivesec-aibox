@@ -60,7 +60,14 @@ def mentioned_entities(view, text: str, patterns=(), types=None, limit: int = 10
     words_at = [w for _, w in tokens]
     prefixes = {w[:k] for w in words_at for k in range(3, len(w) + 1)}
     found: dict[str, tuple[int, int, dict]] = {}
-    for n in view.nodes(types):
+    candidates = view.name_candidates(prefixes)
+    if candidates is None:
+        nodes = view.nodes(types)
+    else:
+        view.prefetch(candidates)
+        nodes = [n for n in map(view.node, sorted(candidates))
+                 if n is not None and (not types or n["type"] in types)]
+    for n in nodes:
         for name in {n["label"], *n["aliases"]}:
             words = fold(name).split()
             if not words or len(" ".join(words)) < MIN_NAME_CHARS or words[-1] not in prefixes:

@@ -78,6 +78,16 @@ class VisibilityTest(unittest.TestCase):
         self.assertIsNone(v.node("Z"))
         self.assertEqual(["d1"], [ev["doc_id"] for ev in v.edges_of("X")[0]["evidence"]])
 
+    def test_documents_by_path_and_named_entities(self):
+        self.assertEqual(["d1"], self.s.doc_ids_by_path("c1", "/a/d1.pdf"))
+        self.assertEqual(["d1", "d2"], sorted(self.s.doc_ids_by_path("c1", "/a", tree=True)))
+        self.assertEqual([], self.s.doc_ids_by_path("c2", "/a", tree=True))
+        question = "Kivel találkozott Titkos Zoltánnal Kiss Ádám?"
+        self.assertEqual(["X"], [n["id"] for n in
+                                 queries.mentioned_entities(self.view(BELA), question)])
+        self.assertEqual(["Z", "X"], [n["id"] for n in
+                                      queries.mentioned_entities(self.view(ANNA), question)])
+
     def test_acl_change_applies_without_reingest(self):
         self.s.set_acl("d2", None)
         self.assertIsNotNone(self.view(BELA).node("Z"))
