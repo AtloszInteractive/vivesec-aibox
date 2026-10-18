@@ -81,7 +81,7 @@ class GraphFacts:
             doc = documents[ev["doc_id"]]
             label = labels.get(edge["type"], {})
             name = label.get(code) or label.get("en") or edge["type"]
-            if edge.get("raw_label"):
+            if edge.get("raw_label") and edge["raw_label"] != edge["type"]:
                 name = "%s (%s)" % (name, edge["raw_label"])
             when = edge.get("start") or ""
             if edge.get("end") and edge["end"] != when:
