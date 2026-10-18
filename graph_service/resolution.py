@@ -60,6 +60,7 @@ class Resolver:
         self.by_key: dict[str, set[str]] = {}
         self.review: list[dict] = []
         self._pending: set[str] = set()
+        self._pairs: set[tuple[str, str]] = set()
         self._pending_n = 0
 
     def strong_key_subtypes(self) -> set[str]:
@@ -176,7 +177,7 @@ class Resolver:
         attrs = {k: v for k, (v, _) in ent.attrs.items()}
         with self.lock:
             scored = sorted(((*self._score(ent, pid, keys), pid)
-                             for pid in self._candidates(ent, keys)), reverse=True)
+                             for pid in self._candidates(ent, keys) - {new_id}), reverse=True)
             if scored and scored[0][0] >= auto:
                 target = scored[0][2]
                 self.remember_person(target, ent.names, attrs, keys)
@@ -186,6 +187,7 @@ class Resolver:
             # same-name person mentioned in ten notes gives ten pairs, not 45.
             if len(self.review) != self._pending_n:  # review may be refilled from outside
                 self._pending = {item["a"] for item in self.review}
+                self._pairs = {(item["a"], item["b"]) for item in self.review}
                 self._pending_n = len(self.review)
             pending = self._pending
             candidates = [s for s in scored if s[0] >= review]
@@ -193,7 +195,9 @@ class Resolver:
             candidates = settled or candidates
             best = candidates[0][0] if candidates else 0.0
             for score, why, pid in candidates:
-                if score == best:
+                if score == best and (new_id, pid) not in self._pairs \
+                        and (pid, new_id) not in self._pairs:
+                    self._pairs.add((new_id, pid))
                     self.review.append({"a": new_id, "b": pid, "score": score, "reason": why,
                                         "doc_id": doc_id, "names": sorted(ent.names)})
                     self._pending.add(new_id)

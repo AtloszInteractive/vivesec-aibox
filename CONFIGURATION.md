@@ -65,6 +65,10 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `ADAPTER_GENERATE` | `auto` | `auto` | auto \| on \| off | restart | Controls adapter answer synthesis. | off disables generation; auto skips when Ollama is down; unknown behaves like on. |
 | `ADAPTER_GEN_MODEL` | `qwen2.5:14b` | `qwen3.6:35b` | Ollama model name | restart | Ollama chat model used by adapter generation. | Any string is accepted at startup; bad values fail only in the consumer if at all. |
 | `ADAPTER_GETFILE_TIMEOUT` | `60` |  | positive seconds (not enforced) | restart | Timeout for fetching original documents from ViVeSecBox. | Unset or empty uses the code default; non-float values raise ValueError and abort startup/import. |
+| `ADAPTER_GRAPH_ADMINS` | *unset* |  | comma-separated VVS user ids | restart | Users who may change the shared graph (review decisions, profile). | Empty: nobody may merge people or change the domain profile through the UI. |
+| `ADAPTER_GRAPH_MAX_FILE_MB` | `32` |  | megabytes >= 1 (graph body limit 64 MB, base64 adds a third) | restart | Largest single file forwarded to the graph. | Larger files are not forwarded and are counted as dropped. |
+| `ADAPTER_GRAPH_QUEUE_MB` | `256` |  | megabytes >= 1 | restart | Synced file bytes waiting to be handed to the graph service. | A full queue drops the file and counts it (re-sync the drive to fill the gap); bytes stay in memory only. |
+| `ADAPTER_GRAPH_TIMEOUT` | `120` |  | seconds > 0 | restart | Timeout of one adapter -> graph call. | A timed-out graph call answers 503; forwarded files are retried. |
 | `ADAPTER_HOST` | `127.0.0.1` | `0.0.0.0` | bind host/address | restart | Bind address for the plain HTTP adapter listener. | Invalid bind addresses raise OSError when the server starts. |
 | `ADAPTER_HTTP_SCOPE` | `full` |  | full, pairing | restart | pairing limits the plain-HTTP listener to status/version/ui-version/init for network peers. | Unset or empty is full; any unknown value falls back to pairing. The mTLS listener and direct (not proxy-relayed) loopback callers are never restricted. |
 | `ADAPTER_IDENTITY_ALGORITHMS` | `HS256,RS256` |  | comma list of HS256, RS256 | restart | Allowlist of JWT signature algorithms. | Unsupported names (including none) are ignored; an empty resulting list rejects every token. |
@@ -131,6 +135,7 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `ADAPTER_UI_VERSION` | `latest` | `latest` | latest, or a release version (YY.MM.N) the embedding host actually serves | restart | Plain-text answer of GET /api/v1/ui-version: the embedded UI bundle path (/latest/ or /<version>/) the ViVeSecBox loads for this box. Not the box's own release version (see /api/v1/version). | Empty falls back to latest; any other string is returned verbatim, so a version the host does not serve leaves the embedded UI unloadable. |
 | `ADAPTER_WATCHDOG_ENABLED` | `auto` | `auto` | auto \| on \| off | restart | Controls presence-lock watchdog. | on always enforces; auto enforces only when storage mode is not off; unknown disables. |
 | `ADAPTER_WATCHDOG_SECONDS` | `90` | `90` | positive seconds (not enforced) | restart | Presence timeout before watchdog locks storage. | Unset uses the code default; non-integer values raise ValueError and abort startup/import. |
+| `GRAPH_URL` | *unset* |  | internal graph_service base URL (empty: off) | restart | Base URL the adapter uses for the graph service; keep it loopback/internal. The adapter sends GRAPH_API_KEY with every call. | Empty: relationship analysis is off, /ui/graph/* answers 503 and no file is forwarded. |
 | `RAG_URL` | `http://127.0.0.1:8090` | `http://127.0.0.1:8090` | RAG service base URL | restart | Base URL used by adapter for RAG requests. | Any URL is accepted at startup; connection errors are reported when used. |
 
 ## RAG service
@@ -164,7 +169,6 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 
 | Parameter | Default | Image | Allowed | Change | Impact | Invalid value |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GRAPH_API_KEY` (secret) | *unset* |  | non-empty API key or empty | restart | API key the adapter must send in X-API-Key. | Empty disables API-key enforcement (acceptable only on loopback); non-empty values must match exactly. |
 | `GRAPH_HOST` | `127.0.0.1` |  | bind host/address | restart | Graph service bind address; keep it on loopback or an internal network (the adapter is the only caller). | Invalid bind addresses raise OSError when the service starts. |
 | `GRAPH_INGEST` | `on` |  | on \| off | restart | Background extraction of submitted documents (/ingest/*) and the same-person review list (/review/*); off answers 503 there. | Only an explicit off disables it; with GRAPH_STORE=neo4j it needs GRAPH_READ_CACHE on, otherwise the service refuses to start. |
 | `GRAPH_INGEST_QUEUE_MB` | `512` |  | megabytes >= 1 | restart | Upper bound of document bytes waiting for extraction. | A full queue answers 429; the caller retries later. Queued bytes stay in memory only. |
@@ -193,6 +197,7 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | Parameter | Default | Image | Allowed | Change | Impact | Invalid value |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ADAPTER_DRIVE_PREFIX` | `/storage/drives` | `/storage/drives` | absolute drive root prefix | restart | Read by adapter corpus mapping and UI demo proxy driveRoot. | Any string is accepted; mismatches break adapter corpus ids and UI demo roots. |
+| `GRAPH_API_KEY` (secret) | *unset* |  | non-empty API key or empty | restart | API key of the graph service; the adapter sends it in X-API-Key and graph_service requires it. | Empty disables API-key enforcement (acceptable only on loopback); non-empty values must match exactly. |
 | `OLLAMA_URL` | `adapter: http://127.0.0.1:11434; rag/poc: http://localhost:11434` | adapter: `http://127.0.0.1:11434`; rag: `http://localhost:11434` | Ollama base URL | restart | Read by adapter and rag/poc model clients; adapter and rag images set different defaults. | Any URL is accepted at startup; connection errors are reported when used. |
 | `RAG_API_KEY` (secret) | *unset* |  | non-empty API key or empty | restart | Shared RAG API key read by adapter and RAG service. | Empty disables RAG API-key enforcement and adapter auth; non-empty values must match exactly. |
 

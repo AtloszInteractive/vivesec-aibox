@@ -26,6 +26,7 @@ ViVeSecBox ──ViVeSec v2──▶ adapter ──RAG contract──▶ rag_ser
 | `POST /api/v1/ui/query`                        | `POST /rag/search_context`              |
 | `POST /api/v1/ui/files/children`               | *(mirror, scope + ACL; E03)*            |
 | `GET  /api/v1/ui/insight`                      | `POST /rag/scope_stats` (E03)           |
+| `POST /api/v1/ui/graph/*`                      | graph_service `/query/*` ... (E26)      |
 | `POST /api/v1/storage/unlock`                  | *(stub until LUKS/init wired)*          |
 
 Key translation decisions:
@@ -378,6 +379,34 @@ they prove routing, ACL boundaries, history separation, audit and job behavior,
 not real-model factual accuracy. Real-model acceptance must cover all supported
 languages, missing company data, mixed facts/advice, prompt injection, and
 quick-action regression before customer rollout.
+
+## Relationship analysis (E26)
+
+Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
+
+- **Sync**: after the RAG committed a synced file, its bytes go to a background
+  forwarder (`graph.py`) that hands them to the graph's extraction queue; a
+  delete (`/index/drop/tree`) and an ACL push follow in the same FIFO order. The
+  document ACL is computed when the file is sent, so it is never older than a
+  change made while it waited. A busy (429) or unreachable graph is retried; a
+  full forward queue (`ADAPTER_GRAPH_QUEUE_MB`) or a file over
+  `ADAPTER_GRAPH_MAX_FILE_MB` is dropped and counted (re-sync to fill the gap).
+  Queued bytes stay in memory.
+- **Queries**: `POST /api/v1/ui/graph/query` `{query, params, drives?}` with
+  `query` one of find, entity, path, common, copresence, shared, timeline,
+  neighborhood, communities, ranking. The adapter adds `corpus_ids` and
+  `access` itself (the client's own values are overwritten). Every document an
+  answer cites is re-checked against the current policy; a hidden one (the
+  graph's ACL copy lags) fails the call with 503 and schedules a resync.
+- **Progress**: `POST /api/v1/ui/graph/status` lists only files the caller may
+  see; queue sizes and totals are box-wide numbers.
+- **Review and profile**: `/api/v1/ui/graph/review/list` (scoped),
+  `/review/decide` and `/profile/set` only for users in `ADAPTER_GRAPH_ADMINS`
+  (empty: nobody); `/profile/get` returns the profile, the templates and
+  `can_edit`.
+
+Tests: `python -m unittest graph_integration_test` (real RAG and graph service,
+fake extraction model; proves plumbing and filtering, not extraction quality).
 
 ## Test
 

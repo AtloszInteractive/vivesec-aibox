@@ -41,6 +41,20 @@ class MemoryGraphStore:
         self._doc_mentions: dict[str, set[str]] = {}
         self._doc_rels: dict[str, set[str]] = {}
         self._doc_attr_entities: dict[str, set[str]] = {}
+        self._by_path: dict[tuple[str, str], str] = {}  # (corpus_id, source_path) -> doc_id
+
+    def doc_ids_by_path(self, corpus_id: str, path: str, tree: bool = False,
+                        keep_exact: bool = False) -> list[str]:
+        """Documents at `path` (and, with tree, below it) in one corpus."""
+        with self._lock:
+            out = []
+            if not keep_exact and (corpus_id, path) in self._by_path:
+                out.append(self._by_path[(corpus_id, path)])
+            if tree:
+                prefix = path.rstrip("/") + "/"
+                out += [doc_id for (c, p), doc_id in self._by_path.items()
+                        if c == corpus_id and p.startswith(prefix)]
+            return out
 
     def load_snapshot(self, documents, entities, mentions, relations) -> None:
         """Replace the whole content (used to mirror a persistent store)."""
@@ -48,6 +62,7 @@ class MemoryGraphStore:
             self._reset()
             for d in documents:
                 self.documents[d.doc_id] = d
+                self._by_path[(d.corpus_id, d.source_path)] = d.doc_id
             for e in entities:
                 self.entities[e.id] = e
                 for a in e.attributes:
@@ -72,6 +87,7 @@ class MemoryGraphStore:
         with self._lock:
             self.drop_document(doc.doc_id)
             self.documents[doc.doc_id] = doc
+            self._by_path[(doc.corpus_id, doc.source_path)] = doc.doc_id
             for e in entities:
                 self._upsert_entity(e)
                 for a in e.attributes:
@@ -127,7 +143,10 @@ class MemoryGraphStore:
 
     def drop_document(self, doc_id: str) -> bool:
         with self._lock:
-            existed = self.documents.pop(doc_id, None) is not None
+            gone = self.documents.pop(doc_id, None)
+            existed = gone is not None
+            if gone is not None and self._by_path.get((gone.corpus_id, gone.source_path)) == doc_id:
+                del self._by_path[(gone.corpus_id, gone.source_path)]
             touched = set()
             for mid in self._doc_mentions.pop(doc_id, set()):
                 m = self.mentions.pop(mid, None)

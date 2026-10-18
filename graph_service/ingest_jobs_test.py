@@ -110,6 +110,24 @@ class IngestWorkerTest(unittest.TestCase):
             self.post("/ingest/document", body)
         self.assertEqual(400, ctx.exception.status)
 
+    def test_sync_by_path_new_version_acl_and_delete(self):
+        self.ingest_both()
+        store = self.state.store
+        newer = doc("d1-v2", "c1", NOTE_1)
+        newer["source_path"] = "/c1/d1.txt"
+        self.post("/ingest/document", newer)
+        self.assertTrue(self.state.worker.wait_idle())
+        self.assertEqual(["d1-v2"], store.doc_ids_by_path("c1", "/c1/d1.txt"))
+        self.assertNotIn("d1", store.documents)
+        acl = {"restricted": True, "allow": ["user:u1"], "deny": [], "classification": 0}
+        out = self.post("/graph/acl/update", {"corpus_id": "c1",
+                                              "entries": [{"path": "/c1/d1.txt", "acl": acl}]})
+        self.assertEqual(1, out["updated"])
+        self.assertIsNotNone(store.documents["d1-v2"].acl)
+        out = self.post("/graph/document/drop_tree", {"corpus_id": "c1", "path": "/c1"})
+        self.assertEqual(1, out["dropped"])
+        self.assertEqual(["d2"], sorted(store.documents))
+
     def test_disabled_extraction_answers_503(self):
         self.state.worker = None
         with self.assertRaises(service.HttpError) as ctx:

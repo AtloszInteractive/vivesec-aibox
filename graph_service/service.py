@@ -7,6 +7,7 @@ request and sends it with every query (corpus_ids + access).
   ops      GET  /health
   profile  POST /profile/get  /profile/templates  /profile/validate  /profile/set
   ingest   POST /graph/document/put  /graph/document/drop  /graph/document/acl
+           POST /graph/document/drop_tree  /graph/acl/update (by path, as the RAG)
            POST /graph/entity/merge
   extract  POST /ingest/document (bytes, extracted in the background)  /ingest/status
            POST /review/list  /review/decide (possible same-person pairs)
@@ -94,12 +95,39 @@ def _types(body, name, default):
     return tuple(value)
 
 
+def _doc_ids(value, out: set) -> set:
+    if isinstance(value, dict):
+        if isinstance(value.get("doc_id"), str):
+            out.add(value["doc_id"])
+        for key, v in value.items():
+            if key == "documents" and isinstance(v, list):
+                out.update(d for d in v if isinstance(d, str))
+            else:
+                _doc_ids(v, out)
+    elif isinstance(value, list):
+        for v in value:
+            _doc_ids(v, out)
+    return out
+
+
 def run_query(state: State, name: str, body: dict) -> dict:
     try:
         scope = Scope.parse(body)
     except ScopeError as e:
         raise HttpError(400, str(e))
     view = state.store.view(scope, include_weak=bool(body.get("include_weak", False)))
+    out = _run_query(state, view, name, body)
+    documents = {}
+    for doc_id in sorted(_doc_ids(out, set())):
+        doc = view.document(doc_id)
+        if doc is not None:
+            documents[doc_id] = {"corpus_id": doc.corpus_id, "source_path": doc.source_path,
+                                 "title": doc.title, "kind": doc.kind}
+    out["documents"] = documents
+    return out
+
+
+def _run_query(state: State, view, name: str, body: dict) -> dict:
     if name == "find":
         text = body.get("text")
         if not isinstance(text, str) or not text.strip():
@@ -236,6 +264,31 @@ def handle_post(state: State, path: str, body: dict) -> dict:
             raise HttpError(400, str(e))
     if path == "/graph/document/drop":
         return {"dropped": state.store.drop_document(_id(body, "doc_id"))}
+    if path == "/graph/document/drop_tree":
+        if state.worker is not None:
+            state.worker.forget(_id(body, "corpus_id"), _id(body, "path"))
+        ids = state.store.doc_ids_by_path(_id(body, "corpus_id"), _id(body, "path"), True,
+                                          bool(body.get("keep_exact", False)))
+        return {"dropped": sum(1 for doc_id in ids if state.store.drop_document(doc_id))}
+    if path == "/graph/acl/update":
+        corpus_id, entries = _id(body, "corpus_id"), body.get("entries")
+        if not isinstance(entries, list) or len(entries) > 5000:
+            raise HttpError(400, "entries must be a list of at most 5000 items")
+        parsed = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                raise HttpError(400, "every entry needs a path and an acl")
+            try:
+                parsed.append((entry["path"], parse_doc_acl(entry.get("acl"))))
+            except ValueError as e:
+                raise HttpError(400, str(e))
+        updated = 0
+        for source_path, acl in parsed:
+            if state.worker is not None:
+                state.worker.update_acl(corpus_id, source_path, acl)
+            for doc_id in state.store.doc_ids_by_path(corpus_id, source_path):
+                updated += bool(state.store.set_acl(doc_id, acl))
+        return {"updated": updated}
     if path == "/graph/document/acl":
         try:
             acl = parse_doc_acl(body.get("acl"))

@@ -99,13 +99,48 @@ class IngestWorker:
                 raise QueueFull("ingest queue is full")
             # A newer version of a queued document replaces the queued one.
             for item in list(self.queue):
-                if item[0]["doc_id"] == meta["doc_id"]:
+                if item[0]["doc_id"] == meta["doc_id"] or (
+                        item[0].get("corpus_id"), item[0].get("source_path")) == (
+                        meta.get("corpus_id"), meta.get("source_path")):
                     self.queue.remove(item)
                     self.queued_bytes -= len(item[1])
             self.queue.append((meta, raw, time.time()))
             self.queued_bytes += len(raw)
             self.cond.notify()
             return len(self.queue)
+
+    def forget(self, corpus_id: str, path: str) -> int:
+        """Drop queued documents at or below a deleted path."""
+        prefix = path.rstrip("/") + "/"
+        with self.cond:
+            gone = [item for item in self.queue if item[0].get("corpus_id") == corpus_id and (
+                item[0].get("source_path") == path
+                or str(item[0].get("source_path")).startswith(prefix))]
+            for item in gone:
+                self.queue.remove(item)
+                self.queued_bytes -= len(item[1])
+            running = self.running
+            if running and running.get("corpus_id") == corpus_id and (
+                    running.get("source_path") == path
+                    or str(running.get("source_path")).startswith(prefix)):
+                running["cancelled"] = True
+            return len(gone)
+
+    def update_acl(self, corpus_id: str, path: str, acl) -> int:
+        """Apply an ACL change to a queued or running document (it is not stored yet)."""
+        hits = 0
+        with self.cond:
+            for meta, _, _ in self.queue:
+                if (meta.get("corpus_id"), meta.get("source_path")) == (corpus_id, path):
+                    meta["acl"] = acl
+                    hits += 1
+            running = self.running
+            if running and (running.get("corpus_id"), running.get("source_path")) == (
+                    corpus_id, path):
+                running["acl"] = acl
+                running["acl_changed"] = True
+                hits += 1
+        return hits
 
     def status(self) -> dict:
         with self.cond:
@@ -128,8 +163,8 @@ class IngestWorker:
                     self.cond.wait()
                 meta, raw, queued_at = self.queue.popleft()
                 self.queued_bytes -= len(raw)
-                self.running = {"doc_id": meta["doc_id"], "source_path": meta.get("source_path"),
-                                "started": time.time()}
+                self.running = {"doc_id": meta["doc_id"], "corpus_id": meta.get("corpus_id"),
+                                "source_path": meta.get("source_path"), "started": time.time()}
             record = {"doc_id": meta["doc_id"], "source_path": meta.get("source_path"),
                       "waited": round(time.time() - queued_at, 1)}
             try:
@@ -152,7 +187,16 @@ class IngestWorker:
             self._reset_models()
         payload, stats = extract_document(raw, meta, profile, self.llm, self.resolver, self.tables)
         doc, entities, mentions, relations = parse_document_payload(payload, profile)
-        self.state.store.put_document(doc, entities, mentions, relations)
+        with self.cond:
+            if self.running and self.running.get("cancelled"):
+                return {"status": "cancelled"}
+            if self.running and self.running.get("acl_changed"):
+                doc.acl = self.running["acl"]
+            # Writing under the queue lock: a delete arriving now waits for this put.
+            for old in self.state.store.doc_ids_by_path(doc.corpus_id, doc.source_path):
+                if old != doc.doc_id:
+                    self.state.store.drop_document(old)
+            self.state.store.put_document(doc, entities, mentions, relations)
         new = self.resolver.review[self._saved:]
         self._save_review([{"op": "candidate", "item": item} for item in new])
         self._saved = len(self.resolver.review)

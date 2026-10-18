@@ -26,6 +26,7 @@ SCHEMA = [
     "CREATE CONSTRAINT graph_mention_id IF NOT EXISTS FOR (m:Mention) REQUIRE m.id IS UNIQUE",
     "CREATE INDEX graph_mention_doc IF NOT EXISTS FOR (m:Mention) ON (m.doc_id)",
     "CREATE INDEX graph_attr_doc IF NOT EXISTS FOR (a:Attr) ON (a.doc_id)",
+    "CREATE INDEX graph_doc_path IF NOT EXISTS FOR (d:Document) ON (d.corpus_id, d.source_path)",
     "CREATE INDEX graph_entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type)",
     "CREATE INDEX graph_rel_id IF NOT EXISTS FOR ()-[r:REL]-() ON (r.id)",
     "CREATE INDEX graph_rel_key IF NOT EXISTS FOR ()-[r:REL]-() ON (r.key)",
@@ -290,6 +291,16 @@ class Neo4jGraphStore:
     def view(self, scope, include_weak: bool = False) -> "Neo4jView":
         return Neo4jView(self, scope, include_weak)
 
+    def doc_ids_by_path(self, corpus_id: str, path: str, tree: bool = False,
+                        keep_exact: bool = False) -> list[str]:
+        with self._session() as s:
+            return [r["id"] for r in s.run(
+                "MATCH (d:Document {corpus_id: $c}) "
+                "WHERE (NOT $keep AND d.source_path = $p) OR ($tree AND d.source_path "
+                "STARTS WITH $prefix) RETURN d.doc_id AS id",
+                c=corpus_id, p=path, keep=keep_exact, tree=tree,
+                prefix=path.rstrip("/") + "/")]
+
     def counts(self) -> dict:
         with self._session() as s:
             row = s.run("CALL () { MATCH (d:Document) RETURN count(d) AS documents } "
@@ -344,6 +355,10 @@ class CachedNeo4jStore:
 
     def view(self, scope, include_weak: bool = False):
         return self.mirror.view(scope, include_weak)
+
+    def doc_ids_by_path(self, corpus_id: str, path: str, tree: bool = False,
+                        keep_exact: bool = False) -> list[str]:
+        return self.mirror.doc_ids_by_path(corpus_id, path, tree, keep_exact)
 
     def counts(self) -> dict:
         return self.mirror.counts()
