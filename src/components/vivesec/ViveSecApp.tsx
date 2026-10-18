@@ -117,7 +117,9 @@ import {
   ThumbsUp,
   ThumbsDown,
   Trash2,
+  Network,
 } from "lucide-react";
+import { GraphPanel, type GraphSource } from "./GraphPanel";
 
 /* ---------- Types ---------- */
 // One command per function specification v2 quick action (F1-F7), plus /data.
@@ -738,6 +740,7 @@ function ViveSecAppInner() {
   const [input, setInput] = useState("");
   const [showSlash, setShowSlash] = useState(false);
   const [driveOpen, setDriveOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<DriveFile | null>(null);
   const [previewCitation, setPreviewCitation] = useState<Citation | null>(null);
   const [viewerMode, setViewerMode] = useState<"side" | "split">("side");
@@ -2262,6 +2265,14 @@ function ViveSecAppInner() {
             </div>
             <div className="ml-auto flex items-center gap-2">
               <button
+                onClick={() => setGraphOpen((v) => !v)}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                style={graphOpen ? { borderColor: `${LIME}88` } : undefined}
+              >
+                <Network className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{tm("Relationships")}</span>
+              </button>
+              <button
                 onClick={() => setDriveOpen((v) => !v)}
                 className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
               >
@@ -3190,6 +3201,21 @@ function ViveSecAppInner() {
                   analyzeDocument(f);
                 }}
                 getFile={(id) => files.find((f) => f.id === id)}
+              />
+            )}
+            {graphOpen && (
+              <GraphPanel
+                drive={drive}
+                onClose={() => setGraphOpen(false)}
+                onOpenSource={(s: GraphSource) => {
+                  setGraphOpen(false);
+                  openCitation({
+                    fileId: s.path,
+                    page: s.page,
+                    label: s.path.split("/").pop() ?? s.path,
+                    snippet: s.quote,
+                  });
+                }}
               />
             )}
           </div>

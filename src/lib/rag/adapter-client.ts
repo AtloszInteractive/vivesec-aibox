@@ -811,6 +811,44 @@ export async function adapterInsight(drive: string): Promise<AdapterInsight> {
 }
 
 // ---------------------------------------------------------------------------
+// E26 — relationship analysis. POST /api/v1/ui/graph/<endpoint>: the adapter
+// adds the caller's scope and access itself; the body only carries the query.
+// ---------------------------------------------------------------------------
+
+const GRAPH_TIMEOUT_MS = 60_000;
+
+export class AdapterGraphError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "AdapterGraphError";
+  }
+}
+
+export async function adapterGraph<T>(
+  endpoint: "query" | "status" | "review/list" | "review/decide" | "profile/get" | "profile/set",
+  body: Record<string, unknown>,
+  drive: string,
+): Promise<T> {
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/graph/${endpoint}`, {
+    method: "POST",
+    headers: vvsHeaders(drive, demoUser()),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+  });
+  const j = await safeJson(res);
+  if (!res.ok) {
+    throw new AdapterGraphError(
+      (j.error as string) ?? `ui/graph/${endpoint} HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return j as T;
+}
+
+// ---------------------------------------------------------------------------
 // C7 — Save steps over the B6 ws-fs channel (aibox_more3 §1).
 // POST /api/v1/ui/save stores the generated file in the session store first,
 // then transfers it to the ViVeSecBox drive over the ws-fs channel. When the
