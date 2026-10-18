@@ -8,6 +8,8 @@ request and sends it with every query (corpus_ids + access).
   profile  POST /profile/get  /profile/templates  /profile/validate  /profile/set
   ingest   POST /graph/document/put  /graph/document/drop  /graph/document/acl
            POST /graph/entity/merge
+  extract  POST /ingest/document (bytes, extracted in the background)  /ingest/status
+           POST /review/list  /review/decide (possible same-person pairs)
   queries  POST /query/find  /query/entity  /query/path  /query/common
            POST /query/copresence  /query/shared  /query/timeline
            POST /query/neighborhood  /query/communities  /query/ranking
@@ -17,9 +19,13 @@ loopback only), GRAPH_PROFILE (template id or file, default "generic"),
 GRAPH_PROFILE_PATH (where the administrator's profile is saved),
 GRAPH_STORE ("memory" for tests and demos, "neo4j" for persistent use with
 GRAPH_NEO4J_URI / _USER / _DATABASE and the password in GRAPH_NEO4J_PASSWORD_FILE).
+Extraction: GRAPH_INGEST (on), GRAPH_INGEST_QUEUE_MB (512), GRAPH_REVIEW_PATH,
+and the model / OCR settings GRAPH_LLM_* / GRAPH_OCR* (llm_client, text_source).
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import sys
@@ -52,6 +58,7 @@ class State:
         self.store = store
         self.profile = profile
         self.lock = threading.Lock()
+        self.worker = None  # ingest_jobs.IngestWorker when extraction is enabled
 
     def presence_types(self):
         return [r["id"] for r in self.profile["relation_types"] if r["presence"]]
@@ -134,9 +141,65 @@ def run_query(state: State, name: str, body: dict) -> dict:
     raise HttpError(404, "not found")
 
 
+def _worker(state: State):
+    if state.worker is None:
+        raise HttpError(503, "graph extraction is not enabled")
+    return state.worker
+
+
+def handle_extract(state: State, path: str, body: dict) -> dict:
+    from ingest_jobs import QueueFull
+
+    worker = _worker(state)
+    if path == "/ingest/document":
+        meta = {k: _id(body, k) for k in ("doc_id", "corpus_id", "source_path")}
+        for k in ("title", "kind"):
+            if isinstance(body.get(k), str):
+                meta[k] = body[k]
+        if body.get("acl") is not None:
+            try:
+                parse_doc_acl(body["acl"])
+            except ValueError as e:
+                raise HttpError(400, str(e))
+            meta["acl"] = body["acl"]
+        try:
+            raw = base64.b64decode(_id(body, "content_b64"), validate=True)
+        except (binascii.Error, ValueError):
+            raise HttpError(400, "content_b64 is not valid base64")
+        try:
+            return {"queued": worker.submit(meta, raw)}
+        except QueueFull as e:
+            raise HttpError(429, str(e))
+    if path == "/ingest/status":
+        return worker.status()
+    try:
+        scope = Scope.parse(body)
+    except ScopeError as e:
+        raise HttpError(400, str(e))
+    view = state.store.view(scope)
+    if path == "/review/list":
+        items = worker.open_review(view)
+        return {"review": items[:_int(body, "limit", 100, 1, 1000)], "total": len(items)}
+    if path == "/review/decide":
+        a, b = _id(body, "a"), _id(body, "b")
+        decision = body.get("decision")
+        if decision not in ("merge", "separate"):
+            raise HttpError(400, "decision must be merge or separate")
+        if not any(i["a"] == a and i["b"] == b for i in worker.open_review(view)):
+            raise HttpError(404, "no such open review pair in scope")
+        try:
+            worker.decide(a, b, decision == "merge")
+        except StoreError as e:
+            raise HttpError(400, str(e))
+        return {"decided": decision}
+    raise HttpError(404, "not found")
+
+
 def handle_post(state: State, path: str, body: dict) -> dict:
     if path.startswith("/query/"):
         return run_query(state, path[len("/query/"):], body)
+    if path.startswith(("/ingest/", "/review/")):
+        return handle_extract(state, path, body)
     if path == "/profile/get":
         return {"profile": state.profile}
     if path == "/profile/templates":
@@ -259,9 +322,25 @@ def make_store(kind: str):
     raise SystemExit("GRAPH_STORE must be memory or neo4j, not %r" % kind)
 
 
+def make_worker(state: State):
+    """The extraction worker, unless GRAPH_INGEST=off (then /ingest and /review answer 503)."""
+    if os.environ.get("GRAPH_INGEST", "on").strip().lower() == "off":
+        return None
+    from ingest_jobs import IngestWorker
+    from llm_client import LLMClient
+
+    queue_mb = int(os.environ.get("GRAPH_INGEST_QUEUE_MB", "512"))
+    try:
+        return IngestWorker(state, LLMClient(), max(1, queue_mb) * 1024 * 1024,
+                            os.environ.get("GRAPH_REVIEW_PATH", ""))
+    except ValueError as e:
+        raise SystemExit("graph extraction: %s (or set GRAPH_INGEST=off)" % e)
+
+
 def main():
     store_kind = os.environ.get("GRAPH_STORE", "memory")
     state = State(make_store(store_kind), initial_profile())
+    state.worker = make_worker(state)
     httpd = ThreadingHTTPServer((HOST, PORT), make_handler(state))
     print("graph_service on %s:%d profile=%s v%d store=%s" % (
         HOST, PORT, state.profile["id"], state.profile["version"], store_kind), flush=True)

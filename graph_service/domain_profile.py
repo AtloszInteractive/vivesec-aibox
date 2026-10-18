@@ -17,6 +17,7 @@ from model import CORE_TYPES
 LANGS = ("en", "hu", "da", "de")
 NORMALIZERS = ("none", "digits", "upper", "lower", "nospace_upper", "phone_hu")
 CO_WINDOWS = ("sentence", "paragraph", "document")
+TABLE_ROLES = ("entity", "attribute", "date", "end_date", "relation_label", "ignore")
 # Always present, never overridable: the generic fallback and the co-mention edge.
 BUILTIN_RELATIONS = {
     "RELATED_TO": {"id": "RELATED_TO", "label": {"en": "Related to", "hu": "Kapcsolatban áll",
@@ -64,7 +65,7 @@ def _types(raw, where):
 
 def validate(raw: dict) -> dict:
     _keys(raw, ("id", "version", "name", "description", "entity_subtypes", "identifier_patterns",
-                "relation_types", "resolution", "cooccurrence"), "profile")
+                "relation_types", "resolution", "cooccurrence", "table_mappings"), "profile")
     if not isinstance(raw.get("id"), str) or not _ID.match(raw["id"]):
         raise ProfileError("profile.id must be a lowercase identifier")
     if not isinstance(raw.get("version"), int) or raw["version"] < 1:
@@ -149,6 +150,41 @@ def validate(raw: dict) -> dict:
         raise ProfileError("cooccurrence needs window in %s and 2 <= max_entities <= 500"
                            % (CO_WINDOWS,))
     out["cooccurrence"] = {"window": window, "max_entities": cap}
+
+    # Pinned table layouts (table_mapping.py): header -> column roles + row relations.
+    mappings = raw.get("table_mappings") or {}
+    if not isinstance(mappings, dict):
+        raise ProfileError("table_mappings must be an object")
+    rel_ids = {r["id"] for r in out["relation_types"]}
+    pinned = {}
+    for name, m in mappings.items():
+        where = "table_mappings.%s" % name
+        if not isinstance(m, dict):
+            raise ProfileError("%s must be an object" % where)
+        _keys(m, ("header", "columns", "relations"), where)
+        header = m.get("header")
+        if not isinstance(header, list) or not header or not all(
+                isinstance(h, str) and h.strip() for h in header):
+            raise ProfileError("%s.header must be a list of column names" % where)
+        columns = []
+        for c in m.get("columns") or []:
+            _keys(c, ("column", "role", "entity_type", "subtype", "attribute", "of"),
+                  where + ".columns")
+            if c.get("column") not in header or c.get("role") not in TABLE_ROLES:
+                raise ProfileError("%s.columns: unknown column or role" % where)
+            if c["role"] == "entity" and c.get("entity_type") not in CORE_TYPES:
+                raise ProfileError("%s.columns: entity needs an entity_type" % where)
+            columns.append(dict(c))
+        relations = []
+        for r in m.get("relations") or []:
+            _keys(r, ("type", "from", "to"), where + ".relations")
+            if r.get("type") not in rel_ids or r.get("from") not in header \
+                    or r.get("to") not in header:
+                raise ProfileError("%s.relations: unknown type or column" % where)
+            relations.append(dict(r))
+        pinned[name] = {"header": list(header), "columns": columns, "relations": relations}
+    if pinned:
+        out["table_mappings"] = pinned
     return out
 
 

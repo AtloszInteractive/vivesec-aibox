@@ -2526,6 +2526,174 @@
       "change": "restart",
       "secret": false,
       "internal": false
+    },
+    {
+      "name": "GRAPH_LLM_API",
+      "component": "graph",
+      "category": "model",
+      "type": "enum",
+      "default": "ollama",
+      "allowed": "ollama | openai",
+      "values": [
+        "ollama",
+        "openai"
+      ],
+      "fail_safe": "Any other value stops the extractor at start instead of guessing the protocol.",
+      "impact": "Protocol of the extraction model endpoint: Ollama /api/chat, or an OpenAI-compatible /v1/chat/completions (vLLM, GPU broker).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_LLM_URL",
+      "component": "graph",
+      "category": "model",
+      "type": "url",
+      "default": "http://127.0.0.1:11434",
+      "allowed": "internal http(s) URL",
+      "fail_safe": "Unreachable: the chunk is recorded as an extraction error; rules and co-mentions still run.",
+      "impact": "Model endpoint for graph extraction. Keep it internal (loopback or the scheduler/broker).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_LLM_MODEL",
+      "component": "graph",
+      "category": "model",
+      "type": "string",
+      "default": "qwen3.6:35b",
+      "allowed": "model name served by the endpoint",
+      "fail_safe": "An unknown model makes every LLM step fail; rule-based results are kept.",
+      "impact": "Model used to extract entities and relations from document chunks.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_LLM_TIMEOUT",
+      "component": "graph",
+      "category": "model",
+      "type": "float",
+      "default": "600",
+      "allowed": "seconds > 0",
+      "fail_safe": "A timed-out chunk is retried once, then recorded as an error.",
+      "impact": "Per-call timeout of the extraction model.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_LLM_NUM_CTX",
+      "component": "graph",
+      "category": "model",
+      "type": "int",
+      "default": "16384",
+      "allowed": "tokens (Ollama only)",
+      "fail_safe": "Too small truncates the prompt; the chunk size (3000 chars) fits the default.",
+      "impact": "Context window requested from Ollama for extraction calls.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_OCR",
+      "component": "graph",
+      "category": "files",
+      "type": "enum",
+      "default": "auto",
+      "allowed": "auto | off",
+      "values": [
+        "auto",
+        "off"
+      ],
+      "fail_safe": "Only an explicit off disables OCR; without Tesseract scans are reported as ocr_unavailable, never as empty documents.",
+      "impact": "OCR for PDFs without a text layer (pypdfium2 render + Tesseract).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_TESSERACT",
+      "component": "graph",
+      "category": "files",
+      "type": "path",
+      "default": "",
+      "allowed": "path to the tesseract binary (empty: PATH lookup)",
+      "fail_safe": "Not found: OCR is unavailable and scans are reported as such.",
+      "impact": "Tesseract executable used for OCR.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_OCR_LANGS",
+      "component": "graph",
+      "category": "files",
+      "type": "string",
+      "default": "hun+eng",
+      "allowed": "Tesseract language codes joined by +",
+      "fail_safe": "A missing language pack makes OCR return no text for the page.",
+      "impact": "Languages Tesseract reads.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_OCR_DPI",
+      "component": "graph",
+      "category": "files",
+      "type": "int",
+      "default": "200",
+      "allowed": "render resolution in DPI",
+      "fail_safe": "Higher is slower and uses more memory; lower loses small print.",
+      "impact": "Resolution at which scanned pages are rendered for OCR.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_INGEST",
+      "component": "graph",
+      "category": "jobs",
+      "type": "enum",
+      "default": "on",
+      "allowed": "on | off",
+      "values": [
+        "on",
+        "off"
+      ],
+      "fail_safe": "Only an explicit off disables it; with GRAPH_STORE=neo4j it needs GRAPH_READ_CACHE on, otherwise the service refuses to start.",
+      "impact": "Background extraction of submitted documents (/ingest/*) and the same-person review list (/review/*); off answers 503 there.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_INGEST_QUEUE_MB",
+      "component": "graph",
+      "category": "limits",
+      "type": "int",
+      "default": "512",
+      "allowed": "megabytes >= 1",
+      "fail_safe": "A full queue answers 429; the caller retries later. Queued bytes stay in memory only.",
+      "impact": "Upper bound of document bytes waiting for extraction.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "GRAPH_REVIEW_PATH",
+      "component": "graph",
+      "category": "storage",
+      "type": "path",
+      "default": "",
+      "allowed": "file path (empty: memory only)",
+      "fail_safe": "Empty: open review pairs are lost on restart (people stay apart, nothing is merged).",
+      "impact": "Append-only file of possible same-person pairs and the administrator's decisions.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
     }
   ]
 }
