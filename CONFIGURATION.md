@@ -173,6 +173,7 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `GRAPH_PORT` | `8095` |  | 1-65535 | restart | Graph service TCP port. | Unset uses the code default; non-integer values raise ValueError and abort startup. |
 | `GRAPH_PROFILE` | `generic` |  | bundled template id (generic, bv, manufacturing) or a profile .json path | restart | Profile used when no administrator profile has been saved yet. | A missing or invalid profile stops the service at startup; there is no silent fallback. |
 | `GRAPH_PROFILE_PATH` | *unset* |  | file path or empty | restart | Where the administrator's profile is saved (previous version kept as .prev); takes precedence over GRAPH_PROFILE. | Empty keeps administrator profile changes in memory only (lost on restart); an invalid saved file stops the service at startup. |
+| `GRAPH_READ_CACHE` | `on` |  | on \| off | restart | With GRAPH_STORE=neo4j, an in-memory mirror loaded from Neo4j at start answers queries; off queries Neo4j directly (slower, for graphs too large for memory). | Only an explicit off disables the mirror; any other value keeps it on. |
 | `GRAPH_STORE` | `memory` |  | memory \| neo4j | restart | Graph store backend: memory (tests and demos, not persistent) or neo4j (persistent). | Any other value stops the service at startup. |
 
 ## Shared (several components)

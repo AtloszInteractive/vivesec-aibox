@@ -2509,6 +2509,23 @@
       "change": "restart",
       "secret": false,
       "internal": false
+    },
+    {
+      "name": "GRAPH_READ_CACHE",
+      "component": "graph",
+      "category": "storage",
+      "type": "enum",
+      "default": "on",
+      "allowed": "on | off",
+      "values": [
+        "on",
+        "off"
+      ],
+      "fail_safe": "Only an explicit off disables the mirror; any other value keeps it on.",
+      "impact": "With GRAPH_STORE=neo4j, an in-memory mirror loaded from Neo4j at start answers queries; off queries Neo4j directly (slower, for graphs too large for memory).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
     }
   ]
 }

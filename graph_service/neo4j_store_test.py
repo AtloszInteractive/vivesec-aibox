@@ -38,6 +38,27 @@ class Neo4jVisibilityTest(visibility_test.VisibilityTest):
 
 
 @unittest.skipUnless(URI and PASSWORD_FILE, "GRAPH_TEST_NEO4J_URI not set")
+class CachedNeo4jVisibilityTest(visibility_test.VisibilityTest):
+    def make_store(self):
+        from neo4j_store import CachedNeo4jStore
+
+        self._store = CachedNeo4jStore(neo4j_store())
+        return self._store
+
+    def tearDown(self):
+        self._store.close()
+
+    def test_a_restarted_service_sees_the_same_graph(self):
+        from neo4j_store import CachedNeo4jStore
+
+        before = self.s.view(Scope(["c1"], visibility_test.ANNA))
+        again = CachedNeo4jStore(self._store.db)
+        after = again.view(Scope(["c1"], visibility_test.ANNA))
+        self.assertEqual([n["id"] for n in before.nodes()], [n["id"] for n in after.nodes()])
+        self.assertEqual(list(before.edges()), list(after.edges()))
+
+
+@unittest.skipUnless(URI and PASSWORD_FILE, "GRAPH_TEST_NEO4J_URI not set")
 class Neo4jStoreTest(unittest.TestCase):
     def setUp(self):
         self.s = neo4j_store()

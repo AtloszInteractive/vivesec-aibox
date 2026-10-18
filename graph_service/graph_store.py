@@ -28,6 +28,9 @@ def _rel_key(r: Relation) -> tuple:
 class MemoryGraphStore:
     def __init__(self):
         self._lock = threading.RLock()
+        self._reset()
+
+    def _reset(self) -> None:
         self.documents: dict[str, Document] = {}
         self.entities: dict[str, Entity] = {}
         self.mentions: dict[str, Mention] = {}
@@ -38,6 +41,28 @@ class MemoryGraphStore:
         self._doc_mentions: dict[str, set[str]] = {}
         self._doc_rels: dict[str, set[str]] = {}
         self._doc_attr_entities: dict[str, set[str]] = {}
+
+    def load_snapshot(self, documents, entities, mentions, relations) -> None:
+        """Replace the whole content (used to mirror a persistent store)."""
+        with self._lock:
+            self._reset()
+            for d in documents:
+                self.documents[d.doc_id] = d
+            for e in entities:
+                self.entities[e.id] = e
+                for a in e.attributes:
+                    self._doc_attr_entities.setdefault(a.doc_id, set()).add(e.id)
+            for m in mentions:
+                self.mentions[m.id] = m
+                self._mentions_of.setdefault(m.entity_id, set()).add(m.id)
+                self._doc_mentions.setdefault(m.doc_id, set()).add(m.id)
+            for r in relations:
+                self.relations[r.id] = r
+                self._rel_by_key[_rel_key(r)] = r.id
+                for node in (r.a, r.b):
+                    self._rels_of.setdefault(node, set()).add(r.id)
+                for ev in r.evidence:
+                    self._doc_rels.setdefault(ev.doc_id, set()).add(r.id)
 
     # -- writes ----------------------------------------------------------------
 
@@ -197,6 +222,7 @@ class GraphView:
         self._doc_ok: dict[str, bool] = {}
         self._docs: dict[str, Document] = {}
         self._node_cache: dict[str, dict | None] = {}
+        self._rel_cache: dict[str, list[Relation]] = {}
 
     # backend hooks ---------------------------------------------------------
     def _load_documents(self, doc_ids: list[str]) -> dict[str, Document]:
@@ -207,6 +233,9 @@ class GraphView:
 
     def _load_relations_of(self, eid: str) -> list[Relation]:
         raise NotImplementedError
+
+    def _load_relations_of_many(self, eids: list[str]) -> dict[str, list[Relation]]:
+        return {eid: self._load_relations_of(eid) for eid in eids}
 
     def _iter_entity_ids(self, types=None):
         raise NotImplementedError
@@ -281,7 +310,19 @@ class GraphView:
     def edges_of(self, eid: str) -> list[dict]:
         if self.node(eid) is None:
             return []
-        return self._edges(self._load_relations_of(eid))
+        self.prefetch_edges([eid])
+        return self._edges(self._rel_cache[eid])
+
+    def prefetch_edges(self, eids) -> None:
+        """Load the relations of many entities at once (one round trip per batch)."""
+        missing = sorted({e for e in eids if e not in self._rel_cache})
+        if missing:
+            loaded = self._load_relations_of_many(missing)
+            for eid in missing:
+                self._rel_cache[eid] = loaded.get(eid, [])
+            rels = [r for eid in missing for r in self._rel_cache[eid]]
+            self._check_docs({ev.doc_id for r in rels for ev in r.evidence})
+            self.prefetch({x for r in rels for x in (r.a, r.b)})
 
     def nodes(self, types=None):
         batch = []
@@ -294,6 +335,7 @@ class GraphView:
 
     def _emit(self, batch, types):
         self.prefetch(batch)
+        self.prefetch_edges([e for e in batch if self._node_cache[e]])
         for eid in batch:
             n = self._node_cache[eid]
             if n and (types is None or n["type"] in types):

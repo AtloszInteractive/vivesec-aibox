@@ -259,17 +259,97 @@ class Neo4jGraphStore:
 
     # -- reads -----------------------------------------------------------------
 
+    def export(self):
+        """Everything as model objects: (documents, entities, mentions, relations)."""
+        with self._session() as s:
+            documents = [Document(d["doc_id"], d["corpus_id"], d["source_path"],
+                                  d.get("title") or "",
+                                  json.loads(d["acl_json"]) if d.get("acl_json") else None,
+                                  d.get("kind") or "", d.get("pages") or 0)
+                         for d in (r["d"] for r in s.run("MATCH (d:Document) RETURN d {.*} AS d"))]
+            entities = {}
+            for r in s.run("MATCH (e:Entity) RETURN e {.*} AS e"):
+                e = r["e"]
+                entities[e["id"]] = Entity(e["id"], e["type"], e.get("subtype") or "",
+                                           e.get("label") or "", [], e.get("status") or "active",
+                                           e.get("merged_into"))
+            for r in s.run("MATCH (a:Attr)-[:OF]->(e:Entity) RETURN a {.*} AS a, e.id AS eid"):
+                a = r["a"]
+                entities[r["eid"]].attributes.append(
+                    AttributeValue(a["name"], a["value"], a["doc_id"], a.get("page")))
+            mentions = [Mention(m["id"], m["doc_id"], r["eid"], m["text"], m.get("page"),
+                                m.get("start"), m.get("end"), m.get("method") or "ner",
+                                m.get("confidence") if m.get("confidence") is not None else 1.0)
+                        for r in s.run("MATCH (m:Mention)-[:OF]->(e:Entity) "
+                                       "RETURN m {.*} AS m, e.id AS eid")
+                        for m in [r["m"]]]
+            relations = [_relation(r["r"], r["a"], r["b"]) for r in s.run(
+                "MATCH (a:Entity)-[r:REL]->(b:Entity) RETURN r {.*} AS r, a.id AS a, b.id AS b")]
+        return documents, list(entities.values()), mentions, relations
+
     def view(self, scope, include_weak: bool = False) -> "Neo4jView":
         return Neo4jView(self, scope, include_weak)
 
     def counts(self) -> dict:
         with self._session() as s:
-            row = s.run("CALL { MATCH (d:Document) RETURN count(d) AS documents } "
-                        "CALL { MATCH (e:Entity) RETURN count(e) AS entities } "
-                        "CALL { MATCH (m:Mention) RETURN count(m) AS mentions } "
-                        "CALL { MATCH ()-[r:REL]->() RETURN count(r) AS relations } "
+            row = s.run("CALL () { MATCH (d:Document) RETURN count(d) AS documents } "
+                        "CALL () { MATCH (e:Entity) RETURN count(e) AS entities } "
+                        "CALL () { MATCH (m:Mention) RETURN count(m) AS mentions } "
+                        "CALL () { MATCH ()-[r:REL]->() RETURN count(r) AS relations } "
                         "RETURN documents, entities, mentions, relations").single()
         return dict(row)
+
+
+class CachedNeo4jStore:
+    """Neo4j persists, an in-memory mirror answers queries.
+
+    Every write goes to Neo4j first (which validates and commits atomically) and
+    is then replayed on the mirror with the same memory-store code; any mismatch
+    reloads the mirror from Neo4j, so a read never sees uncommitted data."""
+
+    def __init__(self, persistent: Neo4jGraphStore):
+        from graph_store import MemoryGraphStore
+
+        self.db = persistent
+        self.mirror = MemoryGraphStore()
+        self.reload()
+
+    def reload(self) -> None:
+        self.mirror.load_snapshot(*self.db.export())
+
+    def _replay(self, method, *args):
+        try:
+            return getattr(self.mirror, method)(*args)
+        except StoreError:
+            self.reload()
+
+    def put_document(self, doc, entities, mentions, relations) -> dict:
+        out = self.db.put_document(doc, entities, mentions, relations)
+        self._replay("put_document", doc, entities, mentions, relations)
+        return out
+
+    def drop_document(self, doc_id: str) -> bool:
+        out = self.db.drop_document(doc_id)
+        self._replay("drop_document", doc_id)
+        return out
+
+    def set_acl(self, doc_id: str, acl) -> bool:
+        out = self.db.set_acl(doc_id, acl)
+        self._replay("set_acl", doc_id, acl)
+        return out
+
+    def merge_entities(self, keep: str, drop: str) -> None:
+        self.db.merge_entities(keep, drop)
+        self._replay("merge_entities", keep, drop)
+
+    def view(self, scope, include_weak: bool = False):
+        return self.mirror.view(scope, include_weak)
+
+    def counts(self) -> dict:
+        return self.mirror.counts()
+
+    def close(self) -> None:
+        self.db.close()
 
 
 class Neo4jView(GraphView):
@@ -313,9 +393,16 @@ class Neo4jView(GraphView):
         return out
 
     def _load_relations_of(self, eid):
-        rows = self._run("MATCH (:Entity {id: $id})-[r:REL]-() "
-                         "RETURN r {.*} AS r, startNode(r).id AS a, endNode(r).id AS b", id=eid)
-        return [_relation(row["r"], row["a"], row["b"]) for row in rows]
+        return self._load_relations_of_many([eid]).get(eid, [])
+
+    def _load_relations_of_many(self, eids):
+        rows = self._run("MATCH (e:Entity)-[r:REL]-() WHERE e.id IN $ids "
+                         "RETURN e.id AS eid, r {.*} AS r, startNode(r).id AS a, "
+                         "endNode(r).id AS b", ids=list(eids))
+        out: dict[str, list[Relation]] = {}
+        for row in rows:
+            out.setdefault(row["eid"], []).append(_relation(row["r"], row["a"], row["b"]))
+        return out
 
     def _iter_entity_ids(self, types=None):
         rows = self._run("MATCH (e:Entity) WHERE $types IS NULL OR e.type IN $types "

@@ -242,16 +242,20 @@ def make_store(kind: str):
     if kind == "memory":
         return MemoryGraphStore()
     if kind == "neo4j":
-        from neo4j_store import Neo4jGraphStore
+        from neo4j_store import CachedNeo4jStore, Neo4jGraphStore
 
         password_file = os.environ.get("GRAPH_NEO4J_PASSWORD_FILE", "")
         if not password_file:
             raise SystemExit("GRAPH_STORE=neo4j needs GRAPH_NEO4J_PASSWORD_FILE")
         with open(password_file, encoding="utf-8") as f:
             password = f.read().strip()
-        return Neo4jGraphStore(os.environ.get("GRAPH_NEO4J_URI", "bolt://127.0.0.1:7687"),
-                               os.environ.get("GRAPH_NEO4J_USER", "neo4j"), password,
-                               os.environ.get("GRAPH_NEO4J_DATABASE", "neo4j"))
+        db = Neo4jGraphStore(os.environ.get("GRAPH_NEO4J_URI", "bolt://127.0.0.1:7687"),
+                             os.environ.get("GRAPH_NEO4J_USER", "neo4j"), password,
+                             os.environ.get("GRAPH_NEO4J_DATABASE", "neo4j"))
+        # Only an explicit off disables the mirror; queries then go to Neo4j directly.
+        if os.environ.get("GRAPH_READ_CACHE", "on").strip().lower() == "off":
+            return db
+        return CachedNeo4jStore(db)
     raise SystemExit("GRAPH_STORE must be memory or neo4j, not %r" % kind)
 
 

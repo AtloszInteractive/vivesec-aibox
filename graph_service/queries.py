@@ -59,6 +59,8 @@ def shortest_path(view, a: str, b: str, max_hops: int = 6) -> dict | None:
         grow_a = len(front_a) <= len(front_b)
         front, seen, other = (front_a, prev, nxt) if grow_a else (front_b, nxt, prev)
         new_front = []
+        if hasattr(view, "prefetch_edges"):
+            view.prefetch_edges(front)
         for cur in front:
             for edge in view.edges_of(cur):
                 o = _other(edge, cur)
