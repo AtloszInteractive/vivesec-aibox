@@ -102,6 +102,7 @@ import factory_reset  # noqa: E402
 import feedback  # noqa: E402
 import filestore  # noqa: E402
 import graph  # noqa: E402
+import gpu_gate  # noqa: E402
 import identity  # noqa: E402
 import jobstore  # noqa: E402
 import lifecycle  # noqa: E402
@@ -2372,7 +2373,8 @@ class Handler(BaseHTTPRequestHandler):
             "running": shown,
             "totals": st.get("totals") or {},
             "recent": [r for r in st.get("recent") or [] if mine(r.get("source_path"))],
-            "forward": {"pending": forward["pending"], "counts": forward["counts"]}})
+            "forward": {"pending": forward["pending"], "counts": forward["counts"]},
+            "gpu": gpu_gate.GATE.stats()})
 
     def _graph_review_list(self):
         ctx = self._graph_request()
@@ -2763,6 +2765,12 @@ def main():
         threading.Thread(target=_watchdog_loop, daemon=True).start()
     threading.Thread(target=_maintenance_loop, daemon=True).start()
     threading.Thread(target=_acl_loop, daemon=True).start()
+    broker_port = int(os.environ.get("ADAPTER_GPU_BROKER_PORT", "0") or 0)
+    if broker_port:
+        gpu_gate.start_broker(gpu_gate.GATE, llm.OLLAMA_URL, broker_port)
+    print("  GPU broker  :", "127.0.0.1:%d (background model calls wait for chat)"
+          % broker_port if broker_port else "off")
+    print("  Graph       :", GRAPH.url or "off")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

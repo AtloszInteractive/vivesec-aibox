@@ -18,6 +18,8 @@ import socket
 import threading
 import urllib.request
 
+import gpu_gate
+
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 GEN_MODEL = os.environ.get("ADAPTER_GEN_MODEL", "qwen2.5:14b")
 # auto = generate only if Ollama answers; on = always try; off = never generate.
@@ -481,6 +483,14 @@ def build_context(contexts):
 
 def _chat(system, user, history=None, timeout=600, num_ctx=None,
           cancel_event=None, progress_callback=None, stream=None, num_predict=None):
+    # Foreground: background model work (graph extraction) waits while this runs.
+    with gpu_gate.GATE.foreground():
+        return _chat_call(system, user, history, timeout, num_ctx, cancel_event,
+                          progress_callback, stream, num_predict)
+
+
+def _chat_call(system, user, history=None, timeout=600, num_ctx=None,
+               cancel_event=None, progress_callback=None, stream=None, num_predict=None):
     options = {"temperature": TEMPERATURE}
     if num_predict or NUM_PREDICT:
         options["num_predict"] = num_predict or NUM_PREDICT

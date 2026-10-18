@@ -404,6 +404,12 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `/review/decide` and `/profile/set` only for users in `ADAPTER_GRAPH_ADMINS`
   (empty: nobody); `/profile/get` returns the profile, the templates and
   `can_edit`.
+- **GPU priority**: with `ADAPTER_GPU_BROKER_PORT` set, a loopback-only broker
+  (`gpu_gate.py`) forwards `/api/chat`, `/api/generate` and
+  `/v1/chat/completions` to Ollama one background call at a time, only while no
+  adapter model call runs (plus `ADAPTER_GPU_GRACE_SECONDS`), and at the latest
+  after `ADAPTER_GPU_MAX_WAIT_SECONDS`. Set the graph's `GRAPH_LLM_URL` to it. A
+  background call already running is not interrupted.
 
 Tests: `python -m unittest graph_integration_test` (real RAG and graph service,
 fake extraction model; proves plumbing and filtering, not extraction quality).
