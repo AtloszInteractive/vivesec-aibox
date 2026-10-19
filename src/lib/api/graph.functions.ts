@@ -155,4 +155,16 @@ export const graphApi = {
     ),
   saveProfile: (drive: string, profile: unknown) =>
     adapterGraph<{ profile: GraphProfile }>("profile/set", { profile }, drive),
+  dossier: (drive: string, id: string, format: "docx" | "pdf", lang: string) =>
+    adapterGraph<GraphDossier>("dossier", { id, format, lang }, drive),
+};
+
+/** A rendered entity dossier: the file (base64) and its markdown source. */
+export type GraphDossier = {
+  name: string;
+  format: string;
+  content_type: string;
+  size: number;
+  text: string;
+  content_b64: string;
 };

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
+  Download,
   ExternalLink,
+  FileText,
   GitMerge,
   Loader2,
   Network,
@@ -16,6 +18,7 @@ import {
 } from "lucide-react";
 import { useLang } from "./i18n";
 import { layoutGraph } from "./graph-layout";
+import { saveToDrive } from "@/lib/api/rag.functions";
 import {
   graphApi,
   graphFailure,
@@ -754,6 +757,7 @@ function EntitySheet({
           ))}
         </Section>
       )}
+      <DossierActions drive={drive} node={node} />
       <Section title={tm("Relations")}>
         {edges.map((e) => (
           <button
@@ -804,6 +808,85 @@ function EntitySheet({
         )}
       </Section>
     </div>
+  );
+}
+
+/** Dossier of the focused entity: relations, timeline and a numbered source
+ *  list, rendered by the adapter within the caller's scope. */
+function DossierActions({ drive, node }: { drive: string; node: GraphNode }) {
+  const { tm, lang } = useLang();
+  const { run, notice } = useFailure();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => setNote(null), [node.id]);
+
+  async function download(format: "docx" | "pdf") {
+    setBusy(format);
+    setNote(null);
+    const res = await run(() => graphApi.dossier(drive, node.id, format, lang));
+    setBusy(null);
+    if (!res) return;
+    const bytes = Uint8Array.from(atob(res.content_b64), (ch) => ch.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: res.content_type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = res.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function save() {
+    setBusy("save");
+    setNote(null);
+    const res = await run(() => graphApi.dossier(drive, node.id, "docx", lang));
+    if (!res) {
+      setBusy(null);
+      return;
+    }
+    const saved = await saveToDrive({
+      data: {
+        name: res.name,
+        text: res.text,
+        format: "docx",
+        drive: drive || undefined,
+      },
+    });
+    setBusy(null);
+    if (saved.ok && saved.transferred) setNote(`${tm("Saved to drive")}: ${saved.path}`);
+    else if (saved.ok && saved.canDownload)
+      setNote(tm("The drive is not writable from here — use the download instead."));
+    else setNote(`${tm("Save failed")}: ${saved.reason || saved.error || "?"}`);
+  }
+
+  const button =
+    "inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1 text-xs hover:bg-white/10 disabled:opacity-40";
+  return (
+    <Section title={tm("Dossier")}>
+      {notice}
+      <div className="flex flex-wrap gap-1.5">
+        <button disabled={!!busy} onClick={() => void download("docx")} className={button}>
+          {busy === "docx" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <FileText className="h-3.5 w-3.5" />
+          )}
+          Word
+        </button>
+        <button disabled={!!busy} onClick={() => void download("pdf")} className={button}>
+          {busy === "pdf" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          PDF
+        </button>
+        <button disabled={!!busy} onClick={() => void save()} className={button}>
+          {busy === "save" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {tm("Save to drive")}
+        </button>
+      </div>
+      {note && <div className="mt-1.5 text-[11px] text-white/60">{note}</div>}
+    </Section>
   );
 }
 

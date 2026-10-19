@@ -549,6 +549,8 @@ const M: Record<string, Tri> = {
   "Find the shortest chain of relations to another entity": ["A legrövidebb kapcsolati lánc keresése egy másik entitáshoz", "Find den korteste kæde af relationer til en anden enhed", "Kürzeste Beziehungskette zu einer anderen Entität finden"],
   "No connection found within 6 steps.": ["6 lépésen belül nincs kapcsolat.", "Ingen forbindelse inden for 6 trin.", "Keine Verbindung innerhalb von 6 Schritten."],
   "Showing the first 150 entities.": ["Az első 150 entitás látható.", "Viser de første 150 enheder.", "Die ersten 150 Entitäten werden angezeigt."],
+  "Dossier": ["Dosszié", "Dossier", "Dossier"],
+  "The drive is not writable from here — use the download instead.": ["Innen nem írható a meghajtó — használja a letöltést.", "Drevet kan ikke skrives herfra — brug download i stedet.", "Das Laufwerk ist von hier nicht beschreibbar — bitte stattdessen herunterladen."],
   "Click a node to focus it, a line to see its evidence.": ["Kattintson egy pontra a kiemeléséhez, egy vonalra a bizonyítékaihoz.", "Klik på et punkt for at fokusere på det, på en linje for at se dokumentationen.", "Klicken Sie auf einen Knoten, um ihn hervorzuheben, auf eine Linie für die Belege."],
   "Back": ["Vissza", "Tilbage", "Zurück"],
   "Evidence": ["Bizonyíték", "Dokumentation", "Belege"],

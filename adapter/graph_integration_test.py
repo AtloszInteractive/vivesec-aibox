@@ -303,6 +303,41 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertIn("Titkos Tamás", out["answer"])
             self.assertIn(HIDDEN, {h["path"] for h in out["hits"]})
 
+    def test_dossier_cites_only_visible_sources(self):
+        import io
+        import zipfile
+
+        def dossier(user, fmt="docx", lang="hu"):
+            status, found = self.query(user, "find", text="Kovács", types=["person"])
+            ids = [e["id"] for e in found["entities"]]
+            outs = []
+            for eid in ids:
+                status, out = self.call("/api/v1/ui/graph/dossier",
+                                        {"id": eid, "format": fmt, "lang": lang}, user=user)
+                self.assertEqual(200, status, out)
+                outs.append(out)
+            return outs
+
+        [out] = dossier("lars")
+        self.assertTrue(out["name"].endswith(".docx"))
+        body = zipfile.ZipFile(io.BytesIO(base64.b64decode(out["content_b64"])))
+        xml = body.read("word/document.xml").decode("utf-8")
+        self.assertIn("Nagy Éva", xml)
+        self.assertIn("Kapcsolatok", xml)
+        self.assertNotIn("Titkos", out["text"] + xml)
+        self.assertIn("[1] " + PUBLIC, out["text"])
+        self.assertNotIn(HIDDEN, out["text"])
+        hanna = " ".join(o["text"] for o in dossier("hanna", lang="en"))
+        self.assertIn("Titkos Tamás", hanna)
+        self.assertIn(HIDDEN, hanna)
+        [pdf] = dossier("lars", fmt="pdf")
+        self.assertTrue(base64.b64decode(pdf["content_b64"]).startswith(b"%PDF"))
+        status, out = self.call("/api/v1/ui/graph/dossier", {"id": "nope"}, user="lars")
+        self.assertEqual(404, status, out)
+        status, out = self.call("/api/v1/ui/graph/dossier", {"id": "x", "format": "exe"},
+                                user="lars")
+        self.assertEqual(400, status, out)
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

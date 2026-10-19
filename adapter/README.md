@@ -411,6 +411,13 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `/review/decide` and `/profile/set` only for users in `ADAPTER_GRAPH_ADMINS`
   (empty: nobody); `/profile/get` returns the profile, the templates and
   `can_edit`.
+- **Dossier**: `POST /api/v1/ui/graph/dossier` `{id, format: docx|pdf|md, lang,
+  drives?}` renders one entity's basic data, direct relations, timeline and a
+  numbered source list (path, page, verbatim quote) with `docgen.py`.
+  Evidence from documents the caller may not see is left out, and so is a
+  relation left without evidence. Response: `{name, format, content_type, size,
+  text, content_b64}` (base64, because the ViVeSecBox tunnel carries JSON
+  only); `text` is the markdown, which the UI can save with `/ui/save`.
 - **GPU priority**: with `ADAPTER_GPU_BROKER_PORT` set, a loopback-only broker
   (`gpu_gate.py`) forwards `/api/chat`, `/api/generate` and
   `/v1/chat/completions` to Ollama one background call at a time, only while no

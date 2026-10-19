@@ -828,7 +828,14 @@ export class AdapterGraphError extends Error {
 }
 
 export async function adapterGraph<T>(
-  endpoint: "query" | "status" | "review/list" | "review/decide" | "profile/get" | "profile/set",
+  endpoint:
+    | "query"
+    | "status"
+    | "review/list"
+    | "review/decide"
+    | "profile/get"
+    | "profile/set"
+    | "dossier",
   body: Record<string, unknown>,
   drive: string,
 ): Promise<T> {

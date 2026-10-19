@@ -98,6 +98,7 @@ import corpus  # noqa: E402
 import directory  # noqa: E402
 import discovery  # noqa: E402
 import docgen  # noqa: E402
+import dossier  # noqa: E402
 import factory_reset  # noqa: E402
 import feedback  # noqa: E402
 import filestore  # noqa: E402
@@ -1480,6 +1481,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/review/decide": self._graph_review_decide,
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
+                "/api/v1/ui/graph/dossier": self._graph_dossier,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -2448,6 +2450,39 @@ class Handler(BaseHTTPRequestHandler):
                 (res.get("profile") or {}).get("id"), (res.get("profile") or {}).get("version"),
                 user))
             self._send(200, res)
+
+    def _graph_dossier(self):
+        """One entity's relations as DOCX/PDF with a source list. Returned as
+        base64 JSON (the ViVeSecBox tunnel does not carry binary bodies) plus
+        the markdown, so the UI can also save it to the drive via /ui/save."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, req_scope, access, scope_body = ctx
+        fmt = docgen.normalize_format(payload.get("format") or "docx")
+        if fmt not in ("docx", "pdf", "md"):
+            self._send(400, {"ok": False, "error": "format must be docx, pdf or md"})
+            return
+        check = _visible(access)
+        try:
+            built = dossier.build(
+                GRAPH, scope_body, lambda p: req_scope.contains_path(p) and check(p),
+                str(payload.get("id") or ""), str(payload.get("lang") or "en").lower(),
+                user, [root.rstrip("/").rsplit("/", 1)[-1] for root in req_scope.drive_roots])
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return
+        if built is None:
+            self._send(404, {"ok": False, "error": "not found"})
+            return
+        text, title = built
+        content, fmt = docgen.render(text, fmt, title=title)
+        safe = re.sub(r"[^\w\- ]+", "", title, flags=re.UNICODE).strip().replace(" ", "_")
+        sys.stderr.write("[adapter] graph: dossier (%s) by %s\n" % (fmt, user))
+        self._send(200, {"ok": True, "name": docgen.with_extension(safe or "dossier", fmt),
+                         "format": fmt, "content_type": docgen.content_type(fmt),
+                         "size": len(content), "text": text,
+                         "content_b64": base64.b64encode(content).decode("ascii")})
 
     def _files_download(self, query):
         vvs = self._read_vvs()
