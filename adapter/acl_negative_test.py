@@ -36,6 +36,8 @@ import llm
 from meta import MetaMirror
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The adapter image ships the adapter alone; these tests need the source tree.
+HAVE_RAG = os.path.exists(os.path.join(REPO, "rag_service", "service.py"))
 DRIVE = "/storage/drives/finance"
 HR_DRIVE = "/storage/drives/hr"
 
@@ -86,6 +88,7 @@ def echo_model(query, contexts, **_kw):
     return "\n".join(c.get("text") or "" for c in contexts), "echo"
 
 
+@unittest.skipUnless(HAVE_RAG, "needs rag_service/ next to adapter/")
 class AclNegativeSqliteTest(unittest.TestCase):
     BACKEND = "sqlite"
 

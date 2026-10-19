@@ -37,6 +37,9 @@ DOCS = {
 }
 PEOPLE = ("Kovács János", "Nagy Éva", "Titkos Tamás")
 GROUPS = {"lars": [], "hanna": ["hr"]}
+# The adapter image ships the adapter alone; these tests need the source tree.
+HAVE_SERVICES = all(os.path.exists(os.path.join(REPO, d, "service.py"))
+                    for d in ("rag_service", "graph_service"))
 
 
 def b64(text):
@@ -102,6 +105,7 @@ def _start(script, env, url):
             time.sleep(0.2)
 
 
+@unittest.skipUnless(HAVE_SERVICES, "needs rag_service/ and graph_service/ next to adapter/")
 class GraphIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
