@@ -84,10 +84,12 @@ class LifecycleStoreTest(unittest.TestCase):
 
     def test_failed_persist_still_locks(self):
         self.store.apply("suspended", "anna")
-        blocker = os.path.join(self.temp.name, "file")
-        with open(blocker, "w", encoding="utf-8") as handle:
-            handle.write("x")
-        store = lifecycle.LifecycleStore(os.path.join(blocker, "lifecycle.json"))
+        # A directory where the temp file goes: the write fails on every OS,
+        # while the state file itself is simply absent (a parent that is a
+        # file reads as "unreadable" on Linux, not as "missing").
+        blocked = os.path.join(self.temp.name, "blocked.json")
+        os.mkdir(blocked + ".tmp")
+        store = lifecycle.LifecycleStore(blocked)
         with self.assertRaises(OSError):
             store.apply("suspended", "lars")
         self.assertEqual(store.state_of(["lars"]), "suspended")
