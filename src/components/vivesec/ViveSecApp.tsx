@@ -818,6 +818,9 @@ function ViveSecAppInner() {
   // Which speech engines this box actually has (adapter/voice.py); both off by
   // default, so a box without a voice backend looks exactly as it does today.
   const [voiceCaps, setVoiceCaps] = useState({ stt: false, tts: false });
+  // Analyst boxes (ADAPTER_APP_MODE=analyst) offer chat + relationships only; the
+  // drive browser and quick actions stay in the code but are not shown.
+  const [analyst, setAnalyst] = useState(false);
 
   const probeBox = useCallback(async () => {
     setBoxState((s) => (s === "online" ? s : "probing"));
@@ -827,6 +830,7 @@ function ViveSecAppInner() {
       setBoxDetail(h.ok ? (h.mode ?? "") : (h.error ?? ""));
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
       if (h.ok) setBoxVersion(h.version ?? null);
+      if (h.ok) setAnalyst(h.app?.mode === "analyst");
       if (h.ok) {
         const policy = h.chatPolicy;
         setChatPolicy(policy && ["locked_hybrid", "selectable_grounded", "selectable_hybrid"].includes(policy.policy)
@@ -2272,12 +2276,14 @@ function ViveSecAppInner() {
                 <Network className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{tm("Relationships")}</span>
               </button>
-              <button
-                onClick={() => setDriveOpen((v) => !v)}
-                className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
-              >
-                <Laptop className="h-3.5 w-3.5" /> {driveOpen ? t.hideDrive : t.browseDrive}
-              </button>
+              {!analyst && (
+                <button
+                  onClick={() => setDriveOpen((v) => !v)}
+                  className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                >
+                  <Laptop className="h-3.5 w-3.5" /> {driveOpen ? t.hideDrive : t.browseDrive}
+                </button>
+              )}
               {/* AI Box connection state. There is no offline answer mode: when
                 the box is unreachable the composer is blocked instead of
                 showing anything the box did not produce. */}
@@ -2450,7 +2456,7 @@ function ViveSecAppInner() {
                 </div>}
                 <button
                   onClick={() => setMobilePane("results")}
-                  className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden"
+                  className={`ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden ${analyst ? "hidden" : ""}`}
                 >
                   <LayoutTemplate className="h-3.5 w-3.5" style={{ color: LIME }} />
                   {tm("Results")}
@@ -2564,7 +2570,7 @@ function ViveSecAppInner() {
               {/* Composer */}
               <div className="relative border-t border-white/5 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
                 {/* Floating browse drive (matches screenshot) */}
-                {!driveOpen && (
+                {!driveOpen && !analyst && (
                   <div className="pointer-events-none absolute -top-12 right-4 sm:right-8">
                     <button
                       onClick={() => setDriveOpen(true)}
@@ -2578,7 +2584,7 @@ function ViveSecAppInner() {
                 {/* Quick actions live in the results column now (they produce
                   deliverables, not chat turns) — on mobile that column is a tab
                   away, so a shortcut back to it stays here. */}
-                <div className="mx-auto mb-2 flex max-w-3xl lg:hidden">
+                <div className={`mx-auto mb-2 max-w-3xl lg:hidden ${analyst ? "hidden" : "flex"}`}>
                   <button
                     onClick={() => setMobilePane("results")}
                     disabled={!!wizard}
@@ -2608,7 +2614,7 @@ function ViveSecAppInner() {
                   lives in the adapter (llm.py TASK_INSTRUCTIONS); canned
                   sub-prompts here would land in the retrieval query and
                   dilute it. */}
-                {showSlash && !wizard && (
+                {showSlash && !wizard && !analyst && (
                   <div className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border border-white/10 bg-[#23272B] shadow-xl max-h-[55vh] overflow-y-auto">
                     {SLASH_COMMANDS.filter((s) => s.cmd.startsWith(input.split(" ")[0] || "/")).map(
                       (s) => {
@@ -2794,8 +2800,8 @@ function ViveSecAppInner() {
 
             {/* Results column — quick actions and the cards they produce */}
             <section
-              className={`h-full min-w-0 flex-1 basis-0 flex-col border-white/5 transition-all duration-500 lg:order-2 lg:flex lg:border-l ${
-                mobilePane === "results" ? "flex" : "hidden"
+              className={`h-full min-w-0 flex-1 basis-0 flex-col border-white/5 transition-all duration-500 lg:order-2 lg:border-l ${
+                analyst ? "hidden" : `lg:flex ${mobilePane === "results" ? "flex" : "hidden"}`
               }`}
             >
               <div className="flex items-center gap-2 border-b border-white/5 px-4 py-2.5">
@@ -3124,6 +3130,7 @@ function ViveSecAppInner() {
                 }}
                 onClearCitation={() => setPreviewCitation(null)}
               >
+                {!analyst && (
                 <div className="border-t border-white/5 p-3">
                   <button
                     className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-40"
@@ -3134,11 +3141,12 @@ function ViveSecAppInner() {
                     <Zap className="h-3.5 w-3.5" /> Analyze with AI
                   </button>
                 </div>
+                )}
               </PdfPreviewPane>
             )}
 
             {/* Drive — hidden while a document is open above it */}
-            {!previewFile && (
+            {!previewFile && !analyst && (
               <DrivePanel
                 open={driveOpen}
                 onClose={() => {

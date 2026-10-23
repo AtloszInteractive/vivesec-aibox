@@ -428,6 +428,27 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
 Tests: `python -m unittest graph_integration_test` (real RAG and graph service,
 fake extraction model; proves plumbing and filtering, not extraction quality).
 
+### Analyst mode (`ADAPTER_APP_MODE=analyst`)
+
+The box offers chat + relationships only. Quick actions (`action` in the body)
+and `/ui/files/children` answer 403, a typed `/summary` is plain text, and
+`/api/v1/status` reports `app {mode, drive_browser, quick_actions,
+orchestrator}` so the UI hides the drive browser, the results column and the
+slash menu. Source viewing (`/ui/file`) and saving (`/ui/save`) stay.
+
+With `GRAPH_URL` set, every chat message goes through the orchestrator
+(`orchestrator.py`): one JSON planning call chooses graph tools (relations,
+connection, common, timeline, copresence, shared_identifiers, most_connected),
+a standalone document search, or a question back to the user. The adapter runs
+the tools itself in the caller's scope; the model only names entities.
+Namesakes (separate records with the same name) are used together with a note;
+a partial name that fits different entities is asked back with the options.
+Each fact becomes a cited context with its quote (at most
+`ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
+is stored as the assistant's turn and answered with `clarify: true`. A failed or
+unusable plan falls back to the plain path (condense + graph facts).
+Tests: `orchestrator_test`, `graph_integration_test`.
+
 ## Test
 
 ```powershell

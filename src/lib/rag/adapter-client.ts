@@ -69,6 +69,28 @@ export type AdapterAnswer = {
 /** On-box speech capabilities (adapter/voice.py). Both default to off. */
 export type AdapterVoice = { stt: boolean; tts: boolean };
 
+/** What this box offers (ADAPTER_APP_MODE): analyst = chat + relationships only. */
+export type AdapterApp = {
+  mode: "workspace" | "analyst";
+  driveBrowser: boolean;
+  quickActions: boolean;
+  orchestrator: boolean;
+};
+
+function readApp(raw: unknown): AdapterApp {
+  const v = (raw ?? {}) as Record<string, unknown>;
+  // An adapter without the block is a workspace box.
+  if (v.mode !== "analyst") {
+    return { mode: "workspace", driveBrowser: true, quickActions: true, orchestrator: false };
+  }
+  return {
+    mode: "analyst",
+    driveBrowser: Boolean(v.drive_browser),
+    quickActions: Boolean(v.quick_actions),
+    orchestrator: Boolean(v.orchestrator),
+  };
+}
+
 export type AdapterStatus = {
   ok: boolean;
   uiReady: boolean;
@@ -76,6 +98,7 @@ export type AdapterStatus = {
   features: string[];
   locked: boolean;
   voice: AdapterVoice;
+  app?: AdapterApp;
   chatPolicy?: ChatPolicy;
   /** Release identity of the box (E01); null when the adapter predates it. */
   version?: BoxVersion | null;
@@ -349,6 +372,7 @@ export async function adapterStatus(): Promise<AdapterStatus> {
       features: Array.isArray(j.features) ? (j.features as string[]) : [],
       locked: Boolean(j.storage_locked ?? j.locked),
       voice: readVoice(j.voice),
+      app: readApp(j.app),
       chatPolicy: j.chat_policy as ChatPolicy | undefined,
       version: readBoxVersion(j.version),
     };

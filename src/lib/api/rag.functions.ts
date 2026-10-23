@@ -50,6 +50,7 @@ import {
   type AdapterJobStatus,
   type AdapterJobSummary,
   type AdapterVoice,
+  type AdapterApp,
   type ChatProfile,
   type ChatPolicy,
 } from "../rag/adapter-client";
@@ -130,6 +131,7 @@ export type RagHealth = {
   mode?: string;
   /** On-box speech engines; absent/false means the box has no voice backend. */
   voice?: AdapterVoice;
+  app?: AdapterApp;
   chatPolicy?: ChatPolicy;
   version?: BoxVersion | null;
   error?: string;
@@ -148,6 +150,7 @@ export async function ragHealth(): Promise<RagHealth> {
       index_ready: status.fsReady,
       embed_backend: status.features.join(", ") || "basic",
       voice: status.voice,
+      app: status.app,
       chatPolicy: status.chatPolicy,
       version: status.version ?? null,
       mode: status.uiReady

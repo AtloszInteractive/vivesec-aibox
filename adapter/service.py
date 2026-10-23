@@ -110,6 +110,7 @@ import jobstore  # noqa: E402
 import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
+import orchestrator  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -477,6 +478,32 @@ GRAPH_CHAT = (os.environ.get("ADAPTER_GRAPH_CHAT", "on").strip().lower() != "off
 GRAPH_FACTS = graph_context.GraphFacts(
     lambda: GRAPH, max_facts=max(1, int(os.environ.get("ADAPTER_GRAPH_CHAT_FACTS", "12") or 12)))
 
+APP_WORKSPACE = "workspace"
+APP_ANALYST = "analyst"
+
+
+def _parse_app_mode(raw):
+    """workspace: drive browser + quick actions (the original box). analyst:
+    chat + relationships only; quick actions and folder browsing are refused.
+    An unknown value takes the narrower analyst mode."""
+    value = (raw or "").strip().lower()
+    if not value:
+        return APP_WORKSPACE
+    if value in (APP_WORKSPACE, APP_ANALYST):
+        return value
+    sys.stderr.write("[adapter] unknown ADAPTER_APP_MODE %r -> %s\n" % (raw, APP_ANALYST))
+    return APP_ANALYST
+
+
+APP_MODE = _parse_app_mode(os.environ.get("ADAPTER_APP_MODE"))
+ORCHESTRATOR_MAX_FACTS = max(1, int(os.environ.get("ADAPTER_ORCHESTRATOR_MAX_FACTS", "40") or 40))
+
+
+def app_settings():
+    analyst = APP_MODE == APP_ANALYST
+    return {"mode": APP_MODE, "drive_browser": not analyst, "quick_actions": not analyst,
+            "orchestrator": analyst and GRAPH.enabled}
+
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
 SESSIONS = session.SessionManager.from_env()
@@ -580,6 +607,7 @@ def status_payload(trusted=True):
             "files": FILES.stats(),
             "voice": voice.status(),
             "chat_policy": chat_policy.settings(),
+            "app": app_settings(),
             "identity": identity_settings(),
             "version": version_block(rag_build),
             "paired": PROVISIONER.is_initialized(),
@@ -931,7 +959,32 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     # is answered from the history instead of being refused for no-context.
     chat_only = False
     retrieval_query = query
-    if action is None and history:
+    planned = None
+    orchestrated = None  # (contexts, info) of the analyst-mode plan
+    if action is None and APP_MODE == APP_ANALYST and GRAPH.enabled:
+        planned = orchestrator.plan(query, history, lang)
+    if planned is not None:
+        if planned["action"] == "clarify":
+            return _clarify_result(user, drive, query, planned["question"], req_scope,
+                                   session_scope, profile, conversation_id, agent, lang)
+        if planned["action"] == "chat":
+            chat_only = bool(history)
+        else:
+            retrieval_query = planned["search"] or query
+        if planned["calls"]:
+            check = _visible(access)
+            run = orchestrator.Run(
+                GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
+                lambda path: req_scope.contains_path(path) and check(path), lang,
+                ORCHESTRATOR_MAX_FACTS)
+            try:
+                orchestrated = (run.run(planned["calls"]), run.info())
+            except orchestrator.Clarify as e:
+                return _clarify_result(user, drive, query, e.question, req_scope,
+                                       session_scope, profile, conversation_id, agent, lang)
+            except graph.GraphError as e:
+                sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
+    elif action is None and history:
         retrieval_query, chat_only = llm.condense(query, history, lang)
     source_paths = [str(source) for source in (files or []) if source]
     if not source_paths and action is None:
@@ -982,7 +1035,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         contexts = res.get("contexts", [])
     contexts = _visible_contexts(contexts, access)
     graph_info = None
-    if action is None and not chat_only and GRAPH_CHAT and GRAPH.enabled:
+    if orchestrated is not None:
+        contexts = orchestrated[0] + contexts
+        graph_info = orchestrated[1]
+    elif action is None and not chat_only and GRAPH_CHAT and GRAPH.enabled:
         check = _visible(access)
         try:
             facts, graph_info = GRAPH_FACTS.contexts(
@@ -1101,6 +1157,33 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         "confidence": result["confidence"],
         "citations": citations, "hits": hits,
     })
+    return result
+
+
+def _clarify_result(user, drive, query, question, req_scope, session_scope, profile,
+                    conversation_id, agent, lang):
+    """The orchestrator asks the user back instead of answering. The question is
+    stored as the assistant's turn, so the next message is read as the reply."""
+    stored = SESSIONS.record(user, session_scope, query, question,
+                             conversation_id=conversation_id)
+    if stored == 1:
+        _title_thread(user, session_scope, conversation_id, query, question, lang)
+    aid = confidence.audit_id(user, drive, query, question)
+    result = {"ok": True, "drive": corpus.norm(drive), "user": user,
+              "corpus_id": req_scope.corpus_id,
+              "answer": "%s\n\n---\n**Adatkontroll & Audit Info**\n* Profile: %s\n* Audit ID: %s"
+                        % (question, profile, aid),
+              "backend": "orchestrator (clarify)", "action": None, "profile": profile,
+              "audit_id": aid, "agent": (agent or "").strip().lower() or llm.DEFAULT_AGENT,
+              "confidence": None, "citations": [], "hits": [], "clarify": True}
+    if conversation_id:
+        result["conversation_id"] = conversation_id
+    TRACES.put(aid, {"ts": time.time(), "user": user, "drive": corpus.norm(drive),
+                     "corpus_id": req_scope.corpus_id, "scope": req_scope.as_dict(),
+                     "action": None, "agent": result["agent"], "lang": lang,
+                     "profile": profile, "question": query, "answer": question,
+                     "backend": result["backend"], "confidence": None,
+                     "citations": [], "hits": []})
     return result
 
 
@@ -1725,7 +1808,15 @@ class Handler(BaseHTTPRequestHandler):
         if not query:
             self._send(400, {"ok": False, "error": "Missing 'query'"})
             return None
-        action, mode, query = parse_action(payload, query)
+        if APP_MODE == APP_ANALYST:
+            if payload.get("action"):
+                self._send(403, {"ok": False,
+                                 "error": "quick actions are not available on this box"})
+                return None
+            # A typed "/summary" is just text here: every message goes to the chat.
+            action, mode = None, None
+        else:
+            action, mode, query = parse_action(payload, query)
         if action in _BARE_QUERY and not query:
             # bare "#action": still retrievable — aim at the task's material.
             query = _BARE_QUERY[action]
@@ -2234,6 +2325,9 @@ class Handler(BaseHTTPRequestHandler):
         """Folder listing for the UI (E03). Unlike the /index/get/children
         sync read it checks the identity, the drive scope and the ACL; a folder
         the caller may not see answers exactly like a missing one."""
+        if APP_MODE == APP_ANALYST:
+            self._send(403, {"ok": False, "error": "folder browsing is not available on this box"})
+            return
         vvs = self._read_vvs()
         if vvs is None:
             return

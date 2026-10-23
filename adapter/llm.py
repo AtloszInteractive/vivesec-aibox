@@ -482,15 +482,17 @@ def build_context(contexts):
 
 
 def _chat(system, user, history=None, timeout=600, num_ctx=None,
-          cancel_event=None, progress_callback=None, stream=None, num_predict=None):
+          cancel_event=None, progress_callback=None, stream=None, num_predict=None,
+          response_format=None):
     # Foreground: background model work (graph extraction) waits while this runs.
     with gpu_gate.GATE.foreground():
         return _chat_call(system, user, history, timeout, num_ctx, cancel_event,
-                          progress_callback, stream, num_predict)
+                          progress_callback, stream, num_predict, response_format)
 
 
 def _chat_call(system, user, history=None, timeout=600, num_ctx=None,
-               cancel_event=None, progress_callback=None, stream=None, num_predict=None):
+               cancel_event=None, progress_callback=None, stream=None, num_predict=None,
+               response_format=None):
     options = {"temperature": TEMPERATURE}
     if num_predict or NUM_PREDICT:
         options["num_predict"] = num_predict or NUM_PREDICT
@@ -512,6 +514,8 @@ def _chat_call(system, user, history=None, timeout=600, num_ctx=None,
         "stream": use_stream,
         "options": options,
     }
+    if response_format:
+        payload["format"] = response_format
     if THINK in ("off", "false", "0"):
         payload["think"] = False
     elif THINK in ("on", "true", "1"):

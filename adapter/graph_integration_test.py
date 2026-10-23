@@ -342,6 +342,56 @@ class GraphIntegrationTest(unittest.TestCase):
                                 user="lars")
         self.assertEqual(400, status, out)
 
+    def test_analyst_mode_orchestrates_and_asks_back(self):
+        import llm
+
+        service = self.service
+
+        def echo(query, contexts, **_kw):
+            return "\n".join(c.get("text") or "" for c in contexts) or "NO-CONTEXT", "echo"
+
+        plans = []
+
+        def planner(system, user, **kw):
+            plans.append(user)
+            return plans_out.pop(0), 0, 0
+
+        plans_out = [
+            '{"action": "tools", "calls": [{"tool": "relations", "args": '
+            '{"entity": "Kovács János"}}], "search": "Kovács János kapcsolatai"}',
+            '{"action": "clarify", "question": "Melyik időszakra gondol?"}',
+            '{"action": "tools", "calls": [{"tool": "timeline", "args": '
+            '{"entity": "Kovács János"}}], "search": "Kovács János 2025"}',
+        ]
+        with patch.object(service, "APP_MODE", service.APP_ANALYST), \
+                patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", planner), \
+                patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False):
+            status, out = self.call("/api/v1/status", {})
+            self.assertEqual("analyst", out["app"]["mode"])
+            self.assertTrue(out["app"]["orchestrator"])
+            status, out = self.call("/api/v1/ui/query", {"query": "x", "action": "summary"},
+                                    user="lars")
+            self.assertEqual(403, status)
+            status, out = self.call("/api/v1/ui/files/children", {}, user="lars")
+            self.assertEqual(403, status)
+
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Kikkel áll kapcsolatban Kovács János?"},
+                                    user="lars")
+            self.assertEqual(200, status, out)
+            self.assertEqual("relations", out["graph"]["calls"][0]["tool"])
+            self.assertRegex(out["answer"], r"Kovács János -- \w+ -- Nagy Éva|"
+                                            r"Nagy Éva -- \w+ -- Kovács János")
+            self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+
+            status, out = self.call("/api/v1/ui/query", {"query": "És mikor?"}, user="lars")
+            self.assertEqual((200, True), (status, out.get("clarify")), out)
+            self.assertTrue(out["answer"].startswith("Melyik időszakra gondol?"))
+            status, out = self.call("/api/v1/ui/query", {"query": "2025-ben"}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertIn("ASSISTANT: Melyik időszakra gondol?", plans[-1])
+            self.assertEqual("timeline", out["graph"]["calls"][0]["tool"])
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

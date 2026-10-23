@@ -2817,6 +2817,36 @@
       "internal": false
     },
     {
+      "name": "ADAPTER_APP_MODE",
+      "component": "adapter",
+      "category": "chat",
+      "type": "enum",
+      "default": "workspace",
+      "allowed": "workspace | analyst",
+      "values": [
+        "workspace",
+        "analyst"
+      ],
+      "fail_safe": "Empty means workspace; an unknown value takes the narrower analyst mode.",
+      "impact": "analyst: chat + relationships only. Quick actions and folder browsing are refused (403) and hidden in the UI; with GRAPH_URL set, chat messages go through the orchestrator (graph queries, questions back to the user). workspace: the drive browser and quick actions as before.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_ORCHESTRATOR_MAX_FACTS",
+      "component": "adapter",
+      "category": "chat",
+      "type": "int",
+      "default": "40",
+      "allowed": ">= 1",
+      "fail_safe": "Empty or 0 uses 40.",
+      "impact": "Upper bound on graph facts (each with its quote and source) one analyst-mode answer receives from the orchestrator's graph queries.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "ADAPTER_GRAPH_CHAT_FACTS",
       "component": "adapter",
       "category": "chat",
