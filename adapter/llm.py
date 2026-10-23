@@ -124,7 +124,9 @@ _REFUSALS = {
 _LANG_MARKERS = {
     "Hungarian": ("a", "az", "és", "van", "volt", "mennyi", "milyen", "melyik",
                   "hány", "mekkora", "mi", "hogyan", "nem", "egy", "ez",
-                  "kell", "lehet", "szerint", "között", "után"),
+                  "kell", "lehet", "szerint", "között", "után", "ki", "kik", "kit",
+                  "kinek", "kinél", "kivel", "aki", "akik", "akiket", "azokat",
+                  "hogy", "meg", "mikor", "hol", "miért", "vagy", "csak"),
     "English": ("the", "is", "was", "are", "what", "which", "how", "much",
                 "many", "does", "did", "and", "of", "in", "to", "for", "a",
                 "who", "when", "where"),
@@ -137,6 +139,8 @@ _LANG_MARKERS = {
 }
 # Diacritics that identify a language on their own (unique to one of the four).
 _LANG_CHARS = {"Hungarian": "őűŐŰ", "Danish": "æøåÆØÅ", "German": "ßẞ"}
+# Letters none of the other three languages write; they settle a tie only.
+_LANG_TIEBREAK = {"Hungarian": "áíóúÁÍÓÚ"}
 
 _TOKEN_RE = re.compile(r"[\wőűöüóáéíúäøåæß]+", re.UNICODE | re.IGNORECASE)
 
@@ -161,7 +165,8 @@ def detect_lang(text):
         return ""
     tied = [k for k, v in scores.items() if v == scores[best]]
     if len(tied) > 1:
-        return ""  # ambiguous -> no forced language
+        hinted = [k for k in tied if any(ch in text for ch in _LANG_TIEBREAK.get(k, ""))]
+        return hinted[0] if len(hinted) == 1 else ""  # ambiguous -> no forced language
     return best
 
 # Task-specific output instructions (function specification v2). The grounding

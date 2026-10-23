@@ -169,6 +169,16 @@ class ChatPolicyTest(unittest.TestCase):
             self.assertIn("- [#1] Graph search (sequence): no result. 5 pairs", user)
             self.assertIn("[#2] /d/a.txt", user)  # numbering unchanged
 
+    def test_hungarian_question_without_unique_letters_is_detected(self):
+        self.assertEqual("Hungarian", llm.detect_lang(
+            "Kik látogatták meg azokat a fogvatartottakat, akiket a 102. számú "
+            "zárkában helyeztek el?"))
+        self.assertEqual("Hungarian", llm.detect_lang("Kinél a kulcs?"))
+        self.assertEqual("Hungarian", llm.detect_lang("A zárka?"))  # tie, settled by á
+        self.assertEqual("", llm.detect_lang("A cell?"))  # tie, nothing to settle it
+        self.assertEqual("English", llm.detect_lang("Who visited a cell?"))
+        self.assertEqual("German", llm.detect_lang("Wer hat die Zelle besucht?"))
+
 
 class ProfilePipelineTest(unittest.TestCase):
     @classmethod

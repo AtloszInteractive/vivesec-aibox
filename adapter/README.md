@@ -458,7 +458,9 @@ when named directly; a partial name that fits different entities is asked back
 with the options. Patterns, sequences and per-entity counts follow node ids, so
 records awaiting an administrator's same-name merge (graph review) are not
 joined; when such a query comes back empty or ranks entities, the answer notes
-how many pairs await a decision in the caller's visible documents.
+how many pairs await a decision in the caller's visible documents (graph notes
+reach the answer model as SEARCH NOTES; for an empty pattern or sequence the
+adapter also shows the reason under the answer, since the model may drop it).
 Each fact becomes a cited context with its quote (at most
 `ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
 is stored as the assistant's turn and answered with `clarify: true`. A failed or
