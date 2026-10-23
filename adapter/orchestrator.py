@@ -87,7 +87,9 @@ PLANNER = (
     "only for specific named people, places or things. Set more: true only when you "
     "must see the results before choosing further calls (first find who or what "
     "matches, then look into them, e.g. the top of a count, then relations or "
-    "find_pattern with that name); you then get RESULTS SO FAR and reply with new "
+    "find_pattern with that name); a request whose second part is about the answer "
+    "to its first part (who did X most, and who visited them) always needs more: "
+    "true. You then get RESULTS SO FAR and reply with new "
     'calls or {"action": "done"}; never repeat a call. Resolve pronouns and follow-ups '
     "from the conversation. "
     "Pass names as given even when they may be incomplete (a surname alone): the system "
