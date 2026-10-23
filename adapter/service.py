@@ -1130,6 +1130,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     display = answer
     if answer and not degenerate and document and document.get("truncated"):
         display = answer + "\n\n" + _analyze_truncation_note(document, lang)
+    if display and orchestrated is not None and orchestrated[1].get("caveat"):
+        display = display + "\n\n> " + orchestrated[1]["caveat"]
     if display:
         display = display + "\n\n" + (confidence.footer(conf, citations, aid, lang)
                 if conf is not None else

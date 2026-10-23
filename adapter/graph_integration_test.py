@@ -427,6 +427,28 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
         self.assertNotIn("Titkos", "".join(u for _, u in prompts))
 
+    def test_empty_cross_document_result_shows_the_merge_caveat(self):
+        import llm
+        import orchestrator
+
+        service = self.service
+        plan = ('{"action": "tools", "calls": [{"tool": "sequence", "args": {"first": "MET", '
+                '"then": "MET", "within_days": 0, "from": "1900", "to": "1900"}}], '
+                '"search": "Kovács János találkozói"}')
+        with patch.object(service, "APP_MODE", service.APP_ANALYST), \
+                patch.object(llm, "GENERATE", "on"), \
+                patch.object(llm, "_chat", return_value=(plan, 0, 0)), \
+                patch.object(llm, "generate",
+                             lambda *a, **k: ("Nincs ilyen.", "echo")), \
+                patch.object(llm, "TITLES", False), \
+                patch.object(orchestrator.Run, "_pending", return_value=4):
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Ki találkozott Kovács Jánossal egymás után?"},
+                                    user="lars")
+        self.assertEqual(200, status, out)
+        self.assertEqual(0, out["graph"]["calls"][0]["facts"])
+        self.assertRegex(out["answer"], r"^Nincs ilyen\.\n\n> .*\b4\b.*\n\n---\n")
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

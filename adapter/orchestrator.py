@@ -443,6 +443,9 @@ class Run:
         self._call_labels = set()
         self._unmerged = None
         self._unmerged_noted = False
+        # Shown under the answer when a cross-document query came back empty
+        # because records await a merge: the model tends to drop that reason.
+        self.caveat = None
 
     def query(self, name, **params):
         res = self.client.post("/query/" + name, dict(self.scope, **params))
@@ -886,6 +889,7 @@ class Run:
                     # Said in the same breath, so the answer cannot drop the reason.
                     text += " " + _t("unmerged", self.code) % pending
                     self._unmerged_noted = True
+                    self.caveat = _t("unmerged", self.code) % pending
                 self.notes.append(text)
             elif (cross and not facts) or (
                     call["tool"] == "count"
@@ -928,8 +932,11 @@ class Run:
         return "\n".join(lines)
 
     def info(self):
-        return {"calls": [{k: c[k] for k in ("tool", "args", "facts", "round")}
-                          for c in self.calls],
-                "facts": len(self.contexts),
-                "entities": sorted({n["label"] for n in self.nodes.values()
-                                    if any(n["id"] in ids for ids in self._names.values())})}
+        out = {"calls": [{k: c[k] for k in ("tool", "args", "facts", "round")}
+                         for c in self.calls],
+               "facts": len(self.contexts),
+               "entities": sorted({n["label"] for n in self.nodes.values()
+                                   if any(n["id"] in ids for ids in self._names.values())})}
+        if self.caveat:
+            out["caveat"] = self.caveat
+        return out

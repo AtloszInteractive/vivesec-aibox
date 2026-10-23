@@ -325,6 +325,9 @@ class RunTest(unittest.TestCase):
         self.assertIn("5 pairs of same-named records", notes[0])
         self.assertNotIn("same-named", notes[1])  # said once
         self.assertEqual(1, sum(p == "/review/list" for p, _ in graph.calls))
+        self.assertIn("5 pairs of same-named records", r.info()["caveat"])
+        self.assertNotIn("caveat", orchestrator.Run(
+            FakeGraph(pending=5), {"corpus_ids": ["c"]}, lambda p: True).info())
 
     def test_sequence_lists_only_visible_pairs(self):
         _, contexts, _ = run([{"tool": "sequence", "args": {
