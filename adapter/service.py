@@ -964,19 +964,25 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     if action is None and APP_MODE == APP_ANALYST and GRAPH.enabled:
         planned = orchestrator.plan(query, history, lang)
     if planned is not None:
+        check = _visible(access)
+        run = orchestrator.Run(
+            GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
+            lambda path: req_scope.contains_path(path) and check(path), lang,
+            ORCHESTRATOR_MAX_FACTS)
         if planned["action"] == "clarify":
-            return _clarify_result(user, drive, query, planned["question"], req_scope,
+            question = planned["question"]
+            try:
+                # A partly named person is better asked back with the actual matches.
+                question = run.name_options(query) or question
+            except graph.GraphError as e:
+                sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
+            return _clarify_result(user, drive, query, question, req_scope,
                                    session_scope, profile, conversation_id, agent, lang)
         if planned["action"] == "chat":
             chat_only = bool(history)
         else:
             retrieval_query = planned["search"] or query
         if planned["calls"]:
-            check = _visible(access)
-            run = orchestrator.Run(
-                GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
-                lambda path: req_scope.contains_path(path) and check(path), lang,
-                ORCHESTRATOR_MAX_FACTS)
             try:
                 orchestrated = (run.run(planned["calls"]), run.info())
             except orchestrator.Clarify as e:

@@ -147,6 +147,15 @@ class RunTest(unittest.TestCase):
         self.assertEqual(1, cm.exception.question.count("Kovács János"))
         self.assertIn("Kovács János (Fogvatartott, 4 dokumentum)", cm.exception.question)
 
+    def test_inflected_partial_name_is_asked_back_with_matches(self):
+        with self.assertRaises(orchestrator.Clarify) as cm:
+            run([{"tool": "timeline", "args": {"entity": "Kovácsot"}}])
+        self.assertIn("Kovács Péter", cm.exception.question)
+        r = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "Hungarian")
+        self.assertIn("Kovács Péter", r.name_options("Mikor szállították át Kovácsot?"))
+        self.assertIsNone(r.name_options("Mi a helyzet vele?"))
+        self.assertIsNone(r.name_options("Mikor látogatták meg Nagy Évát?"))
+
     def test_inflected_name_and_unknown_name(self):
         _, contexts, _ = run([{"tool": "timeline", "args": {"entity": "Kovács Jánossal"}},
                               {"tool": "relations", "args": {"entity": "Senki Sem"}}],

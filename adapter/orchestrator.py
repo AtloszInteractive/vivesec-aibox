@@ -24,7 +24,10 @@ ENTITY_TYPES = ["person", "organization", "place", "identifier", "event", "objec
 MAX_CALLS = 4
 MAX_CANDIDATES = 5
 PLAN_TIMEOUT = 120
+MIN_PREFIX = 4
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
+# Capitalised words after the first one: candidate names in a question.
+_NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
 
 PLANNER = (
     "You plan how to answer a message about people, organisations, places, "
@@ -50,7 +53,9 @@ PLANNER = (
     "(summarise that, thanks, rephrase).\n"
     "Rules: at most 4 calls. Resolve pronouns and follow-ups from the conversation. "
     "Pass names as given even when they may be incomplete (a surname alone): the system "
-    "looks them up and lets the user choose between matches itself. "
+    "looks them up and lets the user choose between matches itself. Never ask which of "
+    "several people or things with a name is meant, and never ask for context the tools "
+    "do not need. "
     "Ask back ONLY when the request cannot be answered without the missing detail -- "
     "who or what is meant is unclear even with the conversation, or a second entity or "
     "a period the request depends on is missing. If the user has just answered your "
@@ -264,6 +269,39 @@ class Run:
                  else _t("documents", self.code) % docs)
         return "%s (%s, %s)" % (node["label"], kind, count)
 
+    def _options(self, name, found):
+        """The ask-back text when `found` holds different names, else None."""
+        groups = {}
+        for n in found:
+            groups.setdefault(fold(n["label"]), []).append(n)
+        if len(groups) < 2:
+            return None
+        options = "\n".join("- " + self.describe(g)
+                            for g in list(groups.values())[:MAX_CANDIDATES])
+        return "%s\n%s" % (_t("ambiguous", self.code) % name, options)
+
+    def _find_prefix(self, word):
+        """Entities for one inflected word ("Nagyot" -> Nagy ...), longest prefix first."""
+        for cut in range(len(word), MIN_PREFIX - 1, -1):
+            found = (self.query("find", text=word[:cut], limit=8, types=ENTITY_TYPES)
+                     .get("entities") or [])
+            if found:
+                return word[:cut], found
+        return word, []
+
+    def name_options(self, text):
+        """For a question the planner wants to ask back: if the message names
+        someone only partly and the graph knows several such names, list them."""
+        if self.query("mentioned", text=(text or "")[:4000], limit=1,
+                      types=ENTITY_TYPES).get("entities"):
+            return None  # a full name is there; the planner's own question stands
+        for word in _NAME_RE.findall(text or ""):
+            stem, found = self._find_prefix(word)
+            question = self._options(stem, found)
+            if question:
+                return question
+        return None
+
     def resolve(self, name):
         """Ids for one name. Namesakes (same name, separate records) are kept
         together; different entities that fit a partial name are asked back."""
@@ -277,16 +315,17 @@ class Run:
         elif len(found) == 1 or len({fold(n["label"]) for n in found}) == 1:
             picked = found
         elif found:
-            groups = {}
-            for n in found:
-                groups.setdefault(fold(n["label"]), []).append(n)
-            options = "\n".join("- " + self.describe(g)
-                                for g in list(groups.values())[:MAX_CANDIDATES])
-            raise Clarify("%s\n%s" % (_t("ambiguous", self.code) % name, options))
+            raise Clarify(self._options(name, found))
         else:
             # Inflected forms ("Kovács Jánossal") are matched by the mention finder.
             picked = (self.query("mentioned", text=name, limit=1, types=ENTITY_TYPES)
                       .get("entities") or [])
+            if not picked and len(name.split()) == 1:
+                stem, found = self._find_prefix(name)
+                question = self._options(stem, found)
+                if question:
+                    raise Clarify(question)
+                picked = found
         for node in picked:
             self.nodes[node["id"]] = node
         if not picked:
