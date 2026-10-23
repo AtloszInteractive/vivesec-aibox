@@ -22,7 +22,7 @@ TOOLS = ("relations", "connection", "common", "timeline", "copresence",
          "shared_identifiers", "most_connected")
 ENTITY_TYPES = ["person", "organization", "place", "identifier", "event", "object"]
 MAX_CALLS = 4
-MAX_CANDIDATES = 5
+MAX_CANDIDATES = 6
 PLAN_TIMEOUT = 120
 MIN_PREFIX = 4
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
@@ -278,15 +278,18 @@ class Run:
             return None
         options = "\n".join("- " + self.describe(g)
                             for g in list(groups.values())[:MAX_CANDIDATES])
-        return "%s\n%s" % (_t("ambiguous", self.code) % name, options)
+        return "%s\n\n%s" % (_t("ambiguous", self.code) % name, options)
 
     def _find_prefix(self, word):
         """Entities for one inflected word ("Nagyot" -> Nagy ...), longest prefix first."""
         for cut in range(len(word), MIN_PREFIX - 1, -1):
-            found = (self.query("find", text=word[:cut], limit=8, types=ENTITY_TYPES)
+            stem = word[:cut]
+            found = (self.query("find", text=stem, limit=20, types=ENTITY_TYPES)
                      .get("entities") or [])
-            if found:
-                return word[:cut], found
+            # "Nagy" means the Nagys, not "Nagykanizsa".
+            whole = [n for n in found if fold(stem) in fold(n["label"]).split()]
+            if whole or found:
+                return stem, whole or found
         return word, []
 
     def name_options(self, text):
