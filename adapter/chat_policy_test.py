@@ -154,6 +154,21 @@ class ChatPolicyTest(unittest.TestCase):
             self.assertEqual(backend, "no-context")
             generate.assert_not_called()
 
+    def test_graph_notes_are_set_apart_as_search_notes(self):
+        contexts = [{"text": "Graph search (sequence): no result. 5 pairs await a merge.",
+                     "origin": "graph-note", "title": "graph search"},
+                    {"text": "Visit log", "source_path": "/d/a.txt", "origin": None}]
+        self.assertEqual("", llm.search_notes(contexts[1:]))
+        for profile in ("hybrid", "grounded"):
+            with patch.object(llm, "GENERATE", "on"), patch.object(llm, "_ollama_up",
+                                                                   return_value=True), \
+                    patch.object(llm, "_chat", return_value=("ok", 0, 0)) as chat:
+                llm.generate("Who?", contexts, profile=profile)
+            user = chat.call_args[0][1]
+            self.assertIn("SEARCH NOTES", user, profile)
+            self.assertIn("- [#1] Graph search (sequence): no result. 5 pairs", user)
+            self.assertIn("[#2] /d/a.txt", user)  # numbering unchanged
+
 
 class ProfilePipelineTest(unittest.TestCase):
     @classmethod

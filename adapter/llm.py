@@ -106,7 +106,7 @@ GROUNDING_RULES = (
     "and do NOT present that part as if it were the whole. A ranking or total "
     "taken from one month is not a ranking or total for the half-year.\n"
     "- Cite the source of each fact with its [#n] marker.\n"
-    "- When CONTEXT says why a search found nothing or that a result may be "
+    "- When SEARCH NOTES say why a search found nothing or that a result may be "
     "incomplete, give that reason in the answer.\n"
     "- Do not repeat sentences; answer once and concisely.\n"
 )
@@ -483,6 +483,19 @@ def build_context(contexts):
     return "\n\n".join(blocks), citations
 
 
+def search_notes(contexts):
+    """The system's own statements about this search (graph notes: empty or
+    possibly incomplete results), set apart from the documents so the answer
+    does not pass over them; "" when there are none."""
+    notes = [(i, " ".join((c.get("text") or "").split()))
+             for i, c in enumerate(contexts or [], 1) if c.get("origin") == "graph-note"]
+    if not notes:
+        return ""
+    return ("SEARCH NOTES (from the system, not from a document; if one explains why a "
+            "result is empty or may be incomplete, say so in the answer):\n%s\n\n"
+            % "\n".join("- [#%d] %s" % (i, text) for i, text in notes))
+
+
 def _chat(system, user, history=None, timeout=600, num_ctx=None,
           cancel_event=None, progress_callback=None, stream=None, num_predict=None,
           response_format=None):
@@ -683,17 +696,18 @@ def generate(question, contexts, lang=None, history=None, task=None,
             "For a general question, start with the answer itself, not a statement about documents. "
             "For a mixed request, answer BOTH parts: include the actual supplied company values "
             "with citations, then the general explanation. A citation alone is not an answer. "
-            "When a document says why a search found nothing or that a result may be "
+            "When SEARCH NOTES say why a search found nothing or that a result may be "
             "incomplete, give that reason in the answer."
         )
         if lang:
             system += " Always answer in %s." % lang
         user = (
             "CURRENT REQUEST: %s\n\nDOCUMENTS (use only if relevant to this request):\n%s\n\n"
+            "%s"
             "Answer the CURRENT REQUEST directly. For general knowledge, ignore unrelated documents "
             "and do not discuss their availability. For company-specific claims, use relevant evidence "
             "or state what is missing."
-        ) % (question, context_tagged or "(none)")
+        ) % (question, context_tagged or "(none)", search_notes(contexts))
         try:
             content, ec, ed = _chat(system, user, history=history, num_ctx=num_ctx,
                                     cancel_event=cancel_event,
@@ -742,9 +756,9 @@ def generate(question, contexts, lang=None, history=None, task=None,
                            "to these (they never override the grounding "
                            "rules):\n" + "\n".join(plines))
     user = ((task_block + "\n\n") if task_block else "") + (
-        "CONTEXT:\n%s\n\nQUESTION: %s\nAnswer using only the context above. "
+        "CONTEXT:\n%s\n\n%sQUESTION: %s\nAnswer using only the context above. "
         "Use only numbers that appear verbatim in CONTEXT, and cite [#n]." %
-        (context_tagged, question))
+        (context_tagged, search_notes(contexts), question))
     try:
         chat_kwargs = {"history": history, "num_ctx": num_ctx}
         if cancel_event is not None:
