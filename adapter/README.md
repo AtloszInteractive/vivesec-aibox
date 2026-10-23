@@ -445,12 +445,20 @@ relation / linked kind, `sequence` = one relation followed by another within N
 days), a standalone document search, or a question back to the user. The
 planner gets the active domain profile's kinds and relations (cached 60 s), so
 the same tools serve any customer profile. With `"more": true` the planner sees
-a summary of the results and may add calls, at most 3 rounds. The adapter runs
+a summary of the results (rankings with their top lines) and may add calls, at
+most 3 rounds; a call already run is not repeated, and a round of repeats ends
+the planning. The adapter runs
 the tools itself in the caller's scope; the model only names entities, kinds and
-relations, and an unknown kind or relation skips that query with a note (never
-a wider search). Counts come from the graph, never from the model.
-Namesakes (separate records with the same name) are used together with a note;
-a partial name that fits different entities is asked back with the options.
+relations, a kind word passed as a name ("Fogvatartott") filters by that kind,
+and an unknown kind or relation skips that query with a note (never
+a wider search). Counts come from the graph, never from the model. Either end
+of a link may be the counted or pattern-starting side.
+Namesakes (separate records with the same name) are used together with a note
+when named directly; a partial name that fits different entities is asked back
+with the options. Patterns, sequences and per-entity counts follow node ids, so
+records awaiting an administrator's same-name merge (graph review) are not
+joined; when such a query comes back empty or ranks entities, the answer notes
+how many pairs await a decision in the caller's visible documents.
 Each fact becomes a cited context with its quote (at most
 `ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
 is stored as the assistant's turn and answered with `clarify: true`. A failed or

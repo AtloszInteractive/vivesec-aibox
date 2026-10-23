@@ -47,12 +47,15 @@ def _relation_ok(edge: dict, relations) -> bool:
     return not relations or edge["type"] in relations
 
 
-def _orient(view, edge: dict, focus: dict | None, other: dict | None):
-    """(focus id, other id) when the edge links a focus entity to an other one."""
+def _orientations(view, edge: dict, focus: dict | None, other: dict | None) -> list:
+    """Every (focus id, other id) reading of the edge that fits the filters: both
+    when either end may be the focus (a person-to-person visit seen from each side)."""
+    out = []
     for f, o in ((edge["a"], edge["b"]), (edge["b"], edge["a"])):
-        if _matches(view.node(f), focus) and _matches(view.node(o), other):
-            return f, o
-    return None
+        if (f, o) not in out and _matches(view.node(f), focus) \
+                and _matches(view.node(o), other):
+            out.append((f, o))
+    return out
 
 
 def _candidate_edges(view, focus: dict | None):
@@ -92,9 +95,8 @@ def match(view, start: dict | None, steps: list[dict], date_from: str | None = N
     for edge in _candidate_edges(view, start):
         if not _relation_ok(edge, first.get("relations")) or not _in_period(edge, date_from, date_to):
             continue
-        pair = _orient(view, edge, start, first.get("target"))
-        if pair:
-            paths.append(([pair[0], pair[1]], [edge]))
+        for f, o in _orientations(view, edge, start, first.get("target")):
+            paths.append(([f, o], [edge]))
     for step in steps[1:]:
         grown = []
         for nodes, edges in paths:
@@ -126,31 +128,10 @@ def aggregate(view, relations=None, focus: dict | None = None, other: dict | Non
     for edge in _candidate_edges(view, focus):
         if not _relation_ok(edge, relations) or not _in_period(edge, date_from, date_to):
             continue
-        pair = _orient(view, edge, focus, other)
-        if not pair:
-            continue
-        f, o = pair
-        if group_by in ("month", "year"):
-            if not edge.get("start"):
-                continue
-            key = edge["start"][:7] if group_by == "month" else edge["start"][:4]
-            label, node = key, None
-        elif group_by == "relation":
-            key = label = edge["type"]
-            node = None
-        elif group_by == "other_kind":
-            n = view.node(o)
-            key = label = n.get("subtype") or n["type"]
-            node = None
-        else:
-            node = view.node(f if group_by == "focus" else o)
-            key, label = node["id"], node["label"]
-        row = rows.setdefault(key, {"key": key, "label": label, "node": node, "count": 0,
-                                    "others": set(), "samples": []})
-        row["count"] += 1
-        row["others"].add(o if group_by != "other" else f)
-        if len(row["samples"]) < SAMPLES:
-            row["samples"].append(edge)
+        pairs = _orientations(view, edge, focus, other)
+        # Per entity, a link counts for each end that fits; per period or kind, once.
+        for f, o in pairs if group_by in ("focus", "other") else pairs[:1]:
+            _count(view, rows, edge, f, o, group_by)
     ordered = sorted(rows.values(), key=lambda r: (-r["count"], str(r["label"])))
     if group_by in ("month", "year"):
         ordered = sorted(rows.values(), key=lambda r: r["key"])
@@ -163,6 +144,30 @@ def aggregate(view, relations=None, focus: dict | None = None, other: dict | Non
     return out
 
 
+def _count(view, rows: dict, edge: dict, f: str, o: str, group_by: str) -> None:
+    if group_by in ("month", "year"):
+        if not edge.get("start"):
+            return
+        key = edge["start"][:7] if group_by == "month" else edge["start"][:4]
+        label, node = key, None
+    elif group_by == "relation":
+        key = label = edge["type"]
+        node = None
+    elif group_by == "other_kind":
+        n = view.node(o)
+        key = label = n.get("subtype") or n["type"]
+        node = None
+    else:
+        node = view.node(f if group_by == "focus" else o)
+        key, label = node["id"], node["label"]
+    row = rows.setdefault(key, {"key": key, "label": label, "node": node, "count": 0,
+                                "others": set(), "samples": []})
+    row["count"] += 1
+    row["others"].add(o if group_by != "other" else f)
+    if len(row["samples"]) < SAMPLES:
+        row["samples"].append(edge)
+
+
 def sequence(view, first: dict, then: dict, within_days: int = 30, focus: dict | None = None,
              date_from: str | None = None, date_to: str | None = None,
              limit: int = 50) -> list[dict]:
@@ -173,25 +178,29 @@ def sequence(view, first: dict, then: dict, within_days: int = 30, focus: dict |
         if not _relation_ok(e1, first.get("relations")) or not _in_period(e1, date_from, date_to):
             continue
         d1 = _date(e1.get("start"))
-        pair = _orient(view, e1, focus, first.get("other"))
-        if d1 is None or not pair:
+        if d1 is None:
             continue
-        pivot = pair[0]
-        for e2 in view.edges_of(pivot):
-            if e2["id"] == e1["id"] or not _relation_ok(e2, then.get("relations")):
-                continue
-            d2 = _date(e2.get("start"))
-            if d2 is None:
-                continue
-            gap = (d2 - d1).days
-            if not 0 <= gap <= within_days:
-                continue
-            o2 = e2["b"] if e2["a"] == pivot else e2["a"]
-            if not _matches(view.node(o2), then.get("other")):
-                continue
-            pairs.append({"focus": view.node(pivot), "first": e1, "then": e2, "days": gap,
-                          "nodes": [view.node(pair[1]), view.node(o2)]})
-            if len(pairs) >= MAX_PAIRS * 5:
-                break
+        for pivot, first_other in _orientations(view, e1, focus, first.get("other")):
+            _follow(view, pairs, e1, d1, pivot, first_other, then, within_days)
+        if len(pairs) >= MAX_PAIRS * 5:
+            break
     pairs.sort(key=lambda p: (p["first"]["start"], p["days"], p["focus"]["label"]))
     return pairs[:max(1, min(limit, MAX_PAIRS))]
+
+
+def _follow(view, pairs: list, e1: dict, d1, pivot: str, first_other: str, then: dict,
+            within_days: int) -> None:
+    for e2 in view.edges_of(pivot):
+        if e2["id"] == e1["id"] or not _relation_ok(e2, then.get("relations")):
+            continue
+        d2 = _date(e2.get("start"))
+        if d2 is None:
+            continue
+        gap = (d2 - d1).days
+        if not 0 <= gap <= within_days:
+            continue
+        o2 = e2["b"] if e2["a"] == pivot else e2["a"]
+        if not _matches(view.node(o2), then.get("other")):
+            continue
+        pairs.append({"focus": view.node(pivot), "first": e1, "then": e2, "days": gap,
+                      "nodes": [view.node(first_other), view.node(o2)]})

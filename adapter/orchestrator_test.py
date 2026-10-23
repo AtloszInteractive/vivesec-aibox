@@ -35,11 +35,14 @@ EDGES = [edge("e1", "p4", "p1", start="2025-03-13", quote="Nagy Éva meglátogat
 
 
 class FakeGraph:
-    def __init__(self):
+    def __init__(self, pending=0):
         self.calls = []
+        self.pending = pending
 
     def post(self, path, body):
         self.calls.append((path, body))
+        if path == "/review/list":
+            return {"review": [], "total": self.pending}
         if path == "/profile/get":
             return {"profile": {
                 "relation_types": [{"id": "VISITED", "label": {"en": "visited",
@@ -274,8 +277,35 @@ class RunTest(unittest.TestCase):
         self.assertEqual((["VISITED"], None, {"subtypes": ["inmate"]}, "focus"),
                          (body["relations"], body["focus"], body["other"], body["group_by"]))
         self.assertIn("visited by entity", contexts[0]["text"])
-        self.assertIn("1. Nagy Éva -- 2; 2", contexts[0]["text"])
+        self.assertIn("1. Nagy Éva -- 2 links (2 different linked entities)", contexts[0]["text"])
         self.assertEqual(1, sum(c["origin"] == "graph" for c in contexts))
+
+    def test_kind_given_as_a_name_filters_by_kind(self):
+        _, _, graph = run([{"tool": "count", "args": {
+            "name": "Fogvatartott", "kind": "person", "relation": "VISITED",
+            "group_by": "entity"}}])
+        body = next(b for p, b in graph.calls if p == "/query/aggregate")
+        self.assertEqual({"subtypes": ["inmate"]}, body["focus"])
+        self.assertFalse([b for p, b in graph.calls if p == "/query/find"])
+
+    def test_pending_namesake_merges_are_noted_once(self):
+        graph = FakeGraph(pending=3)
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "English")
+        out = r.run([{"tool": "count", "args": {"relation": "VISITED", "group_by": "entity"}},
+                     {"tool": "count", "args": {"relation": "VISITED", "group_by": "other"}}])
+        notes = [c["text"] for c in out if "await an administrator" in c["text"]]
+        self.assertEqual(1, len(notes))
+        self.assertIn("3 pairs", notes[0])
+        self.assertEqual([{"corpus_ids": ["c"], "limit": 1}],
+                         [b for p, b in graph.calls if p == "/review/list"])
+        # Over time the split records do not matter; nothing pending, nothing said.
+        _, contexts, graph = run([{"tool": "count", "args": {"relation": "VISITED",
+                                                             "group_by": "month"}}])
+        self.assertFalse([p for p, _ in graph.calls if p == "/review/list"])
+        _, contexts, graph = run([{"tool": "count", "args": {"relation": "VISITED",
+                                                             "group_by": "entity"}}])
+        self.assertTrue([p for p, _ in graph.calls if p == "/review/list"])
+        self.assertFalse(any("adminisztr" in c["text"] for c in contexts))
 
     def test_sequence_lists_only_visible_pairs(self):
         _, contexts, _ = run([{"tool": "sequence", "args": {
@@ -307,6 +337,22 @@ class RunTest(unittest.TestCase):
         r2 = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "English")
         _, info = orchestrator.orchestrate(r2, first, lambda results: {"action": "done"})
         self.assertEqual(1, len(info["calls"]))
+
+    def test_repeated_calls_end_the_rounds_and_rankings_reach_the_planner(self):
+        r = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "English")
+        first = {"action": "tools", "more": True, "search": "",
+                 "calls": [{"tool": "count", "args": {"relation": "VISITED",
+                                                      "group_by": "entity"}}]}
+        seen = []
+
+        def replan(results):
+            seen.append(results)
+            return first
+
+        _, info = orchestrator.orchestrate(r, first, replan, max_rounds=3)
+        self.assertEqual(1, len(seen))
+        self.assertEqual(1, len(info["calls"]))
+        self.assertIn("1. Nagy Éva -- 2 links", seen[0])
 
 
 if __name__ == "__main__":

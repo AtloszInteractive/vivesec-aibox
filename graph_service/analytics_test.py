@@ -79,6 +79,25 @@ class AnalyticsTest(unittest.TestCase):
         self.assertEqual([], analytics.sequence(self.view(BELA), *args, within_days=30,
                                                 focus=INMATE))
 
+    def test_either_end_of_a_link_may_be_the_focus(self):
+        person = {"types": ["person"]}
+        # A visit links two people; the incident is the visited inmate's, not the visitor's.
+        pairs = analytics.sequence(self.view(ANNA), {"relations": ["VISITED"]},
+                                   {"relations": ["INVOLVED_IN"]}, within_days=30, focus=person)
+        self.assertEqual([("Kiss Ádám", 19)], [(p["focus"]["label"], p["days"]) for p in pairs])
+        self.assertEqual(["Szabó Vera", "verekedés"], [n["label"] for n in pairs[0]["nodes"]])
+        paths = analytics.match(self.view(BELA), person, [
+            {"relations": ["VISITED"], "target": person},
+            {"relations": ["PLACED_IN"], "target": {"subtypes": ["cell"]}}])
+        self.assertEqual([["V1", "I1", "C1"], ["V1", "I2", "C1"]],
+                         [[n["id"] for n in p["nodes"]] for p in paths])
+        rows = analytics.aggregate(self.view(BELA), ["VISITED"], person, None, "focus")
+        self.assertEqual({"Szabó Vera": 2, "Kiss Ádám": 1, "Nagy Béla": 1},
+                         {r["label"]: r["count"] for r in rows})
+        # Per month a link still counts once.
+        rows = analytics.aggregate(self.view(BELA), ["VISITED"], person, None, "month")
+        self.assertEqual([("2025-03", 1), ("2025-04", 1)], [(r["key"], r["count"]) for r in rows])
+
     def test_service_route_validates_and_lists_documents(self):
         import domain_profile
         import service

@@ -35,6 +35,7 @@ MAX_CANDIDATES = 6
 PLAN_TIMEOUT = 120
 MIN_PREFIX = 4
 PROFILE_TTL = 60.0
+SUMMARY_LINES = 6
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 # Capitalised words after the first one: candidate names in a question.
 _NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
@@ -54,17 +55,25 @@ PLANNER = (
     "- copresence {entity, from?, to?}: who was at the same place or event at the same time\n"
     "- shared_identifiers {kind?}: identifiers or addresses used by more than one person "
     "or organisation\n"
-    "- most_connected {kind}: the entities with the most links\n"
+    "- most_connected {kind}: the entities with the most links of any relation; for "
+    "\"the most\" of one relation use count\n"
     "- find_pattern {start: {kind?, name?}, steps: [{relation?, kind?, name?}], from?, "
     "to?}: chains of up to 3 links, e.g. who visited the inmates placed in a given cell "
     "= start {kind: the visitors' kind}, steps [{relation: the visit relation, kind: "
     "the inmates' kind}, {relation: the placement relation, name: the cell}]\n"
     "- count {relation?, kind?, name?, other_kind?, group_by, from?, to?}: counts links "
-    "and ranks the groups; group_by is entity (the kind/name side), other (the linked "
-    "side), month, year, relation or other_kind\n"
+    "and ranks the groups. kind/name pick the side being counted, other_kind the linked "
+    "side. group_by entity ranks the kind/name side (the most visited inmate = relation: "
+    "the visit relation, kind: the inmates' kind; the cell with the most inmates = "
+    "relation: the placement relation, kind: the cells' kind); other ranks what is "
+    "linked to them (who visited a given person most often = name: that person); "
+    "month or year counts over time (visits per month); relation ranks the relation "
+    "types (which kinds of links are most common); other_kind ranks the linked kinds\n"
     "- sequence {first, then, within_days, kind?, name?, from?, to?}: where a `then` "
     "relation of an entity follows its `first` relation within the given number of days "
-    "(first and then are relation ids)\n"
+    "(first and then are relation ids; kind is the entity both relations belong to), "
+    "e.g. an incident within 30 days after a visit = first: the visit relation, then: "
+    "the involvement relation, within_days: 30, kind: the visited side's kind\n"
     "Reply with one JSON object only, one of:\n"
     '{"action": "tools", "calls": [{"tool": "...", "args": {...}}], '
     '"search": "<the request as a standalone question for a document search, in the '
@@ -72,10 +81,14 @@ PLANNER = (
     '{"action": "clarify", "question": "<one short question to the user>"}\n'
     '{"action": "chat"} -- only when the message is about the conversation itself '
     "(summarise that, thanks, rephrase).\n"
-    "Rules: at most 4 calls per reply. Set more: true only when you must see the "
-    "results before choosing further calls (first find who or what matches, then look "
-    "into them); you then get RESULTS SO FAR and reply with more calls or "
-    '{"action": "done"}. Resolve pronouns and follow-ups from the conversation. '
+    "Rules: at most 4 calls per reply. A role, category or type word (inmates, a "
+    "visitor, cells, incidents) is a kind id, never a name: name, entity, a and b are "
+    "only for specific named people, places or things. Set more: true only when you "
+    "must see the results before choosing further calls (first find who or what "
+    "matches, then look into them, e.g. the top of a count, then relations or "
+    "find_pattern with that name); you then get RESULTS SO FAR and reply with new "
+    'calls or {"action": "done"}; never repeat a call. Resolve pronouns and follow-ups '
+    "from the conversation. "
     "Pass names as given even when they may be incomplete (a surname alone): the system "
     "looks them up and lets the user choose between matches itself. Never ask which of "
     "several people or things with a name is meant, and never ask for context the tools "
@@ -151,15 +164,19 @@ _TEXT = {
               "in den Dokumenten, die Sie sehen d\u00fcrfen:",
     },
     "count": {
-        "en": "Graph count -- %s by %s (links; distinct linked entities), counted over the "
-              "documents you may see:",
-        "hu": "Gr\u00e1f-sz\u00e1ml\u00e1l\u00e1s -- %s, csoportos\u00edtva: %s (kapcsolatok; "
-              "k\u00fcl\u00f6nb\u00f6z\u0151 kapcsol\u00f3d\u00f3 szerepl\u0151k), az \u00d6n "
+        "en": "Graph count -- %s by %s, counted over the documents you may see:",
+        "hu": "Gr\u00e1f-sz\u00e1ml\u00e1l\u00e1s -- %s, csoportos\u00edtva: %s, az \u00d6n "
               "sz\u00e1m\u00e1ra l\u00e1that\u00f3 dokumentumok alapj\u00e1n:",
-        "da": "Graft\u00e6lling -- %s efter %s (forbindelser; forskellige forbundne enheder), "
-              "talt i de dokumenter, du har adgang til:",
-        "de": "Graphz\u00e4hlung -- %s nach %s (Verbindungen; verschiedene verbundene "
-              "Eintr\u00e4ge), gez\u00e4hlt in den Dokumenten, die Sie sehen d\u00fcrfen:",
+        "da": "Graft\u00e6lling -- %s efter %s, talt i de dokumenter, du har adgang til:",
+        "de": "Graphz\u00e4hlung -- %s nach %s, gez\u00e4hlt in den Dokumenten, die Sie sehen "
+              "d\u00fcrfen:",
+    },
+    "count_row": {
+        "en": "%d. %s -- %d links (%d different linked entities)",
+        "hu": "%d. %s -- %d kapcsolat (%d k\u00fcl\u00f6nb\u00f6z\u0151 kapcsol\u00f3d\u00f3 "
+              "szerepl\u0151)",
+        "da": "%d. %s -- %d forbindelser (%d forskellige forbundne enheder)",
+        "de": "%d. %s -- %d Verbindungen (%d verschiedene verbundene Eintr\u00e4ge)",
     },
     "all_links": {"en": "all links", "hu": "minden kapcsolat", "da": "alle forbindelser",
                   "de": "alle Verbindungen"},
@@ -184,6 +201,25 @@ _TEXT = {
              "da": "%d dage senere", "de": "%d Tage sp\u00e4ter"},
     "together": {"en": "both at", "hu": "egyszerre itt:", "da": "begge ved",
                  "de": "beide bei"},
+    "unmerged": {
+        "en": "Graph search: %d pairs of same-named records in the documents you may see "
+              "await an administrator's merge decision. Until merged, links recorded in "
+              "different documents are not joined, so this result may be incomplete.",
+        "hu": "Gr\u00e1fkeres\u00e9s: az \u00d6n sz\u00e1m\u00e1ra l\u00e1that\u00f3 "
+              "dokumentumokban %d azonos nev\u0171 bejegyz\u00e9sp\u00e1r v\u00e1r "
+              "adminisztr\u00e1tori egyes\u00edt\u00e9si d\u00f6nt\u00e9sre. Am\u00edg nincsenek "
+              "egyes\u00edtve, a k\u00fcl\u00f6nb\u00f6z\u0151 dokumentumokban r\u00f6gz\u00edtett "
+              "kapcsolatok nem kapcsol\u00f3dnak \u00f6ssze, ez\u00e9rt az eredm\u00e9ny "
+              "hi\u00e1nyos lehet.",
+        "da": "Grafs\u00f8gning: %d par af poster med samme navn i de dokumenter, du har "
+              "adgang til, venter p\u00e5 en administrators beslutning om sammenl\u00e6gning. "
+              "Indtil da forbindes oplysninger fra forskellige dokumenter ikke, s\u00e5 "
+              "resultatet kan v\u00e6re ufuldst\u00e6ndigt.",
+        "de": "Graphsuche: %d Paare gleichnamiger Eintr\u00e4ge in den Dokumenten, die Sie "
+              "sehen d\u00fcrfen, warten auf die Zusammenf\u00fchrungsentscheidung eines "
+              "Administrators. Bis dahin werden Verbindungen aus verschiedenen Dokumenten "
+              "nicht verkn\u00fcpft, das Ergebnis kann daher unvollst\u00e4ndig sein.",
+    },
 }
 LANG_CODES = {"Hungarian": "hu", "English": "en", "Danish": "da", "German": "de"}
 
@@ -358,7 +394,11 @@ def orchestrate(run, first, replan, max_rounds=MAX_ROUNDS):
         if not current.get("more") or round_no == max_rounds:
             break
         nxt = replan(run.summary())
-        if not nxt or nxt["action"] != "tools" or not nxt["calls"]:
+        if not nxt or nxt["action"] != "tools":
+            break
+        # A planner that repeats itself has nothing further to look up.
+        nxt = dict(nxt, calls=run.fresh(nxt["calls"]))
+        if not nxt["calls"]:
             break
         current = nxt
     return run.output(), run.info()
@@ -394,6 +434,7 @@ class Run:
         self._call_facts = 0
         self._call_budget = max_facts
         self._call_labels = set()
+        self._unmerged_checked = False
 
     def query(self, name, **params):
         res = self.client.post("/query/" + name, dict(self.scope, **params))
@@ -417,14 +458,11 @@ class Run:
         """A side filter for a kind (type or subtype, by id or label); None if unknown."""
         if not kind:
             return {}
-        wanted = fold(kind)
-        if wanted in ENTITY_TYPES:
-            return {"types": [wanted]}
-        _, subtypes = self._label_maps()
-        ids = [sid for sid, s in subtypes.items()
-               if wanted in {fold(sid), *(fold(v) for v in (s.get("label") or {}).values())}]
-        if ids:
-            return {"subtypes": ids}
+        found = self.kind_of_word(kind)
+        if found in ENTITY_TYPES:
+            return {"types": [found]}
+        if found:
+            return {"subtypes": [found]}
         self.notes.append(_t("unknown", self.code) % kind)
         return None
 
@@ -443,8 +481,23 @@ class Run:
             return None
         return ids
 
+    def kind_of_word(self, word):
+        """The kind id a word names ("Fogvatartott" -> inmate), else None."""
+        wanted = fold(word)
+        if wanted in ENTITY_TYPES:
+            return wanted
+        _, subtypes = self._label_maps()
+        for sid, s in subtypes.items():
+            if wanted in {fold(sid), *(fold(v) for v in (s.get("label") or {}).values())}:
+                return sid
+        return None
+
     def side(self, kind=None, name=None):
         """The filter for one side of a link; None when it cannot match anything."""
+        if name and self.kind_of_word(name):
+            # A category passed as a name ("Inmate") means every entity of that kind;
+            # the word is at least as specific as a kind given beside it.
+            kind, name = self.kind_of_word(name), None
         spec = self.kind_spec(kind)
         if spec is None:
             return None  # an unknown kind must not widen the search to everything
@@ -731,7 +784,7 @@ class Run:
                 label = self._label(relations_map, row["key"])
             elif group == "other_kind":
                 label = self._label(subtypes, row["key"])
-            lines.append("%d. %s -- %d; %d" % (i, label, row["count"], row["distinct"]))
+            lines.append(_t("count_row", self.code) % (i, label, row["count"], row["distinct"]))
             self._call_labels.add(label)
         self.notes.append(_t("count", self.code) % (
             what, _t("group", self.code)[args.get("group_by") or "entity"])
@@ -779,8 +832,20 @@ class Run:
             args.get("within_days", 30)) + "\n" + "\n".join(lines))
         return len(lines)
 
+    def fresh(self, calls):
+        """The calls not run yet in this run."""
+        done = {(c["tool"], json.dumps(c["args"], sort_keys=True)) for c in self.calls}
+        out = []
+        for call in calls:
+            key = (call["tool"], json.dumps(call["args"], sort_keys=True))
+            if key not in done:
+                done.add(key)
+                out.append(call)
+        return out
+
     def run(self, calls, round_no=1):
         """Runs one round of calls; raises Clarify on an ambiguous name."""
+        calls = self.fresh(calls)
         # One broad call (a crowded cell) must not crowd out the others' facts.
         self._call_budget = max(6, self.max_facts // max(1, len(calls)))
         for call in calls:
@@ -792,7 +857,25 @@ class Run:
                                "round": round_no, "entities": sorted(self._call_labels)[:20]})
             if not facts and len(self.notes) == noted:
                 self.notes.append(_t("nothing", self.code) % call["tool"])
+            if (call["tool"] in ("find_pattern", "sequence") and not facts) or (
+                    call["tool"] == "count"
+                    and call["args"].get("group_by", "entity") in ("entity", "other")):
+                self._note_unmerged()
         return self.output()
+
+    def _note_unmerged(self):
+        """Same-named records awaiting a merge split cross-document chains and
+        per-entity counts; say so once (the count covers only visible documents)."""
+        if self._unmerged_checked:
+            return
+        self._unmerged_checked = True
+        try:
+            total = int(self.client.post("/review/list", dict(self.scope, limit=1))
+                        .get("total") or 0)
+        except Exception:  # noqa: BLE001 -- the note is advisory
+            return
+        if total:
+            self.notes.append(_t("unmerged", self.code) % total)
 
     def output(self):
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,
@@ -801,11 +884,13 @@ class Run:
         return notes + self.contexts
 
     def summary(self):
-        """What the calls so far found, for the next planning round."""
+        """What the calls so far found, for the next planning round. Rankings and
+        sequences keep their top lines: the next round looks into those entities."""
         lines = ["- %s %s: %d results; entities: %s" % (
             c["tool"], json.dumps(c["args"], ensure_ascii=False), c["facts"],
             ", ".join(c["entities"]) or "none") for c in self.calls]
-        lines += ["- note: %s" % n.split("\n")[0] for n in self.notes]
+        lines += ["- note: %s" % "\n  ".join(n.split("\n")[:SUMMARY_LINES + 1])
+                  for n in self.notes]
         return "\n".join(lines)
 
     def info(self):
