@@ -49,6 +49,8 @@ PLANNER = (
     '{"action": "chat"} -- only when the message is about the conversation itself '
     "(summarise that, thanks, rephrase).\n"
     "Rules: at most 4 calls. Resolve pronouns and follow-ups from the conversation. "
+    "Pass names as given even when they may be incomplete (a surname alone): the system "
+    "looks them up and lets the user choose between matches itself. "
     "Ask back ONLY when the request cannot be answered without the missing detail -- "
     "who or what is meant is unclear even with the conversation, or a second entity or "
     "a period the request depends on is missing. If the user has just answered your "
@@ -231,6 +233,8 @@ class Run:
         self._seen = set()
         self._names = {}
         self._profile = None
+        self._call_facts = 0
+        self._call_budget = max_facts
 
     def query(self, name, **params):
         res = self.client.post("/query/" + name, dict(self.scope, **params))
@@ -290,7 +294,7 @@ class Run:
                 and self.visible(self.documents[ev["doc_id"]].get("source_path") or "")]
 
     def _add(self, text, ev):
-        if len(self.contexts) >= self.max_facts:
+        if len(self.contexts) >= self.max_facts or self._call_facts >= self._call_budget:
             return False
         doc = self.documents[ev["doc_id"]]
         key = (text, doc.get("source_path"), ev.get("page"))
@@ -303,6 +307,7 @@ class Run:
             "source_path": doc.get("source_path"), "corpus_id": doc.get("corpus_id"),
             "page_number": ev.get("page"), "chunk_id": None, "score": 1.0,
             "origin": "graph"})
+        self._call_facts += 1
         return True
 
     def _name(self, node_id):
@@ -412,8 +417,12 @@ class Run:
             if ids:
                 params["subtypes"] = ids
         for item in self.query("shared", **params).get("shared") or []:
+            holders = item.get("holders") or []
+            # Namesakes (one person split into records) are not "several people".
+            if len({fold(h["node"]["label"]) for h in holders}) < 2:
+                continue
             self.nodes.setdefault(item["identifier"]["id"], item["identifier"])
-            for holder in item.get("holders") or []:
+            for holder in holders:
                 self.nodes.setdefault(holder["node"]["id"], holder["node"])
                 facts += sum(self.edge_fact(e) for e in holder.get("edges") or [])
         return facts
@@ -430,8 +439,11 @@ class Run:
 
     def run(self, calls):
         """Contexts for the plan's calls; raises Clarify on an ambiguous name."""
+        # One broad call (a crowded cell) must not crowd out the others' facts.
+        self._call_budget = max(6, self.max_facts // max(1, len(calls)))
         for call in calls:
             noted = len(self.notes)
+            self._call_facts = 0
             facts = getattr(self, call["tool"])(call["args"])
             self.calls.append({"tool": call["tool"], "args": call["args"], "facts": facts})
             if not facts and len(self.notes) == noted:

@@ -74,7 +74,16 @@ class FakeGraph:
         if path == "/query/ranking":
             return {"ranking": [{"node": KJ1, "degree": 2}], "documents": {}}
         if path == "/query/shared":
-            return {"shared": [], "documents": {}}
+            phone = {"id": "id:phone:1", "label": "+36 1", "type": "identifier",
+                     "subtype": "phone", "aliases": [], "documents": [], "mentions": 1}
+            uses = [edge("u%d" % i, n["id"], phone["id"], typ="USES") for i, n in
+                    enumerate((KJ1, KJ2, NE))]
+            return {"shared": [
+                {"identifier": phone, "holders": [{"node": KJ1, "edges": [uses[0]]},
+                                                  {"node": KJ2, "edges": [uses[1]]}]},
+                {"identifier": dict(phone, id="id:phone:2", label="+36 2"),
+                 "holders": [{"node": KJ1, "edges": [uses[0]]},
+                             {"node": NE, "edges": [uses[2]]}]}], "documents": DOC}
         raise AssertionError(path)
 
 
@@ -162,10 +171,14 @@ class RunTest(unittest.TestCase):
         self.assertEqual(1, sum(c["origin"] == "graph" for c in out))
 
     def test_shared_kind_is_mapped_to_profile_subtypes(self):
-        _, _, graph = run([{"tool": "shared_identifiers", "args": {"kind": "telefonszám"}}])
+        r, contexts, graph = run([{"tool": "shared_identifiers",
+                                   "args": {"kind": "telefonszám"}}])
         body = next(b for p, b in graph.calls if p == "/query/shared")
         self.assertEqual(["phone"], body["subtypes"])
         self.assertEqual(["c"], body["corpus_ids"])
+        # Two records of one name are not two people sharing a number.
+        self.assertEqual(2, len(contexts))
+        self.assertTrue(all("+36 1" not in c["text"] for c in contexts))
 
 
 if __name__ == "__main__":
