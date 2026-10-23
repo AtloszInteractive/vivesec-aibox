@@ -65,7 +65,8 @@ PLANNER = (
     "and ranks the groups. kind/name pick the side being counted, other_kind the linked "
     "side. group_by entity ranks the kind/name side (the most visited inmate = relation: "
     "the visit relation, kind: the inmates' kind; the cell with the most inmates = "
-    "relation: the placement relation, kind: the cells' kind); other ranks what is "
+        "relation: the placement relation, kind: the cells' kind, other_kind: the inmates' "
+        "kind); other ranks what is "
     "linked to them (who visited a given person most often = name: that person); "
     "month or year counts over time (visits per month); relation ranks the relation "
     "types (which kinds of links are most common); other_kind ranks the linked kinds\n"
@@ -177,6 +178,12 @@ _TEXT = {
               "szerepl\u0151)",
         "da": "%d. %s -- %d forbindelser (%d forskellige forbundne enheder)",
         "de": "%d. %s -- %d Verbindungen (%d verschiedene verbundene Eintr\u00e4ge)",
+    },
+    "count_row_kind": {
+        "en": "%d. %s -- %s: %d different (%d links)",
+        "hu": "%d. %s -- %s: %d k\u00fcl\u00f6nb\u00f6z\u0151 (%d kapcsolat)",
+        "da": "%d. %s -- %s: %d forskellige (%d forbindelser)",
+        "de": "%d. %s -- %s: %d verschiedene (%d Verbindungen)",
     },
     "all_links": {"en": "all links", "hu": "minden kapcsolat", "da": "alle forbindelser",
                   "de": "alle Verbindungen"},
@@ -434,7 +441,8 @@ class Run:
         self._call_facts = 0
         self._call_budget = max_facts
         self._call_labels = set()
-        self._unmerged_checked = False
+        self._unmerged = None
+        self._unmerged_noted = False
 
     def query(self, name, **params):
         res = self.client.post("/query/" + name, dict(self.scope, **params))
@@ -762,6 +770,13 @@ class Run:
             facts += sum(self.edge_fact(e) for e in path.get("edges") or [])
         return facts
 
+    def _spec_label(self, spec):
+        """The user-language label of a single-subtype side filter, else None."""
+        subtypes = (spec or {}).get("subtypes") or []
+        if len(subtypes) != 1:
+            return None
+        return self._label(self._label_maps()[1], subtypes[0])
+
     def count(self, args):
         relations = self.relation_ids(args.get("relation"))
         focus = self.side(args.get("kind"), args.get("name"))
@@ -778,13 +793,21 @@ class Run:
         what = ", ".join(self._relation_name(r) for r in relations) if relations \
             else _t("all_links", self.code)
         lines = []
+        # Name the kind the "different" figure counts, when the call fixed it.
+        counted = self._spec_label(other if group == "focus" else
+                                   focus if group == "other" else None)
         for i, row in enumerate(rows, 1):
             label = row["label"]
             if group == "relation":
                 label = self._label(relations_map, row["key"])
             elif group == "other_kind":
                 label = self._label(subtypes, row["key"])
-            lines.append(_t("count_row", self.code) % (i, label, row["count"], row["distinct"]))
+            if counted:
+                lines.append(_t("count_row_kind", self.code) % (
+                    i, label, counted, row["distinct"], row["count"]))
+            else:
+                lines.append(_t("count_row", self.code) % (
+                    i, label, row["count"], row["distinct"]))
             self._call_labels.add(label)
         self.notes.append(_t("count", self.code) % (
             what, _t("group", self.code)[args.get("group_by") or "entity"])
@@ -855,27 +878,38 @@ class Run:
             facts = getattr(self, call["tool"])(call["args"])
             self.calls.append({"tool": call["tool"], "args": call["args"], "facts": facts,
                                "round": round_no, "entities": sorted(self._call_labels)[:20]})
+            cross = call["tool"] in ("find_pattern", "sequence")
             if not facts and len(self.notes) == noted:
-                self.notes.append(_t("nothing", self.code) % call["tool"])
-            if (call["tool"] in ("find_pattern", "sequence") and not facts) or (
+                text = _t("nothing", self.code) % call["tool"]
+                pending = self._pending() if cross and not self._unmerged_noted else 0
+                if pending:
+                    # Said in the same breath, so the answer cannot drop the reason.
+                    text += " " + _t("unmerged", self.code) % pending
+                    self._unmerged_noted = True
+                self.notes.append(text)
+            elif (cross and not facts) or (
                     call["tool"] == "count"
                     and call["args"].get("group_by", "entity") in ("entity", "other")):
                 self._note_unmerged()
         return self.output()
 
+    def _pending(self):
+        """Same-named record pairs awaiting a merge decision in the visible
+        documents (0 when unknown); asked once per run."""
+        if self._unmerged is None:
+            try:
+                self._unmerged = int(self.client.post(
+                    "/review/list", dict(self.scope, limit=1)).get("total") or 0)
+            except Exception:  # noqa: BLE001 -- the note is advisory
+                self._unmerged = 0
+        return self._unmerged
+
     def _note_unmerged(self):
-        """Same-named records awaiting a merge split cross-document chains and
-        per-entity counts; say so once (the count covers only visible documents)."""
-        if self._unmerged_checked:
-            return
-        self._unmerged_checked = True
-        try:
-            total = int(self.client.post("/review/list", dict(self.scope, limit=1))
-                        .get("total") or 0)
-        except Exception:  # noqa: BLE001 -- the note is advisory
-            return
-        if total:
-            self.notes.append(_t("unmerged", self.code) % total)
+        """Unmerged namesakes split cross-document chains and per-entity counts;
+        say so once."""
+        if not self._unmerged_noted and self._pending():
+            self._unmerged_noted = True
+            self.notes.append(_t("unmerged", self.code) % self._pending())
 
     def output(self):
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,

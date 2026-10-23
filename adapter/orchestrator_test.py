@@ -277,7 +277,7 @@ class RunTest(unittest.TestCase):
         self.assertEqual((["VISITED"], None, {"subtypes": ["inmate"]}, "focus"),
                          (body["relations"], body["focus"], body["other"], body["group_by"]))
         self.assertIn("visited by entity", contexts[0]["text"])
-        self.assertIn("1. Nagy Éva -- 2 links (2 different linked entities)", contexts[0]["text"])
+        self.assertIn("1. Nagy Éva -- Inmate: 2 different (2 links)", contexts[0]["text"])
         self.assertEqual(1, sum(c["origin"] == "graph" for c in contexts))
 
     def test_kind_given_as_a_name_filters_by_kind(self):
@@ -306,6 +306,25 @@ class RunTest(unittest.TestCase):
                                                              "group_by": "entity"}}])
         self.assertTrue([p for p, _ in graph.calls if p == "/review/list"])
         self.assertFalse(any("adminisztr" in c["text"] for c in contexts))
+
+    def test_empty_pattern_names_the_pending_merges_as_its_reason(self):
+        class NoMatch(FakeGraph):
+            def post(self, path, body):
+                if path in ("/query/match", "/query/sequence"):
+                    self.calls.append((path, body))
+                    return {"paths": [], "pairs": [], "documents": {}}
+                return super().post(path, body)
+
+        graph = NoMatch(pending=5)
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "English")
+        out = r.run([{"tool": "find_pattern", "args": {"steps": [{"relation": "VISITED"}]}},
+                     {"tool": "sequence", "args": {"first": "VISITED", "then": "INVOLVED_IN"}}])
+        notes = [c["text"] for c in out if c["origin"] == "graph-note"]
+        self.assertEqual(2, len(notes))
+        self.assertIn("(find_pattern): no result", notes[0])
+        self.assertIn("5 pairs of same-named records", notes[0])
+        self.assertNotIn("same-named", notes[1])  # said once
+        self.assertEqual(1, sum(p == "/review/list" for p, _ in graph.calls))
 
     def test_sequence_lists_only_visible_pairs(self):
         _, contexts, _ = run([{"tool": "sequence", "args": {
