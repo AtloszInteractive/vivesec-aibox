@@ -106,6 +106,8 @@ GROUNDING_RULES = (
     "and do NOT present that part as if it were the whole. A ranking or total "
     "taken from one month is not a ranking or total for the half-year.\n"
     "- Cite the source of each fact with its [#n] marker.\n"
+    "- When CONTEXT says why a search found nothing or that a result may be "
+    "incomplete, give that reason in the answer.\n"
     "- Do not repeat sentences; answer once and concisely.\n"
 )
 
@@ -680,7 +682,9 @@ def generate(question, contexts, lang=None, history=None, task=None,
             "Label calculations and assumptions explicitly; do not invent company inputs. "
             "For a general question, start with the answer itself, not a statement about documents. "
             "For a mixed request, answer BOTH parts: include the actual supplied company values "
-            "with citations, then the general explanation. A citation alone is not an answer."
+            "with citations, then the general explanation. A citation alone is not an answer. "
+            "When a document says why a search found nothing or that a result may be "
+            "incomplete, give that reason in the answer."
         )
         if lang:
             system += " Always answer in %s." % lang
