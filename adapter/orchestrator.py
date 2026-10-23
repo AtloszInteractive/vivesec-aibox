@@ -385,7 +385,10 @@ def plan(question, history, lang=None, vocab="", results=""):
     user = ("CONVERSATION:\n%s\n\nMESSAGE: %s" % (convo, question)) if convo \
         else "MESSAGE: %s" % question
     if results:
-        user += "\n\nRESULTS SO FAR:\n%s" % results
+        user += ("\n\nRESULTS SO FAR:\n%s\n\nPlan the next calls with the names found "
+                 "above (the top of a ranking first) for the part of the message still "
+                 'unanswered, or reply {"action": "done"} if nothing is left. Never repeat '
+                 "a call listed above." % results)
     try:
         content, _, _ = llm._chat(system, user, timeout=PLAN_TIMEOUT, stream=False,
                                   num_predict=600, response_format="json")
@@ -400,14 +403,20 @@ def orchestrate(run, first, replan, max_rounds=MAX_ROUNDS):
     current = first
     for round_no in range(1, max_rounds + 1):
         run.run(current["calls"], round_no)
-        if not current.get("more") or round_no == max_rounds:
+        if not current.get("more"):
+            run.stop = "complete"
+            break
+        if round_no == max_rounds:
+            run.stop = "max_rounds"
             break
         nxt = replan(run.summary())
         if not nxt or nxt["action"] != "tools":
+            run.stop = (nxt or {}).get("action") or "invalid"
             break
         # A planner that repeats itself has nothing further to look up.
         nxt = dict(nxt, calls=run.fresh(nxt["calls"]))
         if not nxt["calls"]:
+            run.stop = "repeat"
             break
         current = nxt
     return run.output(), run.info()
@@ -448,6 +457,8 @@ class Run:
         # Shown under the answer when a cross-document query came back empty
         # because records await a merge: the model tends to drop that reason.
         self.caveat = None
+        # Why the planning rounds ended (complete, done, repeat, max_rounds ...).
+        self.stop = None
 
     def query(self, name, **params):
         res = self.client.post("/query/" + name, dict(self.scope, **params))
@@ -941,4 +952,6 @@ class Run:
                                    if any(n["id"] in ids for ids in self._names.values())})}
         if self.caveat:
             out["caveat"] = self.caveat
+        if self.stop:
+            out["stop"] = self.stop
         return out

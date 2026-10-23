@@ -356,9 +356,11 @@ class RunTest(unittest.TestCase):
         self.assertIn("Kovács János", seen[0])
         self.assertEqual([1, 2], [c["round"] for c in info["calls"]])
         self.assertTrue(any("2025-03-13" in c["text"] for c in contexts))
+        self.assertEqual("max_rounds", info["stop"])
         r2 = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "English")
         _, info = orchestrator.orchestrate(r2, first, lambda results: {"action": "done"})
         self.assertEqual(1, len(info["calls"]))
+        self.assertEqual("done", info["stop"])
 
     def test_repeated_calls_end_the_rounds_and_rankings_reach_the_planner(self):
         r = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "English")
@@ -374,6 +376,7 @@ class RunTest(unittest.TestCase):
         _, info = orchestrator.orchestrate(r, first, replan, max_rounds=3)
         self.assertEqual(1, len(seen))
         self.assertEqual(1, len(info["calls"]))
+        self.assertEqual("repeat", info["stop"])
         self.assertIn("1. Nagy Éva -- 2 links", seen[0])
 
 
