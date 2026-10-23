@@ -43,11 +43,27 @@ class FakeGraph:
         if path == "/profile/get":
             return {"profile": {
                 "relation_types": [{"id": "VISITED", "label": {"en": "visited",
-                                                               "hu": "meglátogatta"}}],
-                "entity_subtypes": [{"id": "inmate", "label": {"en": "Inmate",
-                                                               "hu": "Fogvatartott"}},
-                                    {"id": "phone", "label": {"en": "Phone number",
-                                                              "hu": "Telefonszám"}}]}}
+                                                               "hu": "meglátogatta"},
+                                    "from": ["person"], "to": ["person"],
+                                    "synonyms": ["látogatás"]},
+                                   {"id": "INVOLVED_IN", "label": {"en": "involved in"}}],
+                "entity_subtypes": [{"id": "inmate", "type": "person",
+                                     "label": {"en": "Inmate", "hu": "Fogvatartott"}},
+                                    {"id": "phone", "type": "identifier",
+                                     "label": {"en": "Phone number", "hu": "Telefonszám"}}]}}
+        if path == "/query/match":
+            paths = [{"nodes": [NE, KJ1], "edges": [EDGES[0]]},
+                     {"nodes": [TT, KJ1], "edges": [EDGES[1]]}]
+            return {"paths": paths, "documents": DOC}
+        if path == "/query/aggregate":
+            return {"rows": [{"key": "p4", "label": "Nagy Éva", "count": 2, "distinct": 2,
+                              "nodes": [NE, KJ1, KJ2], "samples": [EDGES[0], EDGES[2]]}],
+                    "documents": DOC}
+        if path == "/query/sequence":
+            return {"pairs": [{"focus": NE, "first": EDGES[0], "then": EDGES[2], "days": 295,
+                               "nodes": [KJ1, KJ2]},
+                              {"focus": KJ1, "first": EDGES[0], "then": EDGES[1], "days": 19,
+                               "nodes": [NE, TT]}], "documents": DOC}
         if path == "/query/find":
             text = orchestrator.fold(body["text"])
             hits = [n for n in NODES if all(any(w.startswith(t) for w in
@@ -111,6 +127,41 @@ class PlanTest(unittest.TestCase):
         self.assertEqual("chat", orchestrator.parse_plan('{"action": "chat"}')["action"])
         self.assertIsNone(orchestrator.parse_plan("I think you should look at..."))
         self.assertIsNone(orchestrator.parse_plan('{"action": "clarify", "question": ""}'))
+
+    def test_parse_pattern_count_sequence_and_rounds(self):
+        p = orchestrator.parse_plan(
+            '{"action": "tools", "more": true, "calls": ['
+            '{"tool": "find_pattern", "args": {"start": {"kind": "visitor", "x": 1}, '
+            '"steps": [{"relation": "VISITED", "kind": "inmate"}, "bad", {"name": "A12"}]}},'
+            '{"tool": "count", "args": {"relation": "VISITED", "group_by": "weekday"}},'
+            '{"tool": "sequence", "args": {"first": "VISITED", "then": "INVOLVED_IN", '
+            '"within_days": "30"}},'
+            '{"tool": "sequence", "args": {"first": "VISITED"}}]}')
+        self.assertTrue(p["more"])
+        self.assertEqual([
+            {"tool": "find_pattern", "args": {
+                "start": {"kind": "visitor"},
+                "steps": [{"kind": "inmate", "relation": "VISITED"}, {"name": "A12"}]}},
+            {"tool": "count", "args": {"relation": "VISITED", "group_by": "entity"}},
+            {"tool": "sequence", "args": {"first": "VISITED", "then": "INVOLVED_IN",
+                                          "within_days": 30}}], p["calls"])
+        self.assertEqual("done", orchestrator.parse_plan('{"action": "done"}')["action"])
+        self.assertFalse(orchestrator.parse_plan('{"action": "tools", "calls": []}')["more"])
+
+    def test_vocabulary_lists_profile_kinds_and_relations(self):
+        text = orchestrator.vocabulary(FakeGraph().post("/profile/get", {})["profile"],
+                                       "Hungarian")
+        self.assertIn("person (inmate = Fogvatartott)", text)
+        self.assertIn("identifier (phone = Telefonszám)", text)
+        self.assertIn("VISITED = meglátogatta (person -> person)", text)
+        self.assertIn("INVOLVED_IN = involved in", text)
+        with patch.object(llm, "GENERATE", "on"), \
+                patch.object(llm, "_chat", return_value=('{"action": "done"}', 0, 0)) as chat:
+            orchestrator.plan("Ki?", [], "Hungarian", text, "- relations: 2 results")
+            system, user = chat.call_args[0][:2]
+            self.assertIn("VISITED = meglátogatta", system)
+            self.assertNotIn("{vocabulary}", system)
+            self.assertIn("RESULTS SO FAR:\n- relations: 2 results", user)
 
     def test_plan_fails_open(self):
         with patch.object(llm, "GENERATE", "on"), \
@@ -191,6 +242,71 @@ class RunTest(unittest.TestCase):
         # Two records of one name are not two people sharing a number.
         self.assertEqual(2, len(contexts))
         self.assertTrue(all("+36 1" not in c["text"] for c in contexts))
+
+    def test_find_pattern_maps_kinds_and_relation_synonyms(self):
+        _, contexts, graph = run([{"tool": "find_pattern", "args": {
+            "start": {"kind": "person"},
+            "steps": [{"relation": "látogatás", "kind": "Fogvatartott"}]}}])
+        body = next(b for p, b in graph.calls if p == "/query/match")
+        self.assertEqual({"types": ["person"]}, body["start"])
+        self.assertEqual([{"relations": ["VISITED"], "target": {"subtypes": ["inmate"]}}],
+                         body["steps"])
+        self.assertEqual(["c"], body["corpus_ids"])
+        facts = [c for c in contexts if c["origin"] == "graph"]
+        self.assertEqual(1, len(facts))  # the hidden document's link is dropped
+        self.assertIn("Nagy Éva -- meglátogatta -- Kovács János", facts[0]["text"])
+
+    def test_unknown_relation_or_kind_skips_the_query(self):
+        _, contexts, graph = run([
+            {"tool": "find_pattern", "args": {"steps": [{"relation": "BRIBED"}]}},
+            {"tool": "count", "args": {"other_kind": "dinosaur", "group_by": "entity"}}])
+        self.assertFalse([p for p, _ in graph.calls if p in ("/query/match",
+                                                            "/query/aggregate")])
+        texts = [c["text"] for c in contexts]
+        self.assertTrue(any("\u201eBRIBED\u201d nem ismert" in t for t in texts), texts)
+        self.assertTrue(any("\u201edinosaur\u201d nem ismert" in t for t in texts), texts)
+
+    def test_count_note_and_sample_facts(self):
+        _, contexts, graph = run([{"tool": "count", "args": {
+            "relation": "VISITED", "other_kind": "inmate", "group_by": "entity"}}],
+            lang="English")
+        body = next(b for p, b in graph.calls if p == "/query/aggregate")
+        self.assertEqual((["VISITED"], None, {"subtypes": ["inmate"]}, "focus"),
+                         (body["relations"], body["focus"], body["other"], body["group_by"]))
+        self.assertIn("visited by entity", contexts[0]["text"])
+        self.assertIn("1. Nagy Éva -- 2; 2", contexts[0]["text"])
+        self.assertEqual(1, sum(c["origin"] == "graph" for c in contexts))
+
+    def test_sequence_lists_only_visible_pairs(self):
+        _, contexts, _ = run([{"tool": "sequence", "args": {
+            "first": "VISITED", "then": "VISITED", "within_days": 300}}])
+        note = contexts[0]["text"]
+        self.assertIn("meglátogatta után meglátogatta, 300 napon belül", note)
+        self.assertIn("- Nagy Éva: meglátogatta Kovács János (2025-03-13) -> "
+                      "meglátogatta Kovács János (2026-01-02), 295 nappal később", note)
+        self.assertTrue(all("Titkos" not in c["text"] for c in contexts))
+
+    def test_orchestrate_replans_with_results(self):
+        graph = FakeGraph()
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "English")
+        first = {"action": "tools", "more": True, "search": "",
+                 "calls": [{"tool": "most_connected", "args": {"kind": "person"}}]}
+        seen = []
+
+        def replan(results):
+            seen.append(results)
+            return {"action": "tools", "more": True, "search": "",
+                    "calls": [{"tool": "timeline", "args": {"entity": "Nagy Éva"}}]}
+
+        contexts, info = orchestrator.orchestrate(r, first, replan, max_rounds=2)
+        self.assertEqual(1, len(seen))  # the last round does not replan
+        self.assertIn("most_connected", seen[0])
+        self.assertIn("Kovács János", seen[0])
+        self.assertEqual([1, 2], [c["round"] for c in info["calls"]])
+        self.assertTrue(any("2025-03-13" in c["text"] for c in contexts))
+        r2 = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "English")
+        _, info = orchestrator.orchestrate(r2, first, lambda results: {"action": "done"})
+        self.assertEqual(1, len(info["calls"]))
 
 
 if __name__ == "__main__":

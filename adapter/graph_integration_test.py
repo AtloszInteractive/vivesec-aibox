@@ -392,6 +392,41 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertIn("ASSISTANT: Melyik időszakra gondol?", plans[-1])
             self.assertEqual("timeline", out["graph"]["calls"][0]["tool"])
 
+    def test_analyst_counts_then_replans_with_the_results(self):
+        import llm
+
+        service = self.service
+        prompts = []
+        plans_out = [
+            '{"action": "tools", "more": true, "calls": [{"tool": "count", "args": '
+            '{"relation": "MET", "group_by": "entity"}}], "search": "találkozók"}',
+            '{"action": "tools", "calls": [{"tool": "relations", "args": '
+            '{"entity": "Kovács János"}}]}',
+        ]
+
+        def planner(system, user, **kw):
+            prompts.append((system, user))
+            return plans_out.pop(0), 0, 0
+
+        def echo(query, contexts, **_kw):
+            return "\n".join(c.get("text") or "" for c in contexts) or "NO-CONTEXT", "echo"
+
+        with patch.object(service, "APP_MODE", service.APP_ANALYST), \
+                patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", planner), \
+                patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False):
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Ki találkozott a legtöbbször másokkal?"},
+                                    user="lars")
+        self.assertEqual(200, status, out)
+        self.assertIn("MET =", prompts[0][0])  # the profile vocabulary reaches the planner
+        self.assertIn("RESULTS SO FAR", prompts[1][1])
+        self.assertIn("Kovács János", prompts[1][1])
+        self.assertEqual([("count", 1), ("relations", 2)],
+                         [(c["tool"], c["round"]) for c in out["graph"]["calls"]])
+        self.assertIn("Kovács János --", out["answer"])
+        self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+        self.assertNotIn("Titkos", "".join(u for _, u in prompts))
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

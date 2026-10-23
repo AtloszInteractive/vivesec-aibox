@@ -961,14 +961,21 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     retrieval_query = query
     planned = None
     orchestrated = None  # (contexts, info) of the analyst-mode plan
+    domain = None
     if action is None and APP_MODE == APP_ANALYST and GRAPH.enabled:
-        planned = orchestrator.plan(query, history, lang)
+        try:
+            domain = orchestrator.profile(GRAPH)
+        except graph.GraphError as e:
+            sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
+    if domain is not None:
+        vocab = orchestrator.vocabulary(domain, lang)
+        planned = orchestrator.plan(query, history, lang, vocab)
     if planned is not None:
         check = _visible(access)
         run = orchestrator.Run(
             GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
             lambda path: req_scope.contains_path(path) and check(path), lang,
-            ORCHESTRATOR_MAX_FACTS)
+            ORCHESTRATOR_MAX_FACTS, domain)
         if planned["action"] == "clarify":
             question = planned["question"]
             try:
@@ -984,7 +991,9 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             retrieval_query = planned["search"] or query
         if planned["calls"]:
             try:
-                orchestrated = (run.run(planned["calls"]), run.info())
+                orchestrated = orchestrator.orchestrate(
+                    run, planned,
+                    lambda results: orchestrator.plan(query, history, lang, vocab, results))
             except orchestrator.Clarify as e:
                 return _clarify_result(user, drive, query, e.question, req_scope,
                                        session_scope, profile, conversation_id, agent, lang)

@@ -36,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import domain_profile  # noqa: E402
+import analytics  # noqa: E402
 import queries  # noqa: E402
 from graph_store import MemoryGraphStore, StoreError  # noqa: E402
 from ingest import IngestError, parse_document_payload  # noqa: E402
@@ -128,7 +129,79 @@ def run_query(state: State, name: str, body: dict) -> dict:
     return out
 
 
+def _spec(body, name):
+    """An entity filter {types, subtypes, ids}; None when absent."""
+    value = body.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise HttpError(400, "%s must be an object" % name)
+    out = {}
+    for key, cap in (("types", 10), ("subtypes", 30), ("ids", 50)):
+        items = value.get(key) or []
+        if not isinstance(items, list) or len(items) > cap \
+                or not all(isinstance(x, str) and x for x in items):
+            raise HttpError(400, "%s.%s must be a list of at most %d strings" % (name, key, cap))
+        if key == "types" and any(t not in CORE_TYPES for t in items):
+            raise HttpError(400, "%s.types must be entity types" % name)
+        if items:
+            out[key] = list(items)
+    return out
+
+
+def _relations(value, name="relations"):
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > 20 \
+            or not all(isinstance(x, str) and x for x in value):
+        raise HttpError(400, "%s must be a list of at most 20 relation types" % name)
+    return list(value) or None
+
+
+def _date(body, name):
+    value = body.get(name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}(-\d{2}(-\d{2})?)?", value):
+        raise HttpError(400, "%s must be YYYY, YYYY-MM or YYYY-MM-DD" % name)
+    return value
+
+
+def _clause(body, name, other_key):
+    value = body.get(name)
+    if not isinstance(value, dict):
+        raise HttpError(400, "%s must be an object" % name)
+    return {"relations": _relations(value.get("relations"), name + ".relations"),
+            other_key: _spec(value, other_key)}
+
+
+def _analytic(view, name: str, body: dict) -> dict:
+    period = (_date(body, "date_from"), _date(body, "date_to"))
+    if name == "match":
+        steps = body.get("steps")
+        if not isinstance(steps, list) or not 1 <= len(steps) <= analytics.MAX_STEPS:
+            raise HttpError(400, "steps must be a list of 1..%d steps" % analytics.MAX_STEPS)
+        parsed = [_clause({"s": s}, "s", "target") for s in steps]
+        return {"paths": analytics.match(view, _spec(body, "start"), parsed, *period,
+                                         limit=_int(body, "limit", 50, 1, analytics.MAX_PATHS))}
+    if name == "aggregate":
+        try:
+            rows = analytics.aggregate(
+                view, _relations(body.get("relations")), _spec(body, "focus"),
+                _spec(body, "other"), body.get("group_by", "focus"), *period,
+                limit=_int(body, "limit", 20, 1, analytics.MAX_ROWS))
+        except ValueError as e:
+            raise HttpError(400, str(e))
+        return {"rows": rows}
+    return {"pairs": analytics.sequence(
+        view, _clause(body, "first", "other"), _clause(body, "then", "other"),
+        _int(body, "within_days", 30, 0, 3660), _spec(body, "focus"), *period,
+        limit=_int(body, "limit", 50, 1, analytics.MAX_PAIRS))}
+
+
 def _run_query(state: State, view, name: str, body: dict) -> dict:
+    if name in ("match", "aggregate", "sequence"):
+        return _analytic(view, name, body)
     if name == "find":
         text = body.get("text")
         if not isinstance(text, str) or not text.strip():

@@ -438,16 +438,25 @@ slash menu. Source viewing (`/ui/file`) and saving (`/ui/save`) stay.
 
 With `GRAPH_URL` set, every chat message goes through the orchestrator
 (`orchestrator.py`): one JSON planning call chooses graph tools (relations,
-connection, common, timeline, copresence, shared_identifiers, most_connected),
-a standalone document search, or a question back to the user. The adapter runs
-the tools itself in the caller's scope; the model only names entities.
+connection, common, timeline, copresence, shared_identifiers, most_connected,
+and the general ones: `find_pattern` = chains of up to 3 typed links,
+`count` = links counted and ranked by entity / linked entity / month / year /
+relation / linked kind, `sequence` = one relation followed by another within N
+days), a standalone document search, or a question back to the user. The
+planner gets the active domain profile's kinds and relations (cached 60 s), so
+the same tools serve any customer profile. With `"more": true` the planner sees
+a summary of the results and may add calls, at most 3 rounds. The adapter runs
+the tools itself in the caller's scope; the model only names entities, kinds and
+relations, and an unknown kind or relation skips that query with a note (never
+a wider search). Counts come from the graph, never from the model.
 Namesakes (separate records with the same name) are used together with a note;
 a partial name that fits different entities is asked back with the options.
 Each fact becomes a cited context with its quote (at most
 `ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
 is stored as the assistant's turn and answered with `clarify: true`. A failed or
 unusable plan falls back to the plain path (condense + graph facts).
-Tests: `orchestrator_test`, `graph_integration_test`.
+Tests: `orchestrator_test`, `graph_integration_test`; graph side:
+`graph_service/analytics_test.py`.
 
 ## Test
 

@@ -1,57 +1,81 @@
 """Chat orchestrator (E26 analyst mode): the model plans, the adapter runs the graph.
 
-One planning call per message decides what the answer needs: graph queries
-(relations, connection, timeline, ...), a document search, or a question back
-to the user when a detail is missing. The adapter then runs the queries itself
-within the caller's scope. The model never sees the graph API and cannot widen
-the scope: it only names entities, and the names are resolved here. A name that
-fits several different entities is asked back instead of guessed.
+A planning call decides what a message needs: graph queries (relations,
+connections, timelines, patterns, counts, sequences ...), a document search,
+or a question back to the user when a detail is missing. When the plan says
+it must see the results first, the planner gets them and may add calls
+(at most MAX_ROUNDS rounds). The adapter runs every query itself within the
+caller's scope. The model never sees the graph API and cannot widen the
+scope: it only names entities, kinds and relations from the active domain
+profile, and those are resolved here. A name that fits several different
+entities is asked back instead of guessed.
 
 Every fact a query returns carries its verbatim quote and source, and becomes
 one context in the RAG shape, so the answer cites it like any excerpt and the
 UI opens the source the usual way. Evidence from documents the adapter's
-policy hides is dropped (the graph's ACL copy may lag).
+policy hides is dropped (the graph's ACL copy may lag). Counts and sequences
+come from the graph, never from the model.
 """
 import json
 import re
+import time
 import unicodedata
 
 import llm
 
 TOOLS = ("relations", "connection", "common", "timeline", "copresence",
-         "shared_identifiers", "most_connected")
+         "shared_identifiers", "most_connected", "find_pattern", "count", "sequence")
 ENTITY_TYPES = ["person", "organization", "place", "identifier", "event", "object"]
+GROUP_BY = {"entity": "focus", "other": "other", "month": "month", "year": "year",
+            "relation": "relation", "other_kind": "other_kind"}
 MAX_CALLS = 4
+MAX_ROUNDS = 3
+MAX_STEPS = 3
 MAX_CANDIDATES = 6
 PLAN_TIMEOUT = 120
 MIN_PREFIX = 4
+PROFILE_TTL = 60.0
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 # Capitalised words after the first one: candidate names in a question.
 _NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
 
 PLANNER = (
-    "You plan how to answer a message about people, organisations, places, "
-    "identifiers (phone numbers, vehicles, ID or case numbers) and events found in the "
-    "user's documents. You do not answer it; you choose tools.\n"
-    "Tools (entity arguments are names as the user wrote them or as they appear in the "
-    "conversation; dates are YYYY-MM-DD):\n"
+    "You plan how to answer a message about the entities and events in the user's "
+    "documents, using a knowledge graph built from them. You do not answer it; you "
+    "choose tools.\n"
+    "{vocabulary}\n"
+    "Tools. Names are given as the user wrote them or as they appear in the "
+    "conversation; kind and relation are ids from the lists above; dates are YYYY, "
+    "YYYY-MM or YYYY-MM-DD:\n"
     "- relations {entity}: everything directly linked to one entity\n"
     "- connection {a, b}: the chain of documented links between two entities\n"
     "- common {a, b}: entities linked to both\n"
     "- timeline {entity, from?, to?}: the dated events of one entity in order\n"
     "- copresence {entity, from?, to?}: who was at the same place or event at the same time\n"
     "- shared_identifiers {kind?}: identifiers or addresses used by more than one person "
-    "or organisation (kind: a subtype such as phone, vehicle, address)\n"
-    "- most_connected {kind}: the entities with the most links "
-    "(kind: person, organization, place or identifier)\n"
+    "or organisation\n"
+    "- most_connected {kind}: the entities with the most links\n"
+    "- find_pattern {start: {kind?, name?}, steps: [{relation?, kind?, name?}], from?, "
+    "to?}: chains of up to 3 links, e.g. who visited the inmates placed in a given cell "
+    "= start {kind: the visitors' kind}, steps [{relation: the visit relation, kind: "
+    "the inmates' kind}, {relation: the placement relation, name: the cell}]\n"
+    "- count {relation?, kind?, name?, other_kind?, group_by, from?, to?}: counts links "
+    "and ranks the groups; group_by is entity (the kind/name side), other (the linked "
+    "side), month, year, relation or other_kind\n"
+    "- sequence {first, then, within_days, kind?, name?, from?, to?}: where a `then` "
+    "relation of an entity follows its `first` relation within the given number of days "
+    "(first and then are relation ids)\n"
     "Reply with one JSON object only, one of:\n"
     '{"action": "tools", "calls": [{"tool": "...", "args": {...}}], '
     '"search": "<the request as a standalone question for a document search, in the '
-    'user\'s language>"}\n'
+    'user\'s language>", "more": false}\n'
     '{"action": "clarify", "question": "<one short question to the user>"}\n'
     '{"action": "chat"} -- only when the message is about the conversation itself '
     "(summarise that, thanks, rephrase).\n"
-    "Rules: at most 4 calls. Resolve pronouns and follow-ups from the conversation. "
+    "Rules: at most 4 calls per reply. Set more: true only when you must see the "
+    "results before choosing further calls (first find who or what matches, then look "
+    "into them); you then get RESULTS SO FAR and reply with more calls or "
+    '{"action": "done"}. Resolve pronouns and follow-ups from the conversation. '
     "Pass names as given even when they may be incomplete (a surname alone): the system "
     "looks them up and lets the user choose between matches itself. Never ask which of "
     "several people or things with a name is meant, and never ask for context the tools "
@@ -105,6 +129,16 @@ _TEXT = {
         "da": "Grafs\u00f8gning (%s): intet resultat i de dokumenter, du har adgang til.",
         "de": "Graphsuche (%s): kein Ergebnis in den Dokumenten, die Sie sehen d\u00fcrfen.",
     },
+    "unknown": {
+        "en": "Graph search: \u201c%s\u201d is not a known kind or relation, so that query "
+              "was skipped.",
+        "hu": "Gr\u00e1fkeres\u00e9s: \u201e%s\u201d nem ismert fajta vagy kapcsolat, "
+              "ez\u00e9rt ez a lek\u00e9rdez\u00e9s kimaradt.",
+        "da": "Grafs\u00f8gning: \u201d%s\u201d er ikke en kendt type eller relation, s\u00e5 "
+              "foresp\u00f8rgslen blev sprunget over.",
+        "de": "Graphsuche: \u201e%s\u201c ist keine bekannte Art oder Beziehung, daher wurde "
+              "diese Abfrage \u00fcbersprungen.",
+    },
     "ranking": {
         "en": "Graph statistics -- number of distinct linked entities, counted over the "
               "documents you may see:",
@@ -116,6 +150,38 @@ _TEXT = {
         "de": "Graphstatistik -- Anzahl verschiedener verbundener Eintr\u00e4ge, gez\u00e4hlt "
               "in den Dokumenten, die Sie sehen d\u00fcrfen:",
     },
+    "count": {
+        "en": "Graph count -- %s by %s (links; distinct linked entities), counted over the "
+              "documents you may see:",
+        "hu": "Gr\u00e1f-sz\u00e1ml\u00e1l\u00e1s -- %s, csoportos\u00edtva: %s (kapcsolatok; "
+              "k\u00fcl\u00f6nb\u00f6z\u0151 kapcsol\u00f3d\u00f3 szerepl\u0151k), az \u00d6n "
+              "sz\u00e1m\u00e1ra l\u00e1that\u00f3 dokumentumok alapj\u00e1n:",
+        "da": "Graft\u00e6lling -- %s efter %s (forbindelser; forskellige forbundne enheder), "
+              "talt i de dokumenter, du har adgang til:",
+        "de": "Graphz\u00e4hlung -- %s nach %s (Verbindungen; verschiedene verbundene "
+              "Eintr\u00e4ge), gez\u00e4hlt in den Dokumenten, die Sie sehen d\u00fcrfen:",
+    },
+    "all_links": {"en": "all links", "hu": "minden kapcsolat", "da": "alle forbindelser",
+                  "de": "alle Verbindungen"},
+    "group": {
+        "en": {"entity": "entity", "other": "linked entity", "month": "month",
+               "year": "year", "relation": "relation", "other_kind": "linked kind"},
+        "hu": {"entity": "szerepl\u0151", "other": "kapcsol\u00f3d\u00f3 szerepl\u0151",
+               "month": "h\u00f3nap", "year": "\u00e9v", "relation": "kapcsolatt\u00edpus",
+               "other_kind": "kapcsol\u00f3d\u00f3 fajta"},
+        "da": {"entity": "enhed", "other": "forbundet enhed", "month": "m\u00e5ned",
+               "year": "\u00e5r", "relation": "relation", "other_kind": "forbundet type"},
+        "de": {"entity": "Eintrag", "other": "verbundener Eintrag", "month": "Monat",
+               "year": "Jahr", "relation": "Beziehung", "other_kind": "verbundene Art"},
+    },
+    "sequence": {
+        "en": "Graph sequence -- %s followed by %s within %d days:",
+        "hu": "Gr\u00e1f-sorrend -- %s ut\u00e1n %s, %d napon bel\u00fcl:",
+        "da": "Grafsekvens -- %s efterfulgt af %s inden for %d dage:",
+        "de": "Graphabfolge -- %s gefolgt von %s innerhalb von %d Tagen:",
+    },
+    "days": {"en": "%d days later", "hu": "%d nappal k\u00e9s\u0151bb",
+             "da": "%d dage senere", "de": "%d Tage sp\u00e4ter"},
     "together": {"en": "both at", "hu": "egyszerre itt:", "da": "begge ved",
                  "de": "beide bei"},
 }
@@ -131,6 +197,44 @@ def fold(text):
                    if unicodedata.category(c) != "Mn").strip()
 
 
+# -- the domain profile ----------------------------------------------------------
+_PROFILE = {"at": 0.0, "profile": None, "client": None}
+
+
+def profile(client):
+    """The active domain profile, cached briefly (an admin may change it)."""
+    if _PROFILE["profile"] is None or _PROFILE["client"] is not client \
+            or time.time() - _PROFILE["at"] > PROFILE_TTL:
+        _PROFILE.update(profile=client.post("/profile/get", {}).get("profile") or {},
+                        at=time.time(), client=client)
+    return _PROFILE["profile"]
+
+
+def _label_of(labels, code, fallback):
+    labels = labels or {}
+    return labels.get(code) or labels.get("en") or fallback
+
+
+def vocabulary(prof, lang=None):
+    """The kinds and relations of the profile, for the planner."""
+    code = LANG_CODES.get(lang or "", "en")
+    subtypes = {}
+    for s in prof.get("entity_subtypes") or []:
+        subtypes.setdefault(s.get("type"), []).append(
+            "%s = %s" % (s["id"], _label_of(s.get("label"), code, s["id"])))
+    kinds = ["%s (%s)" % (t, ", ".join(subtypes[t])) if subtypes.get(t) else t
+             for t in ENTITY_TYPES]
+    relations = []
+    for r in prof.get("relation_types") or []:
+        ends = ""
+        if r.get("from") or r.get("to"):
+            ends = " (%s -> %s)" % ("/".join(r.get("from") or ["any"]),
+                                    "/".join(r.get("to") or ["any"]))
+        relations.append("%s = %s%s" % (r["id"], _label_of(r.get("label"), code, r["id"]), ends))
+    return ("ENTITY KINDS (a kind is a type or one of its subtypes): %s\nRELATIONS: %s"
+            % ("; ".join(kinds), "; ".join(relations)))
+
+
 # -- planning ------------------------------------------------------------------
 def _transcript(history, turns=6, chars=600):
     lines = []
@@ -142,24 +246,53 @@ def _transcript(history, turns=6, chars=600):
     return "\n".join(lines)
 
 
+def _text(value, cap=120):
+    return value.strip()[:cap] if isinstance(value, str) and value.strip() else None
+
+
+def _side_args(value):
+    value = value if isinstance(value, dict) else {}
+    return {k: v for k, v in (("kind", _text(value.get("kind"))),
+                              ("name", _text(value.get("name")))) if v}
+
+
 def _clean_args(tool, args):
     args = args if isinstance(args, dict) else {}
     out = {}
-    for key in ("entity", "a", "b", "kind"):
-        value = args.get(key)
-        if isinstance(value, str) and value.strip():
-            out[key] = value.strip()[:120]
+    for key in ("entity", "a", "b", "kind", "name", "relation", "other_kind", "first", "then"):
+        value = _text(args.get(key))
+        if value:
+            out[key] = value
     for key in ("from", "to"):
         value = args.get(key)
         if isinstance(value, str) and _DATE_RE.match(value.strip()):
             out[key] = value.strip()
+    if tool == "find_pattern":
+        steps = []
+        for raw in [s for s in args.get("steps") or [] if isinstance(s, dict)][:MAX_STEPS]:
+            step = _side_args(raw)
+            relation = _text(raw.get("relation"))
+            if relation:
+                step["relation"] = relation
+            steps.append(step)
+        if not steps:
+            return None
+        out["start"] = _side_args(args.get("start"))
+        out["steps"] = steps
+    if tool == "count":
+        group = args.get("group_by")
+        out["group_by"] = group if group in GROUP_BY else "entity"
+    if tool == "sequence":
+        days = args.get("within_days")
+        out["within_days"] = days if isinstance(days, int) and 0 <= days <= 3660 else 30
     need = {"relations": ("entity",), "timeline": ("entity",), "copresence": ("entity",),
-            "connection": ("a", "b"), "common": ("a", "b")}.get(tool, ())
+            "connection": ("a", "b"), "common": ("a", "b"),
+            "sequence": ("first", "then")}.get(tool, ())
     return out if all(k in out for k in need) else None
 
 
 def parse_plan(text):
-    """The planner's reply as {"action", "calls", "search", "question"}, or None."""
+    """The planner's reply as {"action", "calls", "search", "question", "more"}, or None."""
     text = (text or "").strip()
     if text.startswith("```"):
         text = text.strip("`").split("\n", 1)[-1]
@@ -177,10 +310,10 @@ def parse_plan(text):
         question = data.get("question")
         if isinstance(question, str) and question.strip():
             return {"action": "clarify", "question": question.strip()[:500], "calls": [],
-                    "search": ""}
+                    "search": "", "more": False}
         return None
-    if action == "chat":
-        return {"action": "chat", "calls": [], "search": ""}
+    if action in ("chat", "done"):
+        return {"action": action, "calls": [], "search": "", "more": False}
     if action != "tools":
         return None
     calls = []
@@ -192,24 +325,43 @@ def parse_plan(text):
             calls.append({"tool": call["tool"], "args": args})
     search = data.get("search")
     return {"action": "tools", "calls": calls[:MAX_CALLS],
-            "search": search.strip()[:500] if isinstance(search, str) else ""}
+            "search": search.strip()[:500] if isinstance(search, str) else "",
+            "more": data.get("more") is True}
 
 
-def plan(question, history, lang=None):
+def plan(question, history, lang=None, vocab="", results=""):
     """One planning call; None when the model is off, fails or answers nonsense
     (the caller then keeps the plain document + graph-facts path)."""
     if llm.GENERATE == "off":
         return None
-    system = PLANNER + (" Write any question to the user in %s." % lang if lang else "")
+    system = PLANNER.replace("{vocabulary}", vocab) + (
+        " Write any question to the user in %s." % lang if lang else "")
     convo = _transcript(history)
     user = ("CONVERSATION:\n%s\n\nMESSAGE: %s" % (convo, question)) if convo \
         else "MESSAGE: %s" % question
+    if results:
+        user += "\n\nRESULTS SO FAR:\n%s" % results
     try:
         content, _, _ = llm._chat(system, user, timeout=PLAN_TIMEOUT, stream=False,
-                                  num_predict=400, response_format="json")
+                                  num_predict=600, response_format="json")
     except Exception:  # noqa: BLE001
         return None
     return parse_plan(content)
+
+
+def orchestrate(run, first, replan, max_rounds=MAX_ROUNDS):
+    """Runs the plan; while it asks to see results, replans with them.
+    `replan(results_text)` returns the next plan or None. Raises Clarify."""
+    current = first
+    for round_no in range(1, max_rounds + 1):
+        run.run(current["calls"], round_no)
+        if not current.get("more") or round_no == max_rounds:
+            break
+        nxt = replan(run.summary())
+        if not nxt or nxt["action"] != "tools" or not nxt["calls"]:
+            break
+        current = nxt
+    return run.output(), run.info()
 
 
 # -- running the plan ----------------------------------------------------------
@@ -222,9 +374,9 @@ class Clarify(Exception):
 
 
 class Run:
-    """Executes one plan against the graph within one caller's scope."""
+    """Executes plans against the graph within one caller's scope."""
 
-    def __init__(self, client, scope_body, visible, lang=None, max_facts=40):
+    def __init__(self, client, scope_body, visible, lang=None, max_facts=40, prof=None):
         self.client = client
         self.scope = scope_body
         self.visible = visible
@@ -237,27 +389,71 @@ class Run:
         self.calls = []
         self._seen = set()
         self._names = {}
-        self._profile = None
+        self._profile = prof
+        self._maps = None
         self._call_facts = 0
         self._call_budget = max_facts
+        self._call_labels = set()
 
     def query(self, name, **params):
         res = self.client.post("/query/" + name, dict(self.scope, **params))
         self.documents.update(res.get("documents") or {})
         return res
 
-    # labels from the domain profile, in the user's language
+    # the domain profile, in the user's language
     def _label_maps(self):
-        if self._profile is None:
-            profile = self.client.post("/profile/get", {}).get("profile") or {}
-            self._profile = (
-                {r["id"]: r.get("label") or {} for r in profile.get("relation_types") or []},
-                {s["id"]: s.get("label") or {} for s in profile.get("entity_subtypes") or []})
-        return self._profile
+        if self._maps is None:
+            if self._profile is None:
+                self._profile = self.client.post("/profile/get", {}).get("profile") or {}
+            self._maps = (
+                {r["id"]: r for r in self._profile.get("relation_types") or []},
+                {s["id"]: s for s in self._profile.get("entity_subtypes") or []})
+        return self._maps
 
-    def _label(self, labels, key):
-        lab = labels.get(key) or {}
-        return lab.get(self.code) or lab.get("en") or key
+    def _label(self, entries, key):
+        return _label_of((entries.get(key) or {}).get("label"), self.code, key)
+
+    def kind_spec(self, kind):
+        """A side filter for a kind (type or subtype, by id or label); None if unknown."""
+        if not kind:
+            return {}
+        wanted = fold(kind)
+        if wanted in ENTITY_TYPES:
+            return {"types": [wanted]}
+        _, subtypes = self._label_maps()
+        ids = [sid for sid, s in subtypes.items()
+               if wanted in {fold(sid), *(fold(v) for v in (s.get("label") or {}).values())}]
+        if ids:
+            return {"subtypes": ids}
+        self.notes.append(_t("unknown", self.code) % kind)
+        return None
+
+    def relation_ids(self, relation):
+        """Relation type ids for an id, label or synonym; [] when none is given,
+        None when it is unknown (a count over every relation would mislead)."""
+        if not relation:
+            return []
+        wanted = fold(relation)
+        relations, _ = self._label_maps()
+        ids = [rid for rid, r in relations.items()
+               if wanted in {fold(rid), *(fold(v) for v in (r.get("label") or {}).values()),
+                             *(fold(v) for v in r.get("synonyms") or [])}]
+        if not ids:
+            self.notes.append(_t("unknown", self.code) % relation)
+            return None
+        return ids
+
+    def side(self, kind=None, name=None):
+        """The filter for one side of a link; None when it cannot match anything."""
+        spec = self.kind_spec(kind)
+        if spec is None:
+            return None  # an unknown kind must not widen the search to everything
+        if name:
+            ids = self.resolve(name)
+            if not ids:
+                return None
+            spec = dict(spec, ids=ids)
+        return spec
 
     def describe(self, nodes):
         """One option line for records sharing a name (namesakes are one choice)."""
@@ -364,21 +560,27 @@ class Run:
         node = self.nodes.get(node_id) or {}
         return node.get("label") or node_id
 
+    def _relation_name(self, rtype):
+        relations, _ = self._label_maps()
+        return self._label(relations, rtype)
+
     def edge_fact(self, edge):
         evidence = self._evidence(edge)
         if not evidence:
             return 0
-        relations, _ = self._label_maps()
-        name = self._label(relations, edge["type"])
+        name = self._relation_name(edge["type"])
         raw = edge.get("raw_label") or ""
         if raw and raw != edge["type"] and not re.fullmatch(r"[A-Z0-9_]+", raw):
             name = "%s (%s)" % (name, raw)
         when = edge.get("start") or ""
         if edge.get("end") and edge["end"] != when:
             when = "%s - %s" % (when, edge["end"])
-        text = "%s -- %s -- %s%s." % (self._name(edge["a"]), name, self._name(edge["b"]),
-                                      " (%s)" % when if when else "")
-        return int(self._add(text, evidence[0]))
+        a, b = self._name(edge["a"]), self._name(edge["b"])
+        text = "%s -- %s -- %s%s." % (a, name, b, " (%s)" % when if when else "")
+        added = int(self._add(text, evidence[0]))
+        if added:
+            self._call_labels.update((a, b))
+        return added
 
     def _remember(self, res):
         for node in res.get("nodes") or []:
@@ -452,20 +654,20 @@ class Run:
                 text = "%s, %s %s %s (%s)." % (self._name(eid), item["other"]["label"], word,
                                                 item["place"]["label"], span)
                 for ev in evidence[:2]:
-                    facts += int(self._add(text, ev))
+                    if self._add(text, ev):
+                        facts += 1
+                        self._call_labels.add(item["other"]["label"])
         return facts
 
     def shared_identifiers(self, args):
         facts = 0
         params = {"limit": 20}
         if args.get("kind"):
-            _, subtypes = self._label_maps()
-            wanted = fold(args["kind"])
-            # The planner names the kind in words; the graph wants the profile's ids.
-            ids = [sid for sid, labels in subtypes.items()
-                   if wanted in {fold(sid), *(fold(v) for v in labels.values())}]
-            if ids:
-                params["subtypes"] = ids
+            spec = self.kind_spec(args["kind"])
+            if spec is None:
+                return 0
+            if spec.get("subtypes"):
+                params["subtypes"] = spec["subtypes"]
         for item in self.query("shared", **params).get("shared") or []:
             holders = item.get("holders") or []
             # Namesakes (one person split into records) are not "several people".
@@ -485,25 +687,130 @@ class Run:
             lines = ["%d. %s -- %d" % (i, r["node"]["label"], r["degree"])
                      for i, r in enumerate(ranking, 1)]
             self.notes.append(_t("ranking", self.code) + "\n" + "\n".join(lines))
+            self._call_labels.update(r["node"]["label"] for r in ranking)
         return len(ranking)
 
-    def run(self, calls):
-        """Contexts for the plan's calls; raises Clarify on an ambiguous name."""
+    def find_pattern(self, args):
+        start = self.side(**args.get("start") or {})
+        steps = []
+        for step in args["steps"]:
+            relations = self.relation_ids(step.get("relation"))
+            target = self.side(step.get("kind"), step.get("name"))
+            if relations is None or target is None:
+                return 0
+            steps.append({"relations": relations or None, "target": target or None})
+        if start is None:
+            return 0
+        res = self.query("match", start=start or None, steps=steps, limit=40,
+                         date_from=args.get("from"), date_to=args.get("to"))
+        facts = 0
+        for path in res.get("paths") or []:
+            self._remember(path)
+            facts += sum(self.edge_fact(e) for e in path.get("edges") or [])
+        return facts
+
+    def count(self, args):
+        relations = self.relation_ids(args.get("relation"))
+        focus = self.side(args.get("kind"), args.get("name"))
+        other = self.kind_spec(args.get("other_kind"))
+        if relations is None or focus is None or other is None:
+            return 0
+        group = GROUP_BY[args.get("group_by") or "entity"]
+        rows = self.query("aggregate", relations=relations or None, focus=focus or None,
+                          other=other or None, group_by=group, limit=15,
+                          date_from=args.get("from"), date_to=args.get("to")).get("rows") or []
+        if not rows:
+            return 0
+        relations_map, subtypes = self._label_maps()
+        what = ", ".join(self._relation_name(r) for r in relations) if relations \
+            else _t("all_links", self.code)
+        lines = []
+        for i, row in enumerate(rows, 1):
+            label = row["label"]
+            if group == "relation":
+                label = self._label(relations_map, row["key"])
+            elif group == "other_kind":
+                label = self._label(subtypes, row["key"])
+            lines.append("%d. %s -- %d; %d" % (i, label, row["count"], row["distinct"]))
+            self._call_labels.add(label)
+        self.notes.append(_t("count", self.code) % (
+            what, _t("group", self.code)[args.get("group_by") or "entity"])
+            + "\n" + "\n".join(lines))
+        for row in rows[:8]:
+            self._remember(row)
+            for edge in row.get("samples") or []:
+                if self.edge_fact(edge):
+                    break
+        return len(rows)
+
+    def sequence(self, args):
+        first, then = self.relation_ids(args["first"]), self.relation_ids(args["then"])
+        focus = self.side(args.get("kind"), args.get("name"))
+        if not first or not then or focus is None:
+            return 0
+        pairs = self.query("sequence", first={"relations": first}, then={"relations": then},
+                           within_days=args.get("within_days", 30), focus=focus or None,
+                           date_from=args.get("from"), date_to=args.get("to"),
+                           limit=30).get("pairs") or []
+        if not pairs:
+            return 0
+        lines = []
+        for pair in pairs:
+            e1, e2 = pair["first"], pair["then"]
+            # The listing names both links, so both must be visible to the caller.
+            if not self._evidence(e1) or not self._evidence(e2):
+                continue
+            self.nodes.setdefault(pair["focus"]["id"], pair["focus"])
+            self._remember(pair)
+            lines.append("- %s: %s %s (%s) -> %s %s (%s), %s" % (
+                pair["focus"]["label"],
+                self._relation_name(e1["type"]), self._name(e1["b"] if e1["a"] ==
+                                                           pair["focus"]["id"] else e1["a"]),
+                e1["start"], self._relation_name(e2["type"]),
+                self._name(e2["b"] if e2["a"] == pair["focus"]["id"] else e2["a"]),
+                e2["start"], _t("days", self.code) % pair["days"]))
+            self.edge_fact(e1)
+            self.edge_fact(e2)
+            self._call_labels.add(pair["focus"]["label"])
+        if not lines:
+            return 0
+        self.notes.append(_t("sequence", self.code) % (
+            self._relation_name(first[0]), self._relation_name(then[0]),
+            args.get("within_days", 30)) + "\n" + "\n".join(lines))
+        return len(lines)
+
+    def run(self, calls, round_no=1):
+        """Runs one round of calls; raises Clarify on an ambiguous name."""
         # One broad call (a crowded cell) must not crowd out the others' facts.
         self._call_budget = max(6, self.max_facts // max(1, len(calls)))
         for call in calls:
             noted = len(self.notes)
             self._call_facts = 0
+            self._call_labels = set()
             facts = getattr(self, call["tool"])(call["args"])
-            self.calls.append({"tool": call["tool"], "args": call["args"], "facts": facts})
+            self.calls.append({"tool": call["tool"], "args": call["args"], "facts": facts,
+                               "round": round_no, "entities": sorted(self._call_labels)[:20]})
             if not facts and len(self.notes) == noted:
                 self.notes.append(_t("nothing", self.code) % call["tool"])
+        return self.output()
+
+    def output(self):
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,
                   "page_number": None, "chunk_id": None, "score": 1.0, "origin": "graph-note"}
                  for n in self.notes]
         return notes + self.contexts
 
+    def summary(self):
+        """What the calls so far found, for the next planning round."""
+        lines = ["- %s %s: %d results; entities: %s" % (
+            c["tool"], json.dumps(c["args"], ensure_ascii=False), c["facts"],
+            ", ".join(c["entities"]) or "none") for c in self.calls]
+        lines += ["- note: %s" % n.split("\n")[0] for n in self.notes]
+        return "\n".join(lines)
+
     def info(self):
-        return {"calls": self.calls, "facts": len(self.contexts),
+        return {"calls": [{k: c[k] for k in ("tool", "args", "facts", "round")}
+                          for c in self.calls],
+                "facts": len(self.contexts),
                 "entities": sorted({n["label"] for n in self.nodes.values()
                                     if any(n["id"] in ids for ids in self._names.values())})}
