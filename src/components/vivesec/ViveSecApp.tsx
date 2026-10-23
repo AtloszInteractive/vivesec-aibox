@@ -978,9 +978,9 @@ function ViveSecAppInner() {
   );
 
   useEffect(() => {
-    if (!drive || boxState !== "online") return;
+    if (!drive || boxState !== "online" || analyst) return;
     void loadFolder(drive);
-  }, [drive, boxState, loadFolder]);
+  }, [drive, boxState, loadFolder, analyst]);
 
   // Searching spans the whole drive, so it goes back to the box (`#search
   // files:`) instead of filtering the folder currently on screen.
@@ -1835,7 +1835,7 @@ function ViveSecAppInner() {
     // typed "#action" prefix (adapter/service.py parse_action) — the UI's "/"
     // commands must be translated, otherwise the structured task instruction
     // (F1-F7) is lost and every command degrades to a plain question.
-    const { cmd, rest } = splitCommand(v);
+    const { cmd, rest } = analyst ? { cmd: null, rest: v } : splitCommand(v);
     const action = cmd ? LIVE_ACTIONS[cmd] : undefined;
     // The dialog answers that describe WHAT to produce belong in the question;
     // audience/purpose only shape tone and travel as adapter PARAMETERS. The
@@ -1983,7 +1983,7 @@ function ViveSecAppInner() {
     setShowSlash(false);
     pushUser(v);
 
-    const { cmd, rest } = splitCommand(v);
+    const { cmd, rest } = analyst ? { cmd: null, rest: v } : splitCommand(v);
     // /data is UI-side: platform telemetry, not a corpus answer.
     if (cmd === "/data") {
       runData();
@@ -2454,9 +2454,10 @@ function ViveSecAppInner() {
                     </button>
                   ))}
                 </div>}
+                {!analyst && (
                 <button
                   onClick={() => setMobilePane("results")}
-                  className={`ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden ${analyst ? "hidden" : ""}`}
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden"
                 >
                   <LayoutTemplate className="h-3.5 w-3.5" style={{ color: LIME }} />
                   {tm("Results")}
@@ -2469,6 +2470,7 @@ function ViveSecAppInner() {
                     </span>
                   )}
                 </button>
+                )}
                 <div className="relative ml-auto">
                   <button
                     onClick={() => setAgentMenuOpen((v) => !v)}

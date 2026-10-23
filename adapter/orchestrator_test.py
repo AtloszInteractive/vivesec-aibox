@@ -143,6 +143,9 @@ class RunTest(unittest.TestCase):
             run([{"tool": "relations", "args": {"entity": "Kovács"}}])
         self.assertIn("Melyikre gondol", cm.exception.question)
         self.assertIn("Kovács Péter (Fogvatartott, 1 dokumentum)", cm.exception.question)
+        # The two Kovács János records are one option.
+        self.assertEqual(1, cm.exception.question.count("Kovács János"))
+        self.assertIn("Kovács János (Fogvatartott, 4 dokumentum)", cm.exception.question)
 
     def test_inflected_name_and_unknown_name(self):
         _, contexts, _ = run([{"tool": "timeline", "args": {"entity": "Kovács Jánossal"}},

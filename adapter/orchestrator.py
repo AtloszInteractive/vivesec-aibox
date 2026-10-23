@@ -254,11 +254,15 @@ class Run:
         lab = labels.get(key) or {}
         return lab.get(self.code) or lab.get("en") or key
 
-    def describe(self, node):
+    def describe(self, nodes):
+        """One option line for records sharing a name (namesakes are one choice)."""
         _, subtypes = self._label_maps()
+        node = nodes[0]
         kind = self._label(subtypes, node.get("subtype")) if node.get("subtype") else node["type"]
-        return "%s (%s, %s)" % (node["label"], kind,
-                                _t("documents", self.code) % len(node.get("documents") or []))
+        docs = sum(len(n.get("documents") or []) for n in nodes)
+        count = ("1 document" if docs == 1 and self.code == "en"
+                 else _t("documents", self.code) % docs)
+        return "%s (%s, %s)" % (node["label"], kind, count)
 
     def resolve(self, name):
         """Ids for one name. Namesakes (same name, separate records) are kept
@@ -273,7 +277,11 @@ class Run:
         elif len(found) == 1 or len({fold(n["label"]) for n in found}) == 1:
             picked = found
         elif found:
-            options = "\n".join("- " + self.describe(n) for n in found[:MAX_CANDIDATES])
+            groups = {}
+            for n in found:
+                groups.setdefault(fold(n["label"]), []).append(n)
+            options = "\n".join("- " + self.describe(g)
+                                for g in list(groups.values())[:MAX_CANDIDATES])
             raise Clarify("%s\n%s" % (_t("ambiguous", self.code) % name, options))
         else:
             # Inflected forms ("Kovács Jánossal") are matched by the mention finder.
