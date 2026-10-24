@@ -329,6 +329,46 @@ class RunTest(unittest.TestCase):
         self.assertNotIn("caveat", orchestrator.Run(
             FakeGraph(pending=5), {"corpus_ids": ["c"]}, lambda p: True).info())
 
+    def test_name_join_lists_who_was_joined_and_why_a_result_is_empty(self):
+        class Joined(FakeGraph):
+            empty = False
+
+            def post(self, path, body):
+                if path == "/query/match":
+                    self.calls.append((path, body))
+                    if self.empty:
+                        return {"paths": [], "namesakes": {"ambiguous": 3}, "documents": {}}
+                    return {"paths": [{"nodes": [NE, dict(KJ1, joined=["a", "b", "c"])],
+                                       "edges": [EDGES[0]]}],
+                            "namesakes": {"ambiguous": 3}, "documents": DOC}
+                return super().post(path, body)
+
+        graph = Joined(pending=7)
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "English",
+                             name_join=True)
+        call = [{"tool": "find_pattern", "args": {"steps": [{"relation": "VISITED"}]}}]
+        out = r.run(call)
+        body = next(b for p, b in graph.calls if p == "/query/match")
+        self.assertIs(True, body["join_namesakes"])
+        joined = [c["text"] for c in out if c["text"].startswith("Linked by name")]
+        self.assertEqual(["Linked by name: the records of these people from different documents"
+                          " were joined only by the same name; no birth date or ID number "
+                          "confirms it: Kovács János (3)."], joined)
+        self.assertIn("Kovács János (3)", r.info()["caveat"])
+        # The merge queue says nothing about joined records.
+        self.assertFalse([p for p, _ in graph.calls if p == "/review/list"])
+        graph = Joined()
+        graph.empty = True
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "English",
+                             name_join=True)
+        r.run(call)
+        self.assertIn("3 names in the documents you may see", r.info()["caveat"])
+        # Off: the graph is asked plainly.
+        graph = Joined()
+        orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True).run(call)
+        self.assertNotIn("join_namesakes", next(b for p, b in graph.calls
+                                                if p == "/query/match"))
+
     def test_sequence_lists_only_visible_pairs(self):
         _, contexts, _ = run([{"tool": "sequence", "args": {
             "first": "VISITED", "then": "VISITED", "within_days": 300}}])

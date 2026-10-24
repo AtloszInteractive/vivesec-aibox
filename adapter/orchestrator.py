@@ -36,6 +36,7 @@ PLAN_TIMEOUT = 120
 MIN_PREFIX = 4
 PROFILE_TTL = 60.0
 SUMMARY_LINES = 6
+MAX_JOINED_LISTED = 10
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 # Capitalised words after the first one: candidate names in a question.
 _NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
@@ -210,6 +211,40 @@ _TEXT = {
              "da": "%d dage senere", "de": "%d Tage sp\u00e4ter"},
     "together": {"en": "both at", "hu": "egyszerre itt:", "da": "begge ved",
                  "de": "beide bei"},
+    "joined": {
+        "en": "Linked by name: the records of these people from different documents were "
+              "joined only by the same name; no birth date or ID number confirms it: %s.",
+        "hu": "N\u00e9v alapj\u00e1n \u00f6sszekapcsolva: ezeknek a szem\u00e9lyeknek a "
+              "k\u00fcl\u00f6nb\u00f6z\u0151 dokumentumokban szerepl\u0151 bejegyz\u00e9seit csak "
+              "az azonos n\u00e9v k\u00f6ti \u00f6ssze, sz\u00fclet\u00e9si d\u00e1tum vagy "
+              "azonos\u00edt\u00f3 nem er\u0151s\u00edti meg: %s.",
+        "da": "Forbundet via navn: disse personers poster fra forskellige dokumenter er kun "
+              "forbundet via samme navn; ingen f\u00f8dselsdato eller ID-nummer bekr\u00e6fter "
+              "det: %s.",
+        "de": "Namensbasiert verkn\u00fcpft: Die Eintr\u00e4ge dieser Personen aus "
+              "verschiedenen Dokumenten sind nur \u00fcber den gleichen Namen verbunden; kein "
+              "Geburtsdatum und keine Ausweisnummer best\u00e4tigt es: %s.",
+    },
+    "and_more": {"en": " and %d more", "hu": " \u00e9s m\u00e9g %d", "da": " og %d mere",
+                 "de": " und %d weitere"},
+    "ambiguous_names": {
+        "en": "Graph search: %d names in the documents you may see belong to records that "
+              "contradict each other (for example different birth dates), so they were not "
+              "linked across documents; the result may be incomplete.",
+        "hu": "Gr\u00e1fkeres\u00e9s: az \u00d6n sz\u00e1m\u00e1ra l\u00e1that\u00f3 "
+              "dokumentumokban %d n\u00e9vhez egym\u00e1snak ellentmond\u00f3 bejegyz\u00e9sek "
+              "tartoznak (p\u00e9ld\u00e1ul elt\u00e9r\u0151 sz\u00fclet\u00e9si d\u00e1tum), "
+              "ez\u00e9rt ezeket nem kapcsoltuk \u00f6ssze a dokumentumok k\u00f6z\u00f6tt; az "
+              "eredm\u00e9ny hi\u00e1nyos lehet.",
+        "da": "Grafs\u00f8gning: %d navne i de dokumenter, du har adgang til, h\u00f8rer til "
+              "poster, der modsiger hinanden (f.eks. forskellige f\u00f8dselsdatoer), s\u00e5 de "
+              "blev ikke forbundet p\u00e5 tv\u00e6rs af dokumenter; resultatet kan v\u00e6re "
+              "ufuldst\u00e6ndigt.",
+        "de": "Graphsuche: %d Namen in den Dokumenten, die Sie sehen d\u00fcrfen, geh\u00f6ren "
+              "zu Eintr\u00e4gen, die einander widersprechen (z. B. verschiedene "
+              "Geburtsdaten), daher wurden sie nicht dokument\u00fcbergreifend verkn\u00fcpft; "
+              "das Ergebnis kann unvollst\u00e4ndig sein.",
+    },
     "unmerged": {
         "en": "Graph search: %d pairs of same-named records in the documents you may see "
               "await an administrator's merge decision. Until merged, links recorded in "
@@ -434,12 +469,18 @@ class Clarify(Exception):
 class Run:
     """Executes plans against the graph within one caller's scope."""
 
-    def __init__(self, client, scope_body, visible, lang=None, max_facts=40, prof=None):
+    def __init__(self, client, scope_body, visible, lang=None, max_facts=40, prof=None,
+                 name_join=False):
         self.client = client
         self.scope = scope_body
         self.visible = visible
         self.code = LANG_CODES.get(lang or "", "en")
         self.max_facts = max_facts
+        # Patterns, sequences and counts treat same-named records as one person
+        # (graph_service/namesakes.py); the answer names who was joined so.
+        self.name_join = name_join
+        self.joined = {}
+        self._ambiguous = 0
         self.contexts = []
         self.notes = []
         self.documents = {}
@@ -455,15 +496,31 @@ class Run:
         self._unmerged = None
         self._unmerged_noted = False
         # Shown under the answer when a cross-document query came back empty
-        # because records await a merge: the model tends to drop that reason.
-        self.caveat = None
+        # for a reason the model tends to drop (records awaiting a merge).
+        self._reason = None
         # Why the planning rounds ended (complete, done, repeat, max_rounds ...).
         self.stop = None
 
     def query(self, name, **params):
+        if self.name_join and name in ("match", "aggregate", "sequence"):
+            params["join_namesakes"] = True
         res = self.client.post("/query/" + name, dict(self.scope, **params))
         self.documents.update(res.get("documents") or {})
+        if params.get("join_namesakes"):
+            self._ambiguous = max(self._ambiguous,
+                                  int((res.get("namesakes") or {}).get("ambiguous") or 0))
+            self._collect_joined(res)
         return res
+
+    def _collect_joined(self, value):
+        if isinstance(value, dict):
+            if len(value.get("joined") or []) > 1 and value.get("label"):
+                self.joined[value["label"]] = len(value["joined"])
+            for item in value.values():
+                self._collect_joined(item)
+        elif isinstance(value, list):
+            for item in value:
+                self._collect_joined(item)
 
     # the domain profile, in the user's language
     def _label_maps(self):
@@ -897,18 +954,43 @@ class Run:
             cross = call["tool"] in ("find_pattern", "sequence")
             if not facts and len(self.notes) == noted:
                 text = _t("nothing", self.code) % call["tool"]
-                pending = self._pending() if cross and not self._unmerged_noted else 0
-                if pending:
+                reason = self._empty_reason() if cross and not self._unmerged_noted else None
+                if reason:
                     # Said in the same breath, so the answer cannot drop the reason.
-                    text += " " + _t("unmerged", self.code) % pending
+                    text += " " + reason
                     self._unmerged_noted = True
-                    self.caveat = _t("unmerged", self.code) % pending
+                    self._reason = reason
                 self.notes.append(text)
-            elif (cross and not facts) or (
+            elif not self.name_join and ((cross and not facts) or (
                     call["tool"] == "count"
-                    and call["args"].get("group_by", "entity") in ("entity", "other")):
+                    and call["args"].get("group_by", "entity") in ("entity", "other"))):
                 self._note_unmerged()
         return self.output()
+
+    def _empty_reason(self):
+        """Why a cross-document query may have found nothing, or None."""
+        if self.name_join:
+            # Joined records cannot be the reason; conflicting namesakes can.
+            return _t("ambiguous_names", self.code) % self._ambiguous \
+                if self._ambiguous else None
+        pending = self._pending()
+        return _t("unmerged", self.code) % pending if pending else None
+
+    def _joined_note(self):
+        """Which people were joined by name alone in the results, or None."""
+        if not self.joined:
+            return None
+        names = sorted(self.joined)
+        listed = ", ".join("%s (%d)" % (n, self.joined[n]) for n in names[:MAX_JOINED_LISTED])
+        if len(names) > MAX_JOINED_LISTED:
+            listed += _t("and_more", self.code) % (len(names) - MAX_JOINED_LISTED)
+        return _t("joined", self.code) % listed
+
+    @property
+    def caveat(self):
+        """Shown under the answer as is: the model may drop these."""
+        parts = [p for p in (self._joined_note(), self._reason) if p]
+        return "\n\n".join(parts) or None
 
     def _pending(self):
         """Same-named record pairs awaiting a merge decision in the visible
@@ -929,9 +1011,10 @@ class Run:
             self.notes.append(_t("unmerged", self.code) % self._pending())
 
     def output(self):
+        joined = self._joined_note()
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,
                   "page_number": None, "chunk_id": None, "score": 1.0, "origin": "graph-note"}
-                 for n in self.notes]
+                 for n in self.notes + ([joined] if joined else [])]
         return notes + self.contexts
 
     def summary(self):

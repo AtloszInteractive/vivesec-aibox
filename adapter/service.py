@@ -497,6 +497,11 @@ def _parse_app_mode(raw):
 
 APP_MODE = _parse_app_mode(os.environ.get("ADAPTER_APP_MODE"))
 ORCHESTRATOR_MAX_FACTS = max(1, int(os.environ.get("ADAPTER_ORCHESTRATOR_MAX_FACTS", "40") or 40))
+# Analyst patterns, sequences and counts may treat same-named person records as one
+# person (never when their records conflict). An identity rule the customer owns:
+# only the explicit value turns it on; anything else keeps the records apart.
+GRAPH_NAME_JOIN = (os.environ.get("ADAPTER_GRAPH_NAME_JOIN", "off") or "off").strip().lower() \
+    == "same_name"
 
 
 def app_settings():
@@ -975,7 +980,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         run = orchestrator.Run(
             GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
             lambda path: req_scope.contains_path(path) and check(path), lang,
-            ORCHESTRATOR_MAX_FACTS, domain)
+            ORCHESTRATOR_MAX_FACTS, domain, name_join=GRAPH_NAME_JOIN)
         if planned["action"] == "clarify":
             question = planned["question"]
             try:
@@ -1131,7 +1136,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     if answer and not degenerate and document and document.get("truncated"):
         display = answer + "\n\n" + _analyze_truncation_note(document, lang)
     if display and orchestrated is not None and orchestrated[1].get("caveat"):
-        display = display + "\n\n> " + orchestrated[1]["caveat"]
+        display = display + "\n\n" + "\n".join(
+            ("> " + line) if line else ">" for line in orchestrated[1]["caveat"].split("\n"))
     if display:
         display = display + "\n\n" + (confidence.footer(conf, citations, aid, lang)
                 if conf is not None else

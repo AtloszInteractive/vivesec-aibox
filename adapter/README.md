@@ -461,12 +461,22 @@ joined; when such a query comes back empty or ranks entities, the answer notes
 how many pairs await a decision in the caller's visible documents (graph notes
 reach the answer model as SEARCH NOTES; for an empty pattern or sequence the
 adapter also shows the reason under the answer, since the model may drop it).
+`ADAPTER_GRAPH_NAME_JOIN=same_name` (default `off`; any other value is off)
+lets patterns, sequences and counts treat the visible person records of one
+name as one person for that query (`graph_service/namesakes.py`; the graph is
+not changed). Records are never joined when their kinds differ (an inmate and a
+visitor), when visible birth dates, mothers' names or ID numbers differ, or
+when an administrator decided the pair "separate". The answer then lists the
+people joined by name alone, under the answer as well, and an empty result
+mentions how many names were left apart because their records conflict. This
+is an identity rule for the customer to confirm; a strong key in the source
+documents (e.g. an inmate registry number) is the better fix where available.
 Each fact becomes a cited context with its quote (at most
 `ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
 is stored as the assistant's turn and answered with `clarify: true`. A failed or
 unusable plan falls back to the plain path (condense + graph facts).
 Tests: `orchestrator_test`, `graph_integration_test`; graph side:
-`graph_service/analytics_test.py`.
+`graph_service/analytics_test.py`, `graph_service/namesakes_test.py`.
 
 ## Test
 

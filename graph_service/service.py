@@ -37,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import domain_profile  # noqa: E402
 import analytics  # noqa: E402
+import namesakes  # noqa: E402
 import queries  # noqa: E402
 from graph_store import MemoryGraphStore, StoreError  # noqa: E402
 from ingest import IngestError, parse_document_payload  # noqa: E402
@@ -175,33 +176,49 @@ def _clause(body, name, other_key):
             other_key: _spec(value, other_key)}
 
 
-def _analytic(view, name: str, body: dict) -> dict:
+def _analytic(state: State, view, name: str, body: dict) -> dict:
+    join = body.get("join_namesakes", False)
+    if not isinstance(join, bool):
+        raise HttpError(400, "join_namesakes must be true or false")
+    joined = None
+    if join:
+        worker = state.worker
+        joined = view = namesakes.JoinedView(view, worker.decided if worker else frozenset())
+    out = _analytic_query(view, name, body, joined.canon_spec if joined else (lambda s: s))
+    if joined is not None:
+        out["namesakes"] = {"ambiguous": len(joined.ambiguous)}
+    return out
+
+
+def _analytic_query(view, name: str, body: dict, canon) -> dict:
     period = (_date(body, "date_from"), _date(body, "date_to"))
     if name == "match":
         steps = body.get("steps")
         if not isinstance(steps, list) or not 1 <= len(steps) <= analytics.MAX_STEPS:
             raise HttpError(400, "steps must be a list of 1..%d steps" % analytics.MAX_STEPS)
         parsed = [_clause({"s": s}, "s", "target") for s in steps]
-        return {"paths": analytics.match(view, _spec(body, "start"), parsed, *period,
+        parsed = [dict(s, target=canon(s["target"])) for s in parsed]
+        return {"paths": analytics.match(view, canon(_spec(body, "start")), parsed, *period,
                                          limit=_int(body, "limit", 50, 1, analytics.MAX_PATHS))}
     if name == "aggregate":
         try:
             rows = analytics.aggregate(
-                view, _relations(body.get("relations")), _spec(body, "focus"),
-                _spec(body, "other"), body.get("group_by", "focus"), *period,
+                view, _relations(body.get("relations")), canon(_spec(body, "focus")),
+                canon(_spec(body, "other")), body.get("group_by", "focus"), *period,
                 limit=_int(body, "limit", 20, 1, analytics.MAX_ROWS))
         except ValueError as e:
             raise HttpError(400, str(e))
         return {"rows": rows}
+    first, then = _clause(body, "first", "other"), _clause(body, "then", "other")
     return {"pairs": analytics.sequence(
-        view, _clause(body, "first", "other"), _clause(body, "then", "other"),
-        _int(body, "within_days", 30, 0, 3660), _spec(body, "focus"), *period,
+        view, dict(first, other=canon(first["other"])), dict(then, other=canon(then["other"])),
+        _int(body, "within_days", 30, 0, 3660), canon(_spec(body, "focus")), *period,
         limit=_int(body, "limit", 50, 1, analytics.MAX_PAIRS))}
 
 
 def _run_query(state: State, view, name: str, body: dict) -> dict:
     if name in ("match", "aggregate", "sequence"):
-        return _analytic(view, name, body)
+        return _analytic(state, view, name, body)
     if name == "find":
         text = body.get("text")
         if not isinstance(text, str) or not text.strip():
