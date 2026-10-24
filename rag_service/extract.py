@@ -1,7 +1,8 @@
 """Deterministic content extraction for the RAG service.
 
 Mirrors the supported-format policy of the PageIndexes contract
-(`drive_sync_api_spec.txt`): plain text/markdown/csv are decoded directly, the
+(`drive_sync_api_spec.txt`): plain text/markdown are decoded directly, CSV/TSV
+with a header row become labelled row records (like worksheets), the
 office/binary formats go through MarkItDown. Extraction is the boundary where a
 raw uploaded file becomes text we can chunk + embed.
 
@@ -235,6 +236,61 @@ def _render_sheet(title, rows, truncated):
     return "\n".join(lines)
 
 
+def _render_records(header, records, truncated):
+    """Delimited text as row records, the way a worksheet is rendered: a
+    `Columns:` line, then `Header: value; Header: value` per row. A positional
+    "1,Kiss Anna,Nagy Béla" row leaves the model to count columns, and it does
+    mix up which name is which; a labelled one does not."""
+    lines = [COLUMNS_LINE + " | ".join(header)]
+    for record in records:
+        parts = []
+        for i, value in enumerate(record):
+            value = _WS_RE.sub(" ", value).strip()
+            if value:
+                label = header[i] if i < len(header) else _column_letter(i + 1)
+                parts.append("%s: %s" % (label, value))
+        if parts:
+            lines.append("; ".join(parts))
+    if truncated:
+        lines.append("(%d further rows of this file were not indexed)" % truncated)
+    return "\n".join(lines)
+
+
+_VALUE_LIKE_RE = re.compile(r"^[\d\s.,:;/%+\-]+$")
+
+
+def _csv_header(row):
+    """True when the first record reads as column labels: at least two, all
+    filled, distinct, short, and none of them a number or a date."""
+    cells = [_WS_RE.sub(" ", c).strip() for c in row]
+    return (len(cells) >= 2 and all(cells) and len({c.casefold() for c in cells}) == len(cells)
+            and max(len(c) for c in cells) <= 60
+            and not any(_VALUE_LIKE_RE.match(c) for c in cells))
+
+
+def _extract_delimited(text, path):
+    """CSV/TSV with a recognisable header as row records; anything else (no
+    header, a single column, unparsable quoting) stays the raw text."""
+    import csv
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    if ext_of(path) == ".tsv":
+        delimiter = "\t"
+    else:
+        widths = {d: len(next(csv.reader([first], delimiter=d), [])) for d in (";", ",", "\t")}
+        delimiter = max((";", ",", "\t"), key=lambda d: widths[d])
+    try:
+        records = [r for r in csv.reader(io.StringIO(text), delimiter=delimiter)
+                   if any(c.strip() for c in r)]
+    except csv.Error:
+        return text
+    if len(records) < 2 or not _csv_header(records[0]):
+        return text
+    header = [_WS_RE.sub(" ", c).strip() for c in records[0]]
+    body = records[1:]
+    truncated = max(0, len(body) - SHEET_MAX_ROWS)
+    return _render_records(header, body[:SHEET_MAX_ROWS], truncated)
+
+
 def _extract_workbook(raw, path):
     """Each worksheet becomes one page (page_number = sheet position,
     section_path = sheet name) so a citation can name the sheet."""
@@ -376,6 +432,8 @@ def extract_pages(raw, path):
         return []
     if ext in TEXT_EXTS:
         text = _decode_text(raw)
+        if ext in (".csv", ".tsv"):
+            text = _extract_delimited(text.lstrip("\ufeff"), path)
     elif ext == ".pdf":
         text = _extract_pdf(raw, path)
     elif ext in OPENPYXL_EXTS:

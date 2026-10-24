@@ -4093,6 +4093,8 @@ function stageLabel(
       return tm("Collecting every matching passage…");
     case "read":
       return `${tm("Reading passages")} ${(stage.done ?? 0) + 1}/${stage.total ?? 0}`;
+    case "condense":
+      return `${tm("Condensing the findings")} ${(stage.done ?? 0) + 1}/${stage.total ?? 0}`;
     case "write":
       return tm("Writing the answer…");
     default:

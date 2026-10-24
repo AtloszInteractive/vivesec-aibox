@@ -180,6 +180,11 @@ const M: Record<string, Tri> = {
     "Alle passenden Passagen werden gesammelt…",
   ],
   "Reading passages": ["Részletek átnézése", "Gennemgår passager", "Passagen werden gelesen"],
+  "Condensing the findings": [
+    "Megállapítások összesítése",
+    "Sammenfatter fundene",
+    "Befunde werden zusammengefasst",
+  ],
   "Writing the answer…": ["A válasz megírása…", "Skriver svaret…", "Die Antwort wird geschrieben…"],
   "Data control & audit info": ["Adatkontroll & audit infó", "Datakontrol & auditinfo", "Datenkontrolle & Audit-Info"],
   // ---- F6 project tracking (#tracking) ----

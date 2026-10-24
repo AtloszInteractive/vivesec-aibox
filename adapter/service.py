@@ -145,6 +145,14 @@ ANALYZE_NUM_CTX = int(os.environ.get("ADAPTER_ANALYZE_NUM_CTX", "65536") or 0)
 # derived from the WORST measured ratio:
 #   (num_ctx - num_predict - prompt overhead) * 1.75 ~= 109k chars at 65536.
 ANALYZE_MAX_CHARS = int(os.environ.get("ADAPTER_ANALYZE_MAX_CHARS", "100000"))
+# E10a: a document larger than that window is analysed in full, part by part
+# (deep.read_document) instead of being cut. Only "off" restores the cut; the
+# token bound caps what is fetched of one document (beyond it: "partial").
+ANALYZE_FULL = (os.environ.get("ADAPTER_ANALYZE_FULL", "on") or "on").strip().lower() != "off"
+ANALYZE_DOC_MAX_TOKENS = max(1000, int(
+    os.environ.get("ADAPTER_ANALYZE_DOC_MAX_TOKENS", "3000000") or 3000000))
+ANALYZE_DEFAULT_TASK = ("Analyse the document: its purpose, parties, key facts, obligations, "
+                        "dates, amounts, risks and conclusions.")
 # A structured analysis is never this short; anything shorter means generation
 # was starved of context window.
 ANALYZE_MIN_ANSWER_CHARS = int(
@@ -955,6 +963,19 @@ def _read_all(args, query, lang, req_scope, access, job_id, user, drive, cancel_
     return contexts[:1], found, info
 
 
+def _read_document(chunks, document, query, lang, cancel_event, stage_callback):
+    """E10a whole-document analysis of a file too large for one call (deep.py):
+    every passage of it, in parts. The caller already runs in the heavy slot
+    (analyze is a heavy job). Returns (coverage note, part summaries, info)."""
+    name = (document.get("source_path") or document.get("title") or "").rsplit("/", 1)[-1]
+    task = (query or "").strip() or ANALYZE_DEFAULT_TASK
+    contexts, info = deep.read_document(
+        chunks, task, lang, name or None, chunks_total=document.get("chunks_total"),
+        cancel_event=cancel_event, progress=stage_callback, num_ctx=ANALYZE_NUM_CTX or None,
+        budget=ANALYZE_MAX_CHARS * 6 // 10)
+    return contexts[:1], contexts[1:], dict(info, kind="document")
+
+
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
             progress_callback=None, req_scope=None, profile="grounded",
@@ -1078,11 +1099,21 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         res = rag_post_json("/rag/document_context",
                             {"corpus_id": target_corpus, "tenant_id": TENANT_ID,
                              "source_path": corpus.norm(target),
-                             "max_context_tokens": ANALYZE_MAX_CONTEXT_TOKENS,
+                             "max_context_tokens": ANALYZE_DOC_MAX_TOKENS if ANALYZE_FULL
+                             else ANALYZE_MAX_CONTEXT_TOKENS,
                              "access": access.as_rag()})
         contexts = res.get("contexts", [])
         document = res.get("document") or {}
-        contexts, document = _fit_analyze_window(contexts, document)
+        if ANALYZE_FULL and contexts and (document.get("truncated") or sum(
+                len(c.get("text") or "") for c in contexts) > ANALYZE_MAX_CHARS):
+            # E10a: too large for one call, so every passage is read in parts
+            # instead of the tail being cut off; a small document keeps the
+            # single-call path below.
+            deep_note, contexts, deep_info = _read_document(
+                contexts, document, query, lang, cancel_event, stage_callback)
+            document = dict(document, truncated=False)
+        else:
+            contexts, document = _fit_analyze_window(contexts, document)
     elif chat_only:
         contexts = []
     elif deep_call is not None:
@@ -1101,7 +1132,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "include_debug": True})
         contexts = res.get("contexts", [])
     contexts = _visible_contexts(contexts, access)
-    if deep_call is not None:
+    if deep_note:
         contexts = deep_note + contexts  # the coverage note has no path to check
     graph_info = None
     if orchestrated is not None:

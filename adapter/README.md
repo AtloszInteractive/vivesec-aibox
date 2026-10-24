@@ -492,20 +492,51 @@ the words of a multi-word term must lie close together). The passages are read
 in groups of `ADAPTER_DEEP_BATCH_CHARS` characters (default 9000); each group
 is one JSON model call that returns findings with a verbatim quote, and a
 finding whose quote does not occur in its passage is dropped. The findings
-(at most `ADAPTER_DEEP_MAX_FINDINGS`, default 120) become cited contexts for
-the usual answer step, with a coverage note ("N passages in M documents were
-read"). At most `ADAPTER_DEEP_MAX_CHUNKS` passages are read (default 400); when
-more match, the note says the result is partial and asks for a narrower
-question. Graph tools of the same plan still run.
+become cited contexts for the usual answer step, with a coverage note ("N
+passages in M documents were read"). At most `ADAPTER_DEEP_MAX_CHUNKS` passages
+are read (default 400); when more match, the note says the result is partial
+and asks for a narrower question. Graph tools of the same plan still run.
+
+Findings beyond `ADAPTER_DEEP_MAX_FINDINGS` (default 120) or
+`ADAPTER_DEEP_ANSWER_CHARS` characters (default 60000) are condensed, not cut:
+first one context per document (so every citation still names one document),
+the documents over their fair share of the budget summarised by the model in
+batched JSON calls (phase `condense`); only if that still does not fit are the
+documents merged into digests across documents, which name their documents in
+the text (at most 3 rounds). The note says how it was condensed; a summary the
+model fails to write keeps the findings cut to the share and marks the result
+partial, and only what still does not fit after the rounds is dropped (also
+partial).
 
 The reading holds the heavy scheduler slot (`HeavyScheduler.slot`), so its
 model calls queue with the other heavy jobs; cancelling the job stops it before
 the next group. The job reports `progress_phase` (`queued`, `collect`, `read`,
-`write`) with `progress_done`/`progress_total` in `/ui/poll` and `/ui/jobs`, and
-the UI shows them in the waiting bubble and the job list. The response carries
-`deep {terms, matched, read, documents, groups, findings, partial, seconds}`.
+`condense`, `write`) with `progress_done`/`progress_total` in `/ui/poll` and
+`/ui/jobs`, and the UI shows them in the waiting bubble and the job list. The
+response carries `deep {terms, matched, read, documents, groups, findings,
+condensed, partial, seconds}`.
 Tests: `deep_test`, `scheduler_test`, `graph_integration_test`; RAG side:
 `rag_service/match_chunks_test.py`.
+
+#### Whole-document analysis of large files (E10a)
+
+`analyze` (one named file) fetches every passage of the file
+(`ADAPTER_ANALYZE_DOC_MAX_TOKENS`, default 3000000, bounds the fetch; beyond it
+the result is marked partial). A file that fits `ADAPTER_ANALYZE_MAX_CHARS`
+keeps the single-call path. A larger one is no longer cut off: `deep.read_document`
+reads all passages in reading order in parts of `ADAPTER_ANALYZE_SECTION_CHARS`
+characters (default 24000); each part yields up to 8 findings with verified
+quotes and a page label (a part summary), a malformed reply is retried once and
+then counted as failed (partial), and part summaries that do not fit are merged
+into digests that keep the document as source. The final analysis runs on the
+part summaries; the coverage note ("all N passages of X were read in K parts",
+plus any partial reason) is shown under the answer and the response carries
+`deep {kind: "document", read, total, groups, failed, parts, condensed, partial,
+seconds}`. All calls use `ADAPTER_ANALYZE_NUM_CTX`, so the model is not reloaded
+between parts. The job reports `read`/`condense`/`write` progress like a full
+reading. `ADAPTER_ANALYZE_FULL=off` restores the old cut at the window (any other
+value keeps full coverage). Not yet: resuming an interrupted analysis from its
+last part. Tests: `analyze_full_test`, `deep_test`.
 
 ## Test
 
