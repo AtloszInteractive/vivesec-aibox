@@ -40,6 +40,56 @@ export function splitAuditFooter(answer: string): { body: string; audit: string[
   };
 }
 
+/** One block of a plain answer: the few markdown forms the box writes. */
+export type AnswerBlock =
+  | { kind: "text"; text: string }
+  | { kind: "heading"; text: string }
+  | { kind: "note"; text: string }
+  | { kind: "list"; items: { text: string; depth: number }[] };
+
+/** A plain answer as blocks: "- " / "* " lists (indented items one level
+ *  deeper), "> " notes (the box's own coverage and graph notes) and "#"
+ *  headings. Any other line stays text with its line breaks; nothing is
+ *  dropped, so the answer reads the same, just laid out. */
+export function answerBlocks(body: string): AnswerBlock[] {
+  const blocks: AnswerBlock[] = [];
+  for (const raw of body.split("\n")) {
+    const line = raw.trimEnd();
+    const last = blocks[blocks.length - 1];
+    const item = /^(\s*)[-*•]\s+(.*)$/.exec(line);
+    const note = /^\s*>\s?(.*)$/.exec(line);
+    const heading = /^\s*#{1,4}\s+(.*)$/.exec(line);
+    if (item) {
+      const entry = { text: item[2].trim(), depth: item[1].length >= 2 ? 1 : 0 };
+      if (last?.kind === "list") last.items.push(entry);
+      else blocks.push({ kind: "list", items: [entry] });
+    } else if (note) {
+      if (last?.kind === "note") last.text += "\n" + note[1];
+      else blocks.push({ kind: "note", text: note[1] });
+    } else if (heading) {
+      blocks.push({ kind: "heading", text: heading[1].trim() });
+    } else if (last?.kind === "text") {
+      last.text += "\n" + line;
+    } else if (line.trim()) {
+      blocks.push({ kind: "text", text: line });
+    }
+  }
+  return blocks
+    .map((b) => (b.kind === "text" || b.kind === "note" ? { ...b, text: b.text.trim() } : b))
+    .filter((b) => b.kind === "list" || b.text.length > 0);
+}
+
+/** The value an ask-back option sends back: its name without the details in
+ *  parentheses ("Nagy Balázs (Inmate, 10 documents)" -> "Nagy Balázs"). */
+export function optionValue(option: string): string {
+  return (
+    option
+      .replace(/\*\*/g, "")
+      .replace(/\s*\([^()]*\)\s*$/, "")
+      .trim() || option
+  );
+}
+
 /** Strip markdown chrome the model tends to add around a heading or bullet. */
 function clean(line: string): string {
   // Bold markers come off first: on "**1. Key achievements**" the numbering

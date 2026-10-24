@@ -64,6 +64,8 @@ export type AdapterAnswer = {
   citations: AdapterCitation[];
   hits: AdapterHit[];
   error?: string;
+  /** The analyst planner asks back (a "- option" list may follow the question). */
+  clarify?: boolean;
 };
 
 /** On-box speech capabilities (adapter/voice.py). Both default to off. */
@@ -540,6 +542,7 @@ function answerFromJson(j: Record<string, unknown>): AdapterAnswer {
     citations: Array.isArray(j.citations) ? (j.citations as AdapterCitation[]) : [],
     hits: Array.isArray(j.hits) ? (j.hits as AdapterHit[]) : [],
     error: j.error as string | undefined,
+    clarify: j.clarify === true,
   };
 }
 

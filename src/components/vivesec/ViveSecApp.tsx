@@ -14,6 +14,8 @@ import { DataInsightCard } from "./DataInsightCard";
 import { getDataInsightCopy } from "./data-insight";
 import { DriveExplorerModal } from "./DriveExplorerModal";
 import {
+  answerBlocks,
+  optionValue,
   parseMemoTitle,
   parseReport,
   parseSlides,
@@ -272,6 +274,8 @@ type Message =
       answer: string;
       citations: Citation[];
       fileHits?: FileHit[];
+      /** An ask-back: its "- option" lines become buttons in the conversation. */
+      clarify?: boolean;
     } & LiveMeta)
   | ({
       id: string;
@@ -1297,6 +1301,7 @@ function ViveSecAppInner() {
       answer: res.answer,
       citations,
       fileHits,
+      clarify: res.clarify,
     };
     if (res.refused || !body.trim()) return plain;
 
@@ -2582,6 +2587,7 @@ function ViveSecAppInner() {
                         onUpdateSlide={(sid, patch) => updateSlide(m.id, sid, patch)}
                         onEdit={(patch) => patchMessage(m.id, patch)}
                         onOpenFile={openFile}
+                        onAsk={sendText}
                       />
                     </div>
                   ))}
@@ -3949,6 +3955,7 @@ function MessageView({
   onUpdateSlide,
   onEdit,
   onOpenFile,
+  onAsk,
   inChat,
 }: {
   msg: Message;
@@ -3957,6 +3964,8 @@ function MessageView({
   onUpdateSlide: (sid: string, patch: Partial<Slide>) => void;
   onEdit: (patch: Record<string, unknown>) => void;
   onOpenFile: (id: string) => void;
+  /** Sends a message as if typed (an ask-back option); absent outside the chat. */
+  onAsk?: (text: string) => void;
   /** In the conversation the user's own message already states the request. */
   inChat?: boolean;
 }) {
@@ -4021,7 +4030,13 @@ function MessageView({
       {msg.kind === "report" && <ReportCard msg={msg} />}
       {msg.kind === "memo" && <MemoCard msg={msg} onEdit={onEdit} />}
       {msg.kind === "search" && (
-        <SearchCard msg={msg} onCitation={onCitation} onOpenFile={onOpenFile} showQuery={!inChat} />
+        <SearchCard
+          msg={msg}
+          onCitation={onCitation}
+          onOpenFile={onOpenFile}
+          onAsk={onAsk}
+          showQuery={!inChat}
+        />
       )}
       {msg.kind === "deck" && (
         <DeckCard msg={msg} onUpdateSlide={onUpdateSlide} onCitation={onCitation} />
@@ -4105,6 +4120,70 @@ function renderInline(text: string) {
     ) : (
       <span key={i}>{p}</span>
     ),
+  );
+}
+
+/** A plain answer laid out from its markdown: lists, the box's "> " notes and
+ *  headings. With `onChoose` (an ask-back in the conversation) the options
+ *  become buttons that send the chosen name, as if it had been typed. */
+function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string) => void }) {
+  const blocks = answerBlocks(text);
+  const choices = onChoose ? blocks.findIndex((b) => b.kind === "list") : -1;
+  return (
+    <div className="space-y-2 text-[13.5px] leading-relaxed text-white/85">
+      {blocks.map((b, i) => {
+        if (b.kind === "list" && i === choices && onChoose) {
+          return (
+            <div key={i} className="flex flex-col items-start gap-1.5 pt-1">
+              {b.items.map((item, j) => (
+                <button
+                  key={j}
+                  onClick={() => onChoose(optionValue(item.text))}
+                  className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-left text-[13px] text-white/85 transition hover:border-lime-300/50 hover:bg-white/10"
+                >
+                  {renderInline(item.text)}
+                </button>
+              ))}
+            </div>
+          );
+        }
+        if (b.kind === "list") {
+          return (
+            <ul key={i} className="space-y-1">
+              {b.items.map((item, j) => (
+                <li key={j} className={`flex gap-2 ${item.depth ? "pl-5" : ""}`}>
+                  <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-white/50" />
+                  <span className="min-w-0">{renderInline(item.text)}</span>
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        if (b.kind === "note") {
+          return (
+            <div
+              key={i}
+              className="whitespace-pre-wrap rounded-lg border-l-2 px-3 py-2 text-[12.5px] text-white/70"
+              style={{ borderColor: LIME, backgroundColor: "rgba(255,255,255,0.03)" }}
+            >
+              {renderInline(b.text)}
+            </div>
+          );
+        }
+        if (b.kind === "heading") {
+          return (
+            <p key={i} className="font-semibold text-white">
+              {renderInline(b.text.replace(/\*\*/g, ""))}
+            </p>
+          );
+        }
+        return (
+          <p key={i} className="whitespace-pre-wrap">
+            {renderInline(b.text)}
+          </p>
+        );
+      })}
+    </div>
   );
 }
 
@@ -5077,11 +5156,13 @@ function SearchCard({
   msg,
   onCitation,
   onOpenFile,
+  onAsk,
   showQuery,
 }: {
   msg: Extract<Message, { kind: "search" }>;
   onCitation: (c: Citation, siblings?: Citation[]) => void;
   onOpenFile: (id: string) => void;
+  onAsk?: (text: string) => void;
   showQuery: boolean;
 }) {
   const { tm } = useLang();
@@ -5127,9 +5208,7 @@ function SearchCard({
           </div>
         </div>
       )}
-      <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-white/85">
-        {renderInline(answerBody)}
-      </p>
+      <AnswerBody text={answerBody} onChoose={msg.clarify ? onAsk : undefined} />
       {msg.citations.length > 0 && (
         <div className="mt-3">
           <div

@@ -117,6 +117,8 @@ export type RagAskResult = {
   citations: RagCitation[];
   confidence?: { score: number; band: "green" | "amber" | "red"; auditId?: string };
   refused?: boolean;
+  /** The analyst planner asked back instead of answering. */
+  clarify?: boolean;
   error?: string;
   backgroundJobId?: string;
 };
@@ -287,6 +289,7 @@ function ragResultFromAdapter(result: AdapterAnswer): RagAskResult {
         }
       : undefined,
     refused,
+    clarify: result.clarify,
   };
 }
 
