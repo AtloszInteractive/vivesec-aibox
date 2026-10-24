@@ -1169,7 +1169,9 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         contexts = res.get("contexts", [])
     contexts = _visible_contexts(contexts, access)
     if deep_note:
-        contexts = deep_note + contexts  # the coverage note has no path to check
+        # Last, so the passages are [#1]... (the model cited one off with the
+        # note first) and the first source card is a document. No path to check.
+        contexts = contexts + deep_note
     graph_info = None
     if orchestrated is not None:
         contexts = orchestrated[0] + contexts

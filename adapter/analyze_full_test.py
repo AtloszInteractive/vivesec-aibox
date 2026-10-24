@@ -104,6 +104,9 @@ class AnalyzeFullTest(unittest.TestCase):
         self.assertNotIn("?", sources)
         self.assertTrue(all(c["path"] in (None, PATH) for c in result["citations"]))
         self.assertTrue(any(c["path"] == PATH for c in result["citations"]))
+        # The passages come first; the coverage note is the last context.
+        self.assertEqual(PATH, result["citations"][0]["path"])
+        self.assertIsNone(result["citations"][-1]["path"])
 
     def test_a_small_document_keeps_the_single_call(self):
         self.document = chunks(4)
