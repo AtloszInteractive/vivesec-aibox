@@ -18,12 +18,15 @@ CHUNKS = [chunk(n, "Bejegyzés %d: Bogdán Balázs látogatója Fazekas Péter v
 
 
 class FakeRag:
-    def __init__(self, chunks):
+    def __init__(self, chunks, skipped=0):
         self.chunks = chunks
+        self.skipped = skipped
         self.calls = []
 
     def __call__(self, path, body):
         self.calls.append((path, body))
+        if path == "/rag/scope_stats":
+            return {"stats": {"skipped": self.skipped}}
         page = self.chunks[body["offset"]:body["offset"] + body["limit"]]
         end = body["offset"] + len(page)
         return {"chunks": page, "total": len(self.chunks), "documents": 4,
@@ -41,8 +44,8 @@ def model(system, user, **kw):
 
 
 class DeepTest(unittest.TestCase):
-    def run_deep(self, chunks=CHUNKS, **kw):
-        rag = FakeRag(chunks)
+    def run_deep(self, chunks=CHUNKS, skipped=0, **kw):
+        rag = FakeRag(chunks, skipped)
         calls = []
 
         def chat(system, user, **opts):
@@ -80,8 +83,17 @@ class DeepTest(unittest.TestCase):
         with patch.object(deep, "MAX_CHUNKS", 3), patch.object(deep, "PAGE", 2):
             contexts, info, rag, _, _ = self.run_deep()
         self.assertEqual((7, 3, True), (info["matched"], info["read"], info["partial"]))
-        self.assertEqual([0, 2], [b["offset"] for _, b in rag.calls])
+        self.assertEqual([0, 2], [b["offset"] for p, b in rag.calls if p == "/rag/match_chunks"])
         self.assertIn("R\u00e9szleges eredm\u00e9ny: 7 r\u00e9szlet", contexts[0]["text"])
+
+    def test_documents_without_text_are_named_in_the_note(self):
+        contexts, info, rag, _, _ = self.run_deep(skipped=5)
+        self.assertEqual(5, info["unreadable"])
+        self.assertIn("5-nak nincs olvashat\u00f3 sz\u00f6vege", contexts[0]["text"])
+        stats = next(b for p, b in rag.calls if p == "/rag/scope_stats")
+        self.assertEqual({"corpus_ids": ["k"], "access": None}, stats)
+        contexts, info, _, _, _ = self.run_deep()
+        self.assertNotIn("olvashat\u00f3 sz\u00f6vege", contexts[0]["text"])
 
     def test_no_match_reads_nothing(self):
         contexts, info, _, calls, _ = self.run_deep(chunks=[])

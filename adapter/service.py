@@ -1000,6 +1000,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     retrieval_query = query
     planned = None
     deep_info = None
+    deep_note = []
     orchestrated = None  # (contexts, info) of the analyst-mode plan
     domain = None
     if action is None and APP_MODE == APP_ANALYST and GRAPH.enabled:
@@ -1187,6 +1188,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     if display and orchestrated is not None and orchestrated[1].get("caveat"):
         display = display + "\n\n" + "\n".join(
             ("> " + line) if line else ">" for line in orchestrated[1]["caveat"].split("\n"))
+    if display and deep_note:
+        # What the full reading covered (or could not), as is.
+        display = display + "\n\n" + "\n".join(
+            "> " + line for line in deep_note[0]["text"].split("\n") if line.strip())
     if display:
         display = display + "\n\n" + (confidence.footer(conf, citations, aid, lang)
                 if conf is not None else

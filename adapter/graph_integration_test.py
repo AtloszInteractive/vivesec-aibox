@@ -478,6 +478,7 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertEqual((1, 1, 1, False), (out["deep"]["read"], out["deep"]["documents"],
                                                 out["deep"]["findings"], out["deep"]["partial"]))
             self.assertIn("1 r\u00e9szlet 1 dokumentumb\u00f3l", out["answer"])
+            self.assertIn("\n\n> Teljes \u00e1tn\u00e9z\u00e9s:", out["answer"])  # shown as is
             self.assertIn("Nagy Évával találkozott.", out["answer"])
             self.assertIn("read_all", prompts[0][0])  # offered in the first round
             self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))

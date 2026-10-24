@@ -91,6 +91,19 @@ _TEXT = {
         "de": "Vollst\u00e4ndige Durchsicht: Keine Passage der Dokumente, die Sie sehen "
               "d\u00fcrfen, enth\u00e4lt %s.",
     },
+    "unreadable": {
+        "en": "%d of the documents you may see have no readable text (e.g. scanned PDFs "
+              "without OCR, or unsupported formats); they could not be read.",
+        "hu": "Az \u00d6n sz\u00e1m\u00e1ra l\u00e1that\u00f3 dokumentumok k\u00f6z\u00fcl %d-nak "
+              "nincs olvashat\u00f3 sz\u00f6vege (pl. OCR n\u00e9lk\u00fcli szkennelt PDF vagy "
+              "nem t\u00e1mogatott form\u00e1tum), ezeket nem lehetett \u00e1tn\u00e9zni.",
+        "da": "%d af de dokumenter, du har adgang til, har ingen l\u00e6sbar tekst (f.eks. "
+              "scannede PDF'er uden OCR eller formater, der ikke underst\u00f8ttes); de kunne "
+              "ikke l\u00e6ses.",
+        "de": "%d der Dokumente, die Sie sehen d\u00fcrfen, haben keinen lesbaren Text "
+              "(z. B. gescannte PDFs ohne OCR oder nicht unterst\u00fctzte Formate); sie "
+              "konnten nicht gelesen werden.",
+    },
 }
 
 
@@ -185,6 +198,7 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
     if progress:
         progress("collect", 0, 0)
     chunks, total, documents = collect(post, scope_body, terms, mode, path_prefixes)
+    unreadable = _unreadable(post, scope_body)
     groups = batches(chunks)
     findings = []
     for i, group in enumerate(groups):
@@ -207,6 +221,8 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
              if total else _t("none", lang) % shown]
     if total > len(chunks):
         notes.append(_t("partial", lang) % (total, len(chunks)))
+    if unreadable:
+        notes.append(_t("unreadable", lang) % unreadable)
     if len(unique) > MAX_FINDINGS:
         notes.append(_t("trimmed", lang) % (len(unique), MAX_FINDINGS))
     contexts = [{"text": "\n".join(notes), "source_path": None, "title": "full reading",
@@ -221,6 +237,18 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
                          "chunk_id": chunk.get("chunk_id"), "score": 1.0, "origin": "deep"})
     info = {"terms": list(terms), "mode": mode, "matched": total, "read": len(chunks),
             "documents": documents, "groups": len(groups), "findings": len(unique),
+            "unreadable": unreadable,
             "partial": total > len(chunks) or len(unique) > MAX_FINDINGS,
             "seconds": round(time.time() - started, 1)}
     return contexts, info
+
+
+def _unreadable(post, scope_body):
+    """Visible documents without readable text, which no reading can cover; 0
+    when the RAG cannot tell (the note is advisory)."""
+    try:
+        stats = post("/rag/scope_stats", {"corpus_ids": scope_body.get("corpus_ids") or [],
+                                          "access": scope_body.get("access")})
+        return int((stats.get("stats") or {}).get("skipped") or 0)
+    except Exception:  # noqa: BLE001
+        return 0
