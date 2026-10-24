@@ -81,10 +81,10 @@ class ServiceHttpTest(unittest.TestCase):
     def test_profile_set_needs_a_higher_version(self):
         profile = domain_profile.load("bv")
         self.assertEqual(409, self.post("/profile/set", {"profile": profile})[0])
-        profile["version"] = 2
+        profile["version"] += 1
         status, body = self.post("/profile/set", {"profile": profile})
         self.assertEqual((200, True), (status, body["reprocess_required"]))
-        self.assertEqual(2, self.state.profile["version"])
+        self.assertEqual(profile["version"], self.state.profile["version"])
 
     def test_api_key_is_enforced_when_set(self):
         old = service.API_KEY

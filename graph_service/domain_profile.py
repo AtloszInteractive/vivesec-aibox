@@ -63,6 +63,29 @@ def _types(raw, where):
     return list(raw)
 
 
+def reversed_by_subtypes(spec: dict, sub_a: str, sub_b: str) -> bool:
+    """True when a relation read a -> b only fits its profile the other way round
+    (an inmate "visited" a visitor). An unknown subtype fits either end."""
+    first, second = spec.get("from_subtypes") or [], spec.get("to_subtypes") or []
+    if not first and not second:
+        return False
+
+    def fits(x, y):
+        return (not first or not x or x in first) and (not second or not y or y in second)
+    return not fits(sub_a, sub_b) and fits(sub_b, sub_a)
+
+
+def relation_line(r: dict) -> str:
+    """One relation type for an extraction prompt, with the subtype that acts first."""
+    def side(types, subs):
+        text = "/".join(types)
+        return "%s (%s)" % (text, "/".join(subs)) if subs else text
+    return "- %s: %s -> %s. %s%s" % (
+        r["id"], side(r["from"], r.get("from_subtypes")), side(r["to"], r.get("to_subtypes")),
+        r["label"]["en"],
+        (" Typical wording: " + ", ".join(r["synonyms"][:8])) if r["synonyms"] else "")
+
+
 def validate(raw: dict) -> dict:
     _keys(raw, ("id", "version", "name", "description", "entity_subtypes", "identifier_patterns",
                 "relation_types", "resolution", "cooccurrence", "table_mappings"), "profile")
@@ -110,8 +133,8 @@ def validate(raw: dict) -> dict:
     relations = copy.deepcopy(BUILTIN_RELATIONS)
     for i, r in enumerate(raw.get("relation_types", [])):
         where = "relation_types[%d]" % i
-        _keys(r, ("id", "label", "from", "to", "symmetric", "presence", "holding", "synonyms"),
-              where)
+        _keys(r, ("id", "label", "from", "to", "symmetric", "presence", "holding", "synonyms",
+                  "from_subtypes", "to_subtypes"), where)
         # A saved profile echoes the built-ins back; accept them only unchanged.
         if r.get("id") in BUILTIN_RELATIONS and r == BUILTIN_RELATIONS[r["id"]] \
                 and i == list(BUILTIN_RELATIONS).index(r["id"]):
@@ -127,6 +150,18 @@ def validate(raw: dict) -> dict:
                               "symmetric": bool(r.get("symmetric", False)),
                               "presence": bool(r.get("presence", False)),
                               "holding": bool(r.get("holding", False)), "synonyms": synonyms}
+        for side in ("from", "to"):
+            # Which subtype does what: a visit goes from the visitor to the inmate.
+            key = side + "_subtypes"
+            ids = r.get(key)
+            if ids is None:
+                continue
+            if not isinstance(ids, list) or not ids or any(
+                    not isinstance(x, str) or subtypes.get(x, {}).get("type")
+                    not in relations[r["id"]][side] for x in ids):
+                raise ProfileError("%s.%s must list subtypes of its %s types"
+                                   % (where, key, side))
+            relations[r["id"]][key] = list(ids)
     out["relation_types"] = list(relations.values())
 
     resolution = {}

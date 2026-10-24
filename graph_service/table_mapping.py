@@ -21,7 +21,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 
-from domain_profile import normalize_value
+from domain_profile import normalize_value, relation_line, reversed_by_subtypes
 from extraction import (ATTRIBUTE_KEYS, LocalEntity, LocalRelation, _dates_in, fold, squash)
 from model import CORE_TYPES
 
@@ -185,10 +185,8 @@ def _mapping_schema(profile: dict) -> dict:
 
 def _mapping_prompt(profile: dict) -> str:
     subtypes = "; ".join("%s (%s)" % (s["id"], s["type"]) for s in profile["entity_subtypes"])
-    rels = "\n".join("- %s: %s -> %s. %s%s" % (
-        r["id"], "/".join(r["from"]), "/".join(r["to"]), r["label"]["en"],
-        (" Typical wording: " + ", ".join(r["synonyms"][:8])) if r["synonyms"] else "")
-        for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
+    rels = "\n".join(relation_line(r)
+                     for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
     return (
         "You map the columns of a table to a knowledge graph. You see the header and sample "
         "rows; the same mapping is applied to every row.\n"
@@ -203,7 +201,8 @@ def _mapping_prompt(profile: dict) -> str:
         "- relation_label: free text describing the relation of the row (e.g. kinship)\n"
         "- ignore: anything else (durations, counts, remarks, serial numbers)\n"
         "Then list the relations EVERY row states between entity columns (`from`/`to` are "
-        "column headers), using only these types:\n" + rels + "\n"
+        "column headers; `from` is the one who does what the relation says, e.g. the visitor "
+        "in a visit), using only these types:\n" + rels + "\n"
         "A register without a date column (subscribers, vehicles, residents) states who holds "
         "or uses a phone, vehicle, document or address, not calls or visits. Do not add a "
         "relation that holds only for some rows (e.g. kinship when a relation_label column "
@@ -287,6 +286,8 @@ def parse_mapping(raw: dict, header: list[str], profile: dict) -> Mapping:
                 a, b = b, a
             else:
                 continue
+        elif reversed_by_subtypes(spec, m.entities[a][1], m.entities[b][1]):
+            a, b = b, a
         if (r["type"], a, b) not in m.relations:
             m.relations.append((r["type"], a, b))
     return m

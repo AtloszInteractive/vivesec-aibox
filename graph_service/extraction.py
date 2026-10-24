@@ -15,7 +15,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-from domain_profile import normalize_value
+from domain_profile import normalize_value, relation_line, reversed_by_subtypes
 from model import CORE_TYPES
 
 MAX_CHUNK_CHARS = 3000
@@ -138,10 +138,8 @@ def _schema(profile: dict) -> dict:
 
 def _system_prompt(profile: dict) -> str:
     subtypes = "; ".join("%s (%s)" % (s["id"], s["type"]) for s in profile["entity_subtypes"])
-    rels = "\n".join("- %s: %s -> %s. %s%s" % (
-        r["id"], "/".join(r["from"]), "/".join(r["to"]), r["label"]["en"],
-        (" Typical wording: " + ", ".join(r["synonyms"][:8])) if r["synonyms"] else "")
-        for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
+    rels = "\n".join(relation_line(r)
+                     for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
     return (
         "You build a knowledge graph from ONE excerpt of a document. Use only the excerpt.\n"
         "Entity types: person; organization; place (addresses, institutions, rooms, cells, towns); "
@@ -155,7 +153,8 @@ def _system_prompt(profile: dict) -> str:
         "when the excerpt states them.\n"
         "Relations - use only these types:\n" + rels + "\n"
         "Use RELATED_TO with a short `label` only when a stated relation fits none of them.\n"
-        "`from`/`to` are entity refs. `quote` is the exact sentence or table row that states the "
+        "`from`/`to` are entity refs; `from` is the one who does what the relation says (the "
+        "visitor in a visit). `quote` is the exact sentence or table row that states the "
         "relation, copied verbatim. Fill `date` (YYYY-MM-DD) whenever the sentence, the table row "
         "or the document gives the day of the event; `end_date` when a period ends.\n"
         "A table row is one statement: relate the entities of that row directly (do not create "
@@ -223,6 +222,8 @@ def llm_extract(chunk: Chunk, profile: dict, llm, doc_title: str = "") -> tuple[
                 a, b = b, a
             else:
                 continue
+        elif reversed_by_subtypes(spec, a.subtype, b.subtype):
+            a, b = b, a
         quote = squash(r.get("quote") or "")
         if not quote or fold(quote) not in text_folded:
             continue

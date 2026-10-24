@@ -61,6 +61,24 @@ class ProfileTest(unittest.TestCase):
         with self.assertRaises(domain_profile.ProfileError):
             domain_profile.validate(raw)
 
+    def test_relation_subtypes_say_who_acts(self):
+        visit = next(r for r in domain_profile.load("bv")["relation_types"]
+                     if r["id"] == "VISITED")
+        self.assertEqual((["visitor"], ["inmate"]), (visit["from_subtypes"], visit["to_subtypes"]))
+        flip = domain_profile.reversed_by_subtypes
+        self.assertTrue(flip(visit, "inmate", "visitor"))
+        self.assertFalse(flip(visit, "visitor", "inmate"))
+        self.assertTrue(flip(visit, "", "visitor"))  # the visitor is the one who visits
+        self.assertFalse(flip(visit, "", ""))  # nothing to go by: kept
+        self.assertFalse(flip(visit, "staff", "staff"))  # fits neither way: kept
+        self.assertFalse(flip({"id": "MET"}, "inmate", "visitor"))
+        self.assertIn("person (visitor) -> person (inmate)", domain_profile.relation_line(visit))
+        for bad in (["ghost"], ["cell"], [], "visitor"):
+            raw = self._raw()
+            raw["relation_types"] = [dict(visit, from_subtypes=bad)]
+            with self.assertRaises(domain_profile.ProfileError):
+                domain_profile.validate(raw)
+
     def test_validation_is_idempotent(self):
         p = domain_profile.load("bv")
         self.assertEqual(p, domain_profile.validate(copy.deepcopy(p)))

@@ -84,6 +84,17 @@ class MappingTest(unittest.TestCase):
         self.assertEqual(3, len(self.mapping.entities))
         self.assertEqual([("VISITED", 2, 1), ("USES", 2, 3)], self.mapping.relations)
 
+    def test_a_visit_mapped_backwards_is_turned_round_by_the_profile_subtypes(self):
+        backwards = dict(MAPPING, relations=[
+            {"type": "VISITED", "from": "Fogvatartott neve", "to": "Látogató neve"}])
+        mapping = parse_mapping(backwards, self.table.header, PROFILE)
+        self.assertEqual([("VISITED", 2, 1)], mapping.relations)
+        # Without subtypes on the columns there is nothing to go by: kept as given.
+        plain = dict(backwards, columns=[
+            dict(c, subtype="") if c.get("role") == "entity" else c for c in MAPPING["columns"]])
+        self.assertEqual([("VISITED", 1, 2)],
+                         parse_mapping(plain, self.table.header, PROFILE).relations)
+
     def test_rows_become_dated_relations_with_the_row_as_quote(self):
         ents, rels = apply_mapping(self.table, self.mapping, PROFILE, "t0")
         self.assertEqual(9, len(ents))
