@@ -62,6 +62,7 @@ import {
   type AdapterJobProgress,
 } from "@/lib/api/rag.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
+import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib/ui-update";
 import { useVoice } from "./use-voice";
 import {
   ArrowLeft,
@@ -871,6 +872,15 @@ function ViveSecAppInner() {
     }, 15_000);
     return () => window.clearInterval(id);
   }, [probeBox]);
+
+  // A box restart (release) brings it back online, possibly with a new UI bundle.
+  const uiUpdateAvailable = useUiUpdateAvailable(
+    boxState === "online" ? (boxVersion?.release ?? "online") : boxState,
+  );
+  useEffect(() => {
+    const draft = takeReloadDraft();
+    if (draft) setInput((current) => current || draft);
+  }, []);
 
   /* ---------- Drive (the ACL boundary: one drive = one corpus) ----------
      In production the ViVeSecBox session pins the drive. The picker below is a
@@ -2697,6 +2707,24 @@ function ViveSecAppInner() {
                     >
                       <RefreshCw className="mr-1 inline h-3 w-3" />
                       {tm("Retry")}
+                    </button>
+                  </div>
+                )}
+
+                {uiUpdateAvailable && (
+                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-lime-300/40 bg-lime-400/10 px-3 py-2 text-[12px] text-lime-50">
+                    <Sparkles className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">
+                      {tm("A new version of the interface is available.")}
+                      {input.trim() ? ` ${tm("Unsent text is kept.")}` : ""}
+                    </span>
+                    <button
+                      onClick={() => reloadKeepingDraft(input)}
+                      disabled={liveBusy}
+                      className="shrink-0 rounded-lg border border-lime-300/40 px-2 py-1 text-[11px] font-semibold transition hover:bg-lime-400/20 disabled:opacity-50"
+                    >
+                      <RefreshCw className="mr-1 inline h-3 w-3" />
+                      {tm("Reload")}
                     </button>
                   </div>
                 )}

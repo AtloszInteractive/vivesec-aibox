@@ -144,3 +144,13 @@ A `certificateMode: AUTOMATIC` és `status: ACTIVE` jelzi, hogy minden rendben.
   - `apple-touch-icon.png` (180×180)
 - PWA install requires HTTPS — Cloud Run serves HTTPS by default, so installation
   works out of the box on the `run.app` URL.
+- Service workers only run in a secure context (HTTPS or localhost), so a box
+  reached over plain HTTP on the LAN runs without one. Either way page loads are
+  network-first and the assets are content-hashed, so a reload always gets the
+  current release.
+- An open tab keeps running the bundle it loaded. The SSR UI re-reads
+  `/version.json` (no-store) on focus, every 5 minutes and when the AI Box comes
+  back online; when the served label differs from its own build it shows a
+  "new version available — Reload" notice above the composer. The reload keeps an
+  unsent draft. The embed bundle skips this check: the ViVeSec host owns its
+  updates.
