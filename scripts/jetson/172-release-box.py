@@ -1,9 +1,24 @@
+"""Release adapter + RAG + UI on a box in place, with automatic rollback.
+
+  python3 172-release-box.py pack <src.tgz>                (dev machine)
+  python3 172-release-box.py prepare <src.tgz> <ui.tgz>    -> ~/vivesec-release-<stamp>-*/
+  python3 172-release-box.py promote|check|verify|rollback|prune <stage>
+
+A successful verify prunes old releases: it keeps the current stage and the
+previous deployed one (one rollback level), removes stopped parked containers
+(vivesec-{rag,adapter,ui}-{prev,failed}-<stamp>) no newer than the previous
+release, then deletes older stage directories no container binds. Stages newer
+than the current one and other containers are never touched; pruning errors
+only print PRUNE_WARNING. RELEASE_KEEP_STAGES (default 2, minimum 2; 0 turns
+pruning off) sets how many deployed stages to keep.
+"""
 import hashlib
 import base64
 import http.client
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -277,6 +292,123 @@ def verify(stage, manifest):
                "code_hashes": "match release"}
     (stage / "verification.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False), flush=True)
+    try:
+        prune(stage, manifest)
+    except Exception as error:
+        # Housekeeping must never turn a verified release into a failed one.
+        print("PRUNE_WARNING=" + str(error).replace("\n", " ")[:400], flush=True)
+
+
+STAGE_RE = re.compile(r"^vivesec-release-(\d{8}-\d{6})-[A-Za-z0-9_]+$")
+# Containers parked by this tool (-prev/-failed) and by the 19x helper scripts
+# (-prev with a minute or second stamp).
+PARKED_RE = re.compile(r"^vivesec-(?:rag|adapter|ui)-(?:prev|failed)-(\d{8}-\d{4}(?:\d{2})?)$")
+
+
+def keep_count():
+    # Every release leaves a ~1.6 GB stage (index backup) behind; on the eMMC
+    # they filled the disk. Unset or invalid -> 2 (current + one rollback
+    # level); 0 disables pruning; values below 2 are raised to 2.
+    raw = os.environ.get("RELEASE_KEEP_STAGES", "2").strip()
+    if raw == "0":
+        return 0
+    try:
+        return max(2, int(raw))
+    except ValueError:
+        return 2
+
+
+def _kept(stages, current, keep):
+    current_stamp = stages[current][0]
+    older = sorted((stamp, path) for path, (stamp, state) in stages.items()
+                   if path != current and stamp < current_stamp and state == "deployed")
+    return {current} | {path for _, path in older[max(0, len(older) - (keep - 1)):]}
+
+
+def parked_to_remove(stages, current, containers, keep):
+    """Stopped -prev/-failed containers no older than the oldest kept stage.
+
+    stages: {path: (stamp, state)}, current: path of the live release stage,
+    containers: {name: {"running": bool, "binds": [source, ...]}}.
+    A container parked by release X is what rolling X back needs, so with the
+    current and the previous release kept, only the current release's parked
+    containers (and later helper ones) survive.
+    """
+    cutoff = min(stages[path][0] for path in _kept(stages, current, keep))
+    parked = []
+    for name, info in sorted(containers.items()):
+        match = PARKED_RE.match(name)
+        if match and not info["running"] and match.group(1).ljust(15, "0") <= cutoff:
+            parked.append(name)
+    return parked
+
+
+def stages_to_remove(stages, current, containers, keep):
+    """Stage directories older than the current one, outside the kept set and
+    not bound by any existing container (running or not)."""
+    kept = _kept(stages, current, keep)
+    current_stamp = stages[current][0]
+    binds = [source.rstrip("/") for info in containers.values() for source in info["binds"]]
+    removable = []
+    for path, (stamp, _) in sorted(stages.items()):
+        if path in kept or stamp >= current_stamp:
+            continue
+        if any(source == path or source.startswith(path + "/") for source in binds):
+            continue
+        removable.append(path)
+    return removable
+
+
+def inventory(root):
+    stages = {}
+    for entry in sorted(root.iterdir()):
+        match = STAGE_RE.match(entry.name)
+        if not match or entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            state = json.loads((entry / "manifest.json").read_text()).get("state")
+        except (OSError, ValueError):
+            state = None
+        stages[str(entry)] = (match.group(1), state)
+    containers = {}
+    ids = command("docker", "ps", "-aq").split()
+    if ids:
+        for container in json.loads(command("docker", "inspect", *ids)):
+            containers[container["Name"].lstrip("/")] = {
+                "running": bool(container["State"]["Running"]),
+                "binds": [mount["Source"] for mount in container.get("Mounts") or [] if mount.get("Type") == "bind"]}
+    return stages, containers
+
+
+def prune(stage, manifest):
+    keep = keep_count()
+    if not keep:
+        print("PRUNE_SKIPPED=RELEASE_KEEP_STAGES=0", flush=True)
+        return
+    stage = Path(stage).resolve()
+    assert manifest["state"] == "deployed", "Only a deployed release stage can anchor pruning"
+    live = [mount["Source"].rstrip("/") for mount in inspect("vivesec-ui").get("Mounts") or []
+            if mount.get("Destination") == "/app/.output"]
+    assert live and live[0].startswith(str(stage) + "/"), "The live UI does not run from this stage"
+    stages, containers = inventory(stage.parent)
+    parked = parked_to_remove(stages, str(stage), containers, keep)
+    for name in parked:
+        try:
+            command("docker", "rm", name)
+            print("PRUNED_CONTAINER=" + name, flush=True)
+        except RuntimeError as error:
+            print("PRUNE_WARNING=" + name + ": " + str(error).replace("\n", " ")[:200], flush=True)
+    # Re-read the containers so a parked one that could not be removed keeps
+    # protecting the stage it binds.
+    stages, containers = inventory(stage.parent)
+    removable = stages_to_remove(stages, str(stage), containers, keep)
+    for path in removable:
+        try:
+            shutil.rmtree(path)
+            print("PRUNED_STAGE=" + path, flush=True)
+        except OSError as error:
+            print("PRUNE_WARNING=" + path + ": " + str(error)[:200], flush=True)
+    print("PRUNE_OK kept=%d removed_containers=%d removed_stages=%d" % (keep, len(parked), len(removable)), flush=True)
 
 
 def rollback(stage, manifest):
@@ -349,7 +481,7 @@ if __name__ == "__main__":
         prepare(*sys.argv[2:4])
     elif operation == "promote":
         promote(sys.argv[2])
-    elif operation in ("check", "rollback", "verify"):
+    elif operation in ("check", "rollback", "verify", "prune"):
         root = Path(sys.argv[2])
         globals()[operation](root, json.loads((root / "manifest.json").read_text()))
     else:
