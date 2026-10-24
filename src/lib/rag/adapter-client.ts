@@ -69,6 +69,28 @@ export type AdapterAnswer = {
 /** On-box speech capabilities (adapter/voice.py). Both default to off. */
 export type AdapterVoice = { stt: boolean; tts: boolean };
 
+/** What this box offers (ADAPTER_APP_MODE): analyst = chat + relationships only. */
+export type AdapterApp = {
+  mode: "workspace" | "analyst";
+  driveBrowser: boolean;
+  quickActions: boolean;
+  orchestrator: boolean;
+};
+
+function readApp(raw: unknown): AdapterApp {
+  const v = (raw ?? {}) as Record<string, unknown>;
+  // An adapter without the block is a workspace box.
+  if (v.mode !== "analyst") {
+    return { mode: "workspace", driveBrowser: true, quickActions: true, orchestrator: false };
+  }
+  return {
+    mode: "analyst",
+    driveBrowser: Boolean(v.drive_browser),
+    quickActions: Boolean(v.quick_actions),
+    orchestrator: Boolean(v.orchestrator),
+  };
+}
+
 export type AdapterStatus = {
   ok: boolean;
   uiReady: boolean;
@@ -76,6 +98,7 @@ export type AdapterStatus = {
   features: string[];
   locked: boolean;
   voice: AdapterVoice;
+  app?: AdapterApp;
   chatPolicy?: ChatPolicy;
   /** Release identity of the box (E01); null when the adapter predates it. */
   version?: BoxVersion | null;
@@ -166,8 +189,19 @@ export type AdapterJobSummary = {
   error?: string | null;
   progress_chars?: number;
   progress_tokens?: number;
+  // Multi-step jobs (a full reading): the phase and done/total steps of it.
+  progress_phase?: string | null;
+  progress_done?: number;
+  progress_total?: number;
   cancel_requested?: boolean;
   queue_position?: number | null;
+};
+
+export type AdapterJobProgress = {
+  phase: string | null;
+  done: number;
+  total: number;
+  queuePosition: number | null;
 };
 
 export type AdapterJobSubmission = {
@@ -349,6 +383,7 @@ export async function adapterStatus(): Promise<AdapterStatus> {
       features: Array.isArray(j.features) ? (j.features as string[]) : [],
       locked: Boolean(j.storage_locked ?? j.locked),
       voice: readVoice(j.voice),
+      app: readApp(j.app),
       chatPolicy: j.chat_policy as ChatPolicy | undefined,
       version: readBoxVersion(j.version),
     };
@@ -512,7 +547,12 @@ export async function adapterPollJob(
   jobId: string,
   scope: Pick<AdapterAskInput, "drive" | "user"> = {},
   timeout = 0,
-): Promise<{ status: AdapterJobStatus; answer?: AdapterAnswer; queuePosition: number | null }> {
+): Promise<{
+  status: AdapterJobStatus;
+  answer?: AdapterAnswer;
+  queuePosition: number | null;
+  progress?: AdapterJobProgress;
+}> {
   const { headers } = jobScope(scope);
   const pollRes = await apiFetch(`${adapterUrl()}/api/v1/ui/poll`, {
     method: "POST",
@@ -525,9 +565,16 @@ export async function adapterPollJob(
     throw new AdapterError((j.error as string) ?? `ui/poll HTTP ${pollRes.status}`, pollRes.status);
   }
   if (j.status === "pending") {
+    const queuePosition = typeof j.queue_position === "number" ? j.queue_position : null;
     return {
       status: (j.job_status as AdapterJobStatus | undefined) ?? "running",
-      queuePosition: typeof j.queue_position === "number" ? j.queue_position : null,
+      queuePosition,
+      progress: {
+        phase: typeof j.progress_phase === "string" ? j.progress_phase : null,
+        done: typeof j.progress_done === "number" ? j.progress_done : 0,
+        total: typeof j.progress_total === "number" ? j.progress_total : 0,
+        queuePosition,
+      },
     };
   }
   return {
@@ -694,12 +741,19 @@ export async function adapterDeleteConversation(
   }
 }
 
-export async function adapterAsk(input: AdapterAskInput): Promise<AdapterAnswer> {
+export async function adapterAsk(
+  input: AdapterAskInput,
+  onProgress?: (progress: AdapterJobProgress) => void,
+): Promise<AdapterAnswer> {
   const submitted = await adapterSubmitJob(input);
-
-  for (let i = 0; i < MAX_POLLS; i++) {
-    const polled = await adapterPollJob(submitted.jobId, input, POLL_TIMEOUT_S);
+  // A time budget, not a count: a job reporting its phase is polled more often.
+  const deadline = Date.now() + MAX_POLLS * POLL_TIMEOUT_S * 1000;
+  let timeout = 5; // short at first, so a long job shows its phase early
+  while (Date.now() < deadline) {
+    const polled = await adapterPollJob(submitted.jobId, input, timeout);
     if (polled.answer) return polled.answer;
+    if (polled.progress && onProgress) onProgress(polled.progress);
+    timeout = polled.progress?.phase ? 5 : POLL_TIMEOUT_S;
   }
   throw new AdapterJobContinuesError(submitted.jobId);
 }
@@ -808,6 +862,51 @@ export async function adapterInsight(drive: string): Promise<AdapterInsight> {
     throw new AdapterError((j.error as string) ?? `ui/insight HTTP ${res.status}`, res.status);
   }
   return j as AdapterInsight;
+}
+
+// ---------------------------------------------------------------------------
+// E26 — relationship analysis. POST /api/v1/ui/graph/<endpoint>: the adapter
+// adds the caller's scope and access itself; the body only carries the query.
+// ---------------------------------------------------------------------------
+
+const GRAPH_TIMEOUT_MS = 60_000;
+
+export class AdapterGraphError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "AdapterGraphError";
+  }
+}
+
+export async function adapterGraph<T>(
+  endpoint:
+    | "query"
+    | "status"
+    | "review/list"
+    | "review/decide"
+    | "profile/get"
+    | "profile/set"
+    | "dossier",
+  body: Record<string, unknown>,
+  drive: string,
+): Promise<T> {
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/graph/${endpoint}`, {
+    method: "POST",
+    headers: vvsHeaders(drive, demoUser()),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+  });
+  const j = await safeJson(res);
+  if (!res.ok) {
+    throw new AdapterGraphError(
+      (j.error as string) ?? `ui/graph/${endpoint} HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return j as T;
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `ADAPTER_ANALYZE_MIN_ANSWER_CHARS` | `120` |  | non-negative chars (not enforced) | restart | Minimum length for structured analysis before treating generation as starved. | Unset uses the code default; non-integer values raise ValueError and abort startup/import. |
 | `ADAPTER_ANALYZE_NUM_CTX` | `65536` | `65536` | 0 or positive Ollama num_ctx (not enforced) | restart | Ollama context window for #analyze; 0 omits the option. | Unset or empty uses the code default; non-integer values raise ValueError and abort startup/import. |
 | `ADAPTER_ANSWER_LANG` | *unset* | *empty* | language name or empty | restart | Forces adapter answers to a language when non-empty. | Any string is accepted at startup; bad values fail only in the consumer if at all. |
+| `ADAPTER_APP_MODE` | `workspace` |  | workspace \| analyst | restart | analyst: chat + relationships only. Quick actions and folder browsing are refused (403) and hidden in the UI; with GRAPH_URL set, chat messages go through the orchestrator (graph queries, questions back to the user). workspace: the drive browser and quick actions as before. | Empty means workspace; an unknown value takes the narrower analyst mode. |
 | `ADAPTER_CHAT` | `on` |  | off disables; any other value enables | restart | Enables follow-up condensation and chat-history answers. | Only literal off disables chat; all other values enable it. |
 | `ADAPTER_CHAT_POLICY` | `locked_hybrid` | `locked_hybrid` | locked_grounded \| locked_hybrid \| selectable_grounded \| selectable_hybrid | restart | Controls default grounded/hybrid chat profile and whether users may switch. | Unknown falls back to locked_grounded. |
 | `ADAPTER_CONDENSE_TIMEOUT` | `60` |  | positive seconds (not enforced) | restart | Timeout for the follow-up condensation model call. | Unset or empty uses the code default; non-float values raise ValueError and abort startup/import. |
@@ -65,6 +66,15 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `ADAPTER_GENERATE` | `auto` | `auto` | auto \| on \| off | restart | Controls adapter answer synthesis. | off disables generation; auto skips when Ollama is down; unknown behaves like on. |
 | `ADAPTER_GEN_MODEL` | `qwen2.5:14b` | `qwen3.6:35b` | Ollama model name | restart | Ollama chat model used by adapter generation. | Any string is accepted at startup; bad values fail only in the consumer if at all. |
 | `ADAPTER_GETFILE_TIMEOUT` | `60` |  | positive seconds (not enforced) | restart | Timeout for fetching original documents from ViVeSecBox. | Unset or empty uses the code default; non-float values raise ValueError and abort startup/import. |
+| `ADAPTER_GPU_BROKER_PORT` | `0` |  | TCP port (0: off); bound to 127.0.0.1 only | restart | Loopback port of the GPU broker. Point GRAPH_LLM_URL at http://127.0.0.1:<port> so graph extraction waits while a user's model call runs. | 0: no broker; background services must then call Ollama directly and compete with chat. |
+| `ADAPTER_GPU_GRACE_SECONDS` | `2` |  | seconds >= 0 | restart | Quiet time after the last foreground model call before a background call may start. | 0 lets a background call slip between the steps of one chat turn. |
+| `ADAPTER_GPU_MAX_WAIT_SECONDS` | `240` |  | seconds >= 0 | restart | Longest time a background model call waits for the GPU. | After this wait a background call runs even during chat, so extraction never starves; keep it below GRAPH_LLM_TIMEOUT. |
+| `ADAPTER_GRAPH_ADMINS` | *unset* |  | comma-separated VVS user ids | restart | Users who may change the shared graph (review decisions, profile). | Empty: nobody may merge people or change the domain profile through the UI. |
+| `ADAPTER_GRAPH_CHAT` | `on` |  | on \| off | restart | With GRAPH_URL set, plain chat questions that name known entities get their graph relations (with quotes and sources) as extra context. | Only an explicit off disables it; a graph error leaves the answer to the documents. |
+| `ADAPTER_GRAPH_CHAT_FACTS` | `12` |  | integer >= 1 | restart | Most graph relations added to one chat question. | More facts use more of the model's context window. |
+| `ADAPTER_GRAPH_MAX_FILE_MB` | `32` |  | megabytes >= 1 (graph body limit 64 MB, base64 adds a third) | restart | Largest single file forwarded to the graph. | Larger files are not forwarded and are counted as dropped. |
+| `ADAPTER_GRAPH_QUEUE_MB` | `256` |  | megabytes >= 1 | restart | Synced file bytes waiting to be handed to the graph service. | A full queue drops the file and counts it (re-sync the drive to fill the gap); bytes stay in memory only. |
+| `ADAPTER_GRAPH_TIMEOUT` | `120` |  | seconds > 0 | restart | Timeout of one adapter -> graph call. | A timed-out graph call answers 503; forwarded files are retried. |
 | `ADAPTER_HOST` | `127.0.0.1` | `0.0.0.0` | bind host/address | restart | Bind address for the plain HTTP adapter listener. | Invalid bind addresses raise OSError when the server starts. |
 | `ADAPTER_HTTP_SCOPE` | `full` |  | full, pairing | restart | pairing limits the plain-HTTP listener to status/version/ui-version/init for network peers. | Unset or empty is full; any unknown value falls back to pairing. The mTLS listener and direct (not proxy-relayed) loopback callers are never restricted. |
 | `ADAPTER_IDENTITY_ALGORITHMS` | `HS256,RS256` |  | comma list of HS256, RS256 | restart | Allowlist of JWT signature algorithms. | Unsupported names (including none) are ignored; an empty resulting list rejects every token. |
@@ -96,6 +106,7 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `ADAPTER_META_PATH` | *unset* | `/data/adapter_meta.json` | file path or empty | restart | Persistent metadata mirror path. | Empty keeps metadata in memory; invalid paths fail on persistence. |
 | `ADAPTER_NUM_CTX` | `0` | `65536` | 0 or positive Ollama num_ctx (not enforced) | restart | Ollama context window for normal chat; 0 omits option. | Unset or empty uses the code default; non-integer values raise ValueError and abort startup/import. |
 | `ADAPTER_NUM_PREDICT` | `512` | `2048` | 0 or positive Ollama num_predict (not enforced) | restart | Maximum generated tokens for adapter answers; 0 omits option. | Unset or empty uses the code default; non-integer values raise ValueError and abort startup/import. |
+| `ADAPTER_ORCHESTRATOR_MAX_FACTS` | `40` |  | >= 1 | restart | Upper bound on graph facts (each with its quote and source) one analyst-mode answer receives from the orchestrator's graph queries. | Empty or 0 uses 40. |
 | `ADAPTER_PKI_DIR` | `/data/pki` | `/data/pki` | directory path | restart | Directory for adapter PKI and stable discovery UUID. | Any path is accepted at startup; missing or unwritable paths disable persistence or fail when used. |
 | `ADAPTER_PORT` | `8080` | `8088` | 1-65535 | restart | Plain HTTP adapter TCP port. | Unset uses the code default; non-integer values raise ValueError and abort startup/import. |
 | `ADAPTER_PUTFILE_RETRIES` | `3` | `3` | 0 or positive retries (not enforced) | restart | Retry count for ViVeSecBox put-file saves. | Unset or empty uses the code default; non-integer values raise ValueError and abort startup/import. |
@@ -131,6 +142,7 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `ADAPTER_UI_VERSION` | `latest` | `latest` | latest, or a release version (YY.MM.N) the embedding host actually serves | restart | Plain-text answer of GET /api/v1/ui-version: the embedded UI bundle path (/latest/ or /<version>/) the ViVeSecBox loads for this box. Not the box's own release version (see /api/v1/version). | Empty falls back to latest; any other string is returned verbatim, so a version the host does not serve leaves the embedded UI unloadable. |
 | `ADAPTER_WATCHDOG_ENABLED` | `auto` | `auto` | auto \| on \| off | restart | Controls presence-lock watchdog. | on always enforces; auto enforces only when storage mode is not off; unknown disables. |
 | `ADAPTER_WATCHDOG_SECONDS` | `90` | `90` | positive seconds (not enforced) | restart | Presence timeout before watchdog locks storage. | Unset uses the code default; non-integer values raise ValueError and abort startup/import. |
+| `GRAPH_URL` | *unset* |  | internal graph_service base URL (empty: off) | restart | Base URL the adapter uses for the graph service; keep it loopback/internal. The adapter sends GRAPH_API_KEY with every call. | Empty: relationship analysis is off, /ui/graph/* answers 503 and no file is forwarded. |
 | `RAG_URL` | `http://127.0.0.1:8090` | `http://127.0.0.1:8090` | RAG service base URL | restart | Base URL used by adapter for RAG requests. | Any URL is accepted at startup; connection errors are reported when used. |
 
 ## RAG service
@@ -160,11 +172,39 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `VIVESEC_PORT` | `8000` |  | 1-65535 | restart | TCP port for legacy PoC HTTP bridge. | Unset uses the code default; non-integer values raise ValueError and abort startup/import. |
 | `VIVESEC_REPEAT_PENALTY` | `1.15` |  | positive repeat_penalty (not enforced) | restart | Repeat penalty sent by PoC generation layer. | Unset or empty uses the code default; non-float values raise ValueError and abort startup/import. |
 
+## Graph service
+
+| Parameter | Default | Image | Allowed | Change | Impact | Invalid value |
+| --- | --- | --- | --- | --- | --- | --- |
+| `GRAPH_HOST` | `127.0.0.1` |  | bind host/address | restart | Graph service bind address; keep it on loopback or an internal network (the adapter is the only caller). | Invalid bind addresses raise OSError when the service starts. |
+| `GRAPH_INGEST` | `on` |  | on \| off | restart | Background extraction of submitted documents (/ingest/*) and the same-person review list (/review/*); off answers 503 there. | Only an explicit off disables it; with GRAPH_STORE=neo4j it needs GRAPH_READ_CACHE on, otherwise the service refuses to start. |
+| `GRAPH_INGEST_QUEUE_MB` | `512` |  | megabytes >= 1 | restart | Upper bound of document bytes waiting for extraction. | A full queue answers 429; the caller retries later. Queued bytes stay in memory only. |
+| `GRAPH_LLM_API` | `ollama` |  | ollama \| openai | restart | Protocol of the extraction model endpoint: Ollama /api/chat, or an OpenAI-compatible /v1/chat/completions (vLLM, GPU broker). | Any other value stops the extractor at start instead of guessing the protocol. |
+| `GRAPH_LLM_MODEL` | `qwen3.6:35b` |  | model name served by the endpoint | restart | Model used to extract entities and relations from document chunks. | An unknown model makes every LLM step fail; rule-based results are kept. |
+| `GRAPH_LLM_NUM_CTX` | `16384` |  | tokens (Ollama only) | restart | Context window requested from Ollama for extraction calls. | Too small truncates the prompt; the chunk size (3000 chars) fits the default. |
+| `GRAPH_LLM_TIMEOUT` | `600` |  | seconds > 0 | restart | Per-call timeout of the extraction model. | A timed-out chunk is retried once, then recorded as an error. |
+| `GRAPH_LLM_URL` | `http://127.0.0.1:11434` |  | internal http(s) URL | restart | Model endpoint for graph extraction. On the box use the adapter's GPU broker (http://127.0.0.1:<ADAPTER_GPU_BROKER_PORT>) so chat keeps priority; keep it internal. | Unreachable: the chunk is recorded as an extraction error; rules and co-mentions still run. |
+| `GRAPH_NEO4J_DATABASE` | `neo4j` |  | database name (Community: neo4j) | restart | Neo4j database used by the graph service. | An unknown database makes every request fail. |
+| `GRAPH_NEO4J_PASSWORD_FILE` | *unset* |  | file path | restart | File holding the Neo4j password. | Missing with GRAPH_STORE=neo4j stops the service at startup; the password is never put in the environment or logs. |
+| `GRAPH_NEO4J_URI` | `bolt://127.0.0.1:7687` |  | bolt:// or neo4j:// URL | restart | Neo4j server used when GRAPH_STORE=neo4j; keep it on loopback or an internal network. | Unreachable or wrong URIs stop the service at startup. |
+| `GRAPH_NEO4J_USER` | `neo4j` |  | Neo4j user name | restart | Neo4j user when GRAPH_STORE=neo4j. | A wrong user stops the service at startup (authentication error). |
+| `GRAPH_OCR` | `auto` |  | auto \| off | restart | OCR for PDFs without a text layer (pypdfium2 render + Tesseract). | Only an explicit off disables OCR; without Tesseract scans are reported as ocr_unavailable, never as empty documents. |
+| `GRAPH_OCR_DPI` | `200` |  | render resolution in DPI | restart | Resolution at which scanned pages are rendered for OCR. | Higher is slower and uses more memory; lower loses small print. |
+| `GRAPH_OCR_LANGS` | `hun+eng` |  | Tesseract language codes joined by + | restart | Languages Tesseract reads. | A missing language pack makes OCR return no text for the page. |
+| `GRAPH_PORT` | `8095` |  | 1-65535 | restart | Graph service TCP port. | Unset uses the code default; non-integer values raise ValueError and abort startup. |
+| `GRAPH_PROFILE` | `generic` |  | bundled template id (generic, bv, manufacturing) or a profile .json path | restart | Profile used when no administrator profile has been saved yet. | A missing or invalid profile stops the service at startup; there is no silent fallback. |
+| `GRAPH_PROFILE_PATH` | *unset* |  | file path or empty | restart | Where the administrator's profile is saved (previous version kept as .prev); takes precedence over GRAPH_PROFILE. | Empty keeps administrator profile changes in memory only (lost on restart); an invalid saved file stops the service at startup. |
+| `GRAPH_READ_CACHE` | `on` |  | on \| off | restart | With GRAPH_STORE=neo4j, an in-memory mirror loaded from Neo4j at start answers queries; off queries Neo4j directly (slower, for graphs too large for memory). | Only an explicit off disables the mirror; any other value keeps it on. |
+| `GRAPH_REVIEW_PATH` | *unset* |  | file path (empty: memory only) | restart | Append-only file of possible same-person pairs and the administrator's decisions. | Empty: open review pairs are lost on restart (people stay apart, nothing is merged). |
+| `GRAPH_STORE` | `memory` |  | memory \| neo4j | restart | Graph store backend: memory (tests and demos, not persistent) or neo4j (persistent). | Any other value stops the service at startup. |
+| `GRAPH_TESSERACT` | *unset* |  | path to the tesseract binary (empty: PATH lookup) | restart | Tesseract executable used for OCR. | Not found: OCR is unavailable and scans are reported as such. |
+
 ## Shared (several components)
 
 | Parameter | Default | Image | Allowed | Change | Impact | Invalid value |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ADAPTER_DRIVE_PREFIX` | `/storage/drives` | `/storage/drives` | absolute drive root prefix | restart | Read by adapter corpus mapping and UI demo proxy driveRoot. | Any string is accepted; mismatches break adapter corpus ids and UI demo roots. |
+| `GRAPH_API_KEY` (secret) | *unset* |  | non-empty API key or empty | restart | API key of the graph service; the adapter sends it in X-API-Key and graph_service requires it. | Empty disables API-key enforcement (acceptable only on loopback); non-empty values must match exactly. |
 | `OLLAMA_URL` | `adapter: http://127.0.0.1:11434; rag/poc: http://localhost:11434` | adapter: `http://127.0.0.1:11434`; rag: `http://localhost:11434` | Ollama base URL | restart | Read by adapter and rag/poc model clients; adapter and rag images set different defaults. | Any URL is accepted at startup; connection errors are reported when used. |
 | `RAG_API_KEY` (secret) | *unset* |  | non-empty API key or empty | restart | Shared RAG API key read by adapter and RAG service. | Empty disables RAG API-key enforcement and adapter auth; non-empty values must match exactly. |
 

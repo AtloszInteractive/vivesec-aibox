@@ -759,6 +759,36 @@ class RagStore:
                 ch.get("page_number"), ch.get("section_path"), ch["text"]))
         return contexts, _document_debug(meta, len(chunks), len(contexts), used_tokens)
 
+    # ----- full-coverage enumeration -----------------------------------------
+    def match_chunks(self, corpus_ids, match_terms, mode="any", access=None,
+                     path_prefixes=None, limit=200, offset=0):
+        """EVERY visible chunk of the scope that matches the terms (not a top-k),
+        in reading order (path, page, position), one page of it at a time."""
+        import retrieval
+        scope = normalize_corpus_ids(None, corpus_ids)
+        if not scope:
+            return [], {"total": 0, "documents": 0}
+        hits = []
+        with self._lock:
+            for doc in self._docs.values():
+                if doc.get("corpus_id") not in scope or not doc.get("file", True):
+                    continue
+                if not retrieval.under_any(doc.get("source_path"), path_prefixes):
+                    continue
+                if not access_filter.doc_allowed(doc.get("acl"), access):
+                    continue
+                for position, ch in enumerate(self._chunks.get(doc["doc_id"], [])):
+                    if retrieval.chunk_matches(retrieval.tokens(ch["text"]), match_terms, mode):
+                        hits.append((doc.get("source_path") or "", ch.get("page_number") or 0,
+                                     position, doc, ch))
+        hits.sort(key=lambda h: h[:3])
+        page = [{"chunk_id": ch["chunk_id"], "doc_id": doc["doc_id"],
+                 "corpus_id": doc.get("corpus_id"), "title": doc.get("title"),
+                 "source_path": doc.get("source_path"), "page_number": ch.get("page_number"),
+                 "text": ch["text"]}
+                for _, _, _, doc, ch in hits[offset:offset + limit]]
+        return page, {"total": len(hits), "documents": len({h[3]["doc_id"] for h in hits})}
+
     # ----- stats -------------------------------------------------------------
     def stats(self):
         with self._lock:

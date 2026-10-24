@@ -1,0 +1,42 @@
+{
+  "id": "manufacturing",
+  "version": 1,
+  "name": {"en": "Manufacturing and quality", "hu": "Gyártás és minőségügy", "da": "Produktion og kvalitet", "de": "Fertigung und Qualität"},
+  "description": "Products, parts, batches, suppliers, customers, lines, changes, nonconformances and complaints. Traceability and change-impact questions.",
+  "entity_subtypes": [
+    {"id": "supplier", "type": "organization", "label": {"en": "Supplier", "hu": "Beszállító", "da": "Leverandør", "de": "Lieferant"}},
+    {"id": "customer", "type": "organization", "label": {"en": "Customer", "hu": "Vevő", "da": "Kunde", "de": "Kunde"}},
+    {"id": "product", "type": "object", "label": {"en": "Product", "hu": "Termék", "da": "Produkt", "de": "Produkt"}},
+    {"id": "part", "type": "object", "label": {"en": "Part", "hu": "Alkatrész", "da": "Komponent", "de": "Bauteil"}},
+    {"id": "site", "type": "place", "label": {"en": "Site", "hu": "Telephely", "da": "Lokation", "de": "Standort"}},
+    {"id": "production_line", "type": "place", "label": {"en": "Production line", "hu": "Gyártósor", "da": "Produktionslinje", "de": "Fertigungslinie"}},
+    {"id": "batch", "type": "identifier", "label": {"en": "Batch / lot", "hu": "Gyártási tétel", "da": "Batch / parti", "de": "Charge / Los"}},
+    {"id": "serial_number", "type": "identifier", "label": {"en": "Serial number", "hu": "Sorozatszám", "da": "Serienummer", "de": "Seriennummer"}},
+    {"id": "change_request", "type": "event", "label": {"en": "Engineering change", "hu": "Műszaki változtatás", "da": "Teknisk ændring", "de": "Technische Änderung"}},
+    {"id": "nonconformance", "type": "event", "label": {"en": "Nonconformance / 8D", "hu": "Nemmegfelelőség / 8D", "da": "Afvigelse / 8D", "de": "Abweichung / 8D"}},
+    {"id": "complaint", "type": "event", "label": {"en": "Customer complaint", "hu": "Vevői reklamáció", "da": "Kundeklage", "de": "Kundenreklamation"}},
+    {"id": "audit", "type": "event", "label": {"en": "Audit", "hu": "Audit", "da": "Audit", "de": "Audit"}}
+  ],
+  "identifier_patterns": [
+    {"id": "lot", "subtype": "batch", "label": {"en": "Lot number", "hu": "Tételszám", "da": "Lotnummer", "de": "Losnummer"}, "regex": "\\b(?:LOT|Lot|lot)[ -]?\\d{4,10}\\b", "normalize": "nospace_upper"},
+    {"id": "serial", "subtype": "serial_number", "label": {"en": "Serial number", "hu": "Sorozatszám", "da": "Serienummer", "de": "Seriennummer"}, "regex": "\\bS/?N[ :-]?[A-Z0-9-]{5,20}\\b", "normalize": "nospace_upper"}
+  ],
+  "relation_types": [
+    {"id": "SUPPLIES", "label": {"en": "Supplies", "hu": "Szállítja", "da": "Leverer", "de": "Liefert"}, "from": ["organization"], "to": ["object", "organization"], "synonyms": ["szállító", "beszállítója", "szállítja"]},
+    {"id": "PART_OF", "label": {"en": "Part of", "hu": "Része", "da": "Del af", "de": "Teil von"}, "from": ["object", "place", "organization"], "to": ["object", "place", "organization"], "synonyms": ["beépül", "része", "alkatrésze"]},
+    {"id": "PRODUCED_ON", "label": {"en": "Produced on", "hu": "Gyártva", "da": "Produceret på", "de": "Gefertigt auf"}, "from": ["object", "identifier"], "to": ["place"], "presence": true, "synonyms": ["gyártósoron", "gyártották"]},
+    {"id": "IN_BATCH", "label": {"en": "In batch", "hu": "Tételhez tartozik", "da": "I batch", "de": "In Charge"}, "from": ["object", "identifier"], "to": ["identifier"], "synonyms": ["tételből", "lot"]},
+    {"id": "DELIVERED_TO", "label": {"en": "Delivered to", "hu": "Kiszállítva", "da": "Leveret til", "de": "Geliefert an"}, "from": ["object", "identifier"], "to": ["organization"], "synonyms": ["vevőnek", "kiszállítva"]},
+    {"id": "AFFECTS", "label": {"en": "Affects", "hu": "Érinti", "da": "Påvirker", "de": "Betrifft"}, "from": ["event"], "to": ["object", "identifier", "organization", "place"], "synonyms": ["érinti", "érintett"]},
+    {"id": "CAUSED_BY", "label": {"en": "Caused by", "hu": "Oka", "da": "Forårsaget af", "de": "Verursacht durch"}, "from": ["event"], "to": ["object", "identifier", "organization", "place", "event"], "synonyms": ["gyökérok", "oka"]},
+    {"id": "RESOLVED_BY", "label": {"en": "Resolved by", "hu": "Megoldotta", "da": "Løst af", "de": "Behoben durch"}, "from": ["event"], "to": ["event", "person"], "synonyms": ["javító intézkedés", "lezárta"]},
+    {"id": "WORKS_FOR", "label": {"en": "Works for", "hu": "Alkalmazottja", "da": "Ansat hos", "de": "Arbeitet für"}, "from": ["person"], "to": ["organization"], "synonyms": ["munkatárs"]},
+    {"id": "PARTICIPATED_IN", "label": {"en": "Took part in", "hu": "Részt vett", "da": "Deltog i", "de": "Nahm teil an"}, "from": ["person", "organization"], "to": ["event"], "presence": true, "synonyms": ["csapattag", "auditor"]}
+  ],
+  "resolution": {
+    "organization": {"strong_keys": [], "match_fields": ["name", "address"], "auto_merge": 0.95, "review": 0.75},
+    "object": {"strong_keys": [], "match_fields": ["name"], "auto_merge": 0.97, "review": 0.8},
+    "person": {"strong_keys": [], "match_fields": ["name"], "auto_merge": 0.97, "review": 0.75}
+  },
+  "cooccurrence": {"window": "paragraph", "max_entities": 20}
+}

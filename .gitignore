@@ -46,6 +46,9 @@ demo-corpus/out/
 demo-corpus/*.tgz
 demo-corpus/score_report.json
 demo-corpus/**/__pycache__/
+# Generated relationship-analysis corpus (reproducible from graph-corpus/world.py)
+graph-corpus/out/
+graph-corpus/**/__pycache__/
 poc/index.json
 
 # Reproducible build/source snapshots (Git stores the source itself)

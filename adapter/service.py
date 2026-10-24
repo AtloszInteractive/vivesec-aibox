@@ -30,6 +30,8 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
                                               (mutual TLS or loopback only)
     POST /api/v1/admin/acl/effective         {user[,upn,groups,roles,paths,under]}
                                               (mutual TLS or loopback only)
+    POST /api/v1/ui/graph/query               {query,params[,drives]}  (E26, graph.py)
+    POST /api/v1/ui/graph/status | review/list | review/decide | profile/get | profile/set
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -96,14 +98,20 @@ import corpus  # noqa: E402
 import directory  # noqa: E402
 import discovery  # noqa: E402
 import docgen  # noqa: E402
+import dossier  # noqa: E402
+import deep  # noqa: E402
 import factory_reset  # noqa: E402
 import feedback  # noqa: E402
 import filestore  # noqa: E402
+import graph  # noqa: E402
+import graph_context  # noqa: E402
+import gpu_gate  # noqa: E402
 import identity  # noqa: E402
 import jobstore  # noqa: E402
 import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
+import orchestrator  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -381,6 +389,7 @@ def _push_acl(paths):
             {"path": path, "acl": ACL.effective(path, MIRROR.acl_of, cache).as_rag()})
     updated = 0
     for corpus_id, entries in groups.items():
+        GRAPH_FORWARD.acl(corpus_id, entries)
         for start in range(0, len(entries), ACL_PUSH_BATCH):
             res = rag_post_json("/index/acl/update", {
                 "corpus_id": corpus_id, "tenant_id": TENANT_ID,
@@ -455,6 +464,54 @@ def _acl_loop():
         except Exception as e:  # noqa: BLE001
             sys.stderr.write("[adapter] acl resync failed: %s\n" % e)
         time.sleep(30)
+
+
+# Relationship analysis (E26): internal graph service, off unless GRAPH_URL is set.
+GRAPH = graph.GraphClient.from_env()
+GRAPH_FORWARD = graph.Forwarder.from_env(GRAPH, _flat_acl)
+# Who may change the shared graph (merge people, edit the domain profile). Empty:
+# nobody through the UI.
+GRAPH_ADMINS = frozenset(u.strip().casefold() for u in
+                         os.environ.get("ADAPTER_GRAPH_ADMINS", "").split(",") if u.strip())
+# Plain chat questions get the graph's relations among the named entities;
+# only an explicit off disables it.
+GRAPH_CHAT = (os.environ.get("ADAPTER_GRAPH_CHAT", "on").strip().lower() != "off")
+GRAPH_FACTS = graph_context.GraphFacts(
+    lambda: GRAPH, max_facts=max(1, int(os.environ.get("ADAPTER_GRAPH_CHAT_FACTS", "12") or 12)))
+
+APP_WORKSPACE = "workspace"
+APP_ANALYST = "analyst"
+
+
+def _parse_app_mode(raw):
+    """workspace: drive browser + quick actions (the original box). analyst:
+    chat + relationships only; quick actions and folder browsing are refused.
+    An unknown value takes the narrower analyst mode."""
+    value = (raw or "").strip().lower()
+    if not value:
+        return APP_WORKSPACE
+    if value in (APP_WORKSPACE, APP_ANALYST):
+        return value
+    sys.stderr.write("[adapter] unknown ADAPTER_APP_MODE %r -> %s\n" % (raw, APP_ANALYST))
+    return APP_ANALYST
+
+
+APP_MODE = _parse_app_mode(os.environ.get("ADAPTER_APP_MODE"))
+ORCHESTRATOR_MAX_FACTS = max(1, int(os.environ.get("ADAPTER_ORCHESTRATOR_MAX_FACTS", "40") or 40))
+# The analyst planner may read EVERY passage that names its terms (deep.py), a
+# 1-3 minute job that holds the heavy slot. Only "off" disables it.
+DEEP_READ = (os.environ.get("ADAPTER_DEEP_READ", "on") or "on").strip().lower() != "off"
+# Analyst patterns, sequences and counts may treat same-named person records as one
+# person (never when their records conflict). An identity rule the customer owns:
+# only the explicit value turns it on; anything else keeps the records apart.
+GRAPH_NAME_JOIN = (os.environ.get("ADAPTER_GRAPH_NAME_JOIN", "off") or "off").strip().lower() \
+    == "same_name"
+
+
+def app_settings():
+    analyst = APP_MODE == APP_ANALYST
+    return {"mode": APP_MODE, "drive_browser": not analyst, "quick_actions": not analyst,
+            "orchestrator": analyst and GRAPH.enabled}
 
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
@@ -559,6 +616,7 @@ def status_payload(trusted=True):
             "files": FILES.stats(),
             "voice": voice.status(),
             "chat_policy": chat_policy.settings(),
+            "app": app_settings(),
             "identity": identity_settings(),
             "version": version_block(rag_build),
             "paired": PROVISIONER.is_initialized(),
@@ -867,10 +925,40 @@ def _file_search(req_scope, pattern, access=None):
             "backend": "mirror", "citations": [], "hits": []}
 
 
+class _AnyEvent:
+    """is_set() when any of the events is (the job's own and the heavy slot's)."""
+
+    def __init__(self, *events):
+        self.events = [e for e in events if e is not None]
+
+    def is_set(self):
+        return any(e.is_set() for e in self.events)
+
+
+def _read_all(args, query, lang, req_scope, access, job_id, user, drive, cancel_event,
+              stage_callback):
+    """The planner's full reading (deep.py), run in the heavy slot so its many
+    model calls queue with the other heavy work. Returns (coverage note, finding
+    contexts within the scope, info)."""
+    if stage_callback:
+        stage_callback("queued", 0, 0)
+    try:
+        with HEAVY_SCHEDULER.slot(job_id, user, drive) as slot_cancel:
+            contexts, info = deep.read_all(
+                rag_post_json, {"corpus_ids": list(req_scope.corpus_ids),
+                                "tenant_id": TENANT_ID, "access": access.as_rag()},
+                query, args["terms"], lang, args.get("mode", "any"),
+                cancel_event=_AnyEvent(cancel_event, slot_cancel), progress=stage_callback)
+    except scheduler.QueueCancelled:
+        raise llm.GenerationCancelled("cancelled while waiting for the heavy slot")
+    found = [c for c in contexts[1:] if req_scope.contains_path(c.get("source_path") or "")]
+    return contexts[:1], found, info
+
+
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
             progress_callback=None, req_scope=None, profile="grounded",
-            conversation_id=None, access=None):
+            conversation_id=None, access=None, job_id=None, stage_callback=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -910,7 +998,56 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     # is answered from the history instead of being refused for no-context.
     chat_only = False
     retrieval_query = query
-    if action is None and history:
+    planned = None
+    deep_info = None
+    deep_note = []
+    orchestrated = None  # (contexts, info) of the analyst-mode plan
+    domain = None
+    if action is None and APP_MODE == APP_ANALYST and GRAPH.enabled:
+        try:
+            domain = orchestrator.profile(GRAPH)
+        except graph.GraphError as e:
+            sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
+    if domain is not None:
+        vocab = orchestrator.vocabulary(domain, lang)
+        planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ)
+    deep_call = None
+    if planned is not None and planned["action"] == "tools":
+        # A full reading is the document side of the plan, not a graph query.
+        reads = [c for c in planned["calls"] if c["tool"] == "read_all"]
+        deep_call = reads[0] if reads and DEEP_READ else None
+        planned = dict(planned, calls=[c for c in planned["calls"] if c["tool"] != "read_all"])
+    if planned is not None:
+        check = _visible(access)
+        run = orchestrator.Run(
+            GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
+            lambda path: req_scope.contains_path(path) and check(path), lang,
+            ORCHESTRATOR_MAX_FACTS, domain, name_join=GRAPH_NAME_JOIN)
+        if planned["action"] == "clarify":
+            question = planned["question"]
+            try:
+                # A partly named person is better asked back with the actual matches.
+                question = run.name_options(query) or question
+            except graph.GraphError as e:
+                sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
+            return _clarify_result(user, drive, query, question, req_scope,
+                                   session_scope, profile, conversation_id, agent, lang)
+        if planned["action"] == "chat":
+            chat_only = bool(history)
+        else:
+            retrieval_query = planned["search"] or query
+        if planned["calls"]:
+            try:
+                orchestrated = orchestrator.orchestrate(
+                    run, planned,
+                    lambda results: orchestrator.plan(query, history, lang, vocab, results,
+                                                      deep=False))
+            except orchestrator.Clarify as e:
+                return _clarify_result(user, drive, query, e.question, req_scope,
+                                       session_scope, profile, conversation_id, agent, lang)
+            except graph.GraphError as e:
+                sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
+    elif action is None and history:
         retrieval_query, chat_only = llm.condense(query, history, lang)
     source_paths = [str(source) for source in (files or []) if source]
     if not source_paths and action is None:
@@ -948,6 +1085,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         contexts, document = _fit_analyze_window(contexts, document)
     elif chat_only:
         contexts = []
+    elif deep_call is not None:
+        deep_note, contexts, deep_info = _read_all(
+            deep_call["args"], query, lang, req_scope, access, job_id or uuid.uuid4().hex,
+            user, drive, cancel_event, stage_callback)
     else:
         res = rag_post_json("/rag/search_context",
                             {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
@@ -960,6 +1101,23 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "include_debug": True})
         contexts = res.get("contexts", [])
     contexts = _visible_contexts(contexts, access)
+    if deep_call is not None:
+        contexts = deep_note + contexts  # the coverage note has no path to check
+    graph_info = None
+    if orchestrated is not None:
+        contexts = orchestrated[0] + contexts
+        graph_info = orchestrated[1]
+    elif action is None and not chat_only and GRAPH_CHAT and GRAPH.enabled:
+        check = _visible(access)
+        try:
+            facts, graph_info = GRAPH_FACTS.contexts(
+                retrieval_query,
+                {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
+                lambda path: req_scope.contains_path(path) and check(path), lang)
+            contexts = facts + contexts
+        except graph.GraphError as e:
+            # The answer still comes from the documents; the graph is an extra.
+            sys.stderr.write("[adapter] graph facts unavailable: %s\n" % e)
     hits = []
     for i, c in enumerate(contexts, 1):
         snippet = " ".join((c.get("text") or "")[:200].split())
@@ -969,7 +1127,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                      "score": c.get("score"), "snippet": snippet})
     answer, backend = llm.generate(query, contexts, lang=lang, history=history,
                                    task=action, params=params,
-                                   num_ctx=ANALYZE_NUM_CTX if action == "analyze" else None,
+                                   num_ctx=ANALYZE_NUM_CTX if action == "analyze"
+                                   or deep_call is not None else None,
                                    chat_only=chat_only, agent=agent,
                                    cancel_event=cancel_event,
                                    progress_callback=progress_callback,
@@ -1026,6 +1185,13 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     display = answer
     if answer and not degenerate and document and document.get("truncated"):
         display = answer + "\n\n" + _analyze_truncation_note(document, lang)
+    if display and orchestrated is not None and orchestrated[1].get("caveat"):
+        display = display + "\n\n" + "\n".join(
+            ("> " + line) if line else ">" for line in orchestrated[1]["caveat"].split("\n"))
+    if display and deep_note:
+        # What the full reading covered (or could not), as is.
+        display = display + "\n\n" + "\n".join(
+            "> " + line for line in deep_note[0]["text"].split("\n") if line.strip())
     if display:
         display = display + "\n\n" + (confidence.footer(conf, citations, aid, lang)
                 if conf is not None else
@@ -1041,7 +1207,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "components": conf["components"]} if conf is not None else None,
               "citations": citations, "hits": hits}
     if action != "analyze" and not chat_only:
-        result["retrieval_debug"] = res.get("debug", {})
+        result["retrieval_debug"] = res.get("debug", {}) if deep_call is None else {
+            "retrieval": "full-reading"}
         result["source_paths"] = source_paths
         result["evidence_chunk_ids"] = evidence_ids
     if params:
@@ -1052,6 +1219,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         result["retrieval_query"] = retrieval_query
     if document is not None:
         result["document"] = document
+    if graph_info is not None:
+        result["graph"] = graph_info
+    if deep_info is not None:
+        result["deep"] = deep_info
     if conversation_id:
         result["conversation_id"] = conversation_id
     # Keep the trace so a later /ui/feedback rating can be stored WITH what the
@@ -1066,6 +1237,33 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         "confidence": result["confidence"],
         "citations": citations, "hits": hits,
     })
+    return result
+
+
+def _clarify_result(user, drive, query, question, req_scope, session_scope, profile,
+                    conversation_id, agent, lang):
+    """The orchestrator asks the user back instead of answering. The question is
+    stored as the assistant's turn, so the next message is read as the reply."""
+    stored = SESSIONS.record(user, session_scope, query, question,
+                             conversation_id=conversation_id)
+    if stored == 1:
+        _title_thread(user, session_scope, conversation_id, query, question, lang)
+    aid = confidence.audit_id(user, drive, query, question)
+    result = {"ok": True, "drive": corpus.norm(drive), "user": user,
+              "corpus_id": req_scope.corpus_id,
+              "answer": "%s\n\n---\n**Adatkontroll & Audit Info**\n* Profile: %s\n* Audit ID: %s"
+                        % (question, profile, aid),
+              "backend": "orchestrator (clarify)", "action": None, "profile": profile,
+              "audit_id": aid, "agent": (agent or "").strip().lower() or llm.DEFAULT_AGENT,
+              "confidence": None, "citations": [], "hits": [], "clarify": True}
+    if conversation_id:
+        result["conversation_id"] = conversation_id
+    TRACES.put(aid, {"ts": time.time(), "user": user, "drive": corpus.norm(drive),
+                     "corpus_id": req_scope.corpus_id, "scope": req_scope.as_dict(),
+                     "action": None, "agent": result["agent"], "lang": lang,
+                     "profile": profile, "question": query, "answer": question,
+                     "backend": result["backend"], "confidence": None,
+                     "citations": [], "hits": []})
     return result
 
 
@@ -1105,13 +1303,14 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
     access = (acl.Access.from_dict((job.get("request") or {}).get("access"))
               or ACL.access_for(user, None, None))
     progress = lambda chars, tokens: JOBS.progress(user, drive, job_id, chars, tokens)
+    stage = lambda phase, done, total: JOBS.stage(user, drive, job_id, phase, done, total)
     try:
         code, payload = 200, _answer(user, drive, query, top_k, lang, action,
                                      mode, files, params, agent, history_snapshot,
                                      cancel_event, progress, req_scope,
                                      (job.get("request") or {}).get("profile", "grounded"),
                                      (job.get("request") or {}).get("conversation_id") or None,
-                                     access=access)
+                                     access=access, job_id=job_id, stage_callback=stage)
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -1440,6 +1639,13 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/storage/unlock": self._unlock,
                 "/api/v1/identity/lifecycle": self._identity_lifecycle,
                 "/api/v1/admin/acl/effective": self._admin_acl_effective,
+                "/api/v1/ui/graph/query": self._graph_query,
+                "/api/v1/ui/graph/status": self._graph_status,
+                "/api/v1/ui/graph/review/list": self._graph_review_list,
+                "/api/v1/ui/graph/review/decide": self._graph_review_decide,
+                "/api/v1/ui/graph/profile/get": self._graph_profile_get,
+                "/api/v1/ui/graph/profile/set": self._graph_profile_set,
+                "/api/v1/ui/graph/dossier": self._graph_dossier,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -1644,6 +1850,9 @@ class Handler(BaseHTTPRequestHandler):
             # The ACL changed between the check and the upload: the commit just
             # wrote the older one, so the current one goes in after it.
             _acl_changed(pending[0])
+        if pending is not None and res.get("doc_id"):
+            GRAPH_FORWARD.file(pending[0], corpus.corpus_id_of_path(pending[0]),
+                               res["doc_id"], raw)
         self._send(200, {"ok": True, "chunks": res.get("chunks"),
                          "doc_id": res.get("doc_id"), "pages": res.get("pages")})
 
@@ -1661,6 +1870,7 @@ class Handler(BaseHTTPRequestHandler):
                             {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
                              "path": path, "keep_exact": keep_exact})
         MIRROR.drop_tree(path, keep_exact)
+        GRAPH_FORWARD.drop_tree(path, corpus_id, keep_exact)
         self._send(200, {"ok": True, "removed": res.get("deleted_documents", 0),
                          "deleted_pages": res.get("deleted_pages", 0),
                          "deleted_chunks": res.get("deleted_chunks", 0)})
@@ -1679,7 +1889,15 @@ class Handler(BaseHTTPRequestHandler):
         if not query:
             self._send(400, {"ok": False, "error": "Missing 'query'"})
             return None
-        action, mode, query = parse_action(payload, query)
+        if APP_MODE == APP_ANALYST:
+            if payload.get("action"):
+                self._send(403, {"ok": False,
+                                 "error": "quick actions are not available on this box"})
+                return None
+            # A typed "/summary" is just text here: every message goes to the chat.
+            action, mode = None, None
+        else:
+            action, mode, query = parse_action(payload, query)
         if action in _BARE_QUERY and not query:
             # bare "#action": still retrievable — aim at the task's material.
             query = _BARE_QUERY[action]
@@ -1824,6 +2042,9 @@ class Handler(BaseHTTPRequestHandler):
                              "job_status": job.get("status"),
                              "progress_chars": job.get("progress_chars", 0),
                              "progress_tokens": job.get("progress_tokens", 0),
+                             "progress_phase": job.get("progress_phase"),
+                             "progress_done": job.get("progress_done", 0),
+                             "progress_total": job.get("progress_total", 0),
                              "queue_position": HEAVY_SCHEDULER.position(job_id, user, drive)})
             return
         code = job.get("code") or (200 if job.get("status") in
@@ -1852,6 +2073,9 @@ class Handler(BaseHTTPRequestHandler):
                          "error": job.get("error"),
                          "progress_chars": job.get("progress_chars", 0),
                          "progress_tokens": job.get("progress_tokens", 0),
+                         "progress_phase": job.get("progress_phase"),
+                         "progress_done": job.get("progress_done", 0),
+                         "progress_total": job.get("progress_total", 0),
                          "cancel_requested": bool(job.get("cancel_requested")),
                          "queue_position": HEAVY_SCHEDULER.position(
                              job.get("job_id"), user, drive)})
@@ -2188,6 +2412,9 @@ class Handler(BaseHTTPRequestHandler):
         """Folder listing for the UI (E03). Unlike the /index/get/children
         sync read it checks the identity, the drive scope and the ACL; a folder
         the caller may not see answers exactly like a missing one."""
+        if APP_MODE == APP_ANALYST:
+            self._send(403, {"ok": False, "error": "folder browsing is not available on this box"})
+            return
         vvs = self._read_vvs()
         if vvs is None:
             return
@@ -2263,6 +2490,180 @@ class Handler(BaseHTTPRequestHandler):
             "features": FEATURES, "watchdog_seconds": WATCHDOG_SECONDS,
             "sessions": {"active": SESSIONS.stats().get("active")},
             **totals})
+
+    # -- relationship analysis (E26) ------------------------------------------
+    def _graph_request(self):
+        """(user, payload, scope, access, scope body) of a graph call, or None
+        after the refusal. The scope body is what the graph filters on; the
+        client can narrow the drives (`drives`) but never send its own."""
+        if self._locked_guard():
+            return None
+        vvs = self._read_vvs()
+        if vvs is None:
+            return None
+        user, drive = vvs
+        payload = self._read_json()
+        req_scope = self._scope_for(user, drive, payload)
+        if req_scope is None:
+            return None
+        access = self._access()
+        return (user, payload, req_scope, access,
+                {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()})
+
+    def _graph_post(self, path, body):
+        """The graph's answer, or None after relaying its error."""
+        try:
+            return GRAPH.post(path, body)
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return None
+
+    def _graph_admin(self, user):
+        if (user or "").casefold() in GRAPH_ADMINS:
+            return True
+        self._send(403, {"ok": False, "error": "changing the shared graph is not allowed"})
+        return False
+
+    def _graph_query(self):
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        _, payload, req_scope, access, scope_body = ctx
+        name = str(payload.get("query") or "")
+        params = payload.get("params") or {}
+        if name not in graph.QUERIES or not isinstance(params, dict):
+            self._send(400, {"ok": False, "error": "query must be one of %s with object params"
+                                                   % sorted(graph.QUERIES)})
+            return
+        res = self._graph_post("/query/" + name, dict(params, **scope_body))
+        if res is None:
+            return
+        # Second line of defence, as for RAG contexts: the graph's copy of the
+        # ACL can lag the mirror. A cited document the policy hides fails the call.
+        visible = _visible(access)
+        for doc in (res.get("documents") or {}).values():
+            source = doc.get("source_path") or ""
+            if not req_scope.contains_path(source) or not visible(source):
+                _acl_resync_needed()
+                sys.stderr.write("[adapter] graph: answer cited a hidden document (stale ACL)\n")
+                self._send(503, {"ok": False, "error": "access rules are being synchronised, "
+                                                       "retry shortly"})
+                return
+        self._send(200, res)
+
+    def _graph_status(self):
+        """Processing progress over what this caller may see; queue sizes and
+        totals are box-wide operational numbers without document names."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        _, _, req_scope, access, _ = ctx
+        st = self._graph_post("/ingest/status", {})
+        if st is None:
+            return
+        visible = _visible(access)
+
+        def mine(path):
+            return bool(path) and req_scope.contains_path(path) and visible(path)
+
+        running = st.get("running") or None
+        shown = None
+        if running and mine(running.get("source_path")):
+            shown = {k: running.get(k) for k in ("source_path", "started")}
+        forward = GRAPH_FORWARD.stats()
+        self._send(200, {
+            "ok": True, "queued": st.get("queued", 0), "busy": running is not None,
+            "running": shown,
+            "totals": st.get("totals") or {},
+            "recent": [r for r in st.get("recent") or [] if mine(r.get("source_path"))],
+            "forward": {"pending": forward["pending"], "counts": forward["counts"]},
+            "gpu": gpu_gate.GATE.stats()})
+
+    def _graph_review_list(self):
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        _, payload, _, _, scope_body = ctx
+        res = self._graph_post("/review/list", dict(scope_body,
+                                                    limit=int(payload.get("limit") or 100)))
+        if res is not None:
+            self._send(200, res)
+
+    def _graph_review_decide(self):
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, _, _, scope_body = ctx
+        if not self._graph_admin(user):
+            return
+        res = self._graph_post("/review/decide", dict(
+            scope_body, a=str(payload.get("a") or ""), b=str(payload.get("b") or ""),
+            decision=str(payload.get("decision") or "")))
+        if res is not None:
+            sys.stderr.write("[adapter] graph: review %s by %s\n" % (res.get("decided"), user))
+            self._send(200, res)
+
+    def _graph_profile_get(self):
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user = ctx[0]
+        res = self._graph_post("/profile/get", {})
+        if res is None:
+            return
+        templates = self._graph_post("/profile/templates", {})
+        if templates is None:
+            return
+        self._send(200, {"ok": True, "profile": res.get("profile"),
+                         "templates": templates.get("templates"),
+                         "can_edit": (user or "").casefold() in GRAPH_ADMINS})
+
+    def _graph_profile_set(self):
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, _, _, _ = ctx
+        if not self._graph_admin(user):
+            return
+        res = self._graph_post("/profile/set", {"profile": payload.get("profile")})
+        if res is not None:
+            sys.stderr.write("[adapter] graph: profile set to %s v%s by %s\n" % (
+                (res.get("profile") or {}).get("id"), (res.get("profile") or {}).get("version"),
+                user))
+            self._send(200, res)
+
+    def _graph_dossier(self):
+        """One entity's relations as DOCX/PDF with a source list. Returned as
+        base64 JSON (the ViVeSecBox tunnel does not carry binary bodies) plus
+        the markdown, so the UI can also save it to the drive via /ui/save."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, req_scope, access, scope_body = ctx
+        fmt = docgen.normalize_format(payload.get("format") or "docx")
+        if fmt not in ("docx", "pdf", "md"):
+            self._send(400, {"ok": False, "error": "format must be docx, pdf or md"})
+            return
+        check = _visible(access)
+        try:
+            built = dossier.build(
+                GRAPH, scope_body, lambda p: req_scope.contains_path(p) and check(p),
+                str(payload.get("id") or ""), str(payload.get("lang") or "en").lower(),
+                user, [root.rstrip("/").rsplit("/", 1)[-1] for root in req_scope.drive_roots])
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return
+        if built is None:
+            self._send(404, {"ok": False, "error": "not found"})
+            return
+        text, title = built
+        content, fmt = docgen.render(text, fmt, title=title)
+        safe = re.sub(r"[^\w\- ]+", "", title, flags=re.UNICODE).strip().replace(" ", "_")
+        sys.stderr.write("[adapter] graph: dossier (%s) by %s\n" % (fmt, user))
+        self._send(200, {"ok": True, "name": docgen.with_extension(safe or "dossier", fmt),
+                         "format": fmt, "content_type": docgen.content_type(fmt),
+                         "size": len(content), "text": text,
+                         "content_b64": base64.b64encode(content).decode("ascii")})
 
     def _files_download(self, query):
         vvs = self._read_vvs()
@@ -2600,6 +3001,12 @@ def main():
         threading.Thread(target=_watchdog_loop, daemon=True).start()
     threading.Thread(target=_maintenance_loop, daemon=True).start()
     threading.Thread(target=_acl_loop, daemon=True).start()
+    broker_port = int(os.environ.get("ADAPTER_GPU_BROKER_PORT", "0") or 0)
+    if broker_port:
+        gpu_gate.start_broker(gpu_gate.GATE, llm.OLLAMA_URL, broker_port)
+    print("  GPU broker  :", "127.0.0.1:%d (background model calls wait for chat)"
+          % broker_port if broker_port else "off")
+    print("  Graph       :", GRAPH.url or "off")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

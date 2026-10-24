@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import access as access_filter  # noqa: E402
 import build_info  # noqa: E402
+import retrieval  # noqa: E402
 from store import (  # noqa: E402
     MIN_SCORE,
     REACCENT_ACTIVE,
@@ -199,6 +200,7 @@ class Handler(BaseHTTPRequestHandler):
             "/index/skipped": self._skipped,
             "/rag/search_context": self._search_context,
             "/rag/document_context": self._document_context,
+            "/rag/match_chunks": self._match_chunks,
             "/tools/rag_search_context_tool": self._search_context,
         }
 
@@ -361,6 +363,35 @@ class Handler(BaseHTTPRequestHandler):
         contexts, document = STORE.document_context(corpus_id, source_path, max_tokens,
                                                     access=self._access(body))
         self._ok(contexts=contexts, document=document)
+
+    def _match_chunks(self):
+        """Full coverage: every visible chunk of the scope that matches the terms,
+        in reading order and pages of at most 500 -- for analyses that must read
+        all of them, not the best few. No terms is an error, never "everything";
+        an empty scope matches nothing."""
+        body = self._read_json()
+        scope = normalize_corpus_ids(body.get("corpus_id"), body.get("corpus_ids"))
+        terms = body.get("terms")
+        if (not isinstance(terms, list) or not 1 <= len(terms) <= retrieval.MAX_MATCH_TERMS
+                or any(not isinstance(t, str) or not t.strip() or len(t) > 200 for t in terms)
+                or not retrieval.fts_query(terms)):
+            raise HttpError(400, "terms must be 1..%d words or names" % retrieval.MAX_MATCH_TERMS)
+        mode = body.get("mode", "any")
+        if mode not in ("any", "all"):
+            raise HttpError(400, "mode must be any or all")
+        prefixes = body.get("path_prefixes")
+        if prefixes is not None and (not isinstance(prefixes, list) or len(prefixes) > 20 or any(
+                not isinstance(p, str) or not p.strip() for p in prefixes)):
+            raise HttpError(400, "path_prefixes must be a list of at most 20 paths")
+        limit, offset = body.get("limit", 200), body.get("offset", 0)
+        if (isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500
+                or isinstance(offset, bool) or not isinstance(offset, int) or offset < 0):
+            raise HttpError(400, "limit must be 1..500 and offset >= 0")
+        chunks, counts = STORE.match_chunks(scope, terms, mode, access=self._access(body),
+                                            path_prefixes=prefixes, limit=limit, offset=offset)
+        end = offset + len(chunks)
+        self._ok(chunks=chunks, total=counts["total"], documents=counts["documents"],
+                 next_offset=end if end < counts["total"] else None)
 
 
 def main():

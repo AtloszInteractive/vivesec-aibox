@@ -49,13 +49,15 @@ import {
   type AdapterConversationTurn,
   type AdapterJobStatus,
   type AdapterJobSummary,
+  type AdapterJobProgress,
   type AdapterVoice,
+  type AdapterApp,
   type ChatProfile,
   type ChatPolicy,
 } from "../rag/adapter-client";
 import type { BoxVersion } from "../build-info";
 
-export type { ChatProfile, ChatPolicy } from "../rag/adapter-client";
+export type { ChatProfile, ChatPolicy, AdapterJobProgress } from "../rag/adapter-client";
 
 const ACTIONS = [
   "search",
@@ -130,6 +132,7 @@ export type RagHealth = {
   mode?: string;
   /** On-box speech engines; absent/false means the box has no voice backend. */
   voice?: AdapterVoice;
+  app?: AdapterApp;
   chatPolicy?: ChatPolicy;
   version?: BoxVersion | null;
   error?: string;
@@ -148,6 +151,7 @@ export async function ragHealth(): Promise<RagHealth> {
       index_ready: status.fsReady,
       embed_backend: status.features.join(", ") || "basic",
       voice: status.voice,
+      app: status.app,
       chatPolicy: status.chatPolicy,
       version: status.version ?? null,
       mode: status.uiReady
@@ -191,7 +195,13 @@ const askInput = z.object({
   conversationId: z.string().optional(),
 });
 
-export async function askRag({ data }: { data: z.input<typeof askInput> }): Promise<RagAskResult> {
+export async function askRag({
+  data,
+  onProgress,
+}: {
+  data: z.input<typeof askInput>;
+  onProgress?: (progress: AdapterJobProgress) => void;
+}): Promise<RagAskResult> {
   const empty: RagAskResult = {
     ok: false,
     answer: "",
@@ -201,27 +211,30 @@ export async function askRag({ data }: { data: z.input<typeof askInput> }): Prom
     citations: [],
   };
   try {
-    const result = await adapterAsk({
-      query: data.query,
-      profile: data.profile,
-      lang: langName(data.lang),
-      drive: data.drive,
-      action: data.action as AdapterAction | undefined,
-      mode: data.mode,
-      audience: data.audience,
-      purpose: data.purpose,
-      coverage: data.coverage,
-      report_type: data.report_type,
-      aspect: data.aspect,
-      keywords: data.keywords,
-      outcome: data.outcome,
-      situation: data.situation,
-      extra: data.extra,
-      files: data.files,
-      drives: data.drives,
-      conversationId: data.conversationId,
-      topK: data.action ? undefined : 5,
-    });
+    const result = await adapterAsk(
+      {
+        query: data.query,
+        profile: data.profile,
+        lang: langName(data.lang),
+        drive: data.drive,
+        action: data.action as AdapterAction | undefined,
+        mode: data.mode,
+        audience: data.audience,
+        purpose: data.purpose,
+        coverage: data.coverage,
+        report_type: data.report_type,
+        aspect: data.aspect,
+        keywords: data.keywords,
+        outcome: data.outcome,
+        situation: data.situation,
+        extra: data.extra,
+        files: data.files,
+        drives: data.drives,
+        conversationId: data.conversationId,
+        topK: data.action ? undefined : 5,
+      },
+      onProgress,
+    );
 
     return ragResultFromAdapter(result);
   } catch (err) {

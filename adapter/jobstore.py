@@ -124,6 +124,11 @@ class JobStore:
             changes["progress_tokens"] = int(tokens)
         return self.update(user, drive, job_id, **changes)
 
+    def stage(self, user, drive, job_id, phase, done=0, total=0):
+        """Where a multi-step job is: a phase name and done/total steps of it."""
+        return self.update(user, drive, job_id, progress_phase=str(phase),
+                           progress_done=int(done or 0), progress_total=int(total or 0))
+
     def wait(self, user, drive, job_id, timeout):
         job = self.get(user, drive, job_id)
         if not job or job.get("status") in _TERMINAL:

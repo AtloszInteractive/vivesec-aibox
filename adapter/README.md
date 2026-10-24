@@ -24,8 +24,10 @@ ViVeSecBox ──ViVeSec v2──▶ adapter ──RAG contract──▶ rag_ser
 | `POST /api/v1/index/upsert/acl`                | `POST /index/acl/update` (E03)          |
 | `POST /api/v1/index/drop/tree`                 | `POST /index/drop/tree`                 |
 | `POST /api/v1/ui/query`                        | `POST /rag/search_context`              |
+|   *(analyst full reading, `read_all`)*         | `POST /rag/match_chunks`                |
 | `POST /api/v1/ui/files/children`               | *(mirror, scope + ACL; E03)*            |
 | `GET  /api/v1/ui/insight`                      | `POST /rag/scope_stats` (E03)           |
+| `POST /api/v1/ui/graph/*`                      | graph_service `/query/*` ... (E26)      |
 | `POST /api/v1/storage/unlock`                  | *(stub until LUKS/init wired)*          |
 
 Key translation decisions:
@@ -378,6 +380,132 @@ they prove routing, ACL boundaries, history separation, audit and job behavior,
 not real-model factual accuracy. Real-model acceptance must cover all supported
 languages, missing company data, mixed facts/advice, prompt injection, and
 quick-action regression before customer rollout.
+
+## Relationship analysis (E26)
+
+Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
+
+- **Sync**: after the RAG committed a synced file, its bytes go to a background
+  forwarder (`graph.py`) that hands them to the graph's extraction queue; a
+  delete (`/index/drop/tree`) and an ACL push follow in the same FIFO order. The
+  document ACL is computed when the file is sent, so it is never older than a
+  change made while it waited. A busy (429) or unreachable graph is retried; a
+  full forward queue (`ADAPTER_GRAPH_QUEUE_MB`) or a file over
+  `ADAPTER_GRAPH_MAX_FILE_MB` is dropped and counted (re-sync to fill the gap).
+  Queued bytes stay in memory.
+- **Queries**: `POST /api/v1/ui/graph/query` `{query, params, drives?}` with
+  `query` one of find, entity, path, common, copresence, shared, timeline,
+  neighborhood, communities, ranking. The adapter adds `corpus_ids` and
+  `access` itself (the client's own values are overwritten). Every document an
+  answer cites is re-checked against the current policy; a hidden one (the
+  graph's ACL copy lags) fails the call with 503 and schedules a resync.
+- **Chat**: a plain question (no quick action) that names entities the graph
+  knows (`/query/mentioned`: names with Hungarian case endings, identifier
+  patterns) gets the path between the first two and their direct relations as
+  extra contexts (`graph_context.py`), each with its verbatim quote, document
+  and page, ahead of the RAG excerpts; the response carries `graph`
+  `{entities, facts}`. Facts whose documents the caller may not see are dropped.
+  `ADAPTER_GRAPH_CHAT=off` disables it; a graph error never blocks the answer.
+- **Progress**: `POST /api/v1/ui/graph/status` lists only files the caller may
+  see; queue sizes and totals are box-wide numbers.
+- **Review and profile**: `/api/v1/ui/graph/review/list` (scoped),
+  `/review/decide` and `/profile/set` only for users in `ADAPTER_GRAPH_ADMINS`
+  (empty: nobody); `/profile/get` returns the profile, the templates and
+  `can_edit`.
+- **Dossier**: `POST /api/v1/ui/graph/dossier` `{id, format: docx|pdf|md, lang,
+  drives?}` renders one entity's basic data, direct relations, timeline and a
+  numbered source list (path, page, verbatim quote) with `docgen.py`.
+  Evidence from documents the caller may not see is left out, and so is a
+  relation left without evidence. Response: `{name, format, content_type, size,
+  text, content_b64}` (base64, because the ViVeSecBox tunnel carries JSON
+  only); `text` is the markdown, which the UI can save with `/ui/save`.
+- **GPU priority**: with `ADAPTER_GPU_BROKER_PORT` set, a loopback-only broker
+  (`gpu_gate.py`) forwards `/api/chat`, `/api/generate` and
+  `/v1/chat/completions` to Ollama one background call at a time, only while no
+  adapter model call runs (plus `ADAPTER_GPU_GRACE_SECONDS`), and at the latest
+  after `ADAPTER_GPU_MAX_WAIT_SECONDS`. Set the graph's `GRAPH_LLM_URL` to it. A
+  background call already running is not interrupted.
+
+Tests: `python -m unittest graph_integration_test` (real RAG and graph service,
+fake extraction model; proves plumbing and filtering, not extraction quality).
+
+### Analyst mode (`ADAPTER_APP_MODE=analyst`)
+
+The box offers chat + relationships only. Quick actions (`action` in the body)
+and `/ui/files/children` answer 403, a typed `/summary` is plain text, and
+`/api/v1/status` reports `app {mode, drive_browser, quick_actions,
+orchestrator}` so the UI hides the drive browser, the results column and the
+slash menu. Source viewing (`/ui/file`) and saving (`/ui/save`) stay.
+
+With `GRAPH_URL` set, every chat message goes through the orchestrator
+(`orchestrator.py`): one JSON planning call chooses graph tools (relations,
+connection, common, timeline, copresence, shared_identifiers, most_connected,
+and the general ones: `find_pattern` = chains of up to 3 typed links,
+`count` = links counted and ranked by entity / linked entity / month / year /
+relation / linked kind, `sequence` = one relation followed by another within N
+days), a standalone document search, or a question back to the user. The
+planner gets the active domain profile's kinds and relations (cached 60 s), so
+the same tools serve any customer profile. With `"more": true` the planner sees
+a summary of the results (rankings with their top lines) and may add calls, at
+most 3 rounds; a call already run is not repeated, and a round of repeats ends
+the planning. The adapter runs
+the tools itself in the caller's scope; the model only names entities, kinds and
+relations, a kind word passed as a name ("Fogvatartott") filters by that kind,
+and an unknown kind or relation skips that query with a note (never
+a wider search). Counts come from the graph, never from the model. Either end
+of a link may be the counted or pattern-starting side.
+Namesakes (separate records with the same name) are used together with a note
+when named directly; a partial name that fits different entities is asked back
+with the options. Patterns, sequences and per-entity counts follow node ids, so
+records awaiting an administrator's same-name merge (graph review) are not
+joined; when such a query comes back empty or ranks entities, the answer notes
+how many pairs await a decision in the caller's visible documents (graph notes
+reach the answer model as SEARCH NOTES; for an empty pattern or sequence the
+adapter also shows the reason under the answer, since the model may drop it).
+`ADAPTER_GRAPH_NAME_JOIN=same_name` (default `off`; any other value is off)
+lets patterns, sequences and counts treat the visible person records of one
+name as one person for that query (`graph_service/namesakes.py`; the graph is
+not changed). Records are never joined when their kinds differ (an inmate and a
+visitor), when visible birth dates, mothers' names or ID numbers differ, or
+when an administrator decided the pair "separate". The answer then lists the
+people joined by name alone, under the answer as well, and an empty result
+mentions how many names were left apart because their records conflict. This
+is an identity rule for the customer to confirm; a strong key in the source
+documents (e.g. an inmate registry number) is the better fix where available.
+Each fact becomes a cited context with its quote (at most
+`ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
+is stored as the assistant's turn and answered with `clarify: true`. A failed or
+unusable plan falls back to the plain path (condense + graph facts).
+Tests: `orchestrator_test`, `graph_integration_test`; graph side:
+`graph_service/analytics_test.py`, `graph_service/namesakes_test.py`.
+
+#### Full reading (`read_all`)
+
+When a message needs every case or mention in the documents themselves ("list
+every report that mentions X", "everything said about Y"), the planner may add
+`read_all {terms, mode}` (first round only; `ADAPTER_DEEP_READ=off` removes it,
+default on). Instead of the top-k search, `deep.py` then reads EVERY passage of
+the caller's scope that contains the terms: the RAG lists them with
+`/rag/match_chunks` (scope and ACL in the query, reading order, pages of 500;
+a term word of 4+ letters matches as a prefix, so inflected forms are found;
+the words of a multi-word term must lie close together). The passages are read
+in groups of `ADAPTER_DEEP_BATCH_CHARS` characters (default 9000); each group
+is one JSON model call that returns findings with a verbatim quote, and a
+finding whose quote does not occur in its passage is dropped. The findings
+(at most `ADAPTER_DEEP_MAX_FINDINGS`, default 120) become cited contexts for
+the usual answer step, with a coverage note ("N passages in M documents were
+read"). At most `ADAPTER_DEEP_MAX_CHUNKS` passages are read (default 400); when
+more match, the note says the result is partial and asks for a narrower
+question. Graph tools of the same plan still run.
+
+The reading holds the heavy scheduler slot (`HeavyScheduler.slot`), so its
+model calls queue with the other heavy jobs; cancelling the job stops it before
+the next group. The job reports `progress_phase` (`queued`, `collect`, `read`,
+`write`) with `progress_done`/`progress_total` in `/ui/poll` and `/ui/jobs`, and
+the UI shows them in the waiting bubble and the job list. The response carries
+`deep {terms, matched, read, documents, groups, findings, partial, seconds}`.
+Tests: `deep_test`, `scheduler_test`, `graph_integration_test`; RAG side:
+`rag_service/match_chunks_test.py`.
 
 ## Test
 

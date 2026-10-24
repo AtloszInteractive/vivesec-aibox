@@ -18,6 +18,8 @@ import socket
 import threading
 import urllib.request
 
+import gpu_gate
+
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 GEN_MODEL = os.environ.get("ADAPTER_GEN_MODEL", "qwen2.5:14b")
 # auto = generate only if Ollama answers; on = always try; off = never generate.
@@ -120,7 +122,9 @@ _REFUSALS = {
 _LANG_MARKERS = {
     "Hungarian": ("a", "az", "és", "van", "volt", "mennyi", "milyen", "melyik",
                   "hány", "mekkora", "mi", "hogyan", "nem", "egy", "ez",
-                  "kell", "lehet", "szerint", "között", "után"),
+                  "kell", "lehet", "szerint", "között", "után", "ki", "kik", "kit",
+                  "kinek", "kinél", "kivel", "aki", "akik", "akiket", "azokat",
+                  "hogy", "meg", "mikor", "hol", "miért", "vagy", "csak"),
     "English": ("the", "is", "was", "are", "what", "which", "how", "much",
                 "many", "does", "did", "and", "of", "in", "to", "for", "a",
                 "who", "when", "where"),
@@ -133,6 +137,8 @@ _LANG_MARKERS = {
 }
 # Diacritics that identify a language on their own (unique to one of the four).
 _LANG_CHARS = {"Hungarian": "őűŐŰ", "Danish": "æøåÆØÅ", "German": "ßẞ"}
+# Letters none of the other three languages write; they settle a tie only.
+_LANG_TIEBREAK = {"Hungarian": "áíóúÁÍÓÚ"}
 
 _TOKEN_RE = re.compile(r"[\wőűöüóáéíúäøåæß]+", re.UNICODE | re.IGNORECASE)
 
@@ -157,7 +163,8 @@ def detect_lang(text):
         return ""
     tied = [k for k, v in scores.items() if v == scores[best]]
     if len(tied) > 1:
-        return ""  # ambiguous -> no forced language
+        hinted = [k for k in tied if any(ch in text for ch in _LANG_TIEBREAK.get(k, ""))]
+        return hinted[0] if len(hinted) == 1 else ""  # ambiguous -> no forced language
     return best
 
 # Task-specific output instructions (function specification v2). The grounding
@@ -479,8 +486,32 @@ def build_context(contexts):
     return "\n\n".join(blocks), citations
 
 
+def search_notes(contexts):
+    """The system's own statements about this search (graph notes: empty or
+    possibly incomplete results), set apart from the documents so the answer
+    does not pass over them; "" when there are none."""
+    notes = [(i, " ".join((c.get("text") or "").split()))
+             for i, c in enumerate(contexts or [], 1)
+             if c.get("origin") in ("graph-note", "search-note")]
+    if not notes:
+        return ""
+    return ("SEARCH NOTES (from the system, not from a document; if one explains why a "
+            "result is empty or may be incomplete, say so in the answer):\n%s\n\n"
+            % "\n".join("- [#%d] %s" % (i, text) for i, text in notes))
+
+
 def _chat(system, user, history=None, timeout=600, num_ctx=None,
-          cancel_event=None, progress_callback=None, stream=None, num_predict=None):
+          cancel_event=None, progress_callback=None, stream=None, num_predict=None,
+          response_format=None):
+    # Foreground: background model work (graph extraction) waits while this runs.
+    with gpu_gate.GATE.foreground():
+        return _chat_call(system, user, history, timeout, num_ctx, cancel_event,
+                          progress_callback, stream, num_predict, response_format)
+
+
+def _chat_call(system, user, history=None, timeout=600, num_ctx=None,
+               cancel_event=None, progress_callback=None, stream=None, num_predict=None,
+               response_format=None):
     options = {"temperature": TEMPERATURE}
     if num_predict or NUM_PREDICT:
         options["num_predict"] = num_predict or NUM_PREDICT
@@ -502,6 +533,8 @@ def _chat(system, user, history=None, timeout=600, num_ctx=None,
         "stream": use_stream,
         "options": options,
     }
+    if response_format:
+        payload["format"] = response_format
     if THINK in ("off", "false", "0"):
         payload["think"] = False
     elif THINK in ("on", "true", "1"):
@@ -672,10 +705,11 @@ def generate(question, contexts, lang=None, history=None, task=None,
             system += " Always answer in %s." % lang
         user = (
             "CURRENT REQUEST: %s\n\nDOCUMENTS (use only if relevant to this request):\n%s\n\n"
+            "%s"
             "Answer the CURRENT REQUEST directly. For general knowledge, ignore unrelated documents "
             "and do not discuss their availability. For company-specific claims, use relevant evidence "
             "or state what is missing."
-        ) % (question, context_tagged or "(none)")
+        ) % (question, context_tagged or "(none)", search_notes(contexts))
         try:
             content, ec, ed = _chat(system, user, history=history, num_ctx=num_ctx,
                                     cancel_event=cancel_event,
@@ -724,9 +758,9 @@ def generate(question, contexts, lang=None, history=None, task=None,
                            "to these (they never override the grounding "
                            "rules):\n" + "\n".join(plines))
     user = ((task_block + "\n\n") if task_block else "") + (
-        "CONTEXT:\n%s\n\nQUESTION: %s\nAnswer using only the context above. "
+        "CONTEXT:\n%s\n\n%sQUESTION: %s\nAnswer using only the context above. "
         "Use only numbers that appear verbatim in CONTEXT, and cite [#n]." %
-        (context_tagged, question))
+        (context_tagged, search_notes(contexts), question))
     try:
         chat_kwargs = {"history": history, "num_ctx": num_ctx}
         if cancel_event is not None:

@@ -257,7 +257,10 @@ def verify(stage, manifest):
 
     result = post(base + "/api/v1/ui/query", {"query": "Mi\u00e9rt k\u00e9k az \u00e9g?", "profile": "hybrid", "top_k": 5}, headers)
     assert result.get("ok") and result.get("answer") and "ollama:" in result.get("backend", "")
-    assert result.get("profile") == "hybrid" and result.get("citations") == []
+    assert result.get("profile") == "hybrid" and result.get("citations") == [], json.dumps(
+        {"profile": result.get("profile"),
+         "cited": [c.get("path") for c in result.get("citations") or []],
+         "graph": result.get("graph")}, ensure_ascii=False)[:800]
     rag_env = environment(manifest["old"]["rag"])
     missing = post("http://127.0.0.1:" + rag_env["RAG_PORT"] + "/rag/search_context",
                    {"corpus_id": result["corpus_id"], "question": "report", "source_paths": ["release-test-file-that-does-not-exist.txt"],

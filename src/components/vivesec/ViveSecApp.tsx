@@ -57,6 +57,7 @@ import {
   type ScopeDrive,
   type ChatProfile,
   type ChatPolicy,
+  type AdapterJobProgress,
 } from "@/lib/api/rag.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
 import { useVoice } from "./use-voice";
@@ -117,7 +118,9 @@ import {
   ThumbsUp,
   ThumbsDown,
   Trash2,
+  Network,
 } from "lucide-react";
+import { GraphPanel, type GraphSource } from "./GraphPanel";
 
 /* ---------- Types ---------- */
 // One command per function specification v2 quick action (F1-F7), plus /data.
@@ -217,7 +220,15 @@ type Message =
       text: string;
       tone?: "normal" | "error";
     }
-  | { id: string; role: "ai"; ts: string; name: string; kind: "thinking"; startedAt: number }
+  | {
+      id: string;
+      role: "ai";
+      ts: string;
+      name: string;
+      kind: "thinking";
+      startedAt: number;
+      stage?: AdapterJobProgress;
+    }
   | ({
       id: string;
       role: "ai";
@@ -738,6 +749,7 @@ function ViveSecAppInner() {
   const [input, setInput] = useState("");
   const [showSlash, setShowSlash] = useState(false);
   const [driveOpen, setDriveOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<DriveFile | null>(null);
   const [previewCitation, setPreviewCitation] = useState<Citation | null>(null);
   const [viewerMode, setViewerMode] = useState<"side" | "split">("side");
@@ -815,6 +827,9 @@ function ViveSecAppInner() {
   // Which speech engines this box actually has (adapter/voice.py); both off by
   // default, so a box without a voice backend looks exactly as it does today.
   const [voiceCaps, setVoiceCaps] = useState({ stt: false, tts: false });
+  // Analyst boxes (ADAPTER_APP_MODE=analyst) offer chat + relationships only; the
+  // drive browser and quick actions stay in the code but are not shown.
+  const [analyst, setAnalyst] = useState(false);
 
   const probeBox = useCallback(async () => {
     setBoxState((s) => (s === "online" ? s : "probing"));
@@ -824,6 +839,7 @@ function ViveSecAppInner() {
       setBoxDetail(h.ok ? (h.mode ?? "") : (h.error ?? ""));
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
       if (h.ok) setBoxVersion(h.version ?? null);
+      if (h.ok) setAnalyst(h.app?.mode === "analyst");
       if (h.ok) {
         const policy = h.chatPolicy;
         setChatPolicy(policy && ["locked_hybrid", "selectable_grounded", "selectable_hybrid"].includes(policy.policy)
@@ -971,9 +987,9 @@ function ViveSecAppInner() {
   );
 
   useEffect(() => {
-    if (!drive || boxState !== "online") return;
+    if (!drive || boxState !== "online" || analyst) return;
     void loadFolder(drive);
-  }, [drive, boxState, loadFolder]);
+  }, [drive, boxState, loadFolder, analyst]);
 
   // Searching spans the whole drive, so it goes back to the box (`#search
   // files:`) instead of filtering the folder currently on screen.
@@ -1699,6 +1715,11 @@ function ViveSecAppInner() {
                     ? "Interrupted"
                     : "Failed",
           );
+    const jobStage = stageLabel(tm, {
+      phase: job.progress_phase,
+      done: job.progress_done,
+      total: job.progress_total,
+    });
     return (
       <div key={job.job_id} className="flex min-h-12 items-center gap-1 py-1">
         <button
@@ -1731,7 +1752,10 @@ function ViveSecAppInner() {
               )}
             </div>
             <div className="text-[10.5px] text-white/40">{status}</div>
-            {job.status === "running" && (job.progress_tokens ?? 0) > 0 && (
+            {job.status === "running" && jobStage && (
+              <div className="text-[10px] text-lime-200/60">{jobStage}</div>
+            )}
+            {job.status === "running" && !job.progress_phase && (job.progress_tokens ?? 0) > 0 && (
               <div className="text-[10px] text-lime-200/60">
                 {job.progress_tokens} {tm("tokens")} · {job.progress_chars ?? 0} {tm("chars")}
               </div>
@@ -1828,7 +1852,7 @@ function ViveSecAppInner() {
     // typed "#action" prefix (adapter/service.py parse_action) — the UI's "/"
     // commands must be translated, otherwise the structured task instruction
     // (F1-F7) is lost and every command degrades to a plain question.
-    const { cmd, rest } = splitCommand(v);
+    const { cmd, rest } = analyst ? { cmd: null, rest: v } : splitCommand(v);
     const action = cmd ? LIVE_ACTIONS[cmd] : undefined;
     // The dialog answers that describe WHAT to produce belong in the question;
     // audience/purpose only shape tone and travel as adapter PARAMETERS. The
@@ -1905,6 +1929,12 @@ function ViveSecAppInner() {
     try {
       const res = await askRag({
         data: requestData,
+        onProgress: (stage) =>
+          setMessages((all) =>
+            all.map((m) =>
+              m.id === loadingId && "kind" in m && m.kind === "thinking" ? { ...m, stage } : m,
+            ),
+          ),
       });
       if (res.backgroundJobId) {
         setMessages((all) => all.filter((message) => message.id !== loadingId));
@@ -1976,7 +2006,7 @@ function ViveSecAppInner() {
     setShowSlash(false);
     pushUser(v);
 
-    const { cmd, rest } = splitCommand(v);
+    const { cmd, rest } = analyst ? { cmd: null, rest: v } : splitCommand(v);
     // /data is UI-side: platform telemetry, not a corpus answer.
     if (cmd === "/data") {
       runData();
@@ -2262,11 +2292,21 @@ function ViveSecAppInner() {
             </div>
             <div className="ml-auto flex items-center gap-2">
               <button
-                onClick={() => setDriveOpen((v) => !v)}
-                className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                onClick={() => setGraphOpen((v) => !v)}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                style={graphOpen ? { borderColor: `${LIME}88` } : undefined}
               >
-                <Laptop className="h-3.5 w-3.5" /> {driveOpen ? t.hideDrive : t.browseDrive}
+                <Network className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{tm("Relationships")}</span>
               </button>
+              {!analyst && (
+                <button
+                  onClick={() => setDriveOpen((v) => !v)}
+                  className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                >
+                  <Laptop className="h-3.5 w-3.5" /> {driveOpen ? t.hideDrive : t.browseDrive}
+                </button>
+              )}
               {/* AI Box connection state. There is no offline answer mode: when
                 the box is unreachable the composer is blocked instead of
                 showing anything the box did not produce. */}
@@ -2437,6 +2477,7 @@ function ViveSecAppInner() {
                     </button>
                   ))}
                 </div>}
+                {!analyst && (
                 <button
                   onClick={() => setMobilePane("results")}
                   className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden"
@@ -2452,6 +2493,7 @@ function ViveSecAppInner() {
                     </span>
                   )}
                 </button>
+                )}
                 <div className="relative ml-auto">
                   <button
                     onClick={() => setAgentMenuOpen((v) => !v)}
@@ -2553,7 +2595,7 @@ function ViveSecAppInner() {
               {/* Composer */}
               <div className="relative border-t border-white/5 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
                 {/* Floating browse drive (matches screenshot) */}
-                {!driveOpen && (
+                {!driveOpen && !analyst && (
                   <div className="pointer-events-none absolute -top-12 right-4 sm:right-8">
                     <button
                       onClick={() => setDriveOpen(true)}
@@ -2567,7 +2609,7 @@ function ViveSecAppInner() {
                 {/* Quick actions live in the results column now (they produce
                   deliverables, not chat turns) — on mobile that column is a tab
                   away, so a shortcut back to it stays here. */}
-                <div className="mx-auto mb-2 flex max-w-3xl lg:hidden">
+                <div className={`mx-auto mb-2 max-w-3xl lg:hidden ${analyst ? "hidden" : "flex"}`}>
                   <button
                     onClick={() => setMobilePane("results")}
                     disabled={!!wizard}
@@ -2597,7 +2639,7 @@ function ViveSecAppInner() {
                   lives in the adapter (llm.py TASK_INSTRUCTIONS); canned
                   sub-prompts here would land in the retrieval query and
                   dilute it. */}
-                {showSlash && !wizard && (
+                {showSlash && !wizard && !analyst && (
                   <div className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border border-white/10 bg-[#23272B] shadow-xl max-h-[55vh] overflow-y-auto">
                     {SLASH_COMMANDS.filter((s) => s.cmd.startsWith(input.split(" ")[0] || "/")).map(
                       (s) => {
@@ -2783,8 +2825,8 @@ function ViveSecAppInner() {
 
             {/* Results column — quick actions and the cards they produce */}
             <section
-              className={`h-full min-w-0 flex-1 basis-0 flex-col border-white/5 transition-all duration-500 lg:order-2 lg:flex lg:border-l ${
-                mobilePane === "results" ? "flex" : "hidden"
+              className={`h-full min-w-0 flex-1 basis-0 flex-col border-white/5 transition-all duration-500 lg:order-2 lg:border-l ${
+                analyst ? "hidden" : `lg:flex ${mobilePane === "results" ? "flex" : "hidden"}`
               }`}
             >
               <div className="flex items-center gap-2 border-b border-white/5 px-4 py-2.5">
@@ -3113,6 +3155,7 @@ function ViveSecAppInner() {
                 }}
                 onClearCitation={() => setPreviewCitation(null)}
               >
+                {!analyst && (
                 <div className="border-t border-white/5 p-3">
                   <button
                     className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-40"
@@ -3123,11 +3166,12 @@ function ViveSecAppInner() {
                     <Zap className="h-3.5 w-3.5" /> Analyze with AI
                   </button>
                 </div>
+                )}
               </PdfPreviewPane>
             )}
 
             {/* Drive — hidden while a document is open above it */}
-            {!previewFile && (
+            {!previewFile && !analyst && (
               <DrivePanel
                 open={driveOpen}
                 onClose={() => {
@@ -3190,6 +3234,21 @@ function ViveSecAppInner() {
                   analyzeDocument(f);
                 }}
                 getFile={(id) => files.find((f) => f.id === id)}
+              />
+            )}
+            {graphOpen && (
+              <GraphPanel
+                drive={drive}
+                onClose={() => setGraphOpen(false)}
+                onOpenSource={(s: GraphSource) => {
+                  setGraphOpen(false);
+                  openCitation({
+                    fileId: s.path,
+                    page: s.page,
+                    label: s.path.split("/").pop() ?? s.path,
+                    snippet: s.quote,
+                  });
+                }}
               />
             )}
           </div>
@@ -3954,7 +4013,7 @@ function MessageView({
         </div>
       )}
 
-      {msg.kind === "thinking" && <ThinkingBubble startedAt={msg.startedAt} />}
+      {msg.kind === "thinking" && <ThinkingBubble startedAt={msg.startedAt} stage={msg.stage} />}
 
       {msg.kind === "summary" && (
         <SummaryCard msg={msg} onToggle={onToggleAction} onEdit={onEdit} />
@@ -3979,9 +4038,28 @@ function MessageView({
   );
 }
 
+/** The phase of a multi-step job (a full reading), or null for a plain one. */
+function stageLabel(
+  tm: (text: string) => string,
+  stage: { phase?: string | null; done?: number; total?: number } | undefined,
+): string | null {
+  switch (stage?.phase) {
+    case "queued":
+      return tm("Waiting for the analysis slot…");
+    case "collect":
+      return tm("Collecting every matching passage…");
+    case "read":
+      return `${tm("Reading passages")} ${(stage.done ?? 0) + 1}/${stage.total ?? 0}`;
+    case "write":
+      return tm("Writing the answer…");
+    default:
+      return null;
+  }
+}
+
 /** Waiting state for a local answer. The elapsed counter is the honest part:
  *  it proves the request is still alive when generation takes a while. */
-function ThinkingBubble({ startedAt }: { startedAt: number }) {
+function ThinkingBubble({ startedAt, stage }: { startedAt: number; stage?: AdapterJobProgress }) {
   const { tm } = useLang();
   const [elapsed, setElapsed] = useState(0);
 
@@ -4008,7 +4086,9 @@ function ThinkingBubble({ startedAt }: { startedAt: number }) {
           />
         ))}
       </span>
-      <span className="vvs-think-label text-[13.5px]">{tm("The local model is thinking…")}</span>
+      <span className="vvs-think-label text-[13.5px]">
+        {stageLabel(tm, stage) ?? tm("The local model is thinking…")}
+      </span>
       {elapsed >= 3 && <span className="text-[11px] tabular-nums text-white/35">{elapsed}s</span>}
     </div>
   );
