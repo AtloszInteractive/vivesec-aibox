@@ -24,6 +24,7 @@ ViVeSecBox ──ViVeSec v2──▶ adapter ──RAG contract──▶ rag_ser
 | `POST /api/v1/index/upsert/acl`                | `POST /index/acl/update` (E03)          |
 | `POST /api/v1/index/drop/tree`                 | `POST /index/drop/tree`                 |
 | `POST /api/v1/ui/query`                        | `POST /rag/search_context`              |
+|   *(analyst full reading, `read_all`)*         | `POST /rag/match_chunks`                |
 | `POST /api/v1/ui/files/children`               | *(mirror, scope + ACL; E03)*            |
 | `GET  /api/v1/ui/insight`                      | `POST /rag/scope_stats` (E03)           |
 | `POST /api/v1/ui/graph/*`                      | graph_service `/query/*` ... (E26)      |
@@ -477,6 +478,34 @@ is stored as the assistant's turn and answered with `clarify: true`. A failed or
 unusable plan falls back to the plain path (condense + graph facts).
 Tests: `orchestrator_test`, `graph_integration_test`; graph side:
 `graph_service/analytics_test.py`, `graph_service/namesakes_test.py`.
+
+#### Full reading (`read_all`)
+
+When a message needs every case or mention in the documents themselves ("list
+every report that mentions X", "everything said about Y"), the planner may add
+`read_all {terms, mode}` (first round only; `ADAPTER_DEEP_READ=off` removes it,
+default on). Instead of the top-k search, `deep.py` then reads EVERY passage of
+the caller's scope that contains the terms: the RAG lists them with
+`/rag/match_chunks` (scope and ACL in the query, reading order, pages of 500;
+a term word of 4+ letters matches as a prefix, so inflected forms are found;
+the words of a multi-word term must lie close together). The passages are read
+in groups of `ADAPTER_DEEP_BATCH_CHARS` characters (default 9000); each group
+is one JSON model call that returns findings with a verbatim quote, and a
+finding whose quote does not occur in its passage is dropped. The findings
+(at most `ADAPTER_DEEP_MAX_FINDINGS`, default 120) become cited contexts for
+the usual answer step, with a coverage note ("N passages in M documents were
+read"). At most `ADAPTER_DEEP_MAX_CHUNKS` passages are read (default 400); when
+more match, the note says the result is partial and asks for a narrower
+question. Graph tools of the same plan still run.
+
+The reading holds the heavy scheduler slot (`HeavyScheduler.slot`), so its
+model calls queue with the other heavy jobs; cancelling the job stops it before
+the next group. The job reports `progress_phase` (`queued`, `collect`, `read`,
+`write`) with `progress_done`/`progress_total` in `/ui/poll` and `/ui/jobs`, and
+the UI shows them in the waiting bubble and the job list. The response carries
+`deep {terms, matched, read, documents, groups, findings, partial, seconds}`.
+Tests: `deep_test`, `scheduler_test`, `graph_integration_test`; RAG side:
+`rag_service/match_chunks_test.py`.
 
 ## Test
 

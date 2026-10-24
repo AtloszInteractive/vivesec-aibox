@@ -449,6 +449,53 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertEqual(0, out["graph"]["calls"][0]["facts"])
         self.assertRegex(out["answer"], r"^Nincs ilyen\.\n\n> .*\b4\b.*\n\n---\n")
 
+    def test_a_full_reading_reads_every_visible_passage_in_the_heavy_slot(self):
+        import deep
+        import llm
+
+        service = self.service
+        plan = ('{"action": "tools", "calls": [{"tool": "read_all", "args": '
+                '{"terms": ["Kovács János"]}}], "search": "Kovács János"}')
+        prompts = []
+
+        def model(system, user, **kw):
+            prompts.append((system, user))
+            if system == deep.MAP_SYSTEM:
+                return ('{"findings": [{"excerpt": 1, "quote": "Kovács János és Nagy Éva", '
+                        '"note": "Nagy Évával találkozott."}]}'), 0, 0
+            return plan, 0, 0
+
+        def echo(query, contexts, **_kw):
+            return "\n".join(c.get("text") or "" for c in contexts), "echo"
+
+        with patch.object(service, "APP_MODE", service.APP_ANALYST), \
+                patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", model), \
+                patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False):
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Sorold fel, hol szerepel Kovács János!"},
+                                    user="lars")
+            self.assertEqual(200, status, out)
+            self.assertEqual((1, 1, 1, False), (out["deep"]["read"], out["deep"]["documents"],
+                                                out["deep"]["findings"], out["deep"]["partial"]))
+            self.assertIn("1 r\u00e9szlet 1 dokumentumb\u00f3l", out["answer"])
+            self.assertIn("Nagy Évával találkozott.", out["answer"])
+            self.assertIn("read_all", prompts[0][0])  # offered in the first round
+            self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+            self.assertNotIn("Titkos", "".join(u for _, u in prompts))
+            # As a job: the phase reaches the job record.
+            status, sub = self.call("/api/v1/ui/ask",
+                                    {"query": "Sorold fel, hol szerepel Kovács János!"},
+                                    user="lars")
+            self.assertEqual(202, status, sub)
+            status, done = self.call("/api/v1/ui/poll", {"job_id": sub["job_id"], "timeout": 20},
+                                     user="lars")
+            self.assertEqual((200, "done"), (status, done.get("status")), done)
+            status, job = self.call("/api/v1/ui/jobs/get", {"job_id": sub["job_id"]},
+                                    user="lars")
+            self.assertEqual(("write", 1, 1), (job["job"]["progress_phase"],
+                                               job["job"]["progress_done"],
+                                               job["job"]["progress_total"]))
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

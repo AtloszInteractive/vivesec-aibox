@@ -99,6 +99,7 @@ import directory  # noqa: E402
 import discovery  # noqa: E402
 import docgen  # noqa: E402
 import dossier  # noqa: E402
+import deep  # noqa: E402
 import factory_reset  # noqa: E402
 import feedback  # noqa: E402
 import filestore  # noqa: E402
@@ -497,6 +498,9 @@ def _parse_app_mode(raw):
 
 APP_MODE = _parse_app_mode(os.environ.get("ADAPTER_APP_MODE"))
 ORCHESTRATOR_MAX_FACTS = max(1, int(os.environ.get("ADAPTER_ORCHESTRATOR_MAX_FACTS", "40") or 40))
+# The analyst planner may read EVERY passage that names its terms (deep.py), a
+# 1-3 minute job that holds the heavy slot. Only "off" disables it.
+DEEP_READ = (os.environ.get("ADAPTER_DEEP_READ", "on") or "on").strip().lower() != "off"
 # Analyst patterns, sequences and counts may treat same-named person records as one
 # person (never when their records conflict). An identity rule the customer owns:
 # only the explicit value turns it on; anything else keeps the records apart.
@@ -921,10 +925,40 @@ def _file_search(req_scope, pattern, access=None):
             "backend": "mirror", "citations": [], "hits": []}
 
 
+class _AnyEvent:
+    """is_set() when any of the events is (the job's own and the heavy slot's)."""
+
+    def __init__(self, *events):
+        self.events = [e for e in events if e is not None]
+
+    def is_set(self):
+        return any(e.is_set() for e in self.events)
+
+
+def _read_all(args, query, lang, req_scope, access, job_id, user, drive, cancel_event,
+              stage_callback):
+    """The planner's full reading (deep.py), run in the heavy slot so its many
+    model calls queue with the other heavy work. Returns (coverage note, finding
+    contexts within the scope, info)."""
+    if stage_callback:
+        stage_callback("queued", 0, 0)
+    try:
+        with HEAVY_SCHEDULER.slot(job_id, user, drive) as slot_cancel:
+            contexts, info = deep.read_all(
+                rag_post_json, {"corpus_ids": list(req_scope.corpus_ids),
+                                "tenant_id": TENANT_ID, "access": access.as_rag()},
+                query, args["terms"], lang, args.get("mode", "any"),
+                cancel_event=_AnyEvent(cancel_event, slot_cancel), progress=stage_callback)
+    except scheduler.QueueCancelled:
+        raise llm.GenerationCancelled("cancelled while waiting for the heavy slot")
+    found = [c for c in contexts[1:] if req_scope.contains_path(c.get("source_path") or "")]
+    return contexts[:1], found, info
+
+
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
             progress_callback=None, req_scope=None, profile="grounded",
-            conversation_id=None, access=None):
+            conversation_id=None, access=None, job_id=None, stage_callback=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -965,6 +999,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     chat_only = False
     retrieval_query = query
     planned = None
+    deep_info = None
     orchestrated = None  # (contexts, info) of the analyst-mode plan
     domain = None
     if action is None and APP_MODE == APP_ANALYST and GRAPH.enabled:
@@ -974,7 +1009,13 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
     if domain is not None:
         vocab = orchestrator.vocabulary(domain, lang)
-        planned = orchestrator.plan(query, history, lang, vocab)
+        planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ)
+    deep_call = None
+    if planned is not None and planned["action"] == "tools":
+        # A full reading is the document side of the plan, not a graph query.
+        reads = [c for c in planned["calls"] if c["tool"] == "read_all"]
+        deep_call = reads[0] if reads and DEEP_READ else None
+        planned = dict(planned, calls=[c for c in planned["calls"] if c["tool"] != "read_all"])
     if planned is not None:
         check = _visible(access)
         run = orchestrator.Run(
@@ -998,7 +1039,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             try:
                 orchestrated = orchestrator.orchestrate(
                     run, planned,
-                    lambda results: orchestrator.plan(query, history, lang, vocab, results))
+                    lambda results: orchestrator.plan(query, history, lang, vocab, results,
+                                                      deep=False))
             except orchestrator.Clarify as e:
                 return _clarify_result(user, drive, query, e.question, req_scope,
                                        session_scope, profile, conversation_id, agent, lang)
@@ -1042,6 +1084,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         contexts, document = _fit_analyze_window(contexts, document)
     elif chat_only:
         contexts = []
+    elif deep_call is not None:
+        deep_note, contexts, deep_info = _read_all(
+            deep_call["args"], query, lang, req_scope, access, job_id or uuid.uuid4().hex,
+            user, drive, cancel_event, stage_callback)
     else:
         res = rag_post_json("/rag/search_context",
                             {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
@@ -1054,6 +1100,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "include_debug": True})
         contexts = res.get("contexts", [])
     contexts = _visible_contexts(contexts, access)
+    if deep_call is not None:
+        contexts = deep_note + contexts  # the coverage note has no path to check
     graph_info = None
     if orchestrated is not None:
         contexts = orchestrated[0] + contexts
@@ -1078,7 +1126,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                      "score": c.get("score"), "snippet": snippet})
     answer, backend = llm.generate(query, contexts, lang=lang, history=history,
                                    task=action, params=params,
-                                   num_ctx=ANALYZE_NUM_CTX if action == "analyze" else None,
+                                   num_ctx=ANALYZE_NUM_CTX if action == "analyze"
+                                   or deep_call is not None else None,
                                    chat_only=chat_only, agent=agent,
                                    cancel_event=cancel_event,
                                    progress_callback=progress_callback,
@@ -1153,7 +1202,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "components": conf["components"]} if conf is not None else None,
               "citations": citations, "hits": hits}
     if action != "analyze" and not chat_only:
-        result["retrieval_debug"] = res.get("debug", {})
+        result["retrieval_debug"] = res.get("debug", {}) if deep_call is None else {
+            "retrieval": "full-reading"}
         result["source_paths"] = source_paths
         result["evidence_chunk_ids"] = evidence_ids
     if params:
@@ -1166,6 +1216,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         result["document"] = document
     if graph_info is not None:
         result["graph"] = graph_info
+    if deep_info is not None:
+        result["deep"] = deep_info
     if conversation_id:
         result["conversation_id"] = conversation_id
     # Keep the trace so a later /ui/feedback rating can be stored WITH what the
@@ -1246,13 +1298,14 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
     access = (acl.Access.from_dict((job.get("request") or {}).get("access"))
               or ACL.access_for(user, None, None))
     progress = lambda chars, tokens: JOBS.progress(user, drive, job_id, chars, tokens)
+    stage = lambda phase, done, total: JOBS.stage(user, drive, job_id, phase, done, total)
     try:
         code, payload = 200, _answer(user, drive, query, top_k, lang, action,
                                      mode, files, params, agent, history_snapshot,
                                      cancel_event, progress, req_scope,
                                      (job.get("request") or {}).get("profile", "grounded"),
                                      (job.get("request") or {}).get("conversation_id") or None,
-                                     access=access)
+                                     access=access, job_id=job_id, stage_callback=stage)
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -1984,6 +2037,9 @@ class Handler(BaseHTTPRequestHandler):
                              "job_status": job.get("status"),
                              "progress_chars": job.get("progress_chars", 0),
                              "progress_tokens": job.get("progress_tokens", 0),
+                             "progress_phase": job.get("progress_phase"),
+                             "progress_done": job.get("progress_done", 0),
+                             "progress_total": job.get("progress_total", 0),
                              "queue_position": HEAVY_SCHEDULER.position(job_id, user, drive)})
             return
         code = job.get("code") or (200 if job.get("status") in
@@ -2012,6 +2068,9 @@ class Handler(BaseHTTPRequestHandler):
                          "error": job.get("error"),
                          "progress_chars": job.get("progress_chars", 0),
                          "progress_tokens": job.get("progress_tokens", 0),
+                         "progress_phase": job.get("progress_phase"),
+                         "progress_done": job.get("progress_done", 0),
+                         "progress_total": job.get("progress_total", 0),
                          "cancel_requested": bool(job.get("cancel_requested")),
                          "queue_position": HEAVY_SCHEDULER.position(
                              job.get("job_id"), user, drive)})

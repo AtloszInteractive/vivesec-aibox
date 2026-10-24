@@ -491,7 +491,8 @@ def search_notes(contexts):
     possibly incomplete results), set apart from the documents so the answer
     does not pass over them; "" when there are none."""
     notes = [(i, " ".join((c.get("text") or "").split()))
-             for i, c in enumerate(contexts or [], 1) if c.get("origin") == "graph-note"]
+             for i, c in enumerate(contexts or [], 1)
+             if c.get("origin") in ("graph-note", "search-note")]
     if not notes:
         return ""
     return ("SEARCH NOTES (from the system, not from a document; if one explains why a "

@@ -10,6 +10,82 @@ import scheduler
 
 
 class HeavySchedulerTest(unittest.TestCase):
+    def test_a_slot_waits_its_turn_and_holds_the_worker(self):
+        release = threading.Event()
+        started = threading.Event()
+        order = []
+
+        def worker(job_id, **_kwargs):
+            if job_id == "j1":
+                started.set()
+                release.wait(2)
+            order.append(job_id)
+
+        queue = scheduler.HeavyScheduler(worker)
+        queue.submit("j1", "u", "/d", ("j1",))
+        self.assertTrue(started.wait(1))
+        holding = threading.Event()
+        leave = threading.Event()
+
+        def chat_turn():
+            with queue.slot("chat", "u", "/d") as cancel:
+                order.append("chat")
+                self.assertFalse(cancel.is_set())
+                holding.set()
+                leave.wait(2)
+
+        thread = threading.Thread(target=chat_turn)
+        thread.start()
+        deadline = time.time() + 1
+        while queue.position("chat", "u", "/d") != 1 and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(1, queue.position("chat", "u", "/d"))
+        queue.submit("j2", "u", "/d", ("j2",))
+        release.set()
+        self.assertTrue(holding.wait(2))
+        time.sleep(0.1)
+        self.assertEqual(["j1", "chat"], order)  # j2 waits while the slot is held
+        self.assertEqual(0, queue.position("chat", "u", "/d"))
+        self.assertEqual("running", queue.cancel("chat", "u", "/d"))
+        leave.set()
+        thread.join(2)
+        deadline = time.time() + 2
+        while len(order) < 3 and time.time() < deadline:
+            time.sleep(0.01)
+        queue.stop()
+        self.assertEqual(["j1", "chat", "j2"], order)
+
+    def test_a_slot_cancelled_while_queued_never_runs(self):
+        release = threading.Event()
+        started = threading.Event()
+
+        def worker(job_id, **_kwargs):
+            started.set()
+            release.wait(2)
+
+        queue = scheduler.HeavyScheduler(worker)
+        queue.submit("j1", "u", "/d", ("j1",))
+        self.assertTrue(started.wait(1))
+        outcome = []
+
+        def chat_turn():
+            try:
+                with queue.slot("chat", "u", "/d"):
+                    outcome.append("ran")
+            except scheduler.QueueCancelled:
+                outcome.append("cancelled")
+
+        thread = threading.Thread(target=chat_turn)
+        thread.start()
+        deadline = time.time() + 1
+        while queue.position("chat", "u", "/d") != 1 and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual("queued", queue.cancel("chat", "u", "/d"))
+        thread.join(2)
+        release.set()
+        queue.stop()
+        self.assertEqual(["cancelled"], outcome)
+
     def test_fifo_serializes_and_reports_positions(self):
         release = threading.Event()
         first_started = threading.Event()

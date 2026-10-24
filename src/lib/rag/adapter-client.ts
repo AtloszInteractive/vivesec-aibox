@@ -189,8 +189,19 @@ export type AdapterJobSummary = {
   error?: string | null;
   progress_chars?: number;
   progress_tokens?: number;
+  // Multi-step jobs (a full reading): the phase and done/total steps of it.
+  progress_phase?: string | null;
+  progress_done?: number;
+  progress_total?: number;
   cancel_requested?: boolean;
   queue_position?: number | null;
+};
+
+export type AdapterJobProgress = {
+  phase: string | null;
+  done: number;
+  total: number;
+  queuePosition: number | null;
 };
 
 export type AdapterJobSubmission = {
@@ -536,7 +547,12 @@ export async function adapterPollJob(
   jobId: string,
   scope: Pick<AdapterAskInput, "drive" | "user"> = {},
   timeout = 0,
-): Promise<{ status: AdapterJobStatus; answer?: AdapterAnswer; queuePosition: number | null }> {
+): Promise<{
+  status: AdapterJobStatus;
+  answer?: AdapterAnswer;
+  queuePosition: number | null;
+  progress?: AdapterJobProgress;
+}> {
   const { headers } = jobScope(scope);
   const pollRes = await apiFetch(`${adapterUrl()}/api/v1/ui/poll`, {
     method: "POST",
@@ -549,9 +565,16 @@ export async function adapterPollJob(
     throw new AdapterError((j.error as string) ?? `ui/poll HTTP ${pollRes.status}`, pollRes.status);
   }
   if (j.status === "pending") {
+    const queuePosition = typeof j.queue_position === "number" ? j.queue_position : null;
     return {
       status: (j.job_status as AdapterJobStatus | undefined) ?? "running",
-      queuePosition: typeof j.queue_position === "number" ? j.queue_position : null,
+      queuePosition,
+      progress: {
+        phase: typeof j.progress_phase === "string" ? j.progress_phase : null,
+        done: typeof j.progress_done === "number" ? j.progress_done : 0,
+        total: typeof j.progress_total === "number" ? j.progress_total : 0,
+        queuePosition,
+      },
     };
   }
   return {
@@ -718,12 +741,19 @@ export async function adapterDeleteConversation(
   }
 }
 
-export async function adapterAsk(input: AdapterAskInput): Promise<AdapterAnswer> {
+export async function adapterAsk(
+  input: AdapterAskInput,
+  onProgress?: (progress: AdapterJobProgress) => void,
+): Promise<AdapterAnswer> {
   const submitted = await adapterSubmitJob(input);
-
-  for (let i = 0; i < MAX_POLLS; i++) {
-    const polled = await adapterPollJob(submitted.jobId, input, POLL_TIMEOUT_S);
+  // A time budget, not a count: a job reporting its phase is polled more often.
+  const deadline = Date.now() + MAX_POLLS * POLL_TIMEOUT_S * 1000;
+  let timeout = 5; // short at first, so a long job shows its phase early
+  while (Date.now() < deadline) {
+    const polled = await adapterPollJob(submitted.jobId, input, timeout);
     if (polled.answer) return polled.answer;
+    if (polled.progress && onProgress) onProgress(polled.progress);
+    timeout = polled.progress?.phase ? 5 : POLL_TIMEOUT_S;
   }
   throw new AdapterJobContinuesError(submitted.jobId);
 }

@@ -1,4 +1,5 @@
 """Orchestrator planning and plan execution against a fake graph."""
+import json
 import unittest
 from unittest.mock import patch
 
@@ -165,6 +166,28 @@ class PlanTest(unittest.TestCase):
             self.assertIn("VISITED = meglátogatta", system)
             self.assertNotIn("{vocabulary}", system)
             self.assertIn("RESULTS SO FAR:\n- relations: 2 results", user)
+            self.assertNotIn("{deep}", system)
+            self.assertNotIn("read_all", system)  # not offered unless asked for
+            orchestrator.plan("Ki?", [], "Hungarian", text, deep=True)
+            self.assertIn("- read_all {terms, mode?}", chat.call_args[0][0])
+
+    def test_read_all_terms_are_cleaned_and_the_graph_skips_them(self):
+        plan = orchestrator.parse_plan(json.dumps({"action": "tools", "calls": [
+            {"tool": "read_all", "args": {"terms": ["Kovács János", " ", "Kovács János",
+                                                    "a" * 300] + ["t%d" % i for i in range(9)],
+                                          "mode": "all"}},
+            {"tool": "read_all", "args": {"terms": []}},
+            {"tool": "read_all", "args": {"terms": "látogat"}},
+            {"tool": "relations", "args": {"entity": "Kovács János"}}]}))
+        reads = [c["args"] for c in plan["calls"] if c["tool"] == "read_all"]
+        self.assertEqual(2, len(reads))
+        self.assertEqual("all", reads[0]["mode"])
+        self.assertEqual(orchestrator.MAX_READ_TERMS, len(reads[0]["terms"]))
+        self.assertEqual(["Kovács János", "a" * 80], reads[0]["terms"][:2])
+        self.assertEqual({"terms": ["látogat"], "mode": "any"}, reads[1])
+        r = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True)
+        r.run(plan["calls"])
+        self.assertEqual(["relations"], [c["tool"] for c in r.calls])
 
     def test_plan_fails_open(self):
         with patch.object(llm, "GENERATE", "on"), \

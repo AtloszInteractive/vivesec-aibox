@@ -24,7 +24,10 @@ import unicodedata
 import llm
 
 TOOLS = ("relations", "connection", "common", "timeline", "copresence",
-         "shared_identifiers", "most_connected", "find_pattern", "count", "sequence")
+         "shared_identifiers", "most_connected", "find_pattern", "count", "sequence",
+         "read_all")
+GRAPH_TOOLS = TOOLS[:-1]
+MAX_READ_TERMS = 6
 ENTITY_TYPES = ["person", "organization", "place", "identifier", "event", "object"]
 GROUP_BY = {"entity": "focus", "other": "other", "month": "month", "year": "year",
             "relation": "relation", "other_kind": "other_kind"}
@@ -76,6 +79,7 @@ PLANNER = (
     "(first and then are relation ids; kind is the entity both relations belong to), "
     "e.g. an incident within 30 days after a visit = first: the visit relation, then: "
     "the involvement relation, within_days: 30, kind: the visited side's kind\n"
+    "{deep}"
     "Reply with one JSON object only, one of:\n"
     '{"action": "tools", "calls": [{"tool": "...", "args": {...}}], '
     '"search": "<the request as a standalone question for a document search, in the '
@@ -102,6 +106,18 @@ PLANNER = (
     "a period the request depends on is missing. If the user has just answered your "
     "question, plan with that answer and never ask the same thing again. "
     "When no tool fits, plan calls: [] with a search."
+)
+
+DEEP_TOOL = (
+    "- read_all {terms, mode?}: reads EVERY passage of the documents that contains the "
+    "terms, instead of the few best matching ones (takes a few minutes). Use it, beside "
+    "or instead of graph tools, only when the message needs every case, mention or "
+    "occurrence in the documents themselves (list all..., every..., in which reports..., "
+    "how many times... is written, everything about X in the files) or something the "
+    "graph does not hold (what was said, why, how). terms: 1-6 specific names or rare "
+    "words as the documents would write them, word stems for inflected words "
+    "(\"látogat\"), never generic words; mode all when every term must appear in the "
+    "same passage, else any.\n"
 )
 
 _TEXT = {
@@ -352,6 +368,14 @@ def _side_args(value):
 
 def _clean_args(tool, args):
     args = args if isinstance(args, dict) else {}
+    if tool == "read_all":
+        raw = args.get("terms")
+        raw = [raw] if isinstance(raw, str) else raw
+        terms = list(dict.fromkeys(t for t in (_text(x, 80) for x in raw or []) if t))
+        if not terms:
+            return None
+        return {"terms": terms[:MAX_READ_TERMS],
+                "mode": "all" if args.get("mode") == "all" else "any"}
     out = {}
     for key in ("entity", "a", "b", "kind", "name", "relation", "other_kind", "first", "then"):
         value = _text(args.get(key))
@@ -423,12 +447,14 @@ def parse_plan(text):
             "more": data.get("more") is True}
 
 
-def plan(question, history, lang=None, vocab="", results=""):
+def plan(question, history, lang=None, vocab="", results="", deep=False):
     """One planning call; None when the model is off, fails or answers nonsense
-    (the caller then keeps the plain document + graph-facts path)."""
+    (the caller then keeps the plain document + graph-facts path). `deep` offers
+    the full-reading tool (first round only)."""
     if llm.GENERATE == "off":
         return None
-    system = PLANNER.replace("{vocabulary}", vocab) + (
+    system = PLANNER.replace("{vocabulary}", vocab).replace(
+        "{deep}", DEEP_TOOL if deep else "") + (
         " Write any question to the user in %s." % lang if lang else "")
     convo = _transcript(history)
     user = ("CONVERSATION:\n%s\n\nMESSAGE: %s" % (convo, question)) if convo \
@@ -958,7 +984,8 @@ class Run:
 
     def run(self, calls, round_no=1):
         """Runs one round of calls; raises Clarify on an ambiguous name."""
-        calls = self.fresh(calls)
+        # read_all is the document side of a plan; the caller runs it.
+        calls = self.fresh([c for c in calls if c["tool"] in GRAPH_TOOLS])
         # One broad call (a crowded cell) must not crowd out the others' facts.
         self._call_budget = max(6, self.max_facts // max(1, len(calls)))
         for call in calls:

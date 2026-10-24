@@ -166,6 +166,18 @@ const M: Record<string, Tri> = {
   "Retrieved passages": ["Visszakeresett részletek", "Fundne passager", "Gefundene Passagen"],
   "The document stays on the ViVeSecBox — ask a question to see the passages the AI Box retrieved from it.": ["A dokumentum a ViVeSecBoxon marad — tegyél fel kérdést, hogy lásd az AI Box által visszakeresett részleteket.", "Dokumentet forbliver på ViVeSecBox — stil et spørgsmål for at se de passager, AI Box har fundet.", "Das Dokument bleibt auf der ViVeSecBox — stellen Sie eine Frage, um die von der AI Box gefundenen Passagen zu sehen."],
   "The local model is thinking…": ["A helyi modell gondolkodik…", "Den lokale model tænker…", "Das lokale Modell denkt nach…"],
+  "Waiting for the analysis slot…": [
+    "Várakozás az elemzési sorra…",
+    "Venter på en ledig analyseplads…",
+    "Warte auf einen freien Analyseplatz…",
+  ],
+  "Collecting every matching passage…": [
+    "Az összes érintett részlet összegyűjtése…",
+    "Samler alle passager, der passer…",
+    "Alle passenden Passagen werden gesammelt…",
+  ],
+  "Reading passages": ["Részletek átnézése", "Gennemgår passager", "Passagen werden gelesen"],
+  "Writing the answer…": ["A válasz megírása…", "Skriver svaret…", "Die Antwort wird geschrieben…"],
   "Data control & audit info": ["Adatkontroll & audit infó", "Datakontrol & auditinfo", "Datenkontrolle & Audit-Info"],
   // ---- F6 project tracking (#tracking) ----
   "Project status": ["Projekt-állapot", "Projektstatus", "Projektstatus"],

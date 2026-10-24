@@ -57,6 +57,7 @@ import {
   type ScopeDrive,
   type ChatProfile,
   type ChatPolicy,
+  type AdapterJobProgress,
 } from "@/lib/api/rag.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
 import { useVoice } from "./use-voice";
@@ -219,7 +220,15 @@ type Message =
       text: string;
       tone?: "normal" | "error";
     }
-  | { id: string; role: "ai"; ts: string; name: string; kind: "thinking"; startedAt: number }
+  | {
+      id: string;
+      role: "ai";
+      ts: string;
+      name: string;
+      kind: "thinking";
+      startedAt: number;
+      stage?: AdapterJobProgress;
+    }
   | ({
       id: string;
       role: "ai";
@@ -1706,6 +1715,11 @@ function ViveSecAppInner() {
                     ? "Interrupted"
                     : "Failed",
           );
+    const jobStage = stageLabel(tm, {
+      phase: job.progress_phase,
+      done: job.progress_done,
+      total: job.progress_total,
+    });
     return (
       <div key={job.job_id} className="flex min-h-12 items-center gap-1 py-1">
         <button
@@ -1738,7 +1752,10 @@ function ViveSecAppInner() {
               )}
             </div>
             <div className="text-[10.5px] text-white/40">{status}</div>
-            {job.status === "running" && (job.progress_tokens ?? 0) > 0 && (
+            {job.status === "running" && jobStage && (
+              <div className="text-[10px] text-lime-200/60">{jobStage}</div>
+            )}
+            {job.status === "running" && !job.progress_phase && (job.progress_tokens ?? 0) > 0 && (
               <div className="text-[10px] text-lime-200/60">
                 {job.progress_tokens} {tm("tokens")} · {job.progress_chars ?? 0} {tm("chars")}
               </div>
@@ -1912,6 +1929,12 @@ function ViveSecAppInner() {
     try {
       const res = await askRag({
         data: requestData,
+        onProgress: (stage) =>
+          setMessages((all) =>
+            all.map((m) =>
+              m.id === loadingId && "kind" in m && m.kind === "thinking" ? { ...m, stage } : m,
+            ),
+          ),
       });
       if (res.backgroundJobId) {
         setMessages((all) => all.filter((message) => message.id !== loadingId));
@@ -3990,7 +4013,7 @@ function MessageView({
         </div>
       )}
 
-      {msg.kind === "thinking" && <ThinkingBubble startedAt={msg.startedAt} />}
+      {msg.kind === "thinking" && <ThinkingBubble startedAt={msg.startedAt} stage={msg.stage} />}
 
       {msg.kind === "summary" && (
         <SummaryCard msg={msg} onToggle={onToggleAction} onEdit={onEdit} />
@@ -4015,9 +4038,28 @@ function MessageView({
   );
 }
 
+/** The phase of a multi-step job (a full reading), or null for a plain one. */
+function stageLabel(
+  tm: (text: string) => string,
+  stage: { phase?: string | null; done?: number; total?: number } | undefined,
+): string | null {
+  switch (stage?.phase) {
+    case "queued":
+      return tm("Waiting for the analysis slot…");
+    case "collect":
+      return tm("Collecting every matching passage…");
+    case "read":
+      return `${tm("Reading passages")} ${(stage.done ?? 0) + 1}/${stage.total ?? 0}`;
+    case "write":
+      return tm("Writing the answer…");
+    default:
+      return null;
+  }
+}
+
 /** Waiting state for a local answer. The elapsed counter is the honest part:
  *  it proves the request is still alive when generation takes a while. */
-function ThinkingBubble({ startedAt }: { startedAt: number }) {
+function ThinkingBubble({ startedAt, stage }: { startedAt: number; stage?: AdapterJobProgress }) {
   const { tm } = useLang();
   const [elapsed, setElapsed] = useState(0);
 
@@ -4044,7 +4086,9 @@ function ThinkingBubble({ startedAt }: { startedAt: number }) {
           />
         ))}
       </span>
-      <span className="vvs-think-label text-[13.5px]">{tm("The local model is thinking…")}</span>
+      <span className="vvs-think-label text-[13.5px]">
+        {stageLabel(tm, stage) ?? tm("The local model is thinking…")}
+      </span>
       {elapsed >= 3 && <span className="text-[11px] tabular-nums text-white/35">{elapsed}s</span>}
     </div>
   );

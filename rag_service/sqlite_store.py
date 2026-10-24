@@ -858,6 +858,40 @@ class SqliteVecStore:
                 corpus_id, meta, chunk_id, page_id, page_number, section_path, text))
         return contexts, _document_debug(meta, len(rows), len(contexts), used_tokens)
 
+    # ----- full-coverage enumeration -----------------------------------------
+    def match_chunks(self, corpus_ids, match_terms, mode="any", access=None,
+                     path_prefixes=None, limit=200, offset=0):
+        """EVERY visible chunk of the scope that matches the terms (not a top-k),
+        in reading order (path, page, position), one page of it at a time.
+        Scope, folder and access filters are part of the query."""
+        scope = normalize_corpus_ids(None, corpus_ids)
+        expression = retrieval.fts_query(match_terms, mode)
+        if not scope or not expression:
+            return [], {"total": 0, "documents": 0}
+        acl_sql, acl_params = access_filter.sql_clause(access)
+        clause = "c.corpus_id IN (%s) AND d.file=1 AND %s" % (",".join("?" * len(scope)), acl_sql)
+        bindings = list(scope) + list(acl_params)
+        if path_prefixes:
+            paths = []
+            for prefix in path_prefixes:
+                prefix = norm_path(prefix.replace("\\", "/")).rstrip("/")
+                paths.append("(d.source_path=? OR d.source_path LIKE ? ESCAPE '\\')")
+                bindings.extend([prefix, _like_escape(prefix) + "/%"])
+            clause += " AND (" + " OR ".join(paths) + ")"
+        base = ("FROM chunk_text_fts JOIN chunks c ON c.rowid=chunk_text_fts.rowid "
+                "JOIN documents d ON d.doc_id=c.doc_id WHERE chunk_text_fts MATCH ? AND " + clause)
+        with self._lock:
+            total, documents = self._conn.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT c.doc_id) " + base,
+                [expression] + bindings).fetchone()
+            rows = self._conn.execute(
+                "SELECT c.chunk_id, c.doc_id, c.corpus_id, d.title, d.source_path, "
+                "c.page_number, c.text " + base +
+                " ORDER BY d.source_path, c.page_number, c.rowid LIMIT ? OFFSET ?",
+                [expression] + bindings + [int(limit), int(offset)]).fetchall()
+        keys = ("chunk_id", "doc_id", "corpus_id", "title", "source_path", "page_number", "text")
+        return [dict(zip(keys, row)) for row in rows], {"total": total, "documents": documents}
+
     # ----- stats -------------------------------------------------------------
     def stats(self):
         with self._lock:

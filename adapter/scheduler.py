@@ -1,10 +1,15 @@
 """Single-worker FIFO scheduler for heavyweight adapter jobs."""
 import collections
+import contextlib
 import threading
 
 
 class QueueFull(Exception):
     pass
+
+
+class QueueCancelled(Exception):
+    """A slot() wait ended by a cancel before the slot was granted."""
 
 
 class HeavyScheduler:
@@ -42,6 +47,31 @@ class HeavyScheduler:
             self._condition.notify()
             return position
 
+    @contextlib.contextmanager
+    def slot(self, job_id, user, drive):
+        """Hold the heavy worker from a thread of one's own (a chat turn that
+        turned out to need a long analysis). Waits its FIFO turn and yields the
+        cancel event, which cancel() and cancel_user() set; QueueCancelled when
+        the job is cancelled while still waiting."""
+        granted, released = threading.Event(), threading.Event()
+        item = {"job_id": job_id, "user": user or "", "drive": drive or "", "args": (),
+                "cancel_event": threading.Event(), "granted": granted,
+                "released": released}
+        with self._condition:
+            self._queue.append(item)
+            self._condition.notify()
+        try:
+            while not granted.wait(0.5):
+                if item["cancel_event"].is_set():
+                    with self._condition:
+                        if item in self._queue:
+                            self._queue.remove(item)
+                    if not granted.is_set():
+                        raise QueueCancelled("cancelled while queued")
+            yield item["cancel_event"]
+        finally:
+            released.set()
+
     def cancel(self, job_id, user, drive):
         """Remove a queued job. Return queued, running, or missing."""
         user = user or ""
@@ -51,6 +81,7 @@ class HeavyScheduler:
                 if (item["job_id"] == job_id and item["user"] == user
                         and item["drive"] == drive):
                     self._queue.remove(item)
+                    item["cancel_event"].set()  # a slot() waiter stops waiting
                     return "queued"
             if (self._running and self._running["job_id"] == job_id
                     and self._running["user"] == user
@@ -67,6 +98,7 @@ class HeavyScheduler:
             dropped = [item for item in self._queue if item["user"] in users]
             for item in dropped:
                 self._queue.remove(item)
+                item["cancel_event"].set()
             count = len(dropped)
             if self._running and self._running["user"] in users:
                 self._running["cancel_event"].set()
@@ -98,7 +130,12 @@ class HeavyScheduler:
                 item = self._queue.popleft()
                 self._running = item
             try:
-                self.worker(*item["args"], cancel_event=item["cancel_event"])
+                if "granted" in item:
+                    # A slot(): the holder runs in its own thread; wait for it.
+                    item["granted"].set()
+                    item["released"].wait()
+                else:
+                    self.worker(*item["args"], cancel_event=item["cancel_event"])
             finally:
                 with self._condition:
                     self._running = None
