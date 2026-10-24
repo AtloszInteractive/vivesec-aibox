@@ -385,7 +385,9 @@ def footer(conf, citations, aid, lang=None):
     seen = []
     for c in citations or []:
         path = (c.get("path") or "").rstrip("/")
-        name = path.rsplit("/", 1)[-1] if path else (c.get("chunk_id") or "?")
+        if not path and not c.get("chunk_id"):
+            continue  # a system note (coverage, graph caveat), not a source
+        name = path.rsplit("/", 1)[-1] if path else c["chunk_id"]
         page = c.get("page_number")
         label = "%s, p.%s" % (name, page) if page else name
         if label not in seen:

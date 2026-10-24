@@ -98,6 +98,10 @@ class AnalyzeFullTest(unittest.TestCase):
         self.assertIn("Teljes lefedetts\u00e9g\u0171 elemz\u00e9s: a(z) 30 r\u00e9szletet "
                       "(contract.txt)", result["answer"])
         self.assertNotIn("nem f\u00e9rt", result["answer"])
+        # The coverage note is no source: the footer lists the document only.
+        sources = next(line for line in result["answer"].split("\n") if "(Sources)" in line)
+        self.assertIn("contract.txt, p.", sources)
+        self.assertNotIn("?", sources)
         self.assertTrue(all(c["path"] in (None, PATH) for c in result["citations"]))
         self.assertTrue(any(c["path"] == PATH for c in result["citations"]))
 
