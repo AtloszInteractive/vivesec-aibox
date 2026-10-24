@@ -31,6 +31,9 @@ ANSWER_CHARS = max(8000, int(os.environ.get("ADAPTER_DEEP_ANSWER_CHARS", "60000"
 DOC_BATCH_CHARS = max(4000, int(os.environ.get("ADAPTER_ANALYZE_SECTION_CHARS", "24000") or 24000))
 MIN_SHARE = 300
 MAX_ROUNDS = 3
+# A map reply cut off at MAP_PREDICT tokens is re-read in halves, at most this deep.
+MAP_PREDICT = 4096
+MAX_SPLITS = 3
 MAP_TIMEOUT = 180
 SECTION_TIMEOUT = 600
 PAGE = 500
@@ -43,7 +46,7 @@ MAP_SYSTEM = (
     "that helps answer the QUESTION. Use only the excerpts.\n"
     'Reply with JSON only: {"findings": [{"excerpt": <number>, "quote": "<the exact '
     'words of that excerpt that show it, copied character for character, at most 300 '
-    'characters>", "note": "<what it shows for the question, one short sentence>"}]}\n'
+    'characters>", "note": "<what it shows for the question, in a few words>"}]}\n'
     "Give one finding per relevant fact and list every one of them, even when they look "
     "alike: the question may need all cases. Keep names, dates and numbers as written. "
     "An excerpt that does not help gets no finding; if none helps, reply "
@@ -145,8 +148,22 @@ _TEXT = {
               "(z. B. gescannte PDFs ohne OCR oder nicht unterst\u00fctzte Formate); sie "
               "konnten nicht gelesen werden.",
     },
-    "condensed": {
-        "en": "The %d findings were too many to pass on one by one; they were condensed "
+    "cut": {
+        "en": "In %d places a single passage held more findings than one model reply can "
+              "carry, so some may be missing; the result is partial. Ask about a narrower "
+              "subject (a person, a period).",
+        "hu": "%d helyen egyetlen r\u00e9szletben t\u00f6bb meg\u00e1llap\u00edt\u00e1s "
+              "volt, mint amennyit egy modellv\u00e1lasz elb\u00edr, ez\u00e9rt n\u00e9h\u00e1ny "
+              "hi\u00e1nyozhat; az eredm\u00e9ny r\u00e9szleges. K\u00e9rdezzen "
+              "sz\u0171kebben (szem\u00e9ly, id\u0151szak).",
+        "da": "%d steder rummede en enkelt passage flere fund, end et modelsvar kan b\u00e6re, "
+              "s\u00e5 nogle kan mangle; resultatet er delvist. Sp\u00f8rg sn\u00e6vrere (en "
+              "person, en periode).",
+        "de": "An %d Stellen enthielt eine einzelne Passage mehr Befunde, als eine "
+              "Modellantwort fassen kann, daher k\u00f6nnen einige fehlen; das Ergebnis ist "
+              "unvollst\u00e4ndig. Fragen Sie enger (eine Person, ein Zeitraum).",
+    },
+    "condensed": {        "en": "The %d findings were too many to pass on one by one; they were condensed "
               "per document.",
         "hu": "A(z) %d meg\u00e1llap\u00edt\u00e1s egyenk\u00e9nt nem f\u00e9rt a "
               "v\u00e1laszba, ez\u00e9rt dokumentumonk\u00e9nt \u00f6sszes\u00edtettem "
@@ -267,8 +284,10 @@ def _map_user(question, group):
     return "QUESTION: %s\n\nEXCERPTS:\n%s" % (question, "\n\n".join(parts))
 
 
-def parse_findings(content, group):
-    """The model's findings whose quote really occurs in the excerpt it names."""
+def finding_items(content):
+    """(items, complete): the reply's finding objects, and whether the reply was
+    whole JSON. A reply cut off at the output limit keeps the objects that were
+    finished before the cut (complete=False)."""
     text = (content or "").strip()
     if text.startswith("```"):
         text = text.strip("`").split("\n", 1)[-1]
@@ -277,9 +296,29 @@ def parse_findings(content, group):
         data = json.loads(text[start:end + 1]) if 0 <= start < end else None
     except ValueError:
         data = None
-    items = data.get("findings") if isinstance(data, dict) else None
+    if isinstance(data, dict):
+        items = data.get("findings")
+        return (items if isinstance(items, list) else []), True
+    key = text.find('"findings"')
+    i = text.find("[", key) + 1 if key >= 0 else 0
+    items, decoder = [], json.JSONDecoder()
+    while 0 < i < len(text):
+        while i < len(text) and text[i] in " \t\r\n,":
+            i += 1
+        if i >= len(text) or text[i] != "{":
+            break
+        try:
+            item, i = decoder.raw_decode(text, i)
+        except ValueError:
+            break
+        items.append(item)
+    return items, False
+
+
+def verified_findings(items, group):
+    """The findings whose quote really occurs in the excerpt they name."""
     out = []
-    for item in items if isinstance(items, list) else []:
+    for item in items:
         if not isinstance(item, dict):
             continue
         n, quote, note = item.get("excerpt"), item.get("quote"), item.get("note")
@@ -294,6 +333,26 @@ def parse_findings(content, group):
     return out
 
 
+def parse_findings(content, group):
+    """The model's findings whose quote really occurs in the excerpt it names."""
+    return verified_findings(finding_items(content)[0], group)
+
+
+def read_group(chat, question, group, depth=0):
+    """Findings of one group: (findings, cut). A reply cut off at the output
+    limit (a group with very many facts, e.g. a register) is read again in two
+    halves, so no passage is left unread; `cut` counts the groups that were
+    still cut off alone, whose missing findings make the result partial."""
+    content, _, _ = chat(MAP_SYSTEM, _map_user(question, group), timeout=MAP_TIMEOUT,
+                         stream=False, num_predict=MAP_PREDICT, response_format=_SCHEMA)
+    items, complete = finding_items(content)
+    if complete or len(group) == 1 or depth >= MAX_SPLITS:
+        return verified_findings(items, group), 0 if complete else 1
+    half = len(group) // 2
+    first, cut_a = read_group(chat, question, group[:half], depth + 1)
+    second, cut_b = read_group(chat, question, group[half:], depth + 1)
+    return first + second, cut_a + cut_b
+
 def read_all(post, scope_body, question, terms, lang=None, mode="any", path_prefixes=None,
              cancel_event=None, progress=None, chat=None):
     """Reads every matching passage. Returns (contexts, info): contexts are the
@@ -306,15 +365,15 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
     chunks, total, documents = collect(post, scope_body, terms, mode, path_prefixes)
     unreadable = _unreadable(post, scope_body)
     groups = batches(chunks)
-    findings = []
+    findings, cut = [], 0
     for i, group in enumerate(groups):
         if cancel_event is not None and cancel_event.is_set():
             raise llm.GenerationCancelled("cancelled")
         if progress:
             progress("read", i, len(groups))
-        content, _, _ = chat(MAP_SYSTEM, _map_user(question, group), timeout=MAP_TIMEOUT,
-                             stream=False, num_predict=2048, response_format=_SCHEMA)
-        findings += parse_findings(content, group)
+        found, cut_off = read_group(chat, question, group)
+        findings += found
+        cut += cut_off
     seen, unique = set(), []
     for f in findings:
         key = (f["chunk"].get("chunk_id"), _squash(f["quote"]))
@@ -327,6 +386,8 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
         notes.append(_t("partial", lang) % (total, len(chunks)))
     if unreadable:
         notes.append(_t("unreadable", lang) % unreadable)
+    if cut:
+        notes.append(_t("cut", lang) % cut)
     found = [_finding_context(f) for f in unique]
     reduced = {"level": 0, "lost": 0, "digests": 0, "trimmed": 0}
     if len(found) > MAX_FINDINGS or _size(found) > ANSWER_CHARS:
@@ -345,8 +406,8 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
                  "origin": "search-note"}] + found
     info = {"terms": list(terms), "mode": mode, "matched": total, "read": len(chunks),
             "documents": documents, "groups": len(groups), "findings": len(unique),
-            "unreadable": unreadable, "condensed": reduced["level"],
-            "partial": total > len(chunks) or bool(reduced["lost"] or reduced["trimmed"]),
+            "unreadable": unreadable, "condensed": reduced["level"], "cut": cut,
+            "partial": total > len(chunks) or bool(cut or reduced["lost"] or reduced["trimmed"]),
             "seconds": round(time.time() - started, 1)}
     return contexts, info
 
@@ -573,8 +634,9 @@ def read_document(chunks, task, lang=None, name=None, chunks_total=None,
             content, _, _ = chat(SECTION_SYSTEM, _map_user(task, group).replace(
                 "QUESTION:", "TASK:", 1), timeout=SECTION_TIMEOUT, stream=False,
                 num_ctx=num_ctx, num_predict=2048, response_format=_SCHEMA)
-            if _json_list(content, "findings") is not None:
-                findings = parse_findings(content, group)
+            items, complete = finding_items(content)
+            if complete or items:
+                findings = verified_findings(items, group)
                 break
         if findings is None:
             failed += 1

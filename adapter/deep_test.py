@@ -115,6 +115,41 @@ class DeepTest(unittest.TestCase):
         fenced = '```json\n{"findings": [{"excerpt": 1, "quote": "BOGDÁN  BALÁZS", "note": "x"}]}\n```'
         self.assertEqual(1, len(deep.parse_findings(fenced, group)))
 
+    def test_a_reply_cut_off_keeps_its_finished_findings(self):
+        cut = ('{"findings": [\n {"excerpt": 1, "quote": "Bogdán Balázs", "note": "a"},\n'
+               ' {"excerpt": 1, "quote": "Fazekas Péter", "note": "b"},\n {"excerpt": 1, "quo')
+        items, complete = deep.finding_items(cut)
+        self.assertEqual((2, False), (len(items), complete))
+        self.assertEqual(2, len(deep.parse_findings(cut, CHUNKS[:1])))
+        self.assertEqual(([], False), deep.finding_items("semmi"))
+        self.assertEqual(([], True), deep.finding_items('{"findings": []}'))
+
+    def test_a_group_cut_off_is_read_again_in_halves(self):
+        def chat(system, user, **opts):
+            excerpts = user.count("\n[")
+            first = '{"excerpt": 1, "quote": "Bogdán Balázs", "note": "x"}'
+            if excerpts > 2:  # too many facts for one reply
+                return '{"findings": [' + first + ', {"excerpt": 2, "quo', 0, 0
+            return '{"findings": [%s]}' % ", ".join(
+                '{"excerpt": %d, "quote": "Bogdán Balázs", "note": "x"}' % n
+                for n in range(1, excerpts + 1)), 0, 0
+
+        found, cut = deep.read_group(chat, "Ki?", CHUNKS[:7])
+        self.assertEqual(0, cut)
+        self.assertEqual(sorted(c["chunk_id"] for c in CHUNKS[:7]),
+                         sorted(f["chunk"]["chunk_id"] for f in found))
+
+    def test_a_single_passage_still_cut_off_makes_the_result_partial(self):
+        def chat(system, user, **opts):
+            return '{"findings": [{"excerpt": 1, "quote": "Bogdán Balázs", "note": "x"}, {"ex', 0, 0
+
+        with patch.object(deep, "BATCH_CHARS", 70):
+            contexts, info = deep.read_all(FakeRag(CHUNKS[:2]), {"corpus_ids": ["k"]}, "Ki?",
+                                           ["Bogdán"], lang="Hungarian", chat=chat)
+        self.assertEqual((2, True), (info["cut"], info["partial"]))
+        self.assertEqual(2, info["findings"])
+        self.assertIn("2 helyen egyetlen r\u00e9szletben", contexts[0]["text"])
+
 
 def finding(n, path, note="Látogatás.", quote="látogatója"):
     return {"chunk": {"chunk_id": "c%d" % n, "corpus_id": "k", "source_path": path,

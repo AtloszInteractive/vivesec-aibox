@@ -25,8 +25,10 @@ import llm
 
 TOOLS = ("relations", "connection", "common", "timeline", "copresence",
          "shared_identifiers", "most_connected", "find_pattern", "count", "sequence",
-         "read_all")
-GRAPH_TOOLS = TOOLS[:-1]
+         "read_all", "analyze_document")
+# The document side of a plan: the caller runs these, not the graph.
+DOCUMENT_TOOLS = ("read_all", "analyze_document")
+GRAPH_TOOLS = tuple(t for t in TOOLS if t not in DOCUMENT_TOOLS)
 MAX_READ_TERMS = 6
 ENTITY_TYPES = ["person", "organization", "place", "identifier", "event", "object"]
 GROUP_BY = {"entity": "focus", "other": "other", "month": "month", "year": "year",
@@ -118,6 +120,10 @@ DEEP_TOOL = (
     "words as the documents would write them, word stems for inflected words "
     "(\"látogat\"), never generic words; mode all when every term must appear in the "
     "same passage, else any.\n"
+    "- analyze_document {file}: reads ONE document from beginning to end and analyses "
+    "all of it (takes minutes for a long file). Use it instead of read_all when the "
+    "message asks for the analysis, summary or review of one specific file it names by "
+    "its file name; file: that file name exactly as written in the message.\n"
 )
 
 _TEXT = {
@@ -368,6 +374,9 @@ def _side_args(value):
 
 def _clean_args(tool, args):
     args = args if isinstance(args, dict) else {}
+    if tool == "analyze_document":
+        name = _text(args.get("file"), 260)
+        return {"file": name} if name else None
     if tool == "read_all":
         raw = args.get("terms")
         raw = [raw] if isinstance(raw, str) else raw

@@ -189,6 +189,19 @@ class PlanTest(unittest.TestCase):
         r.run(plan["calls"])
         self.assertEqual(["relations"], [c["tool"] for c in r.calls])
 
+    def test_analyze_document_needs_a_file_and_the_graph_skips_it(self):
+        plan = orchestrator.parse_plan(json.dumps({"action": "tools", "calls": [
+            {"tool": "analyze_document", "args": {"file": "  Hazai-ICS-korkep.pdf "}},
+            {"tool": "analyze_document", "args": {"file": ""}},
+            {"tool": "analyze_document", "args": {}},
+            {"tool": "relations", "args": {"entity": "Kovács János"}}]}))
+        self.assertEqual([("analyze_document", {"file": "Hazai-ICS-korkep.pdf"}),
+                          ("relations", {"entity": "Kovács János"})],
+                         [(c["tool"], c["args"]) for c in plan["calls"]])
+        r = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True)
+        r.run(plan["calls"])
+        self.assertEqual(["relations"], [c["tool"] for c in r.calls])
+
     def test_plan_fails_open(self):
         with patch.object(llm, "GENERATE", "on"), \
                 patch.object(llm, "_chat", side_effect=OSError("down")):

@@ -963,6 +963,46 @@ def _read_all(args, query, lang, req_scope, access, job_id, user, drive, cancel_
     return contexts[:1], found, info
 
 
+def _analyze_document(target, req_scope, access, query, lang, cancel_event, stage_callback,
+                      slot=None):
+    """Every passage of ONE file for an analysis: (contexts, document, coverage
+    note, info). A file that fits the window is the context as is; a larger one
+    is read in parts (E10a), inside the heavy slot when `slot` (job_id, user,
+    drive) says the caller does not hold it yet."""
+    try:
+        target_corpus = req_scope.corpus_id_for_path(target)
+    except ValueError:
+        # A bare filename (no drive prefix) is resolved by name inside the
+        # first corpus in scope; a path outside the scope is never reached.
+        target_corpus = req_scope.corpus_ids[0]
+    res = rag_post_json("/rag/document_context",
+                        {"corpus_id": target_corpus, "tenant_id": TENANT_ID,
+                         "source_path": corpus.norm(target),
+                         "max_context_tokens": ANALYZE_DOC_MAX_TOKENS if ANALYZE_FULL
+                         else ANALYZE_MAX_CONTEXT_TOKENS,
+                         "access": access.as_rag()})
+    contexts = res.get("contexts", [])
+    document = res.get("document") or {}
+    if not (ANALYZE_FULL and contexts and (document.get("truncated") or sum(
+            len(c.get("text") or "") for c in contexts) > ANALYZE_MAX_CHARS)):
+        contexts, document = _fit_analyze_window(contexts, document)
+        return contexts, document, [], None
+    if slot is None:
+        note, parts, info = _read_document(contexts, document, query, lang, cancel_event,
+                                           stage_callback)
+    else:
+        if stage_callback:
+            stage_callback("queued", 0, 0)
+        try:
+            with HEAVY_SCHEDULER.slot(*slot) as slot_cancel:
+                note, parts, info = _read_document(contexts, document, query, lang,
+                                                   _AnyEvent(cancel_event, slot_cancel),
+                                                   stage_callback)
+        except scheduler.QueueCancelled:
+            raise llm.GenerationCancelled("cancelled while waiting for the heavy slot")
+    return parts, dict(document, truncated=False), note, info
+
+
 def _read_document(chunks, document, query, lang, cancel_event, stage_callback):
     """E10a whole-document analysis of a file too large for one call (deep.py):
     every passage of it, in parts. The caller already runs in the heavy slot
@@ -1033,11 +1073,16 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         vocab = orchestrator.vocabulary(domain, lang)
         planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ)
     deep_call = None
+    doc_call = None
     if planned is not None and planned["action"] == "tools":
-        # A full reading is the document side of the plan, not a graph query.
+        # A full reading is the document side of the plan, not a graph query;
+        # so is the full analysis of one named file (E10a), which replaces it.
         reads = [c for c in planned["calls"] if c["tool"] == "read_all"]
-        deep_call = reads[0] if reads and DEEP_READ else None
-        planned = dict(planned, calls=[c for c in planned["calls"] if c["tool"] != "read_all"])
+        docs = [c for c in planned["calls"] if c["tool"] == "analyze_document"]
+        doc_call = docs[0] if docs and DEEP_READ else None
+        deep_call = reads[0] if reads and DEEP_READ and doc_call is None else None
+        planned = dict(planned, calls=[c for c in planned["calls"]
+                                       if c["tool"] not in orchestrator.DOCUMENT_TOOLS])
     if planned is not None:
         check = _visible(access)
         run = orchestrator.Run(
@@ -1082,38 +1127,29 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         evidence_ids = followup_evidence(query, history, req_scope.corpus_ids)
     if source_paths or evidence_ids:
         chat_only = False
-    if action == "analyze":
-        # The user pointed at ONE file and asked what is in it. Similarity
-        # retrieval would only return the parts that match the question, so the
-        # whole document is fetched instead — that is the point of the action.
-        target = next((str(f) for f in (files or []) if f), "")
+    doc_target = None
+    if doc_call is not None:
+        # The planner names the file as the user wrote it; the mirror knows the
+        # real path among the files the caller may see.
+        name = doc_call["args"]["file"]
+        found = named_files.resolve(MIRROR, req_scope.drive_roots, name,
+                                    fallback=llm.source_files(name) or [name],
+                                    visible=_visible(access))
+        doc_target = found[0] if found else None
+    analysing = action == "analyze" or doc_target is not None
+    if analysing:
+        # ONE file, read whole: similarity retrieval would only return the parts
+        # that match the question. Started as the analyze action (quick action
+        # or the citation button) or by the analyst planner.
+        target = doc_target or next((str(f) for f in (files or []) if f), "")
         if not target:
             raise RagError(400, {"ok": False,
                                  "error": "analyze requires a source file"})
-        try:
-            target_corpus = req_scope.corpus_id_for_path(target)
-        except ValueError:
-            # A bare filename (no drive prefix) is resolved by name inside the
-            # first corpus in scope; a path outside the scope is never reached.
-            target_corpus = req_scope.corpus_ids[0]
-        res = rag_post_json("/rag/document_context",
-                            {"corpus_id": target_corpus, "tenant_id": TENANT_ID,
-                             "source_path": corpus.norm(target),
-                             "max_context_tokens": ANALYZE_DOC_MAX_TOKENS if ANALYZE_FULL
-                             else ANALYZE_MAX_CONTEXT_TOKENS,
-                             "access": access.as_rag()})
-        contexts = res.get("contexts", [])
-        document = res.get("document") or {}
-        if ANALYZE_FULL and contexts and (document.get("truncated") or sum(
-                len(c.get("text") or "") for c in contexts) > ANALYZE_MAX_CHARS):
-            # E10a: too large for one call, so every passage is read in parts
-            # instead of the tail being cut off; a small document keeps the
-            # single-call path below.
-            deep_note, contexts, deep_info = _read_document(
-                contexts, document, query, lang, cancel_event, stage_callback)
-            document = dict(document, truncated=False)
-        else:
-            contexts, document = _fit_analyze_window(contexts, document)
+        contexts, document, deep_note, deep_info = _analyze_document(
+            target, req_scope, access, query, lang, cancel_event, stage_callback,
+            # A planned analysis runs inside a plain ask, not a heavy job.
+            slot=None if action == "analyze" else (job_id or uuid.uuid4().hex, user, drive))
+        res = {"debug": {"retrieval": "whole-document"}}
     elif chat_only:
         contexts = []
     elif deep_call is not None:
@@ -1157,14 +1193,15 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                      "page_number": c.get("page_number"),
                      "score": c.get("score"), "snippet": snippet})
     answer, backend = llm.generate(query, contexts, lang=lang, history=history,
-                                   task=action, params=params,
-                                   num_ctx=ANALYZE_NUM_CTX if action == "analyze"
+                                   task=action or ("analyze" if analysing else None),
+                                   params=params,
+                                   num_ctx=ANALYZE_NUM_CTX if analysing
                                    or deep_call is not None else None,
                                    chat_only=chat_only, agent=agent,
                                    cancel_event=cancel_event,
                                    progress_callback=progress_callback,
                                    **({"profile": profile} if profile == "hybrid" else {}))
-    degenerate = (action == "analyze" and contexts and answer is not None
+    degenerate = (analysing and contexts and answer is not None
                   and len(answer.strip()) < ANALYZE_MIN_ANSWER_CHARS)
     if degenerate:
         sys.stderr.write("[adapter] analyze: generation starved (%d chars, %s/%s chunks) %r\n"
@@ -1921,12 +1958,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "Missing 'query'"})
             return None
         if APP_MODE == APP_ANALYST:
-            if payload.get("action"):
+            requested = str(payload.get("action") or "").strip().lower()
+            if requested and requested != "analyze":
                 self._send(403, {"ok": False,
                                  "error": "quick actions are not available on this box"})
                 return None
             # A typed "/summary" is just text here: every message goes to the chat.
-            action, mode = None, None
+            # The one action kept is the full analysis of one document (E10a),
+            # started from a cited document.
+            action, mode = ("analyze", None) if requested else (None, None)
         else:
             action, mode, query = parse_action(payload, query)
         if action in _BARE_QUERY and not query:

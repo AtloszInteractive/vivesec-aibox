@@ -185,6 +185,12 @@ const M: Record<string, Tri> = {
     "Sammenfatter fundene",
     "Befunde werden zusammengefasst",
   ],
+  "Full analysis": ["Teljes elemzés", "Fuld analyse", "Vollständige Analyse"],
+  "Read and analyse this whole document (may take minutes)": [
+    "A teljes dokumentum elolvasása és elemzése (percekig tarthat)",
+    "Læs og analysér hele dokumentet (kan tage minutter)",
+    "Das ganze Dokument lesen und analysieren (kann Minuten dauern)",
+  ],
   "Writing the answer…": ["A válasz megírása…", "Skriver svaret…", "Die Antwort wird geschrieben…"],
   "Data control & audit info": ["Adatkontroll & audit infó", "Datakontrol & auditinfo", "Datenkontrolle & Audit-Info"],
   // ---- F6 project tracking (#tracking) ----

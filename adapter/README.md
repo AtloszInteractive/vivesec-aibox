@@ -491,7 +491,11 @@ a term word of 4+ letters matches as a prefix, so inflected forms are found;
 the words of a multi-word term must lie close together). The passages are read
 in groups of `ADAPTER_DEEP_BATCH_CHARS` characters (default 9000); each group
 is one JSON model call that returns findings with a verbatim quote, and a
-finding whose quote does not occur in its passage is dropped. The findings
+finding whose quote does not occur in its passage is dropped. A reply cut off
+at the output limit (4096 tokens; a register passage can hold dozens of facts)
+keeps the findings finished before the cut and the group is read again in two
+halves (at most 3 levels), so no passage goes unread; a single passage still cut
+off alone is named in the note and makes the result partial. The findings
 become cited contexts for the usual answer step, with a coverage note ("N
 passages in M documents were read"). At most `ADAPTER_DEEP_MAX_CHUNKS` passages
 are read (default 400); when more match, the note says the result is partial
@@ -537,6 +541,16 @@ between parts. The job reports `read`/`condense`/`write` progress like a full
 reading. `ADAPTER_ANALYZE_FULL=off` restores the old cut at the window (any other
 value keeps full coverage). Not yet: resuming an interrupted analysis from its
 last part. Tests: `analyze_full_test`, `deep_test`.
+
+On an analyst box (where quick actions are off) the analysis starts two ways:
+the planner's `analyze_document {file}` tool (first round, offered with
+`read_all`; the named file is resolved among the files the caller may see, and
+the analysis takes the heavy slot inside the plain ask), or the "Full analysis"
+button next to a cited document, which sends `action: "analyze"` with that file
+-- the one action an analyst box accepts (any other is still 403). The button's
+analysis goes to the default thread like a quick action. Tests:
+`graph_integration_test` (`test_analyst_analyses_one_named_file_in_full`),
+`orchestrator_test`.
 
 ## Test
 

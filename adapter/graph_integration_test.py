@@ -497,6 +497,65 @@ class GraphIntegrationTest(unittest.TestCase):
                                                job["job"]["progress_done"],
                                                job["job"]["progress_total"]))
 
+    def test_analyst_analyses_one_named_file_in_full(self):
+        import deep
+        import llm
+
+        service = self.service
+        prompts, generated = [], []
+
+        def model(system, user, **kw):
+            prompts.append((system, user))
+            if system == deep.SECTION_SYSTEM:
+                return ('{"findings": [{"excerpt": 1, "quote": "Kovács János és Nagy Éva", '
+                        '"note": "Találkoztak."}]}'), 0, 0
+            name = "secret.txt" if "secret" in user else "note.txt"
+            return ('{"action": "tools", "calls": [{"tool": "analyze_document", "args": '
+                    '{"file": "%s"}}], "search": "elemzés"}' % name), 0, 0
+
+        def echo(query, contexts, **kw):
+            generated.append(kw.get("task"))
+            # An analysis shorter than ANALYZE_MIN_ANSWER_CHARS counts as starved.
+            return ("\n".join(c.get("text") or "" for c in contexts) or "NO-CONTEXT") + \
+                "\n" + "." * 130, "echo"
+
+        with patch.object(service, "APP_MODE", service.APP_ANALYST), \
+                patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", model), \
+                patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False):
+            # Small enough for one call: the whole file is the context.
+            status, out = self.call("/api/v1/ui/query", {"query": "Elemezd a note.txt fájlt!"},
+                                    user="lars")
+            self.assertEqual(200, status, out)
+            self.assertIn(DOCS[PUBLIC], out["answer"])
+            self.assertEqual(["analyze"], generated)
+            self.assertIn("analyze_document", prompts[0][0])
+            # Over the window: read in parts inside the heavy slot.
+            with patch.object(service, "ANALYZE_MAX_CHARS", 10):
+                status, out = self.call("/api/v1/ui/query",
+                                        {"query": "Elemezd a note.txt fájlt!"}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertEqual(("document", 1, False), (out["deep"]["kind"], out["deep"]["read"],
+                                                      out["deep"]["partial"]))
+            self.assertIn("Találkoztak.", out["answer"])
+            self.assertIn("\n\n> Teljes lefedetts\u00e9g\u0171 elemz\u00e9s", out["answer"])
+            # A file the caller may not see is never read, by name or otherwise.
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Elemezd a secret.txt fájlt!"}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+            self.assertNotIn("Titkos", "".join(u for _, u in prompts))
+            # The citation button: analyze is the one action the analyst box takes.
+            status, out = self.call("/api/v1/ui/query", {"query": "Teljes elemzés",
+                                                         "action": "analyze",
+                                                         "files": [PUBLIC]}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertEqual("analyze", out["action"])
+            self.assertIn(DOCS[PUBLIC], out["answer"])
+            status, out = self.call("/api/v1/ui/query", {"query": "Teljes elemzés",
+                                                         "action": "analyze",
+                                                         "files": [HIDDEN]}, user="lars")
+            self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

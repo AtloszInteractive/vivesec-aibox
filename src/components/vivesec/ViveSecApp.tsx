@@ -122,6 +122,7 @@ import {
   ThumbsDown,
   Trash2,
   Network,
+  FileSearch,
 } from "lucide-react";
 import { GraphPanel, type GraphSource } from "./GraphPanel";
 
@@ -469,6 +470,8 @@ type LiveExtras = {
   aspect?: string;
   keywords?: string;
   outcome?: string;
+  /** An action set by the UI itself (the citation "Full analysis" button), not typed. */
+  action?: LiveAction;
 };
 
 /* ---------- Guided dialogs (spec F1/F3/F5 "UX logic") ----------
@@ -1868,7 +1871,7 @@ function ViveSecAppInner() {
     // commands must be translated, otherwise the structured task instruction
     // (F1-F7) is lost and every command degrades to a plain question.
     const { cmd, rest } = analyst ? { cmd: null, rest: v } : splitCommand(v);
-    const action = cmd ? LIVE_ACTIONS[cmd] : undefined;
+    const action = extras?.action ?? (cmd ? LIVE_ACTIONS[cmd] : undefined);
     // The dialog answers that describe WHAT to produce belong in the question;
     // audience/purpose only shape tone and travel as adapter PARAMETERS. The
     // picked file names go in too: the adapter filters retrieved contexts on
@@ -1904,7 +1907,7 @@ function ViveSecAppInner() {
       drives: selectedDrives.length ? selectedDrives : undefined,
       // Quick actions are standalone commands and keep using the default
       // thread; only chat turns belong to the conversation on screen.
-      conversationId: pane === "chat" && conversationId ? conversationId : undefined,
+      conversationId: pane === "chat" && conversationId && !action ? conversationId : undefined,
     };
     if (pane === "results" && jobsSupported === true) {
       try {
@@ -2011,6 +2014,18 @@ function ViveSecAppInner() {
 
   /** One submit path for typed and spoken input alike: a dictated question is
    *  routed, grounded and cited exactly like a typed one. */
+  /** E10a from a cited document: the whole file, read and analysed in full. */
+  function analyzeCited(path: string) {
+    if (boxState !== "online") {
+      toast.error(tm("AI Box unreachable — no answer can be produced."));
+      return;
+    }
+    if (liveBusy) return;
+    const text = `${tm("Full analysis")}: ${path.split("/").pop() ?? path}`;
+    pushUser(text);
+    void runLive(text, { files: [path], action: "analyze" });
+  }
+
   function sendText(v: string) {
     if (!v) return;
     if (boxState !== "online") {
@@ -2598,6 +2613,7 @@ function ViveSecAppInner() {
                         onEdit={(patch) => patchMessage(m.id, patch)}
                         onOpenFile={openFile}
                         onAsk={sendText}
+                        onAnalyze={liveBusy ? undefined : analyzeCited}
                       />
                     </div>
                   ))}
@@ -3984,6 +4000,7 @@ function MessageView({
   onEdit,
   onOpenFile,
   onAsk,
+  onAnalyze,
   inChat,
 }: {
   msg: Message;
@@ -3994,6 +4011,8 @@ function MessageView({
   onOpenFile: (id: string) => void;
   /** Sends a message as if typed (an ask-back option); absent outside the chat. */
   onAsk?: (text: string) => void;
+  /** Starts the full analysis of a cited document; absent outside the chat. */
+  onAnalyze?: (path: string) => void;
   /** In the conversation the user's own message already states the request. */
   inChat?: boolean;
 }) {
@@ -4063,6 +4082,7 @@ function MessageView({
           onCitation={onCitation}
           onOpenFile={onOpenFile}
           onAsk={onAsk}
+          onAnalyze={onAnalyze}
           showQuery={!inChat}
         />
       )}
@@ -5187,12 +5207,14 @@ function SearchCard({
   onCitation,
   onOpenFile,
   onAsk,
+  onAnalyze,
   showQuery,
 }: {
   msg: Extract<Message, { kind: "search" }>;
   onCitation: (c: Citation, siblings?: Citation[]) => void;
   onOpenFile: (id: string) => void;
   onAsk?: (text: string) => void;
+  onAnalyze?: (path: string) => void;
   showQuery: boolean;
 }) {
   const { tm } = useLang();
@@ -5245,27 +5267,38 @@ function SearchCard({
             className={`space-y-2 ${showAllSources && msg.citations.length > 4 ? "vvs-scroll max-h-72 overflow-y-auto pr-1" : ""}`}
           >
             {visibleCitations.map((c, i) => (
-              <button
-                key={i}
-                onClick={() => onCitation(c, msg.citations)}
-                className="group w-full rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-left transition hover:border-white/20 hover:bg-white/[0.06]"
-              >
-                <div className="flex items-center gap-1.5 text-[11.5px]">
-                  <FileText className="h-3 w-3 text-rose-400" />
-                  {c.rank && <span className="shrink-0 text-white/55">[#{c.rank}]</span>}
-                  <span className="truncate font-medium text-white/85">{c.label}</span>
-                  {crossDrive && driveNameOf(c.fileId) && (
-                    <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
-                      {driveNameOf(c.fileId)}
-                    </span>
-                  )}
-                </div>
-                {c.snippet && (
-                  <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-white/65">
-                    <HighlightedText text={c.snippet} terms={c.terms ?? []} />
+              <div key={i} className="flex items-stretch gap-1.5">
+                <button
+                  onClick={() => onCitation(c, msg.citations)}
+                  className="group min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-left transition hover:border-white/20 hover:bg-white/[0.06]"
+                >
+                  <div className="flex items-center gap-1.5 text-[11.5px]">
+                    <FileText className="h-3 w-3 text-rose-400" />
+                    {c.rank && <span className="shrink-0 text-white/55">[#{c.rank}]</span>}
+                    <span className="truncate font-medium text-white/85">{c.label}</span>
+                    {crossDrive && driveNameOf(c.fileId) && (
+                      <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
+                        {driveNameOf(c.fileId)}
+                      </span>
+                    )}
                   </div>
+                  {c.snippet && (
+                    <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-white/65">
+                      <HighlightedText text={c.snippet} terms={c.terms ?? []} />
+                    </div>
+                  )}
+                </button>
+                {onAnalyze && c.fileId.startsWith("/") && (
+                  <button
+                    onClick={() => onAnalyze(c.fileId)}
+                    title={tm("Read and analyse this whole document (may take minutes)")}
+                    className="flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] px-1.5 text-center text-[10.5px] leading-tight text-white/65 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white/90"
+                  >
+                    <FileSearch className="h-3.5 w-3.5" style={{ color: LIME }} />
+                    {tm("Full analysis")}
+                  </button>
                 )}
-              </button>
+              </div>
             ))}
           </div>
           {msg.citations.length > 1 && (
