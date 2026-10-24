@@ -20,7 +20,7 @@ from model import CORE_TYPES
 
 MAX_CHUNK_CHARS = 3000
 TABLE_ROWS_PER_CHUNK = 15
-ATTRIBUTE_KEYS = ("birth_date", "birth_place", "mother_name", "id_number")
+ATTRIBUTE_KEYS = ("birth_date", "birth_place", "mother_name", "id_number", "registry_number")
 
 
 def fold(text: str) -> str:
@@ -149,8 +149,9 @@ def _system_prompt(profile: dict) -> str:
         "For each entity give a short ref (e1, e2 ...) and in `names` EVERY spelling the excerpt "
         "uses for it, copied character for character (keep misspellings, missing accents, "
         "initials, capitals). Words such as 'nevezett', 'az illető', 'he' are not names.\n"
-        "For people also copy birth_date (YYYY-MM-DD), birth_place, mother_name and id_number "
-        "when the excerpt states them.\n"
+        "For people also copy birth_date (YYYY-MM-DD), birth_place, mother_name, id_number "
+        "(personal ID number) and registry_number (the person's number in an institution's "
+        "own register, e.g. an inmate registry number) when the excerpt states them.\n"
         "Relations - use only these types:\n" + rels + "\n"
         "Use RELATED_TO with a short `label` only when a stated relation fits none of them.\n"
         "`from`/`to` are entity refs; `from` is the one who does what the relation says (the "

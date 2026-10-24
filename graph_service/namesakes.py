@@ -21,7 +21,7 @@ from __future__ import annotations
 from extraction import fold
 from resolution import _person_keys
 
-CONFLICT_ATTRS = ("birth_date", "mother_name", "id_number")
+CONFLICT_ATTRS = ("birth_date", "mother_name", "id_number", "registry_number")
 
 
 class JoinedView:

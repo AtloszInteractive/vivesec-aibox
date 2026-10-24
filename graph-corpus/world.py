@@ -77,6 +77,8 @@ class Person:
     phones: list[str] = field(default_factory=list)
     plates: list[str] = field(default_factory=list)
     homonym_of: str | None = None
+    # Inmates only: the number in the prison register (synthetic format NY-123456).
+    registry_number: str | None = None
 
     @property
     def name(self) -> str:
@@ -236,6 +238,14 @@ def build(n_persons: int = 120, seed: int = 26) -> World:
         )
         persons[twin_id] = twin
         groups[twin.group].append(twin_id)
+
+    # A separate stream, so adding registry numbers leaves the rest of the world as it was.
+    reg_rng, used_reg = random.Random(seed * 7919 + 1), set()
+    for p in sorted(persons.values(), key=lambda x: x.id):
+        if p.role == "inmate":
+            while p.registry_number is None or p.registry_number in used_reg:
+                p.registry_number = "NY-%06d" % reg_rng.randint(100000, 999999)
+            used_reg.add(p.registry_number)
 
     for p in persons.values():
         for _ in range(2 if rng.random() < 0.25 else 1):

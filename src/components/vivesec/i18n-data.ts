@@ -573,6 +573,7 @@ const M: Record<string, Tri> = {
   "birth_place": ["Születési hely", "Fødested", "Geburtsort"],
   "mother_name": ["Anyja neve", "Moders navn", "Name der Mutter"],
   "id_number": ["Azonosító szám", "ID-nummer", "Ausweisnummer"],
+  "registry_number": ["Nyilvántartási szám", "Registreringsnummer", "Registernummer"],
   "Possible same person": ["Lehetséges azonos személy", "Muligvis samme person", "Möglicherweise dieselbe Person"],
   "Merge": ["Összevonás", "Flet", "Zusammenführen"],
   "Keep apart": ["Külön tartás", "Hold adskilt", "Getrennt halten"],

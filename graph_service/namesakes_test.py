@@ -49,6 +49,9 @@ class NamesakesTest(unittest.TestCase):
         put(s, "d-N2", [person("N2", "Nagy Béla", "inmate", birth_date="1990-01-01"),
                         person("V2", "Kiss Éva", "visitor")],
             [rel("v2", "VISITED", "V2", "N2", "2026-01-01", "d-N2")])
+        # So are two Szabó Edes with different registry numbers.
+        put(s, "d-S1", [person("S1", "Szabó Ede", "inmate", registry_number="BV-1")], [])
+        put(s, "d-S2", [person("S2", "Szabó Ede", "inmate", registry_number="BV-2")], [])
         # An inmate and a visitor of one name are two people.
         put(s, "d-K1", [person("K1", "Kovács Péter", "inmate"), cell],
             [rel("p3", "PLACED_IN", "K1", "C1", "2025-02-01", "d-K1")])
@@ -80,7 +83,7 @@ class NamesakesTest(unittest.TestCase):
 
     def test_conflicting_records_and_separate_decisions_stay_apart(self):
         view = self.view()
-        self.assertEqual(["Kovács Péter", "Nagy Béla"], sorted(view.ambiguous))
+        self.assertEqual(["Kovács Péter", "Nagy Béla", "Szabó Ede"], sorted(view.ambiguous))
         self.assertNotIn("N1", view.rep)
         self.assertNotIn("K1", view.rep)
         view = self.view(separate={("P3", "P1")})
@@ -116,7 +119,7 @@ class NamesakesTest(unittest.TestCase):
         self.assertEqual(([], None), (out["paths"], out.get("namesakes")))
         out = service.run_query(state, "match", dict(body, join_namesakes=True))
         self.assertEqual(1, len(out["paths"]))
-        self.assertEqual({"ambiguous": 2}, out["namesakes"])
+        self.assertEqual({"ambiguous": 3}, out["namesakes"])
         self.assertTrue({"d-P1", "d-P2"} <= set(out["documents"]))
         # Named ids of any record of the person find the joined one.
         out = service.run_query(state, "aggregate", {

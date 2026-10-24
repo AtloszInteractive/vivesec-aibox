@@ -259,7 +259,8 @@ def build_answer_key(w: world_mod.World, docs: list[Doc], seed: int) -> dict:
         "seed": w.seed,
         "persons": [{
             "id": p.id, "name": p.name, "dob": p.dob.isoformat(), "birthplace": p.birthplace,
-            "mother": p.mother, "id_number": p.id_number, "address": p.address, "role": p.role,
+            "mother": p.mother, "id_number": p.id_number, "registry_number": p.registry_number,
+            "address": p.address, "role": p.role,
             "group": p.group, "phones": p.phones, "plates": p.plates, "homonym_of": p.homonym_of,
             "surfaces": {s: sorted(k) for s, k in sorted(surfaces.get(p.id, {}).items())},
         } for p in w.persons.values()],

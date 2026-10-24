@@ -146,6 +146,7 @@ class Renderer:
             b = doc.blocks
             b.append(("h2", "Személyi adatok"))
             b.append(("", "Név: %s" % self.mention(doc, p, "upper")))
+            b.append(("", "Nyilvántartási szám: %s" % p.registry_number))
             b.append(("", "Születési hely, idő: %s, %s" % (p.birthplace, hu_date(p.dob))))
             b.append(("", "Anyja neve: %s" % p.mother))
             b.append(("", "Személyazonosító igazolvány száma: %s" % p.id_number))
@@ -181,10 +182,12 @@ class Renderer:
                            "pdf", "hatarozat", "Határozat átszállításról")
             doc.blocks += [
                 ("", "Ügyszám: BV-%d/%05d" % (r.start.year, self.rng.randint(1, 99999))),
-                ("", "%s (születési hely, idő: %s, %s; anyja neve: %s) elítéltet %s napi hatállyal "
+                ("", "%s (nyilvántartási szám: %s; születési hely, idő: %s, %s; anyja neve: %s) "
+                     "elítéltet %s napi hatállyal "
                      "a(z) %s intézetből a(z) %s intézetbe szállítom át."
-                 % (self.mention(doc, p, "full"), p.birthplace, hu_date(p.dob), p.mother,
-                    hu_date(r.start), self.label(r.attrs["from_institution"]), self.label(r.b))),
+                 % (self.mention(doc, p, "full"), p.registry_number, p.birthplace, hu_date(p.dob),
+                    p.mother, hu_date(r.start), self.label(r.attrs["from_institution"]),
+                    self.label(r.b))),
                 ("", "Elhelyezése a befogadó intézetben: %s." % self.label(new_place.b)),
                 ("h2", "Indokolás"),
                 ("", "Az átszállításra a fogvatartotti létszám kiegyenlítése érdekében került sor."),
@@ -199,11 +202,13 @@ class Renderer:
                 continue
             doc = self.new("nyilvantartas", "elhelyezes", "Elhelyezesi_kimutatas", "xlsx",
                            "elhelyezesi_kimutatas", "Elhelyezési kimutatás - %s" % inst.label)
-            rows = [["Zárka", "Név", "Születési dátum", "Elhelyezés kezdete", "Elhelyezés vége"]]
+            rows = [["Zárka", "Név", "Nyilvántartási szám", "Születési dátum", "Elhelyezés kezdete",
+                     "Elhelyezés vége"]]
             for r in rels:
                 p = self.w.persons[r.a]
-                rows.append([self.label(r.b), self.mention(doc, p, "full"), p.dob.isoformat(),
-                             r.start.isoformat(), r.end.isoformat() if r.end else "jelenleg is"])
+                rows.append([self.label(r.b), self.mention(doc, p, "full"), p.registry_number,
+                             p.dob.isoformat(), r.start.isoformat(),
+                             r.end.isoformat() if r.end else "jelenleg is"])
                 self.cite(doc, r)
             doc.sheets = {"Elhelyezés": rows}
             doc.noise_list = True
@@ -218,11 +223,13 @@ class Renderer:
             doc = self.new("kommunikacio", "latogatas/%s" % inst, "Latogatasi_naplo_%d_Q%d" % (year, q),
                            fmt, "latogatasi_naplo", "Látogatási napló - %s - %d. %d. negyedév"
                            % (self.label(inst), year, q))
-            rows = [["Dátum", "Fogvatartott neve", "Látogató neve", "Látogató okmányszáma", "Kapcsolat"]]
+            rows = [["Dátum", "Fogvatartott neve", "Fogvatartott nyilvántartási száma",
+                     "Látogató neve", "Látogató okmányszáma", "Kapcsolat"]]
             for r in sorted(rels, key=lambda x: x.start):
                 inmate, visitor = self.w.persons[r.b], self.w.persons[r.a]
                 rows.append([r.start.isoformat(), self.mention(doc, inmate, "full"),
-                             self.mention(doc, visitor, "full"), visitor.id_number, r.attrs["relation"]])
+                             inmate.registry_number, self.mention(doc, visitor, "full"),
+                             visitor.id_number, r.attrs["relation"]])
                 self.cite(doc, r)
             doc.noise_list = True
             if fmt == "xlsx":
@@ -239,10 +246,11 @@ class Renderer:
             doc = self.new("kommunikacio", "hivasok", "Hivasnaplo", "csv", "hivasnaplo",
                            "Telefonhívás-nyilvántartás")
             name = self.mention(doc, p, "full")
-            rows = ["Dátum;Fogvatartott;Születési dátum;Hívott szám;Időtartam (perc)"]
+            rows = ["Dátum;Fogvatartott;Nyilvántartási szám;Születési dátum;Hívott szám;"
+                    "Időtartam (perc)"]
             for r in sorted(rels, key=lambda x: x.start):
-                rows.append("%s;%s;%s;%s;%d" % (r.start.isoformat(), name, p.dob.isoformat(), r.b,
-                                                r.attrs["minutes"]))
+                rows.append("%s;%s;%s;%s;%s;%d" % (r.start.isoformat(), name, p.registry_number,
+                                                   p.dob.isoformat(), r.b, r.attrs["minutes"]))
                 self.cite(doc, r)
             doc.body = "\n".join(rows)
 
@@ -395,7 +403,8 @@ class Renderer:
             doc = self.new("nyilvantartas", "letszam", "Letszamjelentes", "txt", "letszamjelentes",
                            "Létszámjelentés - %s - %s" % (inst.label, hu_date(day)))
             doc.body = "A mai napon az intézet nyilvántartott létszáma %d fő:\n%s" % (
-                len(present), "\n".join(self.mention(doc, p, "full")
+                len(present), "\n".join("%s (%s)" % (self.mention(doc, p, "full"),
+                                                     p.registry_number)
                                         for p in sorted(present, key=lambda x: x.name)))
             doc.noise_list = True
 

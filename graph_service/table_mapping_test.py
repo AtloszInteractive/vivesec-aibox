@@ -95,6 +95,25 @@ class MappingTest(unittest.TestCase):
         self.assertEqual([("VISITED", 1, 2)],
                          parse_mapping(plain, self.table.header, PROFILE).relations)
 
+    def test_registry_number_column_becomes_an_attribute_of_the_inmate(self):
+        text = ("Dátum;Fogvatartott neve;Nyilvántartási szám;Látogató neve\n"
+                "2026-04-16;Bogdán Balázs;BV-0047;Fazekas Péter\n"
+                "2026-04-22;Bogdán Balázs;BV-0047;Fazekas Péter\n")
+        table = find_tables(1, text)[0]
+        raw = {"columns": [
+            {"column": "Dátum", "role": "date"},
+            {"column": "Fogvatartott neve", "role": "entity", "entity_type": "person",
+             "subtype": "inmate"},
+            {"column": "Nyilvántartási szám", "role": "attribute",
+             "attribute": "registry_number", "of": "Fogvatartott neve"},
+            {"column": "Látogató neve", "role": "entity", "entity_type": "person",
+             "subtype": "visitor"}],
+            "relations": [{"type": "VISITED", "from": "Látogató neve",
+                           "to": "Fogvatartott neve"}]}
+        ents, _ = apply_mapping(table, parse_mapping(raw, table.header, PROFILE), PROFILE, "t")
+        inmate = next(e for e in ents if e.subtype == "inmate")
+        self.assertEqual("BV-0047", inmate.attrs["registry_number"][0])
+
     def test_rows_become_dated_relations_with_the_row_as_quote(self):
         ents, rels = apply_mapping(self.table, self.mapping, PROFILE, "t0")
         self.assertEqual(9, len(ents))

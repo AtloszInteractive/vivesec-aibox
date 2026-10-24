@@ -156,6 +156,28 @@ class ResolverTest(unittest.TestCase):
         self.assertNotEqual(a, b)
         self.assertEqual("same id_card, different name", self.r.review[-1]["reason"])
 
+    def test_registry_number_links_records_that_only_share_it_with_the_name(self):
+        # The placement list gives number and birth date, the visit log the number.
+        a = self.r.resolve("d8", person(["Bogdán Balázs"], registry_number="BV-0047",
+                                        birth_date="1981-08-09"))
+        self.assertEqual(a, self.r.resolve("d9", person(["Bogdán Balázs"],
+                                                        registry_number="BV-0047")))
+        self.assertEqual(a, self.r.resolve("d10", person(["Bogdán Balász"],
+                                                         registry_number="bv-0047")))
+        self.assertEqual([], self.r.review)
+
+    def test_registry_number_under_another_name_is_only_a_lead(self):
+        a = self.r.resolve("d8", person(["Bogdán Balázs"], registry_number="BV-0047"))
+        b = self.r.resolve("d9", person(["Fazekas Péter"], registry_number="BV-0047"))
+        self.assertNotEqual(a, b)
+        self.assertEqual("same registry_number, different name", self.r.review[-1]["reason"])
+
+    def test_different_registry_numbers_are_different_people(self):
+        a = self.r.resolve("d8", person(["Nagy Béla"], registry_number="BV-0001"))
+        b = self.r.resolve("d9", person(["Nagy Béla"], registry_number="BV-0002"))
+        self.assertNotEqual(a, b)
+        self.assertEqual([], self.r.review)  # not even "may be the same"
+
 
 if __name__ == "__main__":
     unittest.main()

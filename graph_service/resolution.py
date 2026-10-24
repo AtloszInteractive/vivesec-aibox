@@ -5,12 +5,13 @@ profile's resolution block (auto_merge / review thresholds):
   identifiers  same normalized value -> same entity (exact);
   places, organizations, objects  same folded label -> same entity;
   events       never merged across documents;
-  persons      scored against earlier people with the same name:
-               same ID number 1.0, same held strong identifier (profile
-               strong_keys, e.g. an ID card the person uses) 1.0,
+  persons      scored against earlier people with the same name or ID number:
+               same ID or registry number 1.0, same held strong identifier (profile
+               strong_keys, e.g. an ID card the person uses) 1.0 -- under a
+               different name these are only a lead (0.8);
                name + birth date 0.98, name + mother 0.97,
                name only 0.75, misspelt name 0.7, initial only 0.6;
-               a conflicting birth date, mother or ID number rules a pair out.
+               a conflicting birth date, mother, ID or registry number rules a pair out.
 A score at or above auto_merge links to the existing person. A score between
 review and auto_merge creates a new person and queues the pair for a human
 decision ("may be the same"), so a wrong automatic merge cannot create a false
@@ -22,6 +23,16 @@ import hashlib
 import threading
 
 from extraction import LocalEntity, fold
+
+# Numbers that name one person: a personal ID number, or the person's number in an
+# institution's own register (an inmate registry number).
+ID_ATTRS = ("id_number", "registry_number")
+
+
+def _attr_keys(attrs: dict) -> set[str]:
+    """Index keys for the ID numbers a person record states."""
+    return {"attr:%s:%s" % (k, fold(v)) for k, v in attrs.items()
+            if k in ID_ATTRS and isinstance(v, str) and v.strip()}
 
 
 def _person_keys(name: str) -> tuple[str, str]:
@@ -72,7 +83,7 @@ class Resolver:
 
     def remember_person(self, pid: str, names, attrs: dict, keys=()) -> None:
         p = self.people.setdefault(pid, {"names": set(), "attrs": {}, "keys": set()})
-        for k in keys:
+        for k in set(keys) | _attr_keys(attrs):
             p["keys"].add(k)
             self.by_key.setdefault(k, set()).add(pid)
         for n in names:
@@ -121,11 +132,10 @@ class Resolver:
     def _score(self, ent: LocalEntity, pid: str, keys=frozenset()) -> tuple[float, str]:
         other = self.people[pid]
         mine = {k: fold(v) for k, (v, _) in ent.attrs.items()}
-        for key in ("id_number", "birth_date", "mother_name"):
+        for key in ("id_number", "registry_number", "birth_date", "mother_name"):
             if key in mine and other["attrs"].get(key) and mine[key] not in other["attrs"][key]:
                 return 0.0, "conflicting " + key
-        if "id_number" in mine and mine["id_number"] in other["attrs"].get("id_number", ()):
-            return 1.0, "same id_number"
+        keys = set(keys) | _attr_keys({k: v for k, (v, _) in ent.attrs.items()})
         mine_full = {_person_keys(n)[0] for n in ent.names}
         theirs_full = {_person_keys(n)[0] for n in other["names"]}
         mine_initial = {_person_keys(n)[1] for n in ent.names}
@@ -140,9 +150,11 @@ class Resolver:
             name_score, why = 0.0, "different name"
         shared = sorted(keys & other["keys"])
         if shared:
-            # The same held ID card links the same person; under another name it is
-            # only a lead for a human (typo in the name, or a borrowed document).
-            label = "same " + shared[0].split(":")[0]
+            # The same ID or registry number, or the same held ID card, links the same
+            # person; under another name it is only a lead for a human (a typo in the
+            # name or the number, or a borrowed document).
+            kind, name = shared[0].split(":")[:2]
+            label = "same " + (name if kind == "attr" else kind)
             return (1.0, label) if name_score >= 0.6 else (0.8, label + ", different name")
         if not name_score:
             return 0.0, why
@@ -154,7 +166,7 @@ class Resolver:
 
     def _candidates(self, ent: LocalEntity, keys=frozenset()) -> set[str]:
         out = set()
-        for k in keys:
+        for k in set(keys) | _attr_keys({k: v for k, (v, _) in ent.attrs.items()}):
             out |= self.by_key.get(k, set())
         for n in ent.names:
             full, initial = _person_keys(n)

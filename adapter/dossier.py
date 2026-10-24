@@ -51,7 +51,9 @@ TEXT = {
              "mother_name": {"en": "Mother's name", "hu": "Anyja neve",
                              "da": "Moders navn", "de": "Name der Mutter"},
              "id_number": {"en": "ID number", "hu": "Azonosító szám",
-                           "da": "ID-nummer", "de": "Ausweisnummer"}},
+                           "da": "ID-nummer", "de": "Ausweisnummer"},
+             "registry_number": {"en": "Registry number", "hu": "Nyilvántartási szám",
+                                 "da": "Registreringsnummer", "de": "Registernummer"}},
 }
 LANGS = ("en", "hu", "da", "de")
 MAX_QUOTE = 300
