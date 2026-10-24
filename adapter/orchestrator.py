@@ -227,6 +227,20 @@ _TEXT = {
     },
     "and_more": {"en": " and %d more", "hu": " \u00e9s m\u00e9g %d", "da": " og %d mere",
                  "de": " und %d weitere"},
+    "counted_joined": {
+        "en": "Linked by name: the counts treat records of the same name from different "
+              "documents as one person, although no birth date or ID number confirms it.",
+        "hu": "N\u00e9v alapj\u00e1n \u00f6sszekapcsolva: a sz\u00e1ml\u00e1l\u00e1s a "
+              "k\u00fcl\u00f6nb\u00f6z\u0151 dokumentumokban szerepl\u0151 azonos nev\u0171 "
+              "bejegyz\u00e9seket egy szem\u00e9lynek tekinti, b\u00e1r sz\u00fclet\u00e9si "
+              "d\u00e1tum vagy azonos\u00edt\u00f3 ezt nem er\u0151s\u00edti meg.",
+        "da": "Forbundet via navn: opt\u00e6llingen regner poster med samme navn fra "
+              "forskellige dokumenter som \u00e9n person, selv om ingen f\u00f8dselsdato eller "
+              "ID-nummer bekr\u00e6fter det.",
+        "de": "Namensbasiert verkn\u00fcpft: Die Z\u00e4hlung behandelt gleichnamige "
+              "Eintr\u00e4ge aus verschiedenen Dokumenten als eine Person, obwohl kein "
+              "Geburtsdatum und keine Ausweisnummer es best\u00e4tigt.",
+    },
     "ambiguous_names": {
         "en": "Graph search: %d names in the documents you may see belong to records that "
               "contradict each other (for example different birth dates), so they were not "
@@ -480,6 +494,7 @@ class Run:
         # (graph_service/namesakes.py); the answer names who was joined so.
         self.name_join = name_join
         self.joined = {}
+        self._joined_counts = False
         self._ambiguous = 0
         self.contexts = []
         self.notes = []
@@ -509,18 +524,13 @@ class Run:
         if params.get("join_namesakes"):
             self._ambiguous = max(self._ambiguous,
                                   int((res.get("namesakes") or {}).get("ambiguous") or 0))
-            self._collect_joined(res)
         return res
 
-    def _collect_joined(self, value):
-        if isinstance(value, dict):
-            if len(value.get("joined") or []) > 1 and value.get("label"):
-                self.joined[value["label"]] = len(value["joined"])
-            for item in value.values():
-                self._collect_joined(item)
-        elif isinstance(value, list):
-            for item in value:
-                self._collect_joined(item)
+    def _mark_joined(self, nodes):
+        """Note the people of a result that stand for several same-named records."""
+        for node in nodes:
+            if node and len(node.get("joined") or []) > 1 and node.get("label"):
+                self.joined[node["label"]] = len(node["joined"])
 
     # the domain profile, in the user's language
     def _label_maps(self):
@@ -840,6 +850,7 @@ class Run:
         facts = 0
         for path in res.get("paths") or []:
             self._remember(path)
+            self._mark_joined(path.get("nodes") or [])
             facts += sum(self.edge_fact(e) for e in path.get("edges") or [])
         return facts
 
@@ -885,6 +896,11 @@ class Run:
         self.notes.append(_t("count", self.code) % (
             what, _t("group", self.code)[args.get("group_by") or "entity"])
             + "\n" + "\n".join(lines))
+        if group in ("focus", "other"):
+            # Per-entity figures are where joining by name changes the numbers.
+            self._mark_joined([row.get("node") for row in rows])
+            self._joined_counts = self._joined_counts or any(
+                len(n.get("joined") or []) > 1 for row in rows for n in row.get("nodes") or [])
         for row in rows[:8]:
             self._remember(row)
             for edge in row.get("samples") or []:
@@ -911,6 +927,7 @@ class Run:
                 continue
             self.nodes.setdefault(pair["focus"]["id"], pair["focus"])
             self._remember(pair)
+            self._mark_joined([pair["focus"], *(pair.get("nodes") or [])])
             lines.append("- %s: %s %s (%s) -> %s %s (%s), %s" % (
                 pair["focus"]["label"],
                 self._relation_name(e1["type"]), self._name(e1["b"] if e1["a"] ==
@@ -979,7 +996,7 @@ class Run:
     def _joined_note(self):
         """Which people were joined by name alone in the results, or None."""
         if not self.joined:
-            return None
+            return _t("counted_joined", self.code) if self._joined_counts else None
         names = sorted(self.joined)
         listed = ", ".join("%s (%d)" % (n, self.joined[n]) for n in names[:MAX_JOINED_LISTED])
         if len(names) > MAX_JOINED_LISTED:

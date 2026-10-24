@@ -369,6 +369,33 @@ class RunTest(unittest.TestCase):
         self.assertNotIn("join_namesakes", next(b for p, b in graph.calls
                                                 if p == "/query/match"))
 
+    def test_name_join_is_reported_only_where_it_changes_the_answer(self):
+        joined_kj = dict(KJ1, joined=["a", "b"])
+
+        class Rows(FakeGraph):
+            row_node = None
+
+            def post(self, path, body):
+                if path == "/query/aggregate":
+                    self.calls.append((path, body))
+                    return {"rows": [{"key": "k", "label": "Kovács János", "count": 2,
+                                      "distinct": 1, "node": self.row_node,
+                                      "nodes": [NE, joined_kj], "samples": [EDGES[0]]}],
+                            "documents": DOC}
+                return super().post(path, body)
+
+        def caveat(group, row_node=None):
+            graph = Rows()
+            graph.row_node = row_node
+            r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "English",
+                                 name_join=True)
+            r.run([{"tool": "count", "args": {"relation": "VISITED", "group_by": group}}])
+            return r.info().get("caveat") or ""
+
+        self.assertEqual("", caveat("month"))  # a link counts once, joined or not
+        self.assertIn("Kovács János (2)", caveat("entity", joined_kj))
+        self.assertIn("the counts treat records of the same name", caveat("entity", NE))
+
     def test_sequence_lists_only_visible_pairs(self):
         _, contexts, _ = run([{"tool": "sequence", "args": {
             "first": "VISITED", "then": "VISITED", "within_days": 300}}])
