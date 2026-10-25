@@ -430,7 +430,9 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `GRAPH_REVIEW_PATH`. Tests: graph `review_undo_test`, adapter
   `graph_integration_test` (`test_review_in_bulk_with_history_and_undo`).
 - **Reprocessing after a profile change** (`reprocess.py`): the graph records
-  the profile each document was extracted with (`bv@2`; empty for documents from
+  the profile and extractor revision each document was extracted with (`bv@3/e2`:
+  a software update that changes extraction raises the revision, so its documents
+  count as stale too; empty for documents from
   before this was recorded). `POST /api/v1/ui/graph/reprocess/status` gives the
   caller's view: current profile, counts per profile, `stale_total` (older or
   unknown), `can_start`, the file `source` (`ws-fs` or `local`) and the current or
@@ -458,7 +460,10 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   labels the node "102. számú zárka (Kőhegyi …)" -- from documents the caller may
   see only. A place whose document names no container stays that document's own
   (no cross-document link), the safer choice: a placement list without the
-  institution cannot tell whose cell 102 it lists. Tests: graph
+  institution cannot tell whose cell 102 it lists. Likewise a place,
+  organization or object named only by a common noun (no capital letter, no
+  digit: "intézet", "gépjármű") stays its document's own. (German capitalises
+  every noun, so there this rule does not catch common nouns.) Tests: graph
   `place_scope_test`.
 - **Dossier**: `POST /api/v1/ui/graph/dossier` `{id, format: docx|pdf|md, lang,
   drives?}` renders one entity's basic data, direct relations, timeline and a

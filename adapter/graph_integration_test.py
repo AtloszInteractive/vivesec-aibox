@@ -625,7 +625,7 @@ class GraphIntegrationTest(unittest.TestCase):
             _, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="hanna")
             self.assertEqual((0, "done", 2), (out["stale_total"], out["run"]["state"],
                                               out["run"]["sent"]))
-            self.assertEqual("%s@%s" % (newer["id"], newer["version"]), out["current"])
+            self.assertTrue(out["current"].startswith("%s@%s/e" % (newer["id"], newer["version"])))
         self.assertEqual({"Kovács János"}, self.people("lars", "Kovács"))
         self.assertNotIn("Titkos", json.dumps(self.call("/api/v1/ui/graph/reprocess/status", {},
                                                         user="lars")[1], ensure_ascii=False))

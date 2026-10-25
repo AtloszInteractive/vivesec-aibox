@@ -64,6 +64,15 @@ def _types(raw, where):
 
 
 SCOPED_TYPES = ("place", "organization")
+# Raised when extraction itself changes what it produces from the same text (not
+# the profile): documents extracted before then count as stale and can be
+# reprocessed. 2: places scoped by their container, generic nouns kept local.
+EXTRACTOR_REVISION = 2
+
+
+def profile_tag(profile: dict) -> str:
+    """"bv@3/e2": the profile and extractor revision a document is extracted with."""
+    return "%s@%s/e%d" % (profile["id"], profile["version"], EXTRACTOR_REVISION)
 
 
 def reversed_by_subtypes(spec: dict, sub_a: str, sub_b: str) -> bool:

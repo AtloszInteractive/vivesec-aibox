@@ -96,6 +96,18 @@ def _spans(pages, ents: dict[str, LocalEntity]) -> dict[str, list[tuple[int, int
     return out
 
 
+# Places, organizations and objects named only by a common noun ("intézet",
+# "gépjármű"): no capital letter, no digit. They are not names, so each document
+# keeps its own -- the same word in two documents is not the same thing.
+GENERIC_TYPES = ("place", "organization", "object")
+
+
+
+def _generic(e: LocalEntity) -> bool:
+    return e.type in GENERIC_TYPES and not e.value and bool(e.names) and all(
+        not any(c.isupper() or c.isdigit() for c in name) for name in e.names)
+
+
 # How far apart (characters, same page) a place and its container may be named
 # for the text between them to serve as the evidence that one is inside the other.
 CONTAINER_WINDOW = 300
@@ -219,11 +231,15 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
                 held.setdefault(r.a, set()).add("%s:%s" % (e.subtype, e.value))
     gid = {ref: resolver.resolve(doc_id, e, frozenset(held.get(ref, ())))
            for ref, e in ents.items()}
-    for ref, (container, _) in scoped.items():
-        # Cell 102 of one prison is not cell 102 of another; with no container
-        # named, the place stays this document's own (no cross-document link).
-        gid[ref] = "%s@%s" % (gid[ref], gid[container] if container is not None
-                              else "doc:" + doc_id)
+    for ref, e in ents.items():
+        if _generic(e):
+            gid[ref] = "%s@doc:%s" % (gid[ref], doc_id)
+        elif ref in scoped:
+            # Cell 102 of one prison is not cell 102 of another; with no container
+            # named, the place stays this document's own (no cross-document link).
+            container = scoped[ref][0]
+            gid[ref] = "%s@%s" % (gid[ref], gid[container] if container is not None
+                                  else "doc:" + doc_id)
     entities, mentions, relations = {}, [], {}
     for ref, e in ents.items():
         g = gid[ref]

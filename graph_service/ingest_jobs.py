@@ -30,6 +30,7 @@ from ingest import IngestError, parse_document_payload
 from graph_store import StoreError
 from llm_client import LLMError
 from model import Entity, Evidence, Relation
+from domain_profile import profile_tag  # noqa: F401 (re-exported)
 from pipeline import extract_document
 from resolution import Resolver
 from table_mapping import TableMapper
@@ -39,11 +40,6 @@ RECENT = 200
 
 class QueueFull(Exception):
     pass
-
-
-def profile_tag(profile: dict) -> str:
-    """"bv@2": the profile a document is extracted with."""
-    return "%s@%s" % (profile["id"], profile["version"])
 
 
 class IngestWorker:

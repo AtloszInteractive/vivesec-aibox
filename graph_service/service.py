@@ -123,7 +123,7 @@ def documents_by_profile(state: State, body: dict) -> dict:
         scope = Scope.parse(body)
     except ScopeError as e:
         raise HttpError(400, str(e))
-    current = "%s@%s" % (state.profile["id"], state.profile["version"])
+    current = domain_profile.profile_tag(state.profile)
     prefix = str(body.get("path_prefix") or "").rstrip("/")
     limit = max(1, min(int(body.get("limit") or 5000), 20000))
     store = getattr(state.store, "mirror", state.store)

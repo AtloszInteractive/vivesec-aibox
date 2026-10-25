@@ -150,7 +150,7 @@ class IngestWorkerTest(unittest.TestCase):
     def test_a_profile_change_makes_documents_stale_until_reprocessed(self):
         self.ingest_both()
         scope = {"corpus_ids": ["c1", "c2"]}
-        old = "%s@%s" % (self.state.profile["id"], self.state.profile["version"])
+        old = domain_profile.profile_tag(self.state.profile)
         out = self.post("/documents/profile", scope)
         self.assertEqual((old, {old: 2}, 0), (out["current"], out["counts"], out["stale_total"]))
         newer = dict(self.state.profile, version=self.state.profile["version"] + 1)
@@ -162,7 +162,7 @@ class IngestWorkerTest(unittest.TestCase):
         self.assertEqual([], self.post("/documents/profile", {"corpus_ids": []})["stale"])
         self.reprocess_d2()
         out = self.post("/documents/profile", scope)
-        self.assertEqual({old: 1, "%s@%s" % (newer["id"], newer["version"]): 1}, out["counts"])
+        self.assertEqual({old: 1, domain_profile.profile_tag(newer): 1}, out["counts"])
         self.assertEqual(["/c1/d1.txt"], [d["source_path"] for d in out["stale"]])
 
     def test_reprocessing_keeps_a_keep_apart_decision(self):

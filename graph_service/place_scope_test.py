@@ -148,6 +148,33 @@ class RereadDocumentTest(unittest.TestCase):
         self.assertEqual([("place:deli regio", ["x"]), ("place:eszaki regio", ["y"])], parts)
 
 
+class GenericNounTest(unittest.TestCase):
+    """A common noun is not a name: "gépjármű" in two documents is not one car,
+    while a plate number or a proper name still links them."""
+
+    def put(self, store, resolver, doc_id, text, entities):
+        meta = {"doc_id": doc_id, "corpus_id": "c1", "source_path": "/c1/%s.txt" % doc_id}
+        payload, _ = pipeline.extract_document(text.encode("utf-8"), meta, PROFILE,
+                                               FakeLLM(answer(entities, [])), resolver)
+        store.put_document(*parse_document_payload(payload, PROFILE))
+        return {e["label"]: e["id"] for e in payload["entities"]}
+
+    def test_common_nouns_stay_in_their_document(self):
+        store, resolver = MemoryGraphStore(), Resolver(PROFILE)
+        things = [{"ref": "g", "type": "object", "names": ["gépjármű"]},
+                  {"ref": "o", "type": "organization", "names": ["intézet"]},
+                  {"ref": "p", "type": "object", "names": ["ABC-123 rendszámú gépjármű"]},
+                  {"ref": "k", "type": "place", "names": ["Kőhegyi Intézet"]}]
+        text = "A gépjármű (ABC-123 rendszámú gépjármű) az intézet előtt, a Kőhegyi Intézet mellett állt."
+        one = self.put(store, resolver, "d1", text, things)
+        two = self.put(store, resolver, "d2", text, things)
+        self.assertNotEqual(one["gépjármű"], two["gépjármű"])
+        self.assertNotEqual(one["intézet"], two["intézet"])
+        self.assertTrue(one["gépjármű"].endswith("@doc:d1"))
+        self.assertEqual(one["ABC-123 rendszámú gépjármű"], two["ABC-123 rendszámú gépjármű"])
+        self.assertEqual(one["Kőhegyi Intézet"], two["Kőhegyi Intézet"])
+
+
 class WithinValidationTest(unittest.TestCase):
     def profile(self, within, kind="place"):
         raw = {"id": "t", "version": 1, "name": {"en": "T"}, "entity_subtypes": [
