@@ -5,7 +5,7 @@ import re
 import time
 
 from extraction import (LocalEntity, LocalRelation, chunk_pages, co_mentions, find_identifiers,
-                        fold, llm_extract)
+                        fold, llm_extract, squash)
 from llm_client import LLMError
 from table_mapping import apply_mapping, blank_tables, find_tables
 from text_source import document_pages
@@ -95,6 +95,53 @@ def _spans(pages, ents: dict[str, LocalEntity]) -> dict[str, list[tuple[int, int
     return out
 
 
+# How far apart (characters, same page) a place and its container may be named
+# for the text between them to serve as the evidence that one is inside the other.
+CONTAINER_WINDOW = 300
+
+
+def _containers(profile: dict, pages, ents: dict[str, LocalEntity], rels: list[LocalRelation],
+                spans) -> dict[str, tuple[str | None, LocalRelation | None]]:
+    """ref of a place that only exists inside a larger one (profile `within`, e.g. a
+    cell) -> (ref of its container in this document or None, a PART_OF relation
+    to add). The container is the one a PART_OF relation names, else the only
+    one the document names, else the one named last before the place on its page."""
+    within = {s["id"]: set(s["within"]) for s in profile["entity_subtypes"] if s.get("within")}
+    text = dict(pages)
+    out: dict[str, tuple[str | None, LocalRelation | None]] = {}
+    for ref, e in ents.items():
+        allowed = within.get(e.subtype)
+        if not allowed:
+            continue
+        holders = [x for x, c in ents.items() if x != ref and c.subtype in allowed and x in spans]
+        explicit = {r.b if r.a == ref else r.a for r in rels if r.type == "PART_OF"
+                    and ref in (r.a, r.b) and (r.b if r.a == ref else r.a) in holders}
+        container = None
+        if len(explicit) == 1:
+            container = explicit.pop()
+        elif not explicit and len(holders) == 1:
+            container = holders[0]
+        elif not explicit and holders:
+            for page, start, _, _ in sorted(spans.get(ref, ())):
+                before = [(h_end, h) for h in holders for h_page, _, h_end, _ in spans[h]
+                          if h_page == page and h_end <= start and start - h_end <= CONTAINER_WINDOW]
+                if before:
+                    container = max(before)[1]
+                    break
+        evidence = None
+        if container is not None and not explicit and container in holders:
+            near = sorted((max(s, hs) - min(e_, he), page, min(s, hs), max(e_, he))
+                          for page, s, e_, _ in spans.get(ref, ())
+                          for h_page, hs, he, _ in spans[container] if h_page == page)
+            if near and near[0][0] <= CONTAINER_WINDOW:
+                _, page, start, end = near[0]
+                evidence = LocalRelation("PART_OF", ref, container,
+                                         squash(text[page][start:end]), page, "rule",
+                                         confidence=1.0)
+        out[ref] = (container, evidence)
+    return out
+
+
 def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, tables=None
                      ) -> tuple[dict, dict]:
     """(ingest payload, stats). meta: doc_id, corpus_id, source_path, title?, kind?, acl?
@@ -155,6 +202,13 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
                         profile["cooccurrence"]["max_entities"])
 
     doc_id = meta["doc_id"]
+    scoped = _containers(profile, pages, ents, rels, spans)
+    for ref, (container, evidence) in scoped.items():
+        if container is not None:
+            first = min(spans[ref])[0] if spans.get(ref) else None
+            ents[ref].attrs.setdefault("within", (ents[container].names[0], first))
+        if evidence is not None:
+            rels.append(evidence)
     strong = resolver.strong_key_subtypes()
     held: dict[str, set[str]] = {}
     for r in rels:
@@ -164,6 +218,11 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
                 held.setdefault(r.a, set()).add("%s:%s" % (e.subtype, e.value))
     gid = {ref: resolver.resolve(doc_id, e, frozenset(held.get(ref, ())))
            for ref, e in ents.items()}
+    for ref, (container, _) in scoped.items():
+        # Cell 102 of one prison is not cell 102 of another; with no container
+        # named, the place stays this document's own (no cross-document link).
+        gid[ref] = "%s@%s" % (gid[ref], gid[container] if container is not None
+                              else "doc:" + doc_id)
     entities, mentions, relations = {}, [], {}
     for ref, e in ents.items():
         g = gid[ref]

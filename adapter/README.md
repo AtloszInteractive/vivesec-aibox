@@ -448,6 +448,18 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   Relationships › Processing. Tests: `reprocess_test`, `graph_integration_test`
   (`test_a_profile_change_is_reprocessed_from_the_file_source`), graph side
   `ingest_jobs_test`.
+- **Places inside places** (profile `entity_subtypes[].within`, in `bv` from
+  version 3: a cell is within an institution): such a place's identity includes
+  its container, so cell 102 of two prisons are two places. The container is the
+  one a `PART_OF` relation in the document names, else the only one the document
+  names, else the one named last before the place on its page (within 300
+  characters). The graph then adds `PART_OF` with the text between the two as
+  the verbatim quote, keeps the container as the place's `within` attribute and
+  labels the node "102. számú zárka (Kőhegyi …)" -- from documents the caller may
+  see only. A place whose document names no container stays that document's own
+  (no cross-document link), the safer choice: a placement list without the
+  institution cannot tell whose cell 102 it lists. Tests: graph
+  `place_scope_test`.
 - **Dossier**: `POST /api/v1/ui/graph/dossier` `{id, format: docx|pdf|md, lang,
   drives?}` renders one entity's basic data, direct relations, timeline and a
   numbered source list (path, page, verbatim quote) with `docgen.py`.

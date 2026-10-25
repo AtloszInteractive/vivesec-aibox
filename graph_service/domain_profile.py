@@ -63,6 +63,9 @@ def _types(raw, where):
     return list(raw)
 
 
+SCOPED_TYPES = ("place", "organization")
+
+
 def reversed_by_subtypes(spec: dict, sub_a: str, sub_b: str) -> bool:
     """True when a relation read a -> b only fits its profile the other way round
     (an inmate "visited" a visitor). An unknown subtype fits either end."""
@@ -99,12 +102,28 @@ def validate(raw: dict) -> dict:
     subtypes = {}
     for i, s in enumerate(raw.get("entity_subtypes", [])):
         where = "entity_subtypes[%d]" % i
-        _keys(s, ("id", "type", "label"), where)
+        _keys(s, ("id", "type", "label", "within"), where)
         if not isinstance(s.get("id"), str) or not _ID.match(s["id"]) or s["id"] in subtypes:
             raise ProfileError("%s.id must be a unique lowercase identifier" % where)
         if s.get("type") not in CORE_TYPES:
             raise ProfileError("%s.type must be one of %s" % (where, CORE_TYPES))
         subtypes[s["id"]] = {"id": s["id"], "type": s["type"], "label": _label(s.get("label"), where)}
+        if "within" in s:
+            subtypes[s["id"]]["within"] = s["within"]
+    # within: a place known only inside a larger one (a cell inside an institution).
+    # Its identity then includes that container, so cell 102 of two prisons are
+    # two places; without a container in the document it stays document-local.
+    for i, s in enumerate(subtypes.values()):
+        if "within" not in s:
+            continue
+        where = "entity_subtypes[%d].within" % i
+        within = s["within"]
+        if s["type"] not in SCOPED_TYPES or not isinstance(within, list) or not within \
+                or any(not isinstance(x, str) or x == s["id"] or x not in subtypes
+                       or subtypes[x]["type"] not in SCOPED_TYPES for x in within):
+            raise ProfileError("%s must list other place or organization subtypes (and the "
+                               "subtype itself must be a place or organization)" % where)
+        s["within"] = list(within)
     out["entity_subtypes"] = list(subtypes.values())
 
     patterns = {}

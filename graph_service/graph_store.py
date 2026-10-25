@@ -332,6 +332,11 @@ class GraphView:
         surfaces = Counter(m.text for m in mentions)
         name = [a.value for a in attrs if a.name == "name"]
         label = surfaces.most_common(1)[0][0] if surfaces else (name[0] if name else e.id)
+        within = Counter(a.value for a in attrs if a.name == "within")
+        if within:
+            # "102. számú zárka (Kőhegyi Intézet)": the container, as a visible
+            # document names it, tells apart places that share a name.
+            label = "%s (%s)" % (label, within.most_common(1)[0][0])
         return {"id": e.id, "type": e.type, "subtype": e.subtype, "label": label,
                 "aliases": sorted(surfaces), "mentions": len(mentions),
                 "documents": sorted({m.doc_id for m in mentions} | {a.doc_id for a in attrs}),
