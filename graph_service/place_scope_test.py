@@ -95,7 +95,7 @@ class PlaceScopeTest(unittest.TestCase):
     def test_the_label_names_the_container_from_visible_documents_only(self):
         view = self.store.view(Scope(["c1"]))
         self.assertEqual("102. számú zárka (Kőhegyi Intézet)", view.node(self.cell_of("d1"))["label"])
-        self.assertEqual("102. számú zárka", view.node(self.cell_of("d4"))["label"])
+        self.assertEqual("102. számú zárka (d4.txt)", view.node(self.cell_of("d4"))["label"])
 
     def test_an_explicit_part_of_wins_over_the_nearest_institution(self):
         text = ("Az Alsóréti Börtön 102. számú zárka része a Kőhegyi Intézet épületének? Nem: "

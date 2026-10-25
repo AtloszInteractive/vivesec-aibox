@@ -337,6 +337,12 @@ class GraphView:
             # "102. számú zárka (Kőhegyi Intézet)": the container, as a visible
             # document names it, tells apart places that share a name.
             label = "%s (%s)" % (label, within.most_common(1)[0][0])
+        elif "@doc:" in e.id:
+            # A document-local place or thing ("101. számú zárka" of a list that
+            # names no institution): its document tells it apart.
+            doc = self._docs.get(e.id.rsplit("@doc:", 1)[1])
+            if doc is not None:
+                label = "%s (%s)" % (label, doc.title or doc.source_path.rsplit("/", 1)[-1])
         return {"id": e.id, "type": e.type, "subtype": e.subtype, "label": label,
                 "aliases": sorted(surfaces), "mentions": len(mentions),
                 "documents": sorted({m.doc_id for m in mentions} | {a.doc_id for a in attrs}),
