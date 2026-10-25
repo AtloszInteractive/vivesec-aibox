@@ -88,6 +88,41 @@ class PruneSelectionTest(unittest.TestCase):
         self.assertNotIn("vivesec-ui-prev-20261024-202221", parked)
         self.assertNotIn(stage("20261024-195015"), removable)
 
+class HybridProbeTest(unittest.TestCase):
+    def answers(self, *citations):
+        replies = [{"ok": True, "answer": "Rayleigh.", "backend": "ollama:x (hybrid)",
+                    "profile": "hybrid", "citations": c} for c in citations]
+        asked = []
+
+        def ask(attempt):
+            asked.append(attempt)
+            return replies[attempt - 1]
+        return ask, asked
+
+    def test_an_occasional_citation_is_asked_again(self):
+        ask, asked = self.answers([{"path": "/d/kovasz.pdf"}], [])
+        result, attempts = release_box.hybrid_probe(ask)
+        self.assertEqual((2, [1, 2]), (attempts, asked))
+        self.assertEqual([], result["citations"])
+
+    def test_citing_every_time_fails_and_names_the_documents(self):
+        ask, asked = self.answers(*([[{"path": "/d/kovasz.pdf"}]] * 3))
+        with self.assertRaises(AssertionError) as caught:
+            release_box.hybrid_probe(ask)
+        self.assertEqual([1, 2, 3], asked)
+        self.assertIn("/d/kovasz.pdf", str(caught.exception))
+
+    def test_a_broken_answer_fails_at_once(self):
+        for bad in ({"ok": False, "error": "down"}, {"ok": True, "answer": "x", "backend": "extractive",
+                                                     "profile": "hybrid", "citations": []},
+                    {"ok": True, "answer": "x", "backend": "ollama:x", "profile": "grounded",
+                     "citations": []}):
+            asked = []
+            with self.assertRaises(AssertionError):
+                release_box.hybrid_probe(lambda n: asked.append(n) or bad)
+            self.assertEqual([1], asked)
+
+
 class KeepCountTest(unittest.TestCase):
     def test_default_disable_and_fail_safe_values(self):
         for raw, expected in ((None, 2), ("0", 0), ("1", 2), ("3", 3), ("bad", 2), ("", 2)):
