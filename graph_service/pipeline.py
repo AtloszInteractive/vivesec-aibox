@@ -1,6 +1,7 @@
 """Document -> graph payload: text, rules, model, co-mentions, resolution (E26)."""
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 
@@ -242,7 +243,11 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
         if spec[r.type]["symmetric"] and b < a:
             a, b = b, a
         key = (r.type, a, b, r.start, r.end)
-        rel = relations.setdefault(key, {"id": "%s:r%d" % (doc_id, len(relations)), "type": r.type,
+        # The id follows the relation's key: a relationship keeps the id of the
+        # document that created it while others add evidence, so a positional id
+        # could meet a different relationship when that document is read again.
+        rid = "%s:r%s" % (doc_id, hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:12])
+        rel = relations.setdefault(key, {"id": rid, "type": r.type,
                                          "a": a, "b": b, "start": r.start, "end": r.end,
                                          "raw_label": r.raw_label, "evidence": []})
         if all(ev["quote"] != r.quote for ev in rel["evidence"]):

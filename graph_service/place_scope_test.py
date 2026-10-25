@@ -111,6 +111,43 @@ class PlaceScopeTest(unittest.TestCase):
         self.assertEqual(1, sum(r["type"] == "PART_OF" for r in payload["relations"]))
 
 
+class RereadDocumentTest(unittest.TestCase):
+    """A relationship keeps the id of the document that created it while another
+    document adds evidence; reading the first one again with its relations in
+    another order must not collide with it."""
+
+    TEXT_X = "A Kőhegyi Intézet az Északi Régió része. A Kőhegyi Intézet a Déli Régió része is."
+    TEXT_Y = "A Kőhegyi Intézet az Északi Régió része."
+
+    @staticmethod
+    def places():
+        return [{"ref": "k", "type": "place", "subtype": "institution",
+                 "names": ["Kőhegyi Intézet"]},
+                {"ref": "n", "type": "place", "names": ["Északi Régió"]},
+                {"ref": "s", "type": "place", "names": ["Déli Régió"]}]
+
+    def part_of(self, to, quote):
+        return {"type": "PART_OF", "from": "k", "to": to, "quote": quote}
+
+    def put(self, store, resolver, doc_id, text, relations):
+        meta = {"doc_id": doc_id, "corpus_id": "c1", "source_path": "/c1/%s.txt" % doc_id}
+        payload, _ = pipeline.extract_document(text.encode("utf-8"), meta, PROFILE,
+                                               FakeLLM(answer(self.places(), relations)),
+                                               resolver)
+        store.put_document(*parse_document_payload(payload, PROFILE))
+
+    def test_reading_a_document_again_in_another_order(self):
+        store, resolver = MemoryGraphStore(), Resolver(PROFILE)
+        north = self.part_of("n", "A Kőhegyi Intézet az Északi Régió része.")
+        south = self.part_of("s", "A Kőhegyi Intézet a Déli Régió része is.")
+        self.put(store, resolver, "x", self.TEXT_X, [north, south])
+        self.put(store, resolver, "y", self.TEXT_Y, [north])
+        self.put(store, resolver, "x", self.TEXT_X, [south])
+        parts = sorted((r.b, sorted(ev.doc_id for ev in r.evidence))
+                       for r in store.relations.values() if r.type == "PART_OF")
+        self.assertEqual([("place:deli regio", ["x"]), ("place:eszaki regio", ["y"])], parts)
+
+
 class WithinValidationTest(unittest.TestCase):
     def profile(self, within, kind="place"):
         raw = {"id": "t", "version": 1, "name": {"en": "T"}, "entity_subtypes": [
