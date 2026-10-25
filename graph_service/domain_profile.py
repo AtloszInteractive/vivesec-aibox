@@ -66,12 +66,13 @@ def _types(raw, where):
 SCOPED_TYPES = ("place", "organization")
 # Raised when extraction itself changes what it produces from the same text (not
 # the profile): documents extracted before then count as stale and can be
-# reprocessed. 2: places scoped by their container, generic nouns kept local.
-EXTRACTOR_REVISION = 2
+# reprocessed. 2: places scoped by their container, common nouns kept local;
+# 3: also common nouns with digits (an untyped "102. számú zárka").
+EXTRACTOR_REVISION = 3
 
 
 def profile_tag(profile: dict) -> str:
-    """"bv@3/e2": the profile and extractor revision a document is extracted with."""
+    """"bv@3/e3": the profile and extractor revision a document is extracted with."""
     return "%s@%s/e%d" % (profile["id"], profile["version"], EXTRACTOR_REVISION)
 
 

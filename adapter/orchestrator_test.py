@@ -432,6 +432,34 @@ class RunTest(unittest.TestCase):
         self.assertIn("Kovács János (2)", caveat("entity", joined_kj))
         self.assertIn("the counts treat records of the same name", caveat("entity", NE))
 
+    def test_same_named_places_are_told_apart_in_a_note(self):
+        cells = [("c1", "102. számú zárka (Kőhegyi Intézet)", 5),
+                 ("c2", "102. számú zárka (Lista.xlsx)", 6), ("c3", "Kovács János (x)", 1)]
+
+        class Cells(FakeGraph):
+            def post(self, path, body):
+                if path == "/query/aggregate":
+                    self.calls.append((path, body))
+                    return {"rows": [{"key": k, "label": label, "count": n, "distinct": n,
+                                      "node": None, "nodes": [], "samples": []}
+                                     for k, label, n in cells], "documents": DOC}
+                return super().post(path, body)
+
+        def notes(rows):
+            cells[:] = rows
+            r = orchestrator.Run(Cells(), {"corpus_ids": ["c"]}, lambda p: True, "English")
+            out = r.run([{"tool": "count", "args": {"relation": "VISITED",
+                                                     "group_by": "other"}}])
+            return [c["text"] for c in out if c["origin"] == "graph-note"]
+
+        texts = notes(list(cells))
+        self.assertTrue(any(t.startswith("Same name, different place: 102. számú zárka --")
+                            for t in texts), texts)
+        self.assertFalse(any("Kovács János" in t and t.startswith("Same name") for t in texts))
+        # One qualified variant alone needs no warning.
+        self.assertFalse(any(t.startswith("Same name") for t in notes(
+            [("c1", "102. számú zárka (Kőhegyi Intézet)", 5)])))
+
     def test_sequence_lists_only_visible_pairs(self):
         _, contexts, _ = run([{"tool": "sequence", "args": {
             "first": "VISITED", "then": "VISITED", "within_days": 300}}])

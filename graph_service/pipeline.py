@@ -96,16 +96,17 @@ def _spans(pages, ents: dict[str, LocalEntity]) -> dict[str, list[tuple[int, int
     return out
 
 
-# Places, organizations and objects named only by a common noun ("intézet",
-# "gépjármű"): no capital letter, no digit. They are not names, so each document
-# keeps its own -- the same word in two documents is not the same thing.
+# Places, organizations and objects named without a capital letter ("intézet",
+# "gépjármű", "102. számú zárka"): a common noun, not a name, so each document
+# keeps its own -- the same words in two documents are not the same thing. A
+# cell the model typed as such and placed in an institution is the exception.
 GENERIC_TYPES = ("place", "organization", "object")
 
 
 
 def _generic(e: LocalEntity) -> bool:
     return e.type in GENERIC_TYPES and not e.value and bool(e.names) and all(
-        not any(c.isupper() or c.isdigit() for c in name) for name in e.names)
+        not any(c.isupper() for c in name) for name in e.names)
 
 
 # How far apart (characters, same page) a place and its container may be named
@@ -232,14 +233,13 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
     gid = {ref: resolver.resolve(doc_id, e, frozenset(held.get(ref, ())))
            for ref, e in ents.items()}
     for ref, e in ents.items():
-        if _generic(e):
+        # Cell 102 of one prison is not cell 102 of another; with no container
+        # named, the place stays this document's own (no cross-document link).
+        container = scoped.get(ref, (None, None))[0]
+        if container is not None:
+            gid[ref] = "%s@%s" % (gid[ref], gid[container])
+        elif ref in scoped or _generic(e):
             gid[ref] = "%s@doc:%s" % (gid[ref], doc_id)
-        elif ref in scoped:
-            # Cell 102 of one prison is not cell 102 of another; with no container
-            # named, the place stays this document's own (no cross-document link).
-            container = scoped[ref][0]
-            gid[ref] = "%s@%s" % (gid[ref], gid[container] if container is not None
-                                  else "doc:" + doc_id)
     entities, mentions, relations = {}, [], {}
     for ref, e in ents.items():
         g = gid[ref]

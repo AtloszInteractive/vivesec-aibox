@@ -35,7 +35,7 @@ class Document:
     acl: dict | None = None
     kind: str = ""
     pages: int = 0
-    # The domain profile it was extracted with ("bv@3/e2"); "" when unknown (before
+    # The domain profile it was extracted with ("bv@3/e3"); "" when unknown (before
     # this was recorded, or put directly). A profile change makes it stale.
     profile: str = ""
 

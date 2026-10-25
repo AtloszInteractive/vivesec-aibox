@@ -281,6 +281,12 @@ _TEXT = {
               "Geburtsdaten), daher wurden sie nicht dokument\u00fcbergreifend verkn\u00fcpft; "
               "das Ergebnis kann unvollst\u00e4ndig sein.",
     },
+    "qualified": {
+        "en": "Same name, different place: %s -- the name in brackets (institution or source document) tells them apart. Keep it with the name in the answer and do not add up their figures.",
+        "hu": "Azonos n\u00e9v, k\u00fcl\u00f6nb\u00f6z\u0151 hely: %s -- a z\u00e1r\u00f3jeles r\u00e9sz (int\u00e9zet vagy forr\u00e1sdokumentum) k\u00fcl\u00f6nb\u00f6zteti meg \u0151ket. A v\u00e1laszban is a z\u00e1r\u00f3jeles r\u00e9sszel egy\u00fctt nevezze meg \u0151ket, \u00e9s ne adja \u00f6ssze a sz\u00e1maikat.",
+        "da": "Samme navn, forskelligt sted: %s -- navnet i parentes (institution eller kildedokument) skelner dem. Behold det sammen med navnet i svaret, og l\u00e6g ikke deres tal sammen.",
+        "de": "Gleicher Name, anderer Ort: %s -- der Name in Klammern (Anstalt oder Quelldokument) unterscheidet sie. Behalten Sie ihn in der Antwort beim Namen und addieren Sie ihre Zahlen nicht.",
+    },
     "unmerged": {
         "en": "Graph search: %d pairs of same-named records in the documents you may see "
               "await an administrator's merge decision. Until merged, links recorded in "
@@ -302,6 +308,9 @@ _TEXT = {
     },
 }
 LANG_CODES = {"Hungarian": "hu", "English": "en", "Danish": "da", "German": "de"}
+
+
+_QUALIFIED = re.compile(r"^(.*\S) \(([^()]+)\)$")
 
 
 def _t(key, code):
@@ -1063,11 +1072,26 @@ class Run:
             self._unmerged_noted = True
             self.notes.append(_t("unmerged", self.code) % self._pending())
 
+    def _qualified_note(self):
+        """Places that share a name ("102. sz\u00e1m\u00fa z\u00e1rka" of two prisons, or of
+        a list naming no prison) carry their container or document in brackets; a
+        model tends to drop the brackets and add the figures up."""
+        labels = {label for c in self.calls for label in c["entities"]}
+        labels |= {n["label"] for n in self.nodes.values() if n.get("label")}
+        bases = {}
+        for label in labels:
+            m = _QUALIFIED.match(label)
+            if m:
+                bases.setdefault(m.group(1), set()).add(label)
+        same = sorted(b for b, variants in bases.items() if len(variants) > 1 or b in labels)
+        return _t("qualified", self.code) % ", ".join(same[:5]) if same else None
+
     def output(self):
         joined = self._joined_note()
+        qualified = self._qualified_note()
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,
                   "page_number": None, "chunk_id": None, "score": 1.0, "origin": "graph-note"}
-                 for n in self.notes + ([joined] if joined else [])]
+                 for n in self.notes + [x for x in (joined, qualified) if x]]
         return notes + self.contexts
 
     def summary(self):

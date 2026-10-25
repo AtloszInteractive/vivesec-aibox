@@ -164,12 +164,16 @@ class GenericNounTest(unittest.TestCase):
         things = [{"ref": "g", "type": "object", "names": ["gépjármű"]},
                   {"ref": "o", "type": "organization", "names": ["intézet"]},
                   {"ref": "p", "type": "object", "names": ["ABC-123 rendszámú gépjármű"]},
+                  {"ref": "u", "type": "place", "names": ["7. számú raktár"]},
                   {"ref": "k", "type": "place", "names": ["Kőhegyi Intézet"]}]
-        text = "A gépjármű (ABC-123 rendszámú gépjármű) az intézet előtt, a Kőhegyi Intézet mellett állt."
+        text = ("A gépjármű (ABC-123 rendszámú gépjármű) az intézet előtt, a Kőhegyi Intézet "
+                "mellett, a 7. számú raktár mögött állt.")
         one = self.put(store, resolver, "d1", text, things)
         two = self.put(store, resolver, "d2", text, things)
         self.assertNotEqual(one["gépjármű"], two["gépjármű"])
         self.assertNotEqual(one["intézet"], two["intézet"])
+        # An untyped place with a number is still a common noun (an untyped cell).
+        self.assertNotEqual(one["7. számú raktár"], two["7. számú raktár"])
         self.assertTrue(one["gépjármű"].endswith("@doc:d1"))
         self.assertEqual(one["ABC-123 rendszámú gépjármű"], two["ABC-123 rendszámú gépjármű"])
         self.assertEqual(one["Kőhegyi Intézet"], two["Kőhegyi Intézet"])
