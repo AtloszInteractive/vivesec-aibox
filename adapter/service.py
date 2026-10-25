@@ -31,7 +31,8 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/admin/acl/effective         {user[,upn,groups,roles,paths,under]}
                                               (mutual TLS or loopback only)
     POST /api/v1/ui/graph/query               {query,params[,drives]}  (E26, graph.py)
-    POST /api/v1/ui/graph/status | review/list | review/decide | profile/get | profile/set
+    POST /api/v1/ui/graph/status | review/list | review/decide | review/history | review/undo
+                            | profile/get | profile/set
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -380,6 +381,14 @@ def _access_of(caller):
 def _visible(access):
     """`path -> bool` for one request."""
     return ACL.checker(access, MIRROR.acl_of)
+
+
+def _review_int(payload, key, default):
+    """A paging number of a review call; anything odd falls back to the default
+    (the graph checks the range)."""
+    value = payload.get(key, default)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 \
+        else default
 
 
 def _flat_acl(path):
@@ -1787,6 +1796,8 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/status": self._graph_status,
                 "/api/v1/ui/graph/review/list": self._graph_review_list,
                 "/api/v1/ui/graph/review/decide": self._graph_review_decide,
+                "/api/v1/ui/graph/review/history": self._graph_review_history,
+                "/api/v1/ui/graph/review/undo": self._graph_review_undo,
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
@@ -2885,24 +2896,64 @@ class Handler(BaseHTTPRequestHandler):
         if ctx is None:
             return
         _, payload, _, _, scope_body = ctx
-        res = self._graph_post("/review/list", dict(scope_body,
-                                                    limit=int(payload.get("limit") or 100)))
+        body = dict(scope_body, limit=_review_int(payload, "limit", 100) or 100,
+                    offset=_review_int(payload, "offset", 0))
+        for key in ("q", "reason"):
+            if payload.get(key):
+                body[key] = str(payload[key])[:200]
+        res = self._graph_post("/review/list", body)
         if res is not None and self._log_graph(ctx, "graph:review", "", []):
             self._send(200, res)
 
     def _graph_review_decide(self):
+        """One pair ({a, b}) or many ({pairs: [{a, b}]}); the graph skips, and
+        reports, a pair that is no longer open in the caller's scope."""
         ctx = self._graph_request()
         if ctx is None:
             return
         user, payload, _, _, scope_body = ctx
         if not self._graph_admin(user):
             return
-        res = self._graph_post("/review/decide", dict(
-            scope_body, a=str(payload.get("a") or ""), b=str(payload.get("b") or ""),
-            decision=str(payload.get("decision") or "")))
+        body = dict(scope_body, decision=str(payload.get("decision") or ""), by=user)
+        if "pairs" in payload:
+            pairs = payload.get("pairs")
+            body["pairs"] = [{"a": str(p.get("a") or ""), "b": str(p.get("b") or "")}
+                             for p in pairs if isinstance(p, dict)] \
+                if isinstance(pairs, list) else pairs
+        else:
+            body.update(a=str(payload.get("a") or ""), b=str(payload.get("b") or ""))
+        res = self._graph_post("/review/decide", body)
         if res is not None:
-            sys.stderr.write("[adapter] graph: review %s by %s\n" % (res.get("decided"), user))
+            sys.stderr.write("[adapter] graph: review %s x%s by %s\n" % (
+                res.get("decided"), res.get("done", 1), user))
             self._send(200, res)
+
+    def _graph_review_history(self):
+        """Decisions newest first, as far as the caller may see both people."""
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
+            return
+        user, payload, _, _, scope_body = ctx
+        res = self._graph_post("/review/history", dict(
+            scope_body, limit=_review_int(payload, "limit", 100) or 100,
+            offset=_review_int(payload, "offset", 0)))
+        if res is not None and self._log_graph(ctx, "graph:review-history", "", []):
+            self._send(200, dict(res, can_undo=(user or "").casefold() in GRAPH_ADMINS))
+
+    def _graph_review_undo(self):
+        """A graph administrator takes a decision back; the pair is open again."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, _, _, scope_body = ctx
+        if not self._graph_admin(user):
+            return
+        res = self._graph_post("/review/undo", dict(
+            scope_body, a=str(payload.get("a") or ""), b=str(payload.get("b") or ""), by=user))
+        if res is not None:
+            sys.stderr.write("[adapter] graph: review %s undone by %s (%s documents)\n" % (
+                res.get("undone"), user, res.get("documents", 0)))
+            self._send(200, dict(res, ok=True))
 
     def _graph_profile_get(self):
         ctx = self._graph_request()

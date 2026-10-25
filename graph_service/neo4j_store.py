@@ -258,6 +258,14 @@ class Neo4jGraphStore:
         tx.run("MATCH (e:Entity {id: $d}) SET e.status = 'merged', e.merged_into = $k",
                d=drop, k=keep)
 
+    def revive_entity(self, eid: str) -> None:
+        with self._session() as s:
+            row = s.run("MATCH (e:Entity {id: $id}) WHERE e.status = 'merged' "
+                        "SET e.status = 'active', e.merged_into = null RETURN e.id AS id",
+                        id=eid).single()
+        if row is None:
+            raise StoreError("%s is not a merged entity" % eid)
+
     # -- reads -----------------------------------------------------------------
 
     def export(self):
@@ -353,6 +361,10 @@ class CachedNeo4jStore:
     def merge_entities(self, keep: str, drop: str) -> None:
         self.db.merge_entities(keep, drop)
         self._replay("merge_entities", keep, drop)
+
+    def revive_entity(self, eid: str) -> None:
+        self.db.revive_entity(eid)
+        self._replay("revive_entity", eid)
 
     def view(self, scope, include_weak: bool = False):
         return self.mirror.view(scope, include_weak)

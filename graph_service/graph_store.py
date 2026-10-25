@@ -247,6 +247,15 @@ class MemoryGraphStore:
                                                 r.evidence))
             d.status, d.merged_into = "merged", keep
 
+    def revive_entity(self, eid: str) -> None:
+        """Turn a merge tombstone back into an active (still empty) entity; undoing
+        a merge then re-puts its documents onto it."""
+        with self._lock:
+            e = self.entities.get(eid)
+            if e is None or e.status != "merged":
+                raise StoreError("%s is not a merged entity" % eid)
+            e.status, e.merged_into = "active", None
+
     # -- reads -----------------------------------------------------------------
 
     def view(self, scope, include_weak: bool = False) -> "MemoryView":

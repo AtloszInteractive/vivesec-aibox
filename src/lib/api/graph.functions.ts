@@ -91,6 +91,28 @@ export type GraphReviewItem = {
   b_label?: string;
 };
 
+export type GraphReviewList = {
+  review: GraphReviewItem[];
+  /** After the name and reason filters. */
+  total: number;
+  /** Every open pair in the caller's scope. */
+  open_total: number;
+  reasons: Record<string, number>;
+};
+
+export type GraphReviewDecision = {
+  a: string;
+  b: string;
+  decision: "merge" | "separate";
+  by: string;
+  at: number | null;
+  score: number | null;
+  reason: string;
+  a_label: string;
+  b_label: string;
+  undoable: boolean;
+};
+
 export type GraphStatus = {
   queued: number;
   busy: boolean;
@@ -155,14 +177,32 @@ export const graphApi = {
   status: (drive: string) => adapterGraph<GraphStatus>("status", {}, drive),
   /** E10b: what the search cannot read in this scope (not a graph call). */
   skipped: (drive: string) => adapterSkipped(drive),
-  reviewList: (drive: string) =>
-    adapterGraph<{ review: GraphReviewItem[]; total: number }>(
-      "review/list",
-      { limit: 200 },
-      drive,
-    ),
+  reviewList: (drive: string, filter: { q?: string; reason?: string; offset?: number } = {}) =>
+    adapterGraph<GraphReviewList>("review/list", { limit: 200, ...filter }, drive),
   reviewDecide: (drive: string, a: string, b: string, decision: "merge" | "separate") =>
     adapterGraph<{ decided: string }>("review/decide", { a, b, decision }, drive),
+  reviewDecideMany: (
+    drive: string,
+    pairs: { a: string; b: string }[],
+    decision: "merge" | "separate",
+  ) =>
+    adapterGraph<{
+      decided: string;
+      done: number;
+      skipped: { a: string; b: string; error: string }[];
+    }>("review/decide", { pairs, decision }, drive),
+  reviewHistory: (drive: string, offset = 0) =>
+    adapterGraph<{ history: GraphReviewDecision[]; total: number; can_undo: boolean }>(
+      "review/history",
+      { limit: 100, offset },
+      drive,
+    ),
+  reviewUndo: (drive: string, a: string, b: string) =>
+    adapterGraph<{ undone: string; documents: number; failed: unknown[] }>(
+      "review/undo",
+      { a, b },
+      drive,
+    ),
   profile: (drive: string) =>
     adapterGraph<{ profile: GraphProfile; templates: unknown[]; can_edit: boolean }>(
       "profile/get",

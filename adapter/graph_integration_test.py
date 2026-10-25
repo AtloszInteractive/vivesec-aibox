@@ -653,6 +653,32 @@ class GraphIntegrationTest(unittest.TestCase):
         status, out = self.call("/api/v1/ui/graph/review/decide",
                                 {"a": "x", "b": "y", "decision": "merge"}, user="hanna")
         self.assertEqual(404, status)  # admin, but no such pair in scope
+        status, out = self.call("/api/v1/ui/graph/review/undo", {"a": "x", "b": "y"},
+                                user="lars")
+        self.assertEqual(403, status)
+
+    def test_review_in_bulk_with_history_and_undo(self):
+        status, review = self.call("/api/v1/ui/graph/review/list", {"q": "kovacs"}, user="hanna")
+        self.assertEqual((200, 1, {"same name": 1}),
+                         (status, review["total"], review["reasons"]), review)
+        pair = {k: review["review"][0][k] for k in ("a", "b")}
+        status, out = self.call("/api/v1/ui/graph/review/decide", {
+            "decision": "merge", "pairs": [pair, {"a": "x", "b": "y"}]}, user="hanna")
+        self.assertEqual((200, 1, 1), (status, out["done"], len(out["skipped"])), out)
+        status, hist = self.call("/api/v1/ui/graph/review/history", {}, user="hanna")
+        self.assertEqual(200, status, hist)
+        [entry] = hist["history"]
+        self.assertEqual(("merge", "hanna", True, True),
+                         (entry["decision"], entry["by"], entry["undoable"], hist["can_undo"]))
+        # lars sees only one of the two Kovács János: no history for him.
+        status, hist = self.call("/api/v1/ui/graph/review/history", {}, user="lars")
+        self.assertEqual((200, [], False), (status, hist["history"], hist["can_undo"]))
+        status, out = self.call("/api/v1/ui/graph/review/undo", pair, user="hanna")
+        self.assertEqual((200, "merge"), (status, out["undone"]), out)
+        status, review = self.call("/api/v1/ui/graph/review/list", {}, user="hanna")
+        self.assertEqual(1, review["total"])
+        status, out = self.call("/api/v1/ui/graph/review/undo", pair, user="hanna")
+        self.assertEqual(404, status)  # nothing left to undo
 
 
 class ForwarderTest(unittest.TestCase):

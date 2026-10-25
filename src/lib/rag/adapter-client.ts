@@ -941,6 +941,8 @@ export async function adapterGraph<T>(
     | "status"
     | "review/list"
     | "review/decide"
+    | "review/history"
+    | "review/undo"
     | "profile/get"
     | "profile/set"
     | "dossier"

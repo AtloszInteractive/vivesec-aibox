@@ -10,6 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import queries  # noqa: E402
+import review_undo_test  # noqa: E402
 import visibility_test  # noqa: E402
 from model import Document, Entity, Evidence, Mention, Relation  # noqa: E402
 from visibility import Scope  # noqa: E402
@@ -56,6 +57,23 @@ class CachedNeo4jVisibilityTest(visibility_test.VisibilityTest):
         after = again.view(Scope(["c1"], visibility_test.ANNA))
         self.assertEqual([n["id"] for n in before.nodes()], [n["id"] for n in after.nodes()])
         self.assertEqual(list(before.edges()), list(after.edges()))
+
+
+@unittest.skipUnless(URI and PASSWORD_FILE, "GRAPH_TEST_NEO4J_URI not set")
+class CachedNeo4jUndoTest(review_undo_test.SharedDocumentUndoTest):
+    """Undoing a merge on Neo4j: what is persisted equals the mirror."""
+
+    def make_store(self):
+        from neo4j_store import CachedNeo4jStore
+
+        return CachedNeo4jStore(neo4j_store())
+
+    def tearDown(self):
+        from neo4j_store import CachedNeo4jStore
+
+        self.assertEqual(review_undo_test.snapshot(self.store),
+                         review_undo_test.snapshot(CachedNeo4jStore(self.store.db)))
+        self.store.close()
 
 
 @unittest.skipUnless(URI and PASSWORD_FILE, "GRAPH_TEST_NEO4J_URI not set")

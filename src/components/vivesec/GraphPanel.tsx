@@ -30,7 +30,9 @@ import {
   type GraphLabel,
   type GraphNode,
   type GraphProfile,
+  type GraphReviewDecision,
   type GraphReviewItem,
+  type GraphReviewList,
   type GraphStatus,
   type GraphTimelineItem,
   type GraphReprocessRun,
@@ -905,51 +907,165 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 /* ----------------------------------------------------------------- Review */
 
+type ReviewView = "open" | "decided";
+type Pair = { a: string; b: string };
+type Decision = "merge" | "separate";
+
+const pairId = (p: Pair) => `${p.a}|${p.b}`;
+
+/** A pair's reason ("same name + birth date"), translated part by part. */
+function useReasonText() {
+  const { tm } = useLang();
+  return useCallback(
+    (text: string) =>
+      text
+        .split(" + ")
+        .map((part) =>
+          part
+            .split(", ")
+            .map((p) => tm(p))
+            .join(", "),
+        )
+        .join(" + "),
+    [tm],
+  );
+}
+
 function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
   const { tm } = useLang();
-  const { run, notice } = useFailure();
-  const [items, setItems] = useState<GraphReviewItem[] | null>(null);
-  const [total, setTotal] = useState(0);
-  const [done, setDone] = useState<Record<string, string>>({});
+  const [view, setView] = useState<ReviewView>("open");
+  return (
+    <div className="h-full overflow-y-auto p-4">
+      <div className="mb-3 flex items-center gap-1 text-xs">
+        {(["open", "decided"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`rounded-full px-3 py-1 transition ${
+              view === v ? "text-black" : "text-white/70 hover:bg-white/10"
+            }`}
+            style={view === v ? { backgroundColor: LIME } : undefined}
+          >
+            {tm(v === "open" ? "Open pairs" : "Decisions")}
+          </button>
+        ))}
+      </div>
+      {view === "open" ? (
+        <OpenReview drive={drive} canEdit={canEdit} />
+      ) : (
+        <DecidedReview drive={drive} />
+      )}
+    </div>
+  );
+}
 
-  const load = useCallback(async () => {
-    const res = await run(() => graphApi.reviewList(drive));
-    if (res) {
-      setItems(res.review);
-      setTotal(res.total);
-      setDone({});
-    }
-  }, [drive, run]);
+function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+  const { tm } = useLang();
+  const reason = useReasonText();
+  const { run, notice } = useFailure();
+  const [list, setList] = useState<GraphReviewList | null>(null);
+  const [items, setItems] = useState<GraphReviewItem[]>([]);
+  const [more, setMore] = useState(false);
+  const [query, setQuery] = useState("");
+  const [applied, setApplied] = useState("");
+  const [why, setWhy] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [done, setDone] = useState<Record<string, Decision>>({});
+  const [confirm, setConfirm] = useState<Decision | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setApplied(query.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const load = useCallback(
+    async (offset = 0) => {
+      const res = await run(() =>
+        graphApi.reviewList(drive, {
+          q: applied || undefined,
+          reason: why || undefined,
+          offset,
+        }),
+      );
+      if (!res) return;
+      setList(res);
+      setMore(offset + res.review.length < res.total);
+      setItems((cur) => (offset ? [...cur, ...res.review] : res.review));
+      if (!offset) {
+        setDone({});
+        setSelected(new Set());
+        setConfirm(null);
+      }
+    },
+    [drive, run, applied, why],
+  );
   useEffect(() => {
     void load();
   }, [load]);
 
-  const reason = (text: string) =>
-    text
-      .split(" + ")
-      .map((part) =>
-        part
-          .split(", ")
-          .map((p) => tm(p))
-          .join(", "),
-      )
-      .join(" + ");
+  const pending = items.filter((i) => !done[pairId(i)]);
+  const allSelected = pending.length > 0 && pending.every((i) => selected.has(pairId(i)));
 
-  async function decide(item: GraphReviewItem, decision: "merge" | "separate") {
+  function toggle(key: string) {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function mark(pairs: Pair[], decision: Decision) {
+    setDone((d) => ({ ...d, ...Object.fromEntries(pairs.map((p) => [pairId(p), decision])) }));
+    setSelected((cur) => {
+      const next = new Set(cur);
+      pairs.forEach((p) => next.delete(pairId(p)));
+      return next;
+    });
+  }
+
+  async function decide(item: GraphReviewItem, decision: Decision) {
+    setResult(null);
     const res = await run(() => graphApi.reviewDecide(drive, item.a, item.b, decision));
+    if (res) mark([item], decision);
+  }
+
+  async function decideSelected(decision: Decision) {
+    setConfirm(null);
+    setResult(null);
+    setBusy(true);
+    const pairs = pending.filter((i) => selected.has(pairId(i))).map(({ a, b }) => ({ a, b }));
+    const res = await run(() => graphApi.reviewDecideMany(drive, pairs, decision));
+    setBusy(false);
+    if (!res) return;
+    const skipped = new Set(res.skipped.map(pairId));
+    mark(
+      pairs.filter((p) => !skipped.has(pairId(p))),
+      decision,
+    );
+    setResult(`${tm("Decided")}: ${res.done} · ${tm("Skipped")}: ${res.skipped.length}`);
+  }
+
+  async function undo(item: GraphReviewItem) {
+    setResult(null);
+    const res = await run(() => graphApi.reviewUndo(drive, item.a, item.b));
     if (res) {
-      setDone((d) => ({
-        ...d,
-        [`${item.a}|${item.b}`]: decision === "merge" ? tm("Merged.") : tm("Kept apart."),
-      }));
+      setDone((d) => {
+        const next = { ...d };
+        delete next[pairId(item)];
+        return next;
+      });
     }
   }
 
+  const reasons = Object.entries(list?.reasons ?? {}).sort((x, y) => y[1] - x[1]);
   return (
-    <div className="h-full overflow-y-auto p-4">
+    <>
       <div className="mb-3 flex items-center gap-2">
         <div className="text-sm font-semibold">{tm("Possible same person")}</div>
-        <span className="text-xs text-white/50">({total})</span>
+        <span className="text-xs text-white/50">({list?.open_total ?? 0})</span>
         <button
           onClick={() => void load()}
           className="ml-auto rounded-full p-1.5 hover:bg-white/10"
@@ -960,10 +1076,106 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
       </div>
       {notice}
       {!canEdit && <Notice text={tm("Only graph administrators may do this.")} />}
-      {items && items.length === 0 && <Notice text={tm("Nothing to review in your scope.")} />}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={tm("Filter by name…")}
+            className="w-full rounded-lg border border-white/15 bg-black/30 py-1 pl-7 pr-2 text-xs text-white outline-none focus:border-white/30"
+          />
+        </div>
+        <select
+          value={why}
+          onChange={(e) => setWhy(e.target.value)}
+          className="rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none"
+        >
+          <option value="">{`${tm("All reasons")} (${list?.open_total ?? 0})`}</option>
+          {reasons.map(([r, n]) => (
+            <option key={r} value={r}>{`${reason(r)} (${n})`}</option>
+          ))}
+        </select>
+      </div>
+      {canEdit && pending.length > 0 && (
+        <div
+          className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs"
+          style={{ backgroundColor: PANEL }}
+        >
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={() => setSelected(allSelected ? new Set() : new Set(pending.map(pairId)))}
+            />
+            {`${tm("Select all shown")} (${pending.length})`}
+          </label>
+          <span className="text-white/50">{`${tm("Selected")}: ${selected.size}`}</span>
+          {confirm ? (
+            <span className="ml-auto flex flex-wrap items-center gap-2">
+              <span>
+                {`${tm(
+                  confirm === "merge"
+                    ? "Merge the selected pairs?"
+                    : "Keep the selected pairs apart?",
+                )} (${selected.size})`}
+              </span>
+              <button
+                onClick={() => void decideSelected(confirm)}
+                className="rounded-full px-3 py-1 text-black"
+                style={{ backgroundColor: LIME }}
+              >
+                {tm("Confirm")}
+              </button>
+              <button
+                onClick={() => setConfirm(null)}
+                className="rounded-full border border-white/15 px-3 py-1 hover:bg-white/10"
+              >
+                {tm("Cancel")}
+              </button>
+            </span>
+          ) : (
+            <span className="ml-auto flex gap-2">
+              <button
+                onClick={() => setConfirm("merge")}
+                disabled={!selected.size || busy}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-black disabled:opacity-50"
+                style={{ backgroundColor: LIME }}
+              >
+                {busy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <GitMerge className="h-3.5 w-3.5" />
+                )}
+                {tm("Merge")}
+              </button>
+              <button
+                onClick={() => setConfirm("separate")}
+                disabled={!selected.size || busy}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1 hover:bg-white/10 disabled:opacity-50"
+              >
+                <Split className="h-3.5 w-3.5" /> {tm("Keep apart")}
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+      {result && (
+        <div className="mb-2 text-xs" style={{ color: LIME }}>
+          {result}
+        </div>
+      )}
+      {list && items.length === 0 && (
+        <Notice
+          text={tm(
+            list.open_total ? "No pair matches the filter." : "Nothing to review in your scope.",
+          )}
+        />
+      )}
       <div className="space-y-2">
-        {items?.map((item) => {
-          const key = `${item.a}|${item.b}`;
+        {items.map((item) => {
+          const key = pairId(item);
+          const state = done[key];
           return (
             <div
               key={key}
@@ -971,6 +1183,14 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
               style={{ backgroundColor: PANEL }}
             >
               <div className="flex flex-wrap items-center gap-2 text-sm">
+                {canEdit && !state && (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(key)}
+                    onChange={() => toggle(key)}
+                    aria-label={tm("Select")}
+                  />
+                )}
                 <span className="font-medium">{item.a_label}</span>
                 <span className="text-white/40">↔</span>
                 <span className="font-medium">{item.b_label}</span>
@@ -978,9 +1198,17 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                   {reason(item.reason)} · {Math.round(item.score * 100)}%
                 </span>
               </div>
-              {done[key] ? (
-                <div className="mt-2 text-xs" style={{ color: LIME }}>
-                  {done[key]}
+              {state ? (
+                <div className="mt-2 flex items-center gap-3 text-xs" style={{ color: LIME }}>
+                  {tm(state === "merge" ? "Merged." : "Kept apart.")}
+                  {canEdit && (
+                    <button
+                      onClick={() => void undo(item)}
+                      className="text-white/70 underline hover:text-white"
+                    >
+                      {tm("Undo")}
+                    </button>
+                  )}
                 </div>
               ) : (
                 canEdit && (
@@ -1005,10 +1233,129 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
           );
         })}
       </div>
-    </div>
+      {more && (
+        <button
+          onClick={() => void load(pending.length)}
+          className="mt-3 w-full rounded-lg border border-white/15 py-1.5 text-xs hover:bg-white/10"
+        >
+          {tm("Load more")}
+        </button>
+      )}
+    </>
   );
 }
 
+function DecidedReview({ drive }: { drive: string }) {
+  const { tm } = useLang();
+  const reason = useReasonText();
+  const { run, notice } = useFailure();
+  const [items, setItems] = useState<GraphReviewDecision[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [canUndo, setCanUndo] = useState(false);
+  const [undone, setUndone] = useState<Set<string>>(new Set());
+
+  const load = useCallback(
+    async (offset = 0) => {
+      const res = await run(() => graphApi.reviewHistory(drive, offset));
+      if (!res) return;
+      setItems((cur) => (offset && cur ? [...cur, ...res.history] : res.history));
+      setTotal(res.total);
+      setCanUndo(res.can_undo);
+      if (!offset) setUndone(new Set());
+    },
+    [drive, run],
+  );
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function undo(item: GraphReviewDecision) {
+    const res = await run(() => graphApi.reviewUndo(drive, item.a, item.b));
+    if (res) setUndone((cur) => new Set(cur).add(pairId(item)));
+  }
+
+  const loaded = items?.length ?? 0;
+  return (
+    <>
+      <div className="mb-3 flex items-center gap-2">
+        <div className="text-sm font-semibold">{tm("Decisions")}</div>
+        <span className="text-xs text-white/50">({total})</span>
+        <button
+          onClick={() => void load()}
+          className="ml-auto rounded-full p-1.5 hover:bg-white/10"
+          title={tm("Refresh")}
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {notice}
+      {items && items.length === 0 && <Notice text={tm("No decisions in your scope yet.")} />}
+      <div className="space-y-2">
+        {items?.map((item) => {
+          const key = pairId(item);
+          const merge = item.decision === "merge";
+          return (
+            <div
+              key={key}
+              className="rounded-xl border border-white/10 p-3"
+              style={{ backgroundColor: PANEL }}
+            >
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                {merge ? (
+                  <GitMerge className="h-3.5 w-3.5 text-white/60" />
+                ) : (
+                  <Split className="h-3.5 w-3.5 text-white/60" />
+                )}
+                <span className="font-medium">{item.a_label}</span>
+                <span className="text-white/40">{merge ? "→" : "↔"}</span>
+                <span className="font-medium">{item.b_label}</span>
+                <span className="ml-auto text-[11px] text-white/60">
+                  {tm(merge ? "Merged." : "Kept apart.")}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/50">
+                <span>
+                  {[
+                    item.by,
+                    item.at ? new Date(item.at * 1000).toLocaleString() : "",
+                    item.reason ? reason(item.reason) : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                {undone.has(key) ? (
+                  <span className="ml-auto" style={{ color: LIME }}>
+                    {tm("Undone — the pair is open for review again.")}
+                  </span>
+                ) : (
+                  canUndo &&
+                  (item.undoable ? (
+                    <button
+                      onClick={() => void undo(item)}
+                      className="ml-auto rounded-full border border-white/15 px-3 py-0.5 text-white/80 hover:bg-white/10"
+                    >
+                      {tm("Undo")}
+                    </button>
+                  ) : (
+                    <span className="ml-auto">{tm("Cannot be undone")}</span>
+                  ))
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {loaded < total && (
+        <button
+          onClick={() => void load(loaded - undone.size)}
+          className="mt-3 w-full rounded-lg border border-white/15 py-1.5 text-xs hover:bg-white/10"
+        >
+          {tm("Load more")}
+        </button>
+      )}
+    </>
+  );
+}
 /* ------------------------------------------------------------- Processing */
 
 function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {

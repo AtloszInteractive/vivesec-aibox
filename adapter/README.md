@@ -408,10 +408,27 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `ADAPTER_GRAPH_CHAT=off` disables it; a graph error never blocks the answer.
 - **Progress**: `POST /api/v1/ui/graph/status` lists only files the caller may
   see; queue sizes and totals are box-wide numbers.
-- **Review and profile**: `/api/v1/ui/graph/review/list` (scoped),
-  `/review/decide` and `/profile/set` only for users in `ADAPTER_GRAPH_ADMINS`
-  (empty: nobody); `/profile/get` returns the profile, the templates and
-  `can_edit`.
+- **Review and profile**: `/api/v1/ui/graph/review/list` (scoped; `q` filters
+  on the two names, `reason` on the match reason, `offset`/`limit` page; the
+  response adds `open_total` and the `reasons` counts), `/review/decide` (one
+  `{a, b}` or up to 1000 `pairs`; a pair no longer open in scope -- e.g. folded
+  by an earlier pair of the batch -- comes back under `skipped`),
+  `/review/undo {a, b}` and `/profile/set` only for users in
+  `ADAPTER_GRAPH_ADMINS` (empty: nobody); `/review/history` lists the decisions
+  newest first (who, when, `undoable`) as far as the caller may see both people
+  as they were before the decision, plus `can_undo`; `/profile/get` returns the
+  profile, the templates and `can_edit`. A merge records what the folded person
+  brought (mentions, attributes and relationship evidence per document, with the
+  document paths); undoing it revives that person and writes those documents
+  back onto it: a document only that person was named in moves back whole (also
+  a resynced, newer version at the same path), a document both were named in
+  moves back what the record lists, and a relationship between the two, which
+  the merge removed, returns. A document that reached the merged person later
+  through the folded person's details stays with it. Undoing either decision
+  reopens the pair. Merges decided before this existed cannot be undone. The
+  graph keeps every decision and undo, with the deciding user, in
+  `GRAPH_REVIEW_PATH`. Tests: graph `review_undo_test`, adapter
+  `graph_integration_test` (`test_review_in_bulk_with_history_and_undo`).
 - **Reprocessing after a profile change** (`reprocess.py`): the graph records
   the profile each document was extracted with (`bv@2`; empty for documents from
   before this was recorded). `POST /api/v1/ui/graph/reprocess/status` gives the

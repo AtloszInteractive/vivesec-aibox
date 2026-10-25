@@ -113,6 +113,16 @@ class Resolver:
             for k, v in gone["attrs"].items():
                 p["attrs"].setdefault(k, set()).update(v)
 
+    def rebuild(self, store) -> None:
+        """Re-read every person from the store (after an undone merge split one)."""
+        with self.lock:
+            self.people.clear()
+            self.by_full.clear()
+            self.by_initial.clear()
+            self.by_key.clear()
+            with store._lock:
+                self.load_from_store(store)
+
     def load_from_store(self, store) -> None:
         """Rebuild the person index from an existing (mirror) memory store."""
         strong = self.strong_key_subtypes()

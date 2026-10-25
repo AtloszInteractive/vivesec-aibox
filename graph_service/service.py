@@ -10,7 +10,8 @@ request and sends it with every query (corpus_ids + access).
            POST /graph/document/drop_tree  /graph/acl/update (by path, as the RAG)
            POST /graph/entity/merge
   extract  POST /ingest/document (bytes, extracted in the background)  /ingest/status
-           POST /review/list  /review/decide (possible same-person pairs)
+           POST /review/list  /review/decide (possible same-person pairs, one or many)
+           POST /review/history  /review/undo (decisions, newest first; take one back)
   queries  POST /query/find  /query/mentioned  /query/entity  /query/path  /query/common
            POST /query/copresence  /query/shared  /query/timeline
            POST /query/neighborhood  /query/communities  /query/ranking
@@ -36,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import domain_profile  # noqa: E402
+from extraction import fold  # noqa: E402
 import analytics  # noqa: E402
 import namesakes  # noqa: E402
 import queries  # noqa: E402
@@ -336,21 +338,68 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
     except ScopeError as e:
         raise HttpError(400, str(e))
     view = state.store.view(scope)
+    by = str(body.get("by") or "")[:200]
     if path == "/review/list":
         items = worker.open_review(view)
-        return {"review": items[:_int(body, "limit", 100, 1, 1000)], "total": len(items)}
+        reasons = {}
+        for item in items:
+            reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1
+        open_total = len(items)
+        q = fold(str(body.get("q") or "")).strip()
+        if q:
+            items = [i for i in items if q in fold(i["a_label"]) or q in fold(i["b_label"])]
+        if body.get("reason"):
+            items = [i for i in items if i["reason"] == body["reason"]]
+        offset = _int(body, "offset", 0, 0, 10 ** 7)
+        return {"review": items[offset:offset + _int(body, "limit", 100, 1, 1000)],
+                "total": len(items), "open_total": open_total, "reasons": reasons}
     if path == "/review/decide":
-        a, b = _id(body, "a"), _id(body, "b")
         decision = body.get("decision")
         if decision not in ("merge", "separate"):
             raise HttpError(400, "decision must be merge or separate")
-        if not any(i["a"] == a and i["b"] == b for i in worker.open_review(view)):
+        open_pairs = {(i["a"], i["b"]) for i in worker.open_review(view)}
+        if "pairs" in body:
+            pairs = body["pairs"]
+            if not isinstance(pairs, list) or not 1 <= len(pairs) <= 1000 \
+                    or not all(isinstance(p, dict) for p in pairs):
+                raise HttpError(400, "pairs must be a list of 1..1000 {a, b} objects")
+            done, skipped = 0, []
+            for p in pairs:
+                a, b = str(p.get("a") or ""), str(p.get("b") or "")
+                if (a, b) not in open_pairs:
+                    skipped.append({"a": a, "b": b, "error": "no such open review pair in scope"})
+                    continue
+                try:
+                    worker.decide(a, b, decision == "merge", by)
+                    done += 1
+                except StoreError as e:  # e.g. folded by an earlier pair of this batch
+                    skipped.append({"a": a, "b": b, "error": str(e)})
+            return {"decided": decision, "done": done, "skipped": skipped}
+        a, b = _id(body, "a"), _id(body, "b")
+        if (a, b) not in open_pairs:
             raise HttpError(404, "no such open review pair in scope")
         try:
-            worker.decide(a, b, decision == "merge")
+            worker.decide(a, b, decision == "merge", by)
         except StoreError as e:
             raise HttpError(400, str(e))
         return {"decided": decision}
+    if path == "/review/history":
+        items = worker.history(view)
+        offset = _int(body, "offset", 0, 0, 10 ** 7)
+        return {"history": items[offset:offset + _int(body, "limit", 100, 1, 1000)],
+                "total": len(items)}
+    if path == "/review/undo":
+        a, b = _id(body, "a"), _id(body, "b")
+        entry = next((h for h in worker.history(view) if (h["a"], h["b"]) == (a, b)), None)
+        if entry is None:
+            raise HttpError(404, "no such decision in scope")
+        if not entry["undoable"]:
+            raise HttpError(409, "this decision cannot be undone (made before undo existed, "
+                                 "or a later merge depends on it)")
+        try:
+            return worker.undo(a, b, by)
+        except StoreError as e:
+            raise HttpError(409, str(e))
     raise HttpError(404, "not found")
 
 
