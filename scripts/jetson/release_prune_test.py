@@ -123,6 +123,24 @@ class HybridProbeTest(unittest.TestCase):
             self.assertEqual([1], asked)
 
 
+class VerificationPurposeTest(unittest.TestCase):
+    def test_follows_the_boxs_purpose_setting(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as stage:
+            def purpose(config):
+                with open(os.path.join(stage, "status.json"), "w", encoding="utf-8") as handle:
+                    json.dump({"app": {"purpose": config}} if config is not None else {}, handle)
+                return release_box.verification_purpose(stage, {"stamp": "20261025-1200"})
+
+            self.assertEqual({}, purpose(None))
+            self.assertEqual({}, purpose({"mode": "off"}))
+            self.assertEqual({"legal_basis": "release verification 20261025-1200"},
+                             purpose({"mode": "required", "legal_bases": []}))
+            self.assertEqual({"legal_basis": "Bv. tv. 21. §"},
+                             purpose({"mode": "optional", "legal_bases": ["Bv. tv. 21. §"]}))
+
+
 class KeepCountTest(unittest.TestCase):
     def test_default_disable_and_fail_safe_values(self):
         for raw, expected in ((None, 2), ("0", 0), ("1", 2), ("3", 3), ("bad", 2), ("", 2)):

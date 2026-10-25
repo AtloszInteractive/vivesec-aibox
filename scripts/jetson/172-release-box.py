@@ -303,6 +303,18 @@ def hybrid_probe(ask, attempts=HYBRID_ATTEMPTS):
                                     ensure_ascii=False)[:800])
 
 
+def verification_purpose(stage, manifest):
+    """The purpose the verification questions carry where the box requires one
+    (concept 5.2): the first allowed legal basis, else a named verification. The
+    queries are then in the query log like any other."""
+    status = json.loads((Path(stage) / "status.json").read_text())
+    config = (status.get("app") or {}).get("purpose") or {}
+    if config.get("mode", "off") == "off":
+        return {}
+    bases = config.get("legal_bases") or []
+    return {"legal_basis": bases[0] if bases else "release verification " + manifest["stamp"]}
+
+
 def verify(stage, manifest):
     check(stage, manifest)
     adapter_env = environment(manifest["old"]["adapter"])
@@ -319,7 +331,8 @@ def verify(stage, manifest):
 
     def ask(attempt):
         # A fresh user per attempt: an earlier answer must not become history.
-        return post(base + "/api/v1/ui/query", {"query": "Mi\u00e9rt k\u00e9k az \u00e9g?", "profile": "hybrid", "top_k": 5},
+        return post(base + "/api/v1/ui/query", dict({"query": "Mi\u00e9rt k\u00e9k az \u00e9g?", "profile": "hybrid",
+                                                     "top_k": 5}, **verification_purpose(stage, manifest)),
                     dict(headers, **{"VVS-User": headers["VVS-User"] + "-%d" % attempt}))
 
     result, attempts = hybrid_probe(ask)
