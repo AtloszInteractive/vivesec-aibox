@@ -252,6 +252,54 @@ const M: Record<string, Tri> = {
   "low quality": ["gyenge minőség", "lav kvalitet", "geringe Qualität"],
   "no text": ["nincs szöveg", "ingen tekst", "kein Text"],
   failed: ["sikertelen", "mislykkedes", "fehlgeschlagen"],
+  // ---- Reprocessing after a domain profile change (Relationships › Processing) ----
+  "Domain profile version": [
+    "Domainprofil-verzió",
+    "Domæneprofilversion",
+    "Version des Domänenprofils",
+  ],
+  "Current profile": ["Jelenlegi profil", "Nuværende profil", "Aktuelles Profil"],
+  "Extracted with an older or unknown profile": [
+    "Régebbi vagy ismeretlen profillal feldolgozva",
+    "Behandlet med en ældre eller ukendt profil",
+    "Mit einem älteren oder unbekannten Profil verarbeitet",
+  ],
+  "Every document was extracted with the current profile.": [
+    "Minden dokumentum a jelenlegi profillal készült.",
+    "Alle dokumenter er behandlet med den nuværende profil.",
+    "Alle Dokumente wurden mit dem aktuellen Profil verarbeitet.",
+  ],
+  unknown: ["ismeretlen", "ukendt", "unbekannt"],
+  "Reprocessing…": ["Újrafeldolgozás…", "Genbehandler…", "Wird neu verarbeitet…"],
+  "Reprocessing finished": [
+    "Az újrafeldolgozás befejeződött",
+    "Genbehandlingen er færdig",
+    "Neuverarbeitung abgeschlossen",
+  ],
+  "Reprocessing stopped": [
+    "Az újrafeldolgozás leállt",
+    "Genbehandlingen er stoppet",
+    "Neuverarbeitung angehalten",
+  ],
+  "Reprocessing stopped with an error": [
+    "Az újrafeldolgozás hibával leállt",
+    "Genbehandlingen stoppede med en fejl",
+    "Neuverarbeitung mit einem Fehler angehalten",
+  ],
+  Sent: ["Elküldve", "Sendt", "Gesendet"],
+  Missing: ["Hiányzik", "Mangler", "Fehlt"],
+  "Folder (optional), e.g. /storage/drives/…": [
+    "Mappa (nem kötelező), pl. /storage/drives/…",
+    "Mappe (valgfri), f.eks. /storage/drives/…",
+    "Ordner (optional), z. B. /storage/drives/…",
+  ],
+  Stop: ["Leállítás", "Stop", "Anhalten"],
+  Reprocess: ["Újrafeldolgozás", "Genbehandl", "Neu verarbeiten"],
+  "The ViVeSecBox is not connected: the files cannot be fetched again.": [
+    "A ViVeSecBox nincs csatlakozva: a fájlok nem kérhetők le újra.",
+    "ViVeSecBox er ikke forbundet: filerne kan ikke hentes igen.",
+    "Die ViVeSecBox ist nicht verbunden: die Dateien können nicht erneut abgerufen werden.",
+  ],
   // ---- Concept 5.2: purpose-bound queries ----
   "Purpose of the queries": [
     "A lekérdezések célja",

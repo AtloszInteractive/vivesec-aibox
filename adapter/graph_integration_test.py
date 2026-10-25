@@ -586,6 +586,50 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertEqual([PUBLIC], record["result"]["sources"])
         self.assertEqual((True, 1, None), querylog.verify(path))
 
+    def test_a_profile_change_is_reprocessed_from_the_file_source(self):
+        import reprocess
+
+        service = self.service
+        source = tempfile.TemporaryDirectory()
+        self.addCleanup(source.cleanup)
+        for path, text in DOCS.items():
+            local = os.path.join(source.name, path[len("/storage/drives/"):])
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            with open(local, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        runner = reprocess.Reprocessor(service.GRAPH, self.forward, service._reprocess_fetch,
+                                       idle_wait=0.05)
+        with patch.object(service, "REPROCESS_SOURCE_DIR", source.name), \
+                patch.object(service, "REPROCESS", runner):
+            status, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="lars")
+            self.assertEqual((200, 0, False, "local"), (status, out["stale_total"],
+                                                         out["can_start"], out["source"]))
+            _, prof = self.call("/api/v1/ui/graph/profile/get", {}, user="hanna")
+            newer = dict(prof["profile"], version=prof["profile"]["version"] + 1)
+            status, _ = self.call("/api/v1/ui/graph/profile/set", {"profile": newer}, user="hanna")
+            self.assertEqual(200, status)
+            # Counts cover only what the caller may see.
+            self.assertEqual(1, self.call("/api/v1/ui/graph/reprocess/status", {},
+                                          user="lars")[1]["stale_total"])
+            self.assertEqual(2, self.call("/api/v1/ui/graph/reprocess/status", {},
+                                          user="hanna")[1]["stale_total"])
+            status, _ = self.call("/api/v1/ui/graph/reprocess/start", {}, user="lars")
+            self.assertEqual(403, status)
+            status, out = self.call("/api/v1/ui/graph/reprocess/start",
+                                    {"path_prefix": "/storage/drives/other"}, user="hanna")
+            self.assertEqual(403, status)
+            status, out = self.call("/api/v1/ui/graph/reprocess/start", {}, user="hanna")
+            self.assertEqual((200, 2), (status, out["run"]["total"]))
+            self.assertTrue(runner.wait(30))
+            self.settle()
+            _, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="hanna")
+            self.assertEqual((0, "done", 2), (out["stale_total"], out["run"]["state"],
+                                              out["run"]["sent"]))
+            self.assertEqual("%s@%s" % (newer["id"], newer["version"]), out["current"])
+        self.assertEqual({"Kovács János"}, self.people("lars", "Kovács"))
+        self.assertNotIn("Titkos", json.dumps(self.call("/api/v1/ui/graph/reprocess/status", {},
+                                                        user="lars")[1], ensure_ascii=False))
+
     def test_unreadable_documents_are_listed_within_the_callers_view(self):
         for path in (DRIVE + "/reports/diagram.vsd", DRIVE + "/hr/org.vsd"):
             status, _ = self.call("/api/v1/index/upsert/file/check",

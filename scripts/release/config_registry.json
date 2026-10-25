@@ -3169,6 +3169,19 @@
       "change": "restart",
       "secret": false,
       "internal": false
+    },
+    {
+      "name": "ADAPTER_REPROCESS_SOURCE_DIR",
+      "component": "adapter",
+      "category": "dev",
+      "type": "path",
+      "default": "",
+      "allowed": "directory mirroring the drives (<dir>/<drive>/...)",
+      "fail_safe": "Empty (the default) fetches files from the ViVeSecBox over ws-fs; a path outside the directory is never read.",
+      "impact": "Development boxes without a ViVeSecBox: the file source of reprocessing after a domain profile change. Not for production: it is a second copy of the drives.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
     }
   ]
 }

@@ -113,6 +113,36 @@ def _doc_ids(value, out: set) -> set:
     return out
 
 
+def documents_by_profile(state: State, body: dict) -> dict:
+    """Which domain profile each visible document of the scope was extracted
+    with. The stale ones -- any other version, or unknown (extracted before this
+    was recorded) -- are listed for reprocessing (optionally below one folder)."""
+    try:
+        scope = Scope.parse(body)
+    except ScopeError as e:
+        raise HttpError(400, str(e))
+    current = "%s@%s" % (state.profile["id"], state.profile["version"])
+    prefix = str(body.get("path_prefix") or "").rstrip("/")
+    limit = max(1, min(int(body.get("limit") or 5000), 20000))
+    store = getattr(state.store, "mirror", state.store)
+    with store._lock:
+        docs = list(store.documents.values())
+    counts, stale = {}, []
+    for doc in docs:
+        if not scope.allows(doc):
+            continue
+        if prefix and doc.source_path != prefix and not doc.source_path.startswith(prefix + "/"):
+            continue
+        tag = doc.profile or "unknown"
+        counts[tag] = counts.get(tag, 0) + 1
+        if doc.profile != current:
+            stale.append({"doc_id": doc.doc_id, "corpus_id": doc.corpus_id,
+                          "source_path": doc.source_path, "profile": doc.profile or None})
+    stale.sort(key=lambda d: d["source_path"])
+    return {"current": current, "counts": counts, "stale_total": len(stale),
+            "stale": stale[:limit]}
+
+
 def run_query(state: State, name: str, body: dict) -> dict:
     try:
         scope = Scope.parse(body)
@@ -329,6 +359,8 @@ def handle_post(state: State, path: str, body: dict) -> dict:
         return run_query(state, path[len("/query/"):], body)
     if path.startswith(("/ingest/", "/review/")):
         return handle_extract(state, path, body)
+    if path == "/documents/profile":
+        return documents_by_profile(state, body)
     if path == "/profile/get":
         return {"profile": state.profile}
     if path == "/profile/templates":

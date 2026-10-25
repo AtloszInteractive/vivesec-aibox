@@ -19,6 +19,7 @@ import os
 import threading
 import time
 
+from extraction import fold
 from ingest import IngestError, parse_document_payload
 from llm_client import LLMError
 from pipeline import extract_document
@@ -30,6 +31,11 @@ RECENT = 200
 
 class QueueFull(Exception):
     pass
+
+
+def profile_tag(profile: dict) -> str:
+    """"bv@2": the profile a document is extracted with."""
+    return "%s@%s" % (profile["id"], profile["version"])
 
 
 class IngestWorker:
@@ -181,12 +187,42 @@ class IngestWorker:
                 self.recent.append(record)
                 self.cond.notify_all()
 
+    def _sticky_people(self, meta: dict) -> dict[str, str]:
+        """{folded name: person id} of the people this document already names
+        (followed through merges). A re-extraction -- a resync, or reprocessing
+        after a profile change -- resolves them to the same ids first, so the
+        administrator's merge and keep-apart decisions stay attached to them."""
+        store = getattr(self.state.store, "mirror", self.state.store)
+        out: dict[str, str] = {}
+        with store._lock:
+            doc_ids = {meta["doc_id"]} | set(store.doc_ids_by_path(
+                meta.get("corpus_id") or "", meta.get("source_path") or ""))
+            for doc_id in doc_ids:
+                for mid in store._doc_mentions.get(doc_id, ()):
+                    mention = store.mentions.get(mid)
+                    entity = store.entities.get(mention.entity_id) if mention else None
+                    seen = set()
+                    while entity is not None and entity.status == "merged" \
+                            and entity.merged_into and entity.id not in seen:
+                        seen.add(entity.id)
+                        entity = store.entities.get(entity.merged_into)
+                    if entity is not None and entity.type == "person" \
+                            and entity.status == "active":
+                        out.setdefault(fold(mention.text), entity.id)
+        return out
+
     def _process(self, meta: dict, raw: bytes) -> dict:
         profile = self.state.profile
         if (profile["id"], profile["version"]) != self.profile_version:
             self._reset_models()
-        payload, stats = extract_document(raw, meta, profile, self.llm, self.resolver, self.tables)
+        self.resolver.sticky = self._sticky_people(meta)
+        try:
+            payload, stats = extract_document(raw, meta, profile, self.llm, self.resolver,
+                                              self.tables)
+        finally:
+            self.resolver.sticky = {}
         doc, entities, mentions, relations = parse_document_payload(payload, profile)
+        doc.profile = profile_tag(profile)
         with self.cond:
             if self.running and self.running.get("cancelled"):
                 return {"status": "cancelled"}

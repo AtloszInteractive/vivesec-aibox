@@ -18,18 +18,22 @@ NOTE_2 = "Kovács János és Nagy Éva 2026. 03. 12-én találkozott."
 class FakeLLM:
     calls = 0
     seconds = 0.0
+    # A model names its local references freely: a re-extraction may use others.
+    ref = ""
 
     def json_call(self, system, user, schema, max_tokens=4096, retries=1):
         self.calls += 1
+        r = self.ref
         if "zárkában" in user:
             return {"entities": [
-                {"ref": "a", "type": "person", "names": ["Kovács János"],
+                {"ref": r + "a", "type": "person", "names": ["Kovács János"],
                  "birth_date": "1980-01-02"},
-                {"ref": "c", "type": "place", "subtype": "cell", "names": ["102. zárkában"]}],
-                "relations": [{"type": "PLACED_IN", "from": "a", "to": "c", "quote": NOTE_1}]}
-        return {"entities": [{"ref": "a", "type": "person", "names": ["Kovács János"]},
-                             {"ref": "b", "type": "person", "names": ["Nagy Éva"]}],
-                "relations": [{"type": "MET", "from": "a", "to": "b", "quote": NOTE_2,
+                {"ref": r + "c", "type": "place", "subtype": "cell", "names": ["102. zárkában"]}],
+                "relations": [{"type": "PLACED_IN", "from": r + "a", "to": r + "c",
+                               "quote": NOTE_1}]}
+        return {"entities": [{"ref": r + "a", "type": "person", "names": ["Kovács János"]},
+                             {"ref": r + "b", "type": "person", "names": ["Nagy Éva"]}],
+                "relations": [{"type": "MET", "from": r + "a", "to": r + "b", "quote": NOTE_2,
                                "date": "2026-03-12"}]}
 
 
@@ -137,6 +141,50 @@ class IngestWorkerTest(unittest.TestCase):
                          [d["source_path"] for d in out["documents"].values()])
         out = self.post("/query/mentioned", {"corpus_ids": ["c2"], "text": "Kovácsné jött"})
         self.assertEqual([], out["entities"])
+
+    def reprocess_d2(self):
+        self.state.worker.llm.ref = "x"
+        self.post("/ingest/document", doc("d2", "c2", NOTE_2))
+        self.assertTrue(self.state.worker.wait_idle())
+
+    def test_a_profile_change_makes_documents_stale_until_reprocessed(self):
+        self.ingest_both()
+        scope = {"corpus_ids": ["c1", "c2"]}
+        old = "%s@%s" % (self.state.profile["id"], self.state.profile["version"])
+        out = self.post("/documents/profile", scope)
+        self.assertEqual((old, {old: 2}, 0), (out["current"], out["counts"], out["stale_total"]))
+        newer = dict(self.state.profile, version=self.state.profile["version"] + 1)
+        self.post("/profile/set", {"profile": newer})
+        out = self.post("/documents/profile", scope)
+        self.assertEqual(["/c1/d1.txt", "/c2/d2.txt"], [d["source_path"] for d in out["stale"]])
+        self.assertEqual(["/c2/d2.txt"], [d["source_path"] for d in self.post(
+            "/documents/profile", dict(scope, path_prefix="/c2"))["stale"]])
+        self.assertEqual([], self.post("/documents/profile", {"corpus_ids": []})["stale"])
+        self.reprocess_d2()
+        out = self.post("/documents/profile", scope)
+        self.assertEqual({old: 1, "%s@%s" % (newer["id"], newer["version"]): 1}, out["counts"])
+        self.assertEqual(["/c1/d1.txt"], [d["source_path"] for d in out["stale"]])
+
+    def test_reprocessing_keeps_a_keep_apart_decision(self):
+        self.ingest_both()
+        scope = {"corpus_ids": ["c1", "c2"]}
+        [item] = self.post("/review/list", scope)["review"]
+        self.post("/review/decide", dict(scope, a=item["a"], b=item["b"], decision="separate"))
+        people = sorted(e.id for e in self.state.store.entities.values() if e.type == "person")
+        self.reprocess_d2()
+        self.assertEqual([], self.post("/review/list", scope)["review"])
+        self.assertEqual(people, sorted(e.id for e in self.state.store.entities.values()
+                                        if e.type == "person"))
+
+    def test_reprocessing_keeps_a_merge(self):
+        self.ingest_both()
+        scope = {"corpus_ids": ["c1", "c2"]}
+        [item] = self.post("/review/list", scope)["review"]
+        self.post("/review/decide", dict(scope, a=item["a"], b=item["b"], decision="merge"))
+        self.reprocess_d2()
+        self.assertEqual([], self.post("/review/list", scope)["review"])
+        found = self.post("/query/find", dict(scope, text="Kovács"))["entities"]
+        self.assertEqual([item["b"]], [e["id"] for e in found])
 
     def test_disabled_extraction_answers_503(self):
         self.state.worker = None

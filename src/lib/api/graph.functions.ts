@@ -173,6 +173,42 @@ export const graphApi = {
     adapterGraph<{ profile: GraphProfile }>("profile/set", { profile }, drive),
   dossier: (drive: string, id: string, format: "docx" | "pdf", lang: string) =>
     adapterGraph<GraphDossier>("dossier", { id, format, lang }, drive),
+  reprocessStatus: (drive: string) =>
+    adapterGraph<GraphReprocessStatus>("reprocess/status", {}, drive),
+  reprocessStart: (drive: string, pathPrefix: string) =>
+    adapterGraph<{ run: GraphReprocessRun }>(
+      "reprocess/start",
+      { path_prefix: pathPrefix || undefined },
+      drive,
+    ),
+  reprocessCancel: (drive: string) =>
+    adapterGraph<{ run: GraphReprocessRun }>("reprocess/cancel", {}, drive),
+};
+
+/** A reprocessing run after a profile change (adapter/reprocess.py). */
+export type GraphReprocessRun = {
+  state: "idle" | "running" | "done" | "cancelled" | "failed";
+  started_by?: string;
+  profile?: string;
+  path_prefix?: string | null;
+  total?: number;
+  done?: number;
+  sent?: number;
+  missing?: number;
+  failed?: number;
+  current?: string;
+  error?: string | null;
+};
+
+/** Which profile the documents of this scope were extracted with. */
+export type GraphReprocessStatus = {
+  current: string;
+  counts: Record<string, number>;
+  stale_total: number;
+  can_start: boolean;
+  source: "local" | "ws-fs";
+  source_ready: boolean;
+  run: GraphReprocessRun;
 };
 
 /** A rendered entity dossier: the file (base64) and its markdown source. */

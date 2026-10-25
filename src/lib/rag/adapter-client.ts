@@ -943,7 +943,10 @@ export async function adapterGraph<T>(
     | "review/decide"
     | "profile/get"
     | "profile/set"
-    | "dossier",
+    | "dossier"
+    | "reprocess/status"
+    | "reprocess/start"
+    | "reprocess/cancel",
   body: Record<string, unknown>,
   drive: string,
 ): Promise<T> {

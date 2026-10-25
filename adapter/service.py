@@ -114,6 +114,7 @@ import named_files  # noqa: E402
 import orchestrator  # noqa: E402
 import purpose  # noqa: E402
 import querylog  # noqa: E402
+import reprocess  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -479,6 +480,37 @@ def _acl_loop():
 # Relationship analysis (E26): internal graph service, off unless GRAPH_URL is set.
 GRAPH = graph.GraphClient.from_env()
 GRAPH_FORWARD = graph.Forwarder.from_env(GRAPH, _flat_acl)
+# Reprocessing after a profile change fetches each file again: from the
+# ViVeSecBox (ws-fs), or -- on a development box without that channel -- from
+# this mirror of the drives (<dir>/<drive>/... for /storage/drives/<drive>/...).
+REPROCESS_SOURCE_DIR = (os.environ.get("ADAPTER_REPROCESS_SOURCE_DIR", "") or "").strip()
+
+
+def _reprocess_fetch(user, path):
+    """A file's content for reprocessing; None when it no longer exists."""
+    if REPROCESS_SOURCE_DIR:
+        root = os.path.realpath(REPROCESS_SOURCE_DIR)
+        prefix = corpus.DRIVE_PREFIX.rstrip("/") + "/"
+        if not path.startswith(prefix):
+            return None
+        local = os.path.realpath(os.path.join(root, path[len(prefix):]))
+        if not local.startswith(root + os.sep) or not os.path.isfile(local):
+            return None
+        with open(local, "rb") as handle:
+            return handle.read()
+    try:
+        header, content = WSFS.get_file(user, path, timeout=GETFILE_TIMEOUT)
+    except wsfs.ChannelError as e:
+        raise reprocess.ReprocessError("ViVeSecBox not connected: %s" % e)
+    error = (header or {}).get("error")
+    if error in ("not-found", "missing"):
+        return None
+    if error:
+        raise RuntimeError(error)
+    return content or None
+
+
+REPROCESS = reprocess.Reprocessor(GRAPH, GRAPH_FORWARD, _reprocess_fetch)
 # Who may change the shared graph (merge people, edit the domain profile). Empty:
 # nobody through the UI.
 GRAPH_ADMINS = frozenset(u.strip().casefold() for u in
@@ -1758,6 +1790,9 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
+                "/api/v1/ui/graph/reprocess/status": self._graph_reprocess_status,
+                "/api/v1/ui/graph/reprocess/start": self._graph_reprocess_start,
+                "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
                 "/api/v1/ui/index/skipped": self._index_skipped,
             }.get(path.rstrip("/"))
             if route is None:
@@ -2775,6 +2810,75 @@ class Handler(BaseHTTPRequestHandler):
             "recent": [r for r in st.get("recent") or [] if mine(r.get("source_path"))],
             "forward": {"pending": forward["pending"], "counts": forward["counts"]},
             "gpu": gpu_gate.GATE.stats()})
+
+    def _reprocess_source_ready(self):
+        return bool(REPROCESS_SOURCE_DIR) or WSFS.connected()
+
+    def _graph_reprocess_status(self):
+        """Which profile the documents of the caller's scope were extracted with
+        (counts only), and the current or last reprocessing run."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, _, req_scope, access, scope_body = ctx
+        res = self._graph_post("/documents/profile", dict(scope_body, limit=1))
+        if res is None:
+            return
+        visible = _visible(access)
+        self._send(200, {"ok": True, "current": res.get("current"),
+                         "counts": res.get("counts") or {},
+                         "stale_total": res.get("stale_total", 0),
+                         "can_start": (user or "").casefold() in GRAPH_ADMINS,
+                         "source": "local" if REPROCESS_SOURCE_DIR else "ws-fs",
+                         "source_ready": self._reprocess_source_ready(),
+                         "run": REPROCESS.status(
+                             lambda p: req_scope.contains_path(p) and visible(p))})
+
+    def _graph_reprocess_start(self):
+        """A graph administrator reprocesses the documents of their scope that an
+        older or unknown profile extracted, optionally below one folder."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, req_scope, access, scope_body = ctx
+        if not self._graph_admin(user):
+            return
+        prefix = str(payload.get("path_prefix") or "").strip()
+        prefix = corpus.norm(prefix).rstrip("/") if prefix else ""
+        if prefix and not req_scope.contains_path(prefix):
+            self._send(403, {"ok": False, "error": "folder outside the request scope"})
+            return
+        if not self._reprocess_source_ready():
+            self._send(503, {"ok": False, "error": "ViVeSecBox not connected: the files "
+                                                   "cannot be fetched again"})
+            return
+        res = self._graph_post("/documents/profile",
+                               dict(scope_body, path_prefix=prefix, limit=20000))
+        if res is None:
+            return
+        visible = _visible(access)
+        docs = [d for d in res.get("stale") or []
+                if req_scope.contains_path(d.get("source_path") or "")
+                and visible(d.get("source_path") or "")]
+        try:
+            run = REPROCESS.start(user, docs, res.get("current"), prefix)
+        except reprocess.ReprocessError as e:
+            self._send(409, {"ok": False, "error": str(e)})
+            return
+        sys.stderr.write("[adapter] graph: reprocessing %d documents (%s) by %s\n"
+                         % (len(docs), prefix or "whole scope", user))
+        self._send(200, {"ok": True, "run": run})
+
+    def _graph_reprocess_cancel(self):
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user = ctx[0]
+        if not self._graph_admin(user):
+            return
+        REPROCESS.cancel()
+        sys.stderr.write("[adapter] graph: reprocessing cancelled by %s\n" % user)
+        self._send(200, {"ok": True, "run": REPROCESS.status()})
 
     def _graph_review_list(self):
         ctx = self._graph_request(bound=True)

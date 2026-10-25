@@ -130,9 +130,9 @@ class Neo4jGraphStore:
         rel_ids = self._add_relations_tx(tx, relations)
         tx.run("CREATE (d:Document {doc_id: $doc_id, corpus_id: $corpus_id, "
                "source_path: $source_path, title: $title, kind: $kind, pages: $pages, "
-               "acl_json: $acl, rel_ids: $rel_ids, attr_entities: $attr_entities})",
+               "profile: $profile, acl_json: $acl, rel_ids: $rel_ids, attr_entities: $attr_entities})",
                doc_id=doc.doc_id, corpus_id=doc.corpus_id, source_path=doc.source_path,
-               title=doc.title, kind=doc.kind, pages=doc.pages,
+               title=doc.title, kind=doc.kind, pages=doc.pages, profile=doc.profile,
                acl=json.dumps(doc.acl) if doc.acl is not None else None,
                rel_ids=sorted(set(rel_ids.values())),
                attr_entities=sorted({a["eid"] for a in attrs}))
@@ -266,7 +266,8 @@ class Neo4jGraphStore:
             documents = [Document(d["doc_id"], d["corpus_id"], d["source_path"],
                                   d.get("title") or "",
                                   json.loads(d["acl_json"]) if d.get("acl_json") else None,
-                                  d.get("kind") or "", d.get("pages") or 0)
+                                  d.get("kind") or "", d.get("pages") or 0,
+                                  d.get("profile") or "")
                          for d in (r["d"] for r in s.run("MATCH (d:Document) RETURN d {.*} AS d"))]
             entities = {}
             for r in s.run("MATCH (e:Entity) RETURN e {.*} AS e"):
@@ -384,7 +385,8 @@ class Neo4jView(GraphView):
             out[d["doc_id"]] = Document(d["doc_id"], d["corpus_id"], d["source_path"],
                                         d.get("title") or "",
                                         json.loads(d["acl_json"]) if d.get("acl_json") else None,
-                                        d.get("kind") or "", d.get("pages") or 0)
+                                        d.get("kind") or "", d.get("pages") or 0,
+                                        d.get("profile") or "")
         return out
 
     def _load_nodes(self, eids):

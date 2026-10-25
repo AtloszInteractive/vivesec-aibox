@@ -33,6 +33,8 @@ import {
   type GraphReviewItem,
   type GraphStatus,
   type GraphTimelineItem,
+  type GraphReprocessRun,
+  type GraphReprocessStatus,
   type IndexSkipped,
 } from "@/lib/api/graph.functions";
 
@@ -184,7 +186,7 @@ export function GraphPanel({
             />
           )}
           {tab === "review" && <ReviewTab drive={drive} canEdit={canEdit} />}
-          {tab === "processing" && <ProcessingTab drive={drive} />}
+          {tab === "processing" && <ProcessingTab drive={drive} canEdit={canEdit} />}
           {tab === "profile" && (
             <ProfileTab
               drive={drive}
@@ -1009,7 +1011,7 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
 
 /* ------------------------------------------------------------- Processing */
 
-function ProcessingTab({ drive }: { drive: string }) {
+function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
   const { tm } = useLang();
   const { run, notice } = useFailure();
   const [status, setStatus] = useState<GraphStatus | null>(null);
@@ -1078,7 +1080,128 @@ function ProcessingTab({ drive }: { drive: string }) {
           </div>
         </>
       )}
+      <ReprocessSection drive={drive} canEdit={canEdit} />
       <UnreadableDocuments drive={drive} />
+    </div>
+  );
+}
+
+const RUN_STATE: Record<GraphReprocessRun["state"], string> = {
+  idle: "",
+  running: "Reprocessing…",
+  done: "Reprocessing finished",
+  cancelled: "Reprocessing stopped",
+  failed: "Reprocessing stopped with an error",
+};
+
+/** After a domain profile change: which profile the documents were extracted
+ *  with, and (graph administrators) reprocessing those of an older one. The
+ *  files are fetched again from the ViVeSecBox, one at a time, in the background. */
+function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+  const { tm } = useLang();
+  const { run: call, notice } = useFailure();
+  const [data, setData] = useState<GraphReprocessStatus | null>(null);
+  const [folder, setFolder] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    const res = await call(() => graphApi.reprocessStatus(drive));
+    if (res) setData(res);
+  }, [drive, call]);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  async function act(work: () => Promise<unknown>) {
+    setBusy(true);
+    await call(work);
+    await load();
+    setBusy(false);
+  }
+
+  if (!data) return notice;
+  const run = data.run;
+  const running = run.state === "running";
+  const versions = Object.entries(data.counts).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    <div className="mt-6">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/45">
+        <Settings2 className="h-3.5 w-3.5" />
+        {tm("Domain profile version")}
+      </div>
+      {notice}
+      <div className="text-xs text-white/70">
+        {tm("Current profile")}: <span className="font-medium text-white">{data.current}</span>
+      </div>
+      <div className="mt-1 text-xs text-white/70">
+        {data.stale_total
+          ? `${tm("Extracted with an older or unknown profile")}: ${data.stale_total}`
+          : tm("Every document was extracted with the current profile.")}
+      </div>
+      {versions.length > 1 && (
+        <div className="mt-1 text-[11px] text-white/45">
+          {versions.map(([v, n]) => `${v === "unknown" ? tm("unknown") : v}: ${n}`).join(" · ")}
+        </div>
+      )}
+      {run.state !== "idle" && (
+        <div
+          className="mt-2 rounded-xl border border-white/10 p-2.5 text-xs"
+          style={{ backgroundColor: PANEL }}
+        >
+          <div className="flex items-center gap-2">
+            {running && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            <span>{tm(RUN_STATE[run.state])}</span>
+            <span className="ml-auto text-white/60">
+              {run.done ?? 0}/{run.total ?? 0}
+            </span>
+          </div>
+          {running && run.current && (
+            <div className="mt-1 truncate text-[11px] text-white/50" title={run.current}>
+              {run.current.split("/").pop()}
+            </div>
+          )}
+          <div className="mt-1 text-[11px] text-white/50">
+            {`${tm("Sent")}: ${run.sent ?? 0} · ${tm("Missing")}: ${run.missing ?? 0} · ${tm("Failed")}: ${run.failed ?? 0}`}
+          </div>
+          {run.error && <div className="mt-1 text-[11px] text-amber-300">{run.error}</div>}
+        </div>
+      )}
+      {canEdit && data.can_start && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+            disabled={running}
+            placeholder={tm("Folder (optional), e.g. /storage/drives/…")}
+            className="min-w-0 flex-1 rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-white/30"
+          />
+          {running ? (
+            <button
+              onClick={() => void act(() => graphApi.reprocessCancel(drive))}
+              disabled={busy}
+              className="rounded-lg border border-white/15 px-3 py-1 text-xs transition hover:bg-white/10 disabled:opacity-50"
+            >
+              {tm("Stop")}
+            </button>
+          ) : (
+            <button
+              onClick={() => void act(() => graphApi.reprocessStart(drive, folder.trim()))}
+              disabled={busy || !data.stale_total || !data.source_ready}
+              className="rounded-lg px-3 py-1 text-xs font-medium text-black disabled:opacity-50"
+              style={{ backgroundColor: LIME }}
+            >
+              {tm("Reprocess")}
+            </button>
+          )}
+        </div>
+      )}
+      {canEdit && data.can_start && !data.source_ready && (
+        <div className="mt-1 text-[11px] text-amber-300">
+          {tm("The ViVeSecBox is not connected: the files cannot be fetched again.")}
+        </div>
+      )}
     </div>
   );
 }

@@ -412,6 +412,25 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `/review/decide` and `/profile/set` only for users in `ADAPTER_GRAPH_ADMINS`
   (empty: nobody); `/profile/get` returns the profile, the templates and
   `can_edit`.
+- **Reprocessing after a profile change** (`reprocess.py`): the graph records
+  the profile each document was extracted with (`bv@2`; empty for documents from
+  before this was recorded). `POST /api/v1/ui/graph/reprocess/status` gives the
+  caller's view: current profile, counts per profile, `stale_total` (older or
+  unknown), `can_start`, the file `source` (`ws-fs` or `local`) and the current or
+  last run. `/reprocess/start {path_prefix?}` (graph administrators; the folder
+  must be inside the scope) re-reads the stale documents the administrator may
+  see: each file is fetched again -- from the ViVeSecBox over ws-fs as that
+  administrator, or from `ADAPTER_REPROCESS_SOURCE_DIR` on a development box --
+  only when the forwarder and the graph queue are empty, and handed to the
+  forwarder like a synced file (its current ACL applies). A file gone from the
+  drive counts as missing, a refused one as failed; a lost ws-fs channel stops
+  the run. `/reprocess/cancel` stops after the current file. A re-extracted
+  document keeps its people's ids (the graph resolves the names it named before
+  to the same, merge-followed ids first, unless the document now conflicts), so
+  merge and keep-apart decisions survive. The UI shows this under
+  Relationships › Processing. Tests: `reprocess_test`, `graph_integration_test`
+  (`test_a_profile_change_is_reprocessed_from_the_file_source`), graph side
+  `ingest_jobs_test`.
 - **Dossier**: `POST /api/v1/ui/graph/dossier` `{id, format: docx|pdf|md, lang,
   drives?}` renders one entity's basic data, direct relations, timeline and a
   numbered source list (path, page, verbatim quote) with `docgen.py`.
