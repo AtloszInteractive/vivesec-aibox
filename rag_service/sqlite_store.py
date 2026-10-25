@@ -1071,20 +1071,26 @@ class SqliteVecStore:
         return {"documents": documents, "pages": pages, "chunks": chunks,
                 "corpora": corpora, "skipped": skipped}
 
-    def skipped_documents(self, corpus_id=None):
+    def skipped_documents(self, corpus_id=None, corpus_ids=None, access=None):
         """Files we know about but cannot answer from, with the reason.
 
         This is what tells an operator which documents need OCR or a format fix,
-        instead of them silently never appearing in any answer.
+        instead of them silently never appearing in any answer. With `corpus_ids`
+        and `access` it is a user's view: only documents that user may see.
         """
         sql = ("SELECT d.doc_id, d.source_path, d.corpus_id, d.size, d.skip_reason, d.ocr_state "
                "FROM documents d WHERE d.file=1 AND (d.skip_reason IS NOT NULL OR d.ocr_state "
                "IN ('pending', 'deferred', 'interrupted', 'failed') OR EXISTS(SELECT 1 FROM pages p "
                "WHERE p.doc_id=d.doc_id AND p.kind='skipped'))")
-        params = ()
-        if corpus_id:
-            sql += " AND d.corpus_id=?"
-            params = (corpus_id,)
+        params = []
+        scope = normalize_corpus_ids(corpus_id, corpus_ids)
+        if scope:
+            sql += " AND d.corpus_id IN (%s)" % ",".join("?" * len(scope))
+            params += scope
+        if access is not None:
+            acl_sql, acl_params = access_filter.sql_clause(access)
+            sql += " AND " + acl_sql
+            params += acl_params
         out = []
         with self._lock:
             rows = self._conn.execute(sql + " ORDER BY d.source_path", params).fetchall()

@@ -215,7 +215,8 @@ class Handler(BaseHTTPRequestHandler):
         silently never appearing in an answer.
         """
         body = self._read_json()
-        docs = STORE.skipped_documents(body.get("corpus_id"))
+        docs = STORE.skipped_documents(body.get("corpus_id"), body.get("corpus_ids"),
+                                       self._access(body) if "access" in body else None)
         self._ok(skipped=docs, count=len(docs))
 
     def _upsert_directory(self):

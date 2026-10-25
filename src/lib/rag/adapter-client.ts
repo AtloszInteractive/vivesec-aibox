@@ -73,25 +73,51 @@ export type AdapterAnswer = {
 /** On-box speech capabilities (adapter/voice.py). Both default to off. */
 export type AdapterVoice = { stt: boolean; tts: boolean };
 
+/** Concept 5.2: whether queries must name a case reference or legal basis. */
+export type AdapterPurposeConfig = {
+  mode: "off" | "optional" | "required";
+  legalBases: string[];
+  caseRefPattern: string | null;
+};
+
 /** What this box offers (ADAPTER_APP_MODE): analyst = chat + relationships only. */
 export type AdapterApp = {
   mode: "workspace" | "analyst";
   driveBrowser: boolean;
   quickActions: boolean;
   orchestrator: boolean;
+  purpose: AdapterPurposeConfig;
 };
+
+function readPurpose(raw: unknown): AdapterPurposeConfig {
+  const v = (raw ?? {}) as Record<string, unknown>;
+  const mode = v.mode === "required" || v.mode === "optional" ? v.mode : "off";
+  return {
+    mode,
+    legalBases: Array.isArray(v.legal_bases) ? v.legal_bases.map(String) : [],
+    caseRefPattern: typeof v.case_ref_pattern === "string" ? v.case_ref_pattern : null,
+  };
+}
 
 function readApp(raw: unknown): AdapterApp {
   const v = (raw ?? {}) as Record<string, unknown>;
+  const purpose = readPurpose(v.purpose);
   // An adapter without the block is a workspace box.
   if (v.mode !== "analyst") {
-    return { mode: "workspace", driveBrowser: true, quickActions: true, orchestrator: false };
+    return {
+      mode: "workspace",
+      driveBrowser: true,
+      quickActions: true,
+      orchestrator: false,
+      purpose,
+    };
   }
   return {
     mode: "analyst",
     driveBrowser: Boolean(v.drive_browser),
     quickActions: Boolean(v.quick_actions),
     orchestrator: Boolean(v.orchestrator),
+    purpose,
   };
 }
 
@@ -478,6 +504,23 @@ export async function adapterScope(input?: {
  * then bounded long-poll (/ui/poll) until it completes. The VVS-Drive header is
  * the mandatory corpus hard filter.
  */
+/**
+ * Concept 5.2: the case reference / legal basis the current queries are for.
+ * Set by the UI and sent with every content query (questions, file-name search,
+ * graph calls); the box decides whether it is required (/status app.purpose).
+ */
+export type RequestPurpose = { caseRef?: string; legalBasis?: string };
+let requestPurpose: RequestPurpose = {};
+export function setRequestPurpose(next: RequestPurpose) {
+  requestPurpose = { ...next };
+}
+function purposeFields() {
+  return {
+    case_ref: requestPurpose.caseRef || undefined,
+    legal_basis: requestPurpose.legalBasis || undefined,
+  };
+}
+
 function jobScope(input: Pick<AdapterAskInput, "drive" | "user">) {
   const drive = input.drive ?? demoDrive();
   const user = input.user ?? demoUser();
@@ -509,6 +552,7 @@ export async function adapterSubmitJob(input: AdapterAskInput): Promise<AdapterJ
       drives: input.drives?.length ? input.drives : undefined,
       origin: input.origin ?? "chat",
       conversation_id: input.conversationId || undefined,
+      ...purposeFields(),
     }),
     signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
   });
@@ -800,7 +844,12 @@ export async function adapterDriveFiles(
   const res = await apiFetch(`${adapterUrl()}/api/v1/ui/query`, {
     method: "POST",
     headers: vvsHeaders(drive, demoUser()),
-    body: JSON.stringify({ action: "search", mode: "files", query: `files:${pattern}` }),
+    body: JSON.stringify({
+      action: "search",
+      mode: "files",
+      query: `files:${pattern}`,
+      ...purposeFields(),
+    }),
     signal: AbortSignal.timeout(FILES_TIMEOUT_MS),
   });
   const j = await safeJson(res);
@@ -901,7 +950,7 @@ export async function adapterGraph<T>(
   const res = await apiFetch(`${adapterUrl()}/api/v1/ui/graph/${endpoint}`, {
     method: "POST",
     headers: vvsHeaders(drive, demoUser()),
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, ...purposeFields() }),
     signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
   });
   const j = await safeJson(res);
@@ -914,8 +963,38 @@ export async function adapterGraph<T>(
   return j as T;
 }
 
-// ---------------------------------------------------------------------------
-// C7 — Save steps over the B6 ws-fs channel (aibox_more3 §1).
+/** E10b: documents of the caller's scope the search cannot read, with the reason. */
+export type AdapterSkipped = {
+  ok: boolean;
+  count: number;
+  reasons: Record<string, number>;
+  pages_skipped: number;
+  documents: {
+    source_path: string;
+    reason: string;
+    ocr_state?: string;
+    size?: number;
+    skipped_pages?: { page: number; reason: string; quality: number | null }[];
+  }[];
+  truncated: boolean;
+};
+
+export async function adapterSkipped(drive: string): Promise<AdapterSkipped> {
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/index/skipped`, {
+    method: "POST",
+    headers: vvsHeaders(drive, demoUser()),
+    body: "{}",
+    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+  });
+  const j = await safeJson(res);
+  if (!res.ok) {
+    throw new AdapterGraphError(
+      (j.error as string) ?? `ui/index/skipped HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return j as AdapterSkipped;
+}
 // POST /api/v1/ui/save stores the generated file in the session store first,
 // then transfers it to the ViVeSecBox drive over the ws-fs channel. When the
 // transfer is rejected (permission) or no channel is up, the copy stays stored

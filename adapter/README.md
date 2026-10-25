@@ -536,6 +536,38 @@ documents waiting, interrupted or deferred are listed by the RAG's
 `/index/skipped`; documents indexed before OCR become readable after a resync
 from the ViVeSecBox (the box keeps no raw file).
 
+`POST /api/v1/ui/index/skipped` gives a user the same list for their own scope:
+the RAG filters by the scope's corpora and the caller's ACL in its query, and
+the adapter checks every path again (scope + `_visible`), as it does for graph
+answers. The answer has `count`, `reasons` (counts per reason), `pages_skipped`
+and up to 500 `documents` with `reason`, `ocr_state` and `skipped_pages`; the
+UI shows it under Relationships › Processing ("Not readable for search").
+
+#### Purpose-bound queries and the query log (concept 5.2-5.3)
+
+With `ADAPTER_PURPOSE=required` every content query -- a question (`/ui/query`,
+`/ui/ask`, including quick actions and the file-name search), a graph query, the
+review list and a dossier export -- must carry `case_ref` (ügyszám) and/or
+`legal_basis` (jogalap) in its body; without one it gets 428
+`purpose_required` (400 `purpose_invalid` for a value outside
+`ADAPTER_LEGAL_BASES` or not matching `ADAPTER_CASE_REF_PATTERN`). Status and
+processing views need none. `/status` reports `app.purpose {mode, legal_bases,
+case_ref_pattern}`; the UI asks for the purpose once per browser session (a
+chip in the chat header, a dialog) and sends it with every such call.
+
+With `optional` or `required` each of those queries is written to the query log
+(`querylog.py`): an append-only daily JSONL under `ADAPTER_QUERY_LOG_DIR` with
+user, drive and scope, kind (`ask`, a quick action, `graph:<query>`,
+`graph:review`, `export:dossier`), the purpose, the question's SHA-256 (its text
+only with `ADAPTER_QUERY_LOG_TEXT=on`) and the result (audit id, citation
+count, cited document paths, graph tools, full reading). Every record carries
+the previous record's hash, so `querylog.verify(path)` finds an edited, inserted
+or removed line; signing and anchoring the log is E06. When the purpose is
+required and the log cannot be written, the query is refused (503) or its
+answer withheld -- an unlogged answer is never returned. A job logs its outcome
+when it finishes. Tests: `purpose_test`, `graph_integration_test`
+(`test_graph_queries_and_exports_carry_their_purpose`).
+
 #### Whole-document analysis of large files (E10a)
 
 `analyze` (one named file) fetches every passage of the file

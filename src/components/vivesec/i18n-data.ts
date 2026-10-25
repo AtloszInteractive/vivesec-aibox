@@ -191,6 +191,102 @@ const M: Record<string, Tri> = {
     "Genkendt tekst (OCR) – kan indeholde genkendelsesfejl",
     "Erkannter Text (OCR) – kann Erkennungsfehler enthalten",
   ],
+  // ---- E10b: documents the search cannot read (Relationships › Processing) ----
+  "Not readable for search": [
+    "A keresés számára nem olvasható",
+    "Kan ikke læses af søgningen",
+    "Für die Suche nicht lesbar",
+  ],
+  "The list could not be loaded.": [
+    "A listát nem sikerült betölteni.",
+    "Listen kunne ikke indlæses.",
+    "Die Liste konnte nicht geladen werden.",
+  ],
+  "Every document in this scope is readable.": [
+    "Ebben a körben minden dokumentum olvasható.",
+    "Alle dokumenter i dette omfang kan læses.",
+    "Alle Dokumente in diesem Bereich sind lesbar.",
+  ],
+  "Pages not read": ["Nem olvasott oldalak", "Sider, der ikke er læst", "Nicht gelesene Seiten"],
+  "Only the first documents are listed; the counts cover all.": [
+    "Csak az első dokumentumok szerepelnek a listában; a darabszámok mindet lefedik.",
+    "Kun de første dokumenter er vist; tallene dækker dem alle.",
+    "Nur die ersten Dokumente sind aufgeführt; die Zahlen umfassen alle.",
+  ],
+  "No text layer — resync to read it with OCR": [
+    "Nincs szövegréteg – újraszinkronnal OCR-rel olvasható",
+    "Intet tekstlag – synkronisér igen for at læse det med OCR",
+    "Keine Textebene – erneut synchronisieren, um sie per OCR zu lesen",
+  ],
+  "Waiting for OCR": ["OCR-re vár", "Venter på OCR", "Wartet auf OCR"],
+  "OCR interrupted — resync needed": [
+    "Az OCR megszakadt – újraszinkron szükséges",
+    "OCR blev afbrudt – ny synkronisering kræves",
+    "OCR unterbrochen – erneute Synchronisierung nötig",
+  ],
+  "OCR deferred — resync needed": [
+    "Az OCR elhalasztva – újraszinkron szükséges",
+    "OCR udsat – ny synkronisering kræves",
+    "OCR zurückgestellt – erneute Synchronisierung nötig",
+  ],
+  "OCR failed": ["Az OCR sikertelen", "OCR mislykkedes", "OCR fehlgeschlagen"],
+  "No text recognised": ["Nem ismerhető fel szöveg", "Ingen tekst genkendt", "Kein Text erkannt"],
+  "Some pages could not be read": [
+    "Egyes oldalak nem olvashatók",
+    "Nogle sider kunne ikke læses",
+    "Einige Seiten konnten nicht gelesen werden",
+  ],
+  "Unsupported format": [
+    "Nem támogatott formátum",
+    "Formatet understøttes ikke",
+    "Nicht unterstütztes Format",
+  ],
+  "Empty file": ["Üres fájl", "Tom fil", "Leere Datei"],
+  "Too large": ["Túl nagy", "For stor", "Zu groß"],
+  "Invalid content": ["Érvénytelen tartalom", "Ugyldigt indhold", "Ungültiger Inhalt"],
+  "No reader for this format on the AI Box": [
+    "Ehhez a formátumhoz nincs olvasó az AI Boxon",
+    "Ingen læser til dette format på AI Box",
+    "Kein Leser für dieses Format auf der AI Box",
+  ],
+  "low quality": ["gyenge minőség", "lav kvalitet", "geringe Qualität"],
+  "no text": ["nincs szöveg", "ingen tekst", "kein Text"],
+  failed: ["sikertelen", "mislykkedes", "fehlgeschlagen"],
+  // ---- Concept 5.2: purpose-bound queries ----
+  "Purpose of the queries": [
+    "A lekérdezések célja",
+    "Formålet med forespørgslerne",
+    "Zweck der Abfragen",
+  ],
+  "Set the purpose": ["Cél megadása", "Angiv formålet", "Zweck angeben"],
+  "Case reference": ["Ügyszám", "Sagsnummer", "Aktenzeichen"],
+  "Legal basis": ["Jogalap", "Retsgrundlag", "Rechtsgrundlage"],
+  "Give the case reference or the legal basis before asking.": [
+    "Kérdés előtt adja meg az ügyszámot vagy a jogalapot.",
+    "Angiv sagsnummeret eller retsgrundlaget, før du spørger.",
+    "Geben Sie vor der Frage das Aktenzeichen oder die Rechtsgrundlage an.",
+  ],
+  "Give the case reference or the legal basis of your queries. It is logged with every question.": [
+    "Adja meg a lekérdezései ügyszámát vagy jogalapját. Minden kérdéssel együtt naplózzuk.",
+    "Angiv sagsnummeret eller retsgrundlaget for dine forespørgsler. Det logges med hvert spørgsmål.",
+    "Geben Sie das Aktenzeichen oder die Rechtsgrundlage Ihrer Abfragen an. Sie wird mit jeder Frage protokolliert.",
+  ],
+  "You may give the case reference or the legal basis of your queries. It is logged with every question.":
+    [
+      "Megadhatja a lekérdezései ügyszámát vagy jogalapját. Minden kérdéssel együtt naplózzuk.",
+      "Du kan angive sagsnummeret eller retsgrundlaget for dine forespørgsler. Det logges med hvert spørgsmål.",
+      "Sie können das Aktenzeichen oder die Rechtsgrundlage Ihrer Abfragen angeben. Sie wird mit jeder Frage protokolliert.",
+    ],
+  "The case reference does not have the expected form.": [
+    "Az ügyszám formája nem megfelelő.",
+    "Sagsnummeret har ikke den forventede form.",
+    "Das Aktenzeichen hat nicht die erwartete Form.",
+  ],
+  "Give the case reference or the legal basis first (chat header).": [
+    "Előbb adja meg az ügyszámot vagy a jogalapot (a beszélgetés fejlécében).",
+    "Angiv først sagsnummeret eller retsgrundlaget (i samtalens overskrift).",
+    "Geben Sie zuerst das Aktenzeichen oder die Rechtsgrundlage an (Kopfzeile des Chats).",
+  ],
   "Read and analyse this whole document (may take minutes)": [
     "A teljes dokumentum elolvasása és elemzése (percekig tarthat)",
     "Læs og analysér hele dokumentet (kan tage minutter)",

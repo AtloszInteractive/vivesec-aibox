@@ -244,6 +244,24 @@ class StoreTest(unittest.TestCase):
         self.assertEqual("deferred", result["ocr"]["state"])
         self.assertEqual((0, "ocr_deferred", "deferred"), self.document())
 
+    def test_the_skipped_list_is_a_users_view(self):
+        hr_only = {"restricted": True, "allow": ["group:hr"], "deny": [], "classification": 1}
+        lars = {"principals": ["everyone", "user:lars"], "clearance": 1, "membership_known": True,
+                "default_classification": 1}
+        hanna = dict(lars, principals=["everyone", "user:hanna", "group:hr"])
+        with patch.object(ocr, "available", lambda: False):
+            self.ingest(acl=hr_only)
+        listed = self.store.skipped_documents(corpus_ids=[self.CORPUS], access=lars)
+        self.assertEqual([], listed)
+        listed = self.store.skipped_documents(corpus_ids=[self.CORPUS], access=hanna)
+        self.assertEqual([self.PATH], [d["source_path"] for d in listed])
+        self.assertEqual([], self.store.skipped_documents(corpus_ids=["other"], access=hanna))
+        json_store = store.RagStore()
+        json_store.check(self.CORPUS, "default", "/d/x.vsd", 10, 1, "", acl=hr_only)
+        self.assertEqual([], json_store.skipped_documents(corpus_ids=[self.CORPUS], access=lars))
+        self.assertEqual(1, len(json_store.skipped_documents(corpus_ids=[self.CORPUS],
+                                                             access=hanna)))
+
     def test_an_image_file_is_one_page(self):
         buffer = io.BytesIO()
         Image.new("L", (40, 40), 255).save(buffer, "PNG")

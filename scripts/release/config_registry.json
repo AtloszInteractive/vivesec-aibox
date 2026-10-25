@@ -3095,6 +3095,80 @@
       "change": "restart",
       "secret": false,
       "internal": false
+    },
+    {
+      "name": "ADAPTER_PURPOSE",
+      "component": "adapter",
+      "category": "security",
+      "type": "enum",
+      "default": "off",
+      "allowed": "off | optional | required",
+      "values": [
+        "off",
+        "optional",
+        "required"
+      ],
+      "fail_safe": "An unknown value means required (the stricter one).",
+      "impact": "Concept 5.2: questions, file-name search, graph queries, the review list and dossier exports must carry a case reference (case_ref) and/or legal basis (legal_basis) when required (428 otherwise); with optional or required every such query is written to the query log; off keeps the old behaviour without a log.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_LEGAL_BASES",
+      "component": "adapter",
+      "category": "security",
+      "type": "list",
+      "default": "",
+      "allowed": "legal bases separated by ;",
+      "fail_safe": "Empty allows any legal basis text (at most 200 characters).",
+      "impact": "The legal bases a query may name; the UI offers them as a list. To be supplied by the customer.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_CASE_REF_PATTERN",
+      "component": "adapter",
+      "category": "security",
+      "type": "string",
+      "default": "",
+      "allowed": "regular expression",
+      "fail_safe": "Empty accepts any case reference (at most 64 characters); an invalid pattern accepts none.",
+      "impact": "The form a case reference must have in full (e.g. BV-\\d{4}/\\d+). To be supplied by the customer.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_QUERY_LOG_DIR",
+      "component": "adapter",
+      "category": "security",
+      "type": "path",
+      "default": "/data/querylog",
+      "allowed": "directory on the encrypted data volume",
+      "fail_safe": "Empty disables the log; with ADAPTER_PURPOSE=required queries are then refused (503), as they are when it cannot be written.",
+      "impact": "Concept 5.3: append-only daily JSONL of the purpose-bound queries (who, when, scope, purpose, kind, audit id, cited documents, graph tools), hash-chained so an edited or removed line is detected (querylog.verify).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_QUERY_LOG_TEXT",
+      "component": "adapter",
+      "category": "security",
+      "type": "enum",
+      "default": "off",
+      "allowed": "off | on",
+      "values": [
+        "off",
+        "on"
+      ],
+      "fail_safe": "Only on keeps the question text; anything else keeps its SHA-256 only.",
+      "impact": "Whether the query log keeps the question text as well as its hash.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
     }
   ]
 }

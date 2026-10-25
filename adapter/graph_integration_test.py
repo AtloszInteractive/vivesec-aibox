@@ -556,6 +556,50 @@ class GraphIntegrationTest(unittest.TestCase):
                                                          "files": [HIDDEN]}, user="lars")
             self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
 
+    def test_graph_queries_and_exports_carry_their_purpose(self):
+        import purpose
+        import querylog
+
+        service = self.service
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+        with patch.object(service, "PURPOSE", purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name)):
+            status, out = self.query("lars", "find", text="Kovács", types=["person"])
+            self.assertEqual((428, "purpose_required"), (status, out["error"]))
+            status, out = self.call("/api/v1/ui/graph/query",
+                                    {"query": "find", "case_ref": "BV-2026/7",
+                                     "params": {"text": "Kovács", "types": ["person"]}},
+                                    user="lars")
+            self.assertEqual(200, status, out)
+            status, out = self.call("/api/v1/ui/graph/review/list", {}, user="lars")
+            self.assertEqual(428, status)
+            # Status is not content: it needs no purpose.
+            status, _ = self.call("/api/v1/ui/graph/status", {}, user="lars")
+            self.assertEqual(200, status)
+        name, = os.listdir(logdir.name)
+        path = os.path.join(logdir.name, name)
+        with open(path, encoding="utf-8") as handle:
+            record, = [json.loads(line) for line in handle]
+        self.assertEqual(("lars", "graph:find", "BV-2026/7"),
+                         (record["user"], record["kind"], record["case_ref"]))
+        self.assertEqual([PUBLIC], record["result"]["sources"])
+        self.assertEqual((True, 1, None), querylog.verify(path))
+
+    def test_unreadable_documents_are_listed_within_the_callers_view(self):
+        for path in (DRIVE + "/reports/diagram.vsd", DRIVE + "/hr/org.vsd"):
+            status, _ = self.call("/api/v1/index/upsert/file/check",
+                                  {"path": path, "size": 10, "mtime": 1700000000, "head": ""})
+            self.assertEqual(200, status)
+        status, out = self.call("/api/v1/ui/index/skipped", {}, user="lars")
+        self.assertEqual(200, status, out)
+        self.assertEqual([DRIVE + "/reports/diagram.vsd"],
+                         [d["source_path"] for d in out["documents"]])
+        self.assertEqual({"unsupported_type": 1}, out["reasons"])
+        self.assertNotIn("org.vsd", json.dumps(out))
+        status, out = self.call("/api/v1/ui/index/skipped", {}, user="hanna")
+        self.assertEqual(2, out["count"])
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))

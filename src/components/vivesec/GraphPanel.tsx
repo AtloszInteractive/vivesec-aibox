@@ -33,6 +33,7 @@ import {
   type GraphReviewItem,
   type GraphStatus,
   type GraphTimelineItem,
+  type IndexSkipped,
 } from "@/lib/api/graph.functions";
 
 const LIME = "#C6F24E";
@@ -60,6 +61,7 @@ const FAILURE_TEXT: Record<GraphFailure, string> = {
   extraction_off: "Document processing for relationships is not enabled on this AI Box.",
   forbidden: "Only graph administrators may do this.",
   syncing: "Access rules are being synchronised — try again shortly.",
+  purpose: "Give the case reference or the legal basis first (chat header).",
   error: "The relationship service did not answer.",
 };
 const STATUS_TEXT: Record<string, string> = {
@@ -1075,6 +1077,112 @@ function ProcessingTab({ drive }: { drive: string }) {
               ))}
           </div>
         </>
+      )}
+      <UnreadableDocuments drive={drive} />
+    </div>
+  );
+}
+
+/** E10b: why a document of this scope is not in the search -- reason
+ *  counts, and the documents with any pages OCR could not read. */
+const SKIP_REASON: Record<string, string> = {
+  extraction_empty: "No text layer — resync to read it with OCR",
+  ocr_pending: "Waiting for OCR",
+  ocr_interrupted: "OCR interrupted — resync needed",
+  ocr_deferred: "OCR deferred — resync needed",
+  ocr_failed: "OCR failed",
+  ocr_no_text: "No text recognised",
+  ocr_pages_skipped: "Some pages could not be read",
+  unsupported_type: "Unsupported format",
+  empty_content: "Empty file",
+  too_large: "Too large",
+  invalid_content: "Invalid content",
+  extractor_unavailable: "No reader for this format on the AI Box",
+};
+const PAGE_REASON: Record<string, string> = {
+  low_quality: "low quality",
+  no_text: "no text",
+  failed: "failed",
+};
+
+function UnreadableDocuments({ drive }: { drive: string }) {
+  const { tm } = useLang();
+  const [data, setData] = useState<IndexSkipped | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [reason, setReason] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setData(await graphApi.skipped(drive));
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    }
+  }, [drive]);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), 30000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const reasons = Object.entries(data?.reasons ?? {}).sort((a, b) => b[1] - a[1]);
+  const shown = (data?.documents ?? []).filter((d) => !reason || d.reason === reason);
+  return (
+    <div className="mt-6">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/45">
+        <ShieldAlert className="h-3.5 w-3.5" />
+        {tm("Not readable for search")}
+        {data && <span className="normal-case tracking-normal text-white/60">({data.count})</span>}
+      </div>
+      {failed && <Notice text={tm("The list could not be loaded.")} tone="warn" />}
+      {data && data.count === 0 && (
+        <div className="text-xs text-white/55">
+          {tm("Every document in this scope is readable.")}
+        </div>
+      )}
+      {reasons.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {reasons.map(([key, n]) => (
+            <button
+              key={key}
+              onClick={() => setReason(reason === key ? null : key)}
+              className={`rounded-full border px-2 py-0.5 text-[11px] transition ${reason === key ? "border-transparent text-black" : "border-white/15 text-white/70 hover:bg-white/10"}`}
+              style={reason === key ? { backgroundColor: LIME } : undefined}
+            >
+              {tm(SKIP_REASON[key] ?? key)}: {n}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+        {shown.map((d) => (
+          <div key={d.source_path} className="text-xs">
+            <div className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate" title={d.source_path}>
+                {d.source_path.split("/").pop()}
+              </span>
+              <span className="shrink-0 text-amber-300/90">
+                {tm(SKIP_REASON[d.reason] ?? d.reason)}
+              </span>
+            </div>
+            {!!d.skipped_pages?.length && (
+              <div className="pl-2 text-[11px] text-white/50">
+                {tm("Pages not read")}:{" "}
+                {d.skipped_pages
+                  .map(
+                    (p) =>
+                      `${p.page} (${tm(PAGE_REASON[p.reason] ?? p.reason)}${p.quality != null ? ` ${p.quality}%` : ""})`,
+                  )
+                  .join(", ")}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {data?.truncated && (
+        <div className="mt-1 text-[11px] text-white/45">
+          {tm("Only the first documents are listed; the counts cover all.")}
+        </div>
       )}
     </div>
   );

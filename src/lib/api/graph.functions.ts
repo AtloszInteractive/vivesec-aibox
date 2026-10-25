@@ -2,7 +2,14 @@
 // Plain async functions like rag.functions.ts: the embedded UI reaches the
 // adapter through the ViVeSecBox tunnel, never through framework routes.
 
-import { adapterGraph, AdapterGraphError } from "../rag/adapter-client";
+import {
+  adapterGraph,
+  AdapterGraphError,
+  adapterSkipped,
+  type AdapterSkipped,
+} from "../rag/adapter-client";
+
+export type IndexSkipped = AdapterSkipped;
 
 export type GraphEntityType =
   | "person"
@@ -101,10 +108,17 @@ export type GraphStatus = {
 };
 
 /** Why a graph call failed, as the UI shows it. */
-export type GraphFailure = "disabled" | "extraction_off" | "forbidden" | "syncing" | "error";
+export type GraphFailure =
+  | "disabled"
+  | "extraction_off"
+  | "forbidden"
+  | "syncing"
+  | "purpose"
+  | "error";
 
 export function graphFailure(err: unknown): GraphFailure {
   if (err instanceof AdapterGraphError) {
+    if (err.status === 428) return "purpose";
     if (err.status === 403) return "forbidden";
     if (err.status === 503 && /synchronis/i.test(err.message)) return "syncing";
     if (err.status === 503 && /extraction/i.test(err.message)) return "extraction_off";
@@ -139,6 +153,8 @@ export const graphApi = {
   timeline: (drive: string, id: string) =>
     query<{ timeline: GraphTimelineItem[] }>(drive, "timeline", { id }),
   status: (drive: string) => adapterGraph<GraphStatus>("status", {}, drive),
+  /** E10b: what the search cannot read in this scope (not a graph call). */
+  skipped: (drive: string) => adapterSkipped(drive),
   reviewList: (drive: string) =>
     adapterGraph<{ review: GraphReviewItem[]; total: number }>(
       "review/list",

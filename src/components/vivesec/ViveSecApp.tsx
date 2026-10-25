@@ -63,6 +63,11 @@ import {
 } from "@/lib/api/rag.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
 import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib/ui-update";
+import {
+  setRequestPurpose,
+  type AdapterPurposeConfig,
+  type RequestPurpose,
+} from "@/lib/rag/adapter-client";
 import { useVoice } from "./use-voice";
 import {
   ArrowLeft,
@@ -840,6 +845,34 @@ function ViveSecAppInner() {
   // Analyst boxes (ADAPTER_APP_MODE=analyst) offer chat + relationships only; the
   // drive browser and quick actions stay in the code but are not shown.
   const [analyst, setAnalyst] = useState(false);
+  // Concept 5.2: the case reference / legal basis of this session's queries,
+  // and whether the box requires one (/status app.purpose).
+  const [purposeConfig, setPurposeConfig] = useState<AdapterPurposeConfig>({
+    mode: "off",
+    legalBases: [],
+    caseRefPattern: null,
+  });
+  const [purposeValue, setPurposeValue] = useState<RequestPurpose>({});
+  const [purposeDialog, setPurposeDialog] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("vivesec.purpose");
+      if (saved) setPurposeValue(JSON.parse(saved) as RequestPurpose);
+    } catch {
+      // Unreadable storage: ask again.
+    }
+  }, []);
+  useEffect(() => {
+    setRequestPurpose(purposeValue);
+    try {
+      sessionStorage.setItem("vivesec.purpose", JSON.stringify(purposeValue));
+    } catch {
+      // The purpose still travels with this tab's queries.
+    }
+  }, [purposeValue]);
+  const purposeMissing =
+    purposeConfig.mode === "required" && !purposeValue.caseRef && !purposeValue.legalBasis;
+  const purposeLabel = [purposeValue.caseRef, purposeValue.legalBasis].filter(Boolean).join(" · ");
 
   const probeBox = useCallback(async () => {
     setBoxState((s) => (s === "online" ? s : "probing"));
@@ -850,6 +883,7 @@ function ViveSecAppInner() {
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
       if (h.ok) setBoxVersion(h.version ?? null);
       if (h.ok) setAnalyst(h.app?.mode === "analyst");
+      if (h.ok && h.app) setPurposeConfig(h.app.purpose);
       if (h.ok) {
         const policy = h.chatPolicy;
         setChatPolicy(policy && ["locked_hybrid", "selectable_grounded", "selectable_hybrid"].includes(policy.policy)
@@ -1989,6 +2023,8 @@ function ViveSecAppInner() {
     } catch (err) {
       // No mock fallback: the failure is shown as a failure.
       const detail = err instanceof Error ? err.message : "error";
+      // The box asked for the purpose (its setting changed under the tab).
+      if (/purpose_required/.test(detail)) setPurposeDialog(true);
       setMessages((all) =>
         all.map((m) =>
           m.id === loadingId
@@ -2015,10 +2051,12 @@ function ViveSecAppInner() {
     sendText(input.trim());
   }
 
-  /** One submit path for typed and spoken input alike: a dictated question is
-   *  routed, grounded and cited exactly like a typed one. */
   /** E10a from a cited document: the whole file, read and analysed in full. */
   function analyzeCited(path: string) {
+    if (purposeMissing) {
+      setPurposeDialog(true);
+      return;
+    }
     if (boxState !== "online") {
       toast.error(tm("AI Box unreachable — no answer can be produced."));
       return;
@@ -2029,8 +2067,14 @@ function ViveSecAppInner() {
     void runLive(text, { files: [path], action: "analyze" });
   }
 
+  /** One submit path for typed and spoken input alike: a dictated question is
+   *  routed, grounded and cited exactly like a typed one. */
   function sendText(v: string) {
     if (!v) return;
+    if (purposeMissing) {
+      setPurposeDialog(true);
+      return;
+    }
     if (boxState !== "online") {
       toast.error(tm("AI Box unreachable — no answer can be produced."));
       return;
@@ -2397,6 +2441,17 @@ function ViveSecAppInner() {
                 <div className="hidden xl:block text-xs text-white/55">
                   Encrypted channel · Edge inference only
                 </div>
+                {purposeConfig.mode !== "off" && (
+                  <button
+                    type="button"
+                    onClick={() => setPurposeDialog(true)}
+                    className={`inline-flex min-h-8 max-w-[16rem] shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition hover:bg-white/10 ${purposeMissing ? "border-amber-300/50 text-amber-100" : "border-white/10 text-white/70"}`}
+                    title={tm("Purpose of the queries")}
+                  >
+                    <Scale className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                    <span className="truncate">{purposeLabel || tm("Set the purpose")}</span>
+                  </button>
+                )}
                 {conversationsSupported && (
                   <div className="relative flex shrink-0 items-center gap-1">
                     <button
@@ -2726,6 +2781,21 @@ function ViveSecAppInner() {
                     >
                       <RefreshCw className="mr-1 inline h-3 w-3" />
                       {tm("Retry")}
+                    </button>
+                  </div>
+                )}
+
+                {purposeMissing && boxState === "online" && (
+                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-50">
+                    <Scale className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">
+                      {tm("Give the case reference or the legal basis before asking.")}
+                    </span>
+                    <button
+                      onClick={() => setPurposeDialog(true)}
+                      className="shrink-0 rounded-lg border border-amber-300/40 px-2 py-1 text-[11px] font-semibold transition hover:bg-amber-400/20"
+                    >
+                      {tm("Set the purpose")}
                     </button>
                   </div>
                 )}
@@ -3331,6 +3401,17 @@ function ViveSecAppInner() {
           onClose={() => setExplorerOpen(false)}
         />
       )}
+      {purposeDialog && (
+        <PurposeDialog
+          config={purposeConfig}
+          value={purposeValue}
+          onCancel={() => setPurposeDialog(false)}
+          onSave={(value) => {
+            setPurposeValue(value);
+            setPurposeDialog(false);
+          }}
+        />
+      )}
       {threadDialog && (
         <ThreadDialog
           mode={threadDialog.mode}
@@ -3348,6 +3429,123 @@ function ViveSecAppInner() {
 }
 
 /* ---------- Subcomponents ---------- */
+
+/** Concept 5.2: what the following queries are for -- a case reference and/or a
+ *  legal basis. Kept for this browser session and sent with every content
+ *  query; the box logs it with each query. */
+function PurposeDialog({
+  config,
+  value,
+  onCancel,
+  onSave,
+}: {
+  config: AdapterPurposeConfig;
+  value: RequestPurpose;
+  onCancel: () => void;
+  onSave: (value: RequestPurpose) => void;
+}) {
+  const { tm } = useLang();
+  const [caseRef, setCaseRef] = useState(value.caseRef ?? "");
+  const [legalBasis, setLegalBasis] = useState(value.legalBasis ?? "");
+  const caseOk = (() => {
+    if (!caseRef.trim() || !config.caseRefPattern) return true;
+    try {
+      return new RegExp(`^(?:${config.caseRefPattern})$`).test(caseRef.trim());
+    } catch {
+      return true; // the box checks it anyway
+    }
+  })();
+  const missing = config.mode === "required" && !caseRef.trim() && !legalBasis.trim();
+  const disabled = missing || !caseOk;
+  const save = () => {
+    if (!disabled) onSave({ caseRef: caseRef.trim(), legalBasis: legalBasis.trim() });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
+        style={{ backgroundColor: "#1B1F22" }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onCancel();
+          if (e.key === "Enter") save();
+        }}
+      >
+        <div className="mb-1 flex items-center gap-2 text-[13px] font-semibold">
+          <Scale className="h-4 w-4" style={{ color: LIME }} />
+          {tm("Purpose of the queries")}
+        </div>
+        <p className="mb-3 text-[12px] text-white/60">
+          {tm(
+            config.mode === "required"
+              ? "Give the case reference or the legal basis of your queries. It is logged with every question."
+              : "You may give the case reference or the legal basis of your queries. It is logged with every question.",
+          )}
+        </p>
+        <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+          {tm("Case reference")}
+        </label>
+        <input
+          autoFocus
+          value={caseRef}
+          onChange={(e) => setCaseRef(e.target.value)}
+          maxLength={64}
+          className={`mb-1 w-full rounded-lg border bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30 ${caseOk ? "border-white/15" : "border-rose-400/60"}`}
+        />
+        <div className="mb-3 min-h-4 text-[11px] text-rose-300">
+          {caseOk ? "" : tm("The case reference does not have the expected form.")}
+        </div>
+        <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+          {tm("Legal basis")}
+        </label>
+        {config.legalBases.length ? (
+          <select
+            value={legalBasis}
+            onChange={(e) => setLegalBasis(e.target.value)}
+            className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+          >
+            <option value="">—</option>
+            {config.legalBases.map((basis) => (
+              <option key={basis} value={basis}>
+                {basis}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={legalBasis}
+            onChange={(e) => setLegalBasis(e.target.value)}
+            maxLength={200}
+            className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+          />
+        )}
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/5"
+          >
+            {tm("Cancel")}
+          </button>
+          <button
+            onClick={save}
+            disabled={disabled}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+            style={{ backgroundColor: LIME, color: "#15181B" }}
+          >
+            {tm("Save")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Rename / delete a conversation. In-app rather than window.prompt/confirm:
  *  embedded in the ViVeSecBox iframe a native dialog is the host page's, not

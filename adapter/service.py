@@ -112,6 +112,8 @@ import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
 import orchestrator  # noqa: E402
+import purpose  # noqa: E402
+import querylog  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -481,6 +483,8 @@ GRAPH_FORWARD = graph.Forwarder.from_env(GRAPH, _flat_acl)
 # nobody through the UI.
 GRAPH_ADMINS = frozenset(u.strip().casefold() for u in
                          os.environ.get("ADAPTER_GRAPH_ADMINS", "").split(",") if u.strip())
+# Documents listed at most by one /ui/index/skipped answer (the counts cover all).
+SKIPPED_LIST_LIMIT = 500
 # Plain chat questions get the graph's relations among the named entities;
 # only an explicit off disables it.
 GRAPH_CHAT = (os.environ.get("ADAPTER_GRAPH_CHAT", "on").strip().lower() != "off")
@@ -516,10 +520,43 @@ GRAPH_NAME_JOIN = (os.environ.get("ADAPTER_GRAPH_NAME_JOIN", "off") or "off").st
     == "same_name"
 
 
+# Purpose-bound queries (concept 5.2) and their log (5.3): see purpose.py and
+# querylog.py. Off by default; required on a box that serves case work.
+PURPOSE = purpose.settings()
+QUERY_LOG = querylog.QueryLog.from_env()
+
+
 def app_settings():
     analyst = APP_MODE == APP_ANALYST
     return {"mode": APP_MODE, "drive_browser": not analyst, "quick_actions": not analyst,
-            "orchestrator": analyst and GRAPH.enabled}
+            "orchestrator": analyst and GRAPH.enabled, "purpose": purpose.public(PURPOSE)}
+
+
+def _answer_summary(result):
+    """What the query log keeps of an answer: never its text."""
+    citations = result.get("citations") or []
+    return {"ok": bool(result.get("ok")), "audit_id": result.get("audit_id"),
+            "citations": len(citations), "sources": querylog.sources_of(citations),
+            "graph_calls": [c.get("tool") for c in (result.get("graph") or {}).get("calls") or []],
+            "full_reading": bool(result.get("deep")), "clarify": bool(result.get("clarify")),
+            "error": result.get("error")}
+
+
+def _log_query(user, drive, req_scope, kind, bound, question, result):
+    """Record one bound query (purpose on). False only when the log is required
+    and could not be written -- the caller then withholds the answer."""
+    if PURPOSE["mode"] == "off":
+        return True
+    entry = {"user": user, "drive": corpus.norm(drive),
+             "drives": list(req_scope.drive_roots) if req_scope is not None else [],
+             "kind": kind, "case_ref": bound.get("case_ref"),
+             "legal_basis": bound.get("legal_basis"), "question": question, "result": result}
+    try:
+        QUERY_LOG.record(entry)
+        return True
+    except OSError as e:
+        sys.stderr.write("[adapter] query log: %s\n" % e)
+        return PURPOSE["mode"] != "required"
 
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
@@ -1387,6 +1424,11 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
         code, payload = e.status, e.body
     except Exception as e:  # noqa: BLE001
         code, payload = 500, {"ok": False, "error": str(e)}
+    request = job.get("request") or {}
+    if not _log_query(user, drive, req_scope, action or "ask", request.get("purpose") or {},
+                      query, dict(_answer_summary(payload if isinstance(payload, dict) else {}),
+                                  status=code)) and code == 200:
+        code, payload = 503, {"ok": False, "error": "query log unavailable"}
     JOBS.finish(user, drive, job_id, code, payload)
 
 
@@ -1716,6 +1758,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
+                "/api/v1/ui/index/skipped": self._index_skipped,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -1997,6 +2040,22 @@ class Handler(BaseHTTPRequestHandler):
             self._send(403, {"ok": False, "error": str(e)})
             return None
 
+    def _purpose_for(self, payload):
+        """The request's purpose ({} when none is needed), or None after the
+        refusal: 428 when one is required but missing, 400 when it is not
+        acceptable, 503 when it is required and the query log cannot be written."""
+        try:
+            bound = purpose.parse(payload, PURPOSE)
+        except purpose.PurposeError as e:
+            self._send(428 if e.code == "purpose_required" else 400,
+                       {"ok": False, "error": e.code, "message": str(e),
+                        "purpose": purpose.public(PURPOSE)})
+            return None
+        if PURPOSE["mode"] == "required" and not QUERY_LOG.available():
+            self._send(503, {"ok": False, "error": "query log unavailable"})
+            return None
+        return bound
+
     def _profile_for(self, payload, action):
         try:
             return chat_policy.resolve(payload.get("profile"), action)
@@ -2037,8 +2096,16 @@ class Handler(BaseHTTPRequestHandler):
         conversation_id = self._conversation_for(payload, parsed[0], req_scope, profile)
         if conversation_id is False:
             return
-        self._send(200, _answer(*parsed, req_scope=req_scope, profile=profile,
-                                conversation_id=conversation_id, access=self._access()))
+        bound = self._purpose_for(payload)
+        if bound is None:
+            return
+        result = _answer(*parsed, req_scope=req_scope, profile=profile,
+                         conversation_id=conversation_id, access=self._access())
+        if not _log_query(parsed[0], parsed[1], req_scope, parsed[5] or "ask", bound, parsed[2],
+                          _answer_summary(result)):
+            self._send(503, {"ok": False, "error": "query log unavailable"})
+            return
+        self._send(200, result)
 
     # -- async UI channel: submit a job, then long-poll for it (spec sec 2.4) -
     def _ask(self):
@@ -2059,6 +2126,9 @@ class Handler(BaseHTTPRequestHandler):
         conversation_id = self._conversation_for(payload, user, req_scope, profile)
         if conversation_id is False:
             return
+        bound = self._purpose_for(payload)
+        if bound is None:
+            return
         history_snapshot = SESSIONS.history(
             user, chat_policy.history_scope(req_scope.session_scope, profile), conversation_id)
         # Where the request was STARTED decides where its result belongs: a chat
@@ -2072,7 +2142,7 @@ class Handler(BaseHTTPRequestHandler):
                    "scope_drives": list(req_scope.drive_roots),
                    "origin": origin, "history": history_snapshot, "profile": profile,
                    "conversation_id": conversation_id,
-                   "access": self._access().to_dict()}
+                   "access": self._access().to_dict(), "purpose": bound}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
         heavy = action is not None and not (action == "search" and mode == "files")
@@ -2564,11 +2634,47 @@ class Handler(BaseHTTPRequestHandler):
             "sessions": {"active": SESSIONS.stats().get("active")},
             **totals})
 
+    # -- unreadable documents (E10b) --------------------------------------------
+    def _index_skipped(self):
+        """The documents of the caller's own scope the search cannot read --
+        scans waiting for OCR or interrupted, unsupported or empty files, pages
+        OCR skipped -- with the reason. The RAG filters by scope and ACL in its
+        query; the paths are checked here again, as for graph answers."""
+        if self._locked_guard():
+            return
+        vvs = self._read_vvs()
+        if vvs is None:
+            return
+        user, drive = vvs
+        payload = self._read_json()
+        req_scope = self._scope_for(user, drive, payload)
+        if req_scope is None:
+            return
+        access = self._access()
+        res = rag_post_json("/index/skipped", {"corpus_ids": list(req_scope.corpus_ids),
+                                               "access": access.as_rag()})
+        visible = _visible(access)
+        docs = [d for d in res.get("skipped") or []
+                if req_scope.contains_path(d.get("source_path") or "")
+                and visible(d.get("source_path") or "")]
+        reasons = {}
+        for d in docs:
+            reasons[d.get("reason") or "unknown"] = reasons.get(d.get("reason") or "unknown", 0) + 1
+        limit = max(1, min(int(payload.get("limit") or SKIPPED_LIST_LIMIT), SKIPPED_LIST_LIMIT))
+        self._send(200, {"ok": True, "count": len(docs), "reasons": reasons,
+                         "pages_skipped": sum(len(d.get("skipped_pages") or []) for d in docs),
+                         "documents": [{k: d.get(k) for k in ("source_path", "reason", "ocr_state",
+                                                              "skipped_pages", "size") if d.get(k)
+                                        is not None} for d in docs[:limit]],
+                         "truncated": len(docs) > limit})
+
     # -- relationship analysis (E26) ------------------------------------------
-    def _graph_request(self):
+    def _graph_request(self, bound=False):
         """(user, payload, scope, access, scope body) of a graph call, or None
         after the refusal. The scope body is what the graph filters on; the
-        client can narrow the drives (`drives`) but never send its own."""
+        client can narrow the drives (`drives`) but never send its own. A
+        `bound` call (one that reveals content) must carry its purpose, kept in
+        self._bound for the query log."""
         if self._locked_guard():
             return None
         vvs = self._read_vvs()
@@ -2579,6 +2685,12 @@ class Handler(BaseHTTPRequestHandler):
         req_scope = self._scope_for(user, drive, payload)
         if req_scope is None:
             return None
+        self._bound = {}
+        if bound:
+            self._bound = self._purpose_for(payload)
+            if self._bound is None:
+                return None
+            self._bound_drive = drive
         access = self._access()
         return (user, payload, req_scope, access,
                 {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()})
@@ -2598,7 +2710,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _graph_query(self):
-        ctx = self._graph_request()
+        ctx = self._graph_request(bound=True)
         if ctx is None:
             return
         _, payload, req_scope, access, scope_body = ctx
@@ -2622,7 +2734,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(503, {"ok": False, "error": "access rules are being synchronised, "
                                                        "retry shortly"})
                 return
+        if not self._log_graph(ctx, "graph:" + name, json.dumps(params, sort_keys=True),
+                               [d.get("source_path") for d in (res.get("documents") or {}).values()]):
+            return
         self._send(200, res)
+
+    def _log_graph(self, ctx, kind, question, sources):
+        """Query log of a bound graph call; False after refusing it (log required
+        and unwritable)."""
+        if _log_query(ctx[0], self._bound_drive, ctx[2], kind, self._bound, question,
+                      {"ok": True, "sources": querylog.sources_of(sources)}):
+            return True
+        self._send(503, {"ok": False, "error": "query log unavailable"})
+        return False
 
     def _graph_status(self):
         """Processing progress over what this caller may see; queue sizes and
@@ -2653,13 +2777,13 @@ class Handler(BaseHTTPRequestHandler):
             "gpu": gpu_gate.GATE.stats()})
 
     def _graph_review_list(self):
-        ctx = self._graph_request()
+        ctx = self._graph_request(bound=True)
         if ctx is None:
             return
         _, payload, _, _, scope_body = ctx
         res = self._graph_post("/review/list", dict(scope_body,
                                                     limit=int(payload.get("limit") or 100)))
-        if res is not None:
+        if res is not None and self._log_graph(ctx, "graph:review", "", []):
             self._send(200, res)
 
     def _graph_review_decide(self):
@@ -2709,11 +2833,12 @@ class Handler(BaseHTTPRequestHandler):
         """One entity's relations as DOCX/PDF with a source list. Returned as
         base64 JSON (the ViVeSecBox tunnel does not carry binary bodies) plus
         the markdown, so the UI can also save it to the drive via /ui/save."""
-        ctx = self._graph_request()
+        ctx = self._graph_request(bound=True)
         if ctx is None:
             return
         user, payload, req_scope, access, scope_body = ctx
         fmt = docgen.normalize_format(payload.get("format") or "docx")
+        bound_id = str(payload.get("id") or "")
         if fmt not in ("docx", "pdf", "md"):
             self._send(400, {"ok": False, "error": "format must be docx, pdf or md"})
             return
@@ -2730,6 +2855,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "error": "not found"})
             return
         text, title = built
+        if not self._log_graph(ctx, "export:dossier", bound_id, []):
+            return
         content, fmt = docgen.render(text, fmt, title=title)
         safe = re.sub(r"[^\w\- ]+", "", title, flags=re.UNICODE).strip().replace(" ", "_")
         sys.stderr.write("[adapter] graph: dossier (%s) by %s\n" % (fmt, user))
