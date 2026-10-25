@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import access as access_filter  # noqa: E402
 import build_info  # noqa: E402
+import ocr  # noqa: E402
 import retrieval  # noqa: E402
 from store import (  # noqa: E402
     MIN_SCORE,
@@ -159,6 +160,7 @@ class Handler(BaseHTTPRequestHandler):
                     vector_backend=VECTOR_BACKEND,
                     min_score=MIN_SCORE,
                     query_reaccent=REACCENT_ACTIVE,
+                    ocr=ocr.status(),
                 )
             if path == "/ready":
                 return self._ok(ready=True)

@@ -390,6 +390,8 @@ def footer(conf, citations, aid, lang=None):
         name = path.rsplit("/", 1)[-1] if path else c["chunk_id"]
         page = c.get("page_number")
         label = "%s, p.%s" % (name, page) if page else name
+        if c.get("ocr_quality") is not None:
+            label += " (OCR %s%%)" % c["ocr_quality"]
         if label not in seen:
             seen.append(label)
     sources = "; ".join(seen[:6]) if seen else "-"

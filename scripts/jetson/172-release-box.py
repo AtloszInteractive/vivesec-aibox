@@ -9,6 +9,10 @@ without document citations; the model now and then cites a related passage
 anyway, so it asks up to 3 times (a fresh user each time) and passes on the
 first uncited answer.
 
+prepare adds Tesseract (hun, deu, dan; eng and osd come with it) to a RAG image
+that lacks it (E10b OCR), which needs the package mirrors once, and prints the
+installed OCR languages; RELEASE_RAG_OCR=off skips that.
+
 A successful verify prunes old releases: it keeps the current stage and the
 previous deployed one (one rollback level), removes stopped parked containers
 (vivesec-{rag,adapter,ui}-{prev,failed}-<stamp>) no newer than the previous
@@ -188,6 +192,13 @@ def prepare(source_archive, ui_archive):
     for kind in ("rag", "adapter", "ui"):
         copied = ["poc", "rag_service"] if kind == "rag" else (["adapter"] if kind == "adapter" else [".output"])
         dockerfile = "FROM " + old[kind]["Image"] + "\nWORKDIR /app\n"
+        if kind == "rag" and RAG_OCR_PACKAGES:
+            # E10b: images built before OCR lack Tesseract; the first release
+            # after it adds the packages (needs the package mirrors once), later
+            # ones find them in the base and skip both steps.
+            dockerfile += ("RUN command -v tesseract >/dev/null 2>&1 || (apt-get update && apt-get install -y "
+                           "--no-install-recommends " + RAG_OCR_PACKAGES + " && rm -rf /var/lib/apt/lists/*)\n"
+                           "RUN python -c 'import pypdfium2, PIL' 2>/dev/null || pip install --no-cache-dir pypdfium2 pillow\n")
         for directory in copied:
             dockerfile += "RUN rm -rf /app/" + directory + "\nCOPY " + directory + " /app/" + directory + "\n"
         dockerfile += ("LABEL vivesec.source-sha256=" + fingerprint + " vivesec.version=" + json.dumps(builds[kind]["version"])
@@ -201,6 +212,10 @@ def prepare(source_archive, ui_archive):
         manifest["images"][kind] = image
         persist(stage, manifest)
         print("BUILT=" + image, flush=True)
+        if kind == "rag" and RAG_OCR_PACKAGES:
+            langs = command("docker", "run", "--rm", "--network", "none", "--entrypoint", "tesseract", image,
+                            "--list-langs").splitlines()[1:]
+            print("OCR_LANGS=" + "+".join(lang.strip() for lang in langs if lang.strip()), flush=True)
         if kind != "ui":
             output = command("docker", "run", "--rm", "--network", "none", "-e", "VIVESEC_BACKEND=fallback",
                              "--entrypoint", "python", image, "-m", "unittest", "discover", "-s",
@@ -262,6 +277,11 @@ def check(stage, manifest):
 
 
 HYBRID_ATTEMPTS = 3
+# System packages the RAG image needs for OCR (E10b); RELEASE_RAG_OCR=off
+# leaves the image as it is (a box without package mirrors), and the RAG then
+# reports OCR as unavailable instead of reading scans.
+RAG_OCR_PACKAGES = ("" if os.environ.get("RELEASE_RAG_OCR", "on").strip().lower() == "off"
+                    else "tesseract-ocr tesseract-ocr-hun tesseract-ocr-deu tesseract-ocr-dan")
 
 
 def hybrid_probe(ask, attempts=HYBRID_ATTEMPTS):

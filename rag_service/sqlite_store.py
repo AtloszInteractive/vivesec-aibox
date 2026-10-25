@@ -19,10 +19,12 @@ config-per-corpus guard, upload-token TTL, reason set) are reused verbatim from
 store.py so the two backends behave identically behind the same contract.
 """
 import os
+import queue
 import sqlite3
 import sys
 import threading
 import time
+import uuid
 
 import sqlite_vec
 
@@ -33,6 +35,7 @@ import embeddings  # noqa: E402
 
 import access as access_filter  # noqa: E402
 import extract  # noqa: E402
+import ocr  # noqa: E402
 import query_split  # noqa: E402
 import reaccent  # noqa: E402
 import retrieval
@@ -58,6 +61,14 @@ from store import (  # noqa: E402
     normalize_corpus_ids,
     under,
 )
+
+
+# Uploads waiting for OCR are held in memory only (the box keeps no raw file);
+# beyond this many bytes an upload is marked ocr_deferred and needs a resync.
+OCR_QUEUE_BYTES = max(1, int(os.environ.get("RAG_OCR_QUEUE_MB", "512") or 512)) << 20
+# documents.ocr_state -> skip_reason of a document that has no text (yet).
+_OCR_SKIP = {"pending": "ocr_pending", "deferred": "ocr_deferred", "failed": "ocr_failed",
+             "interrupted": "ocr_interrupted", "done": "ocr_no_text"}
 
 
 def _like_escape(value):
@@ -87,6 +98,11 @@ class SqliteVecStore:
         self._conn.enable_load_extension(False)
         self._init_schema()
         self._load_meta()
+        self._ocr_queue = queue.Queue()
+        self._ocr_tokens = {}  # doc_id -> token of the upload whose OCR may still land
+        self._ocr_bytes = 0
+        self._ocr_thread = None
+        self._recover_ocr()
 
     # ----- schema ------------------------------------------------------------
     def _init_schema(self):
@@ -149,6 +165,15 @@ class SqliteVecStore:
             c.execute("ALTER TABLE documents ADD COLUMN acl_restricted INTEGER")
         if "classification" not in columns:
             c.execute("ALTER TABLE documents ADD COLUMN classification INTEGER")
+        # E10b: where a document's text came from. pages.kind is NULL for a text
+        # layer, 'ocr' for a recognised page, 'skipped' for one OCR could not read.
+        if "ocr_state" not in columns:
+            c.execute("ALTER TABLE documents ADD COLUMN ocr_state TEXT")
+        page_columns = {row[1] for row in c.execute("PRAGMA table_info(pages)")}
+        for name, kind in (("kind", "TEXT"), ("ocr_status", "TEXT"), ("ocr_quality", "INTEGER"),
+                           ("ocr_lang", "TEXT"), ("ocr_rotation", "INTEGER")):
+            if name not in page_columns:
+                c.execute("ALTER TABLE pages ADD COLUMN %s %s" % (name, kind))
         c.executescript("""
             CREATE TABLE IF NOT EXISTS doc_acl (
                 doc_id TEXT,
@@ -328,14 +353,16 @@ class SqliteVecStore:
         where = "d.corpus_id IN (%s) AND d.file=1 AND %s" % (marks, acl_sql)
         params = scope + acl_params
         with self._lock:
-            documents, pages, skipped = self._conn.execute(
+            documents, pages, skipped, ocr_pending = self._conn.execute(
                 "SELECT COUNT(*), IFNULL(SUM(d.pages), 0), "
-                "IFNULL(SUM(CASE WHEN d.skip_reason IS NOT NULL THEN 1 ELSE 0 END), 0) "
+                "IFNULL(SUM(CASE WHEN d.skip_reason IS NOT NULL THEN 1 ELSE 0 END), 0), "
+                "IFNULL(SUM(CASE WHEN d.ocr_state='pending' THEN 1 ELSE 0 END), 0) "
                 "FROM documents d WHERE " + where, params).fetchone()
             chunks = self._conn.execute(
                 "SELECT COUNT(*) FROM chunks c JOIN documents d ON d.doc_id=c.doc_id WHERE "
                 + where, params).fetchone()[0]
-        return {"documents": documents, "pages": pages, "chunks": chunks, "skipped": skipped}
+        return {"documents": documents, "pages": pages, "chunks": chunks, "skipped": skipped,
+                "ocr_pending": ocr_pending}
 
     # ----- directory ---------------------------------------------------------
     def upsert_directory(self, corpus_id, tenant_id, path, acl=None):
@@ -396,6 +423,7 @@ class SqliteVecStore:
     def _store_meta_only(self, corpus_id, tenant_id, path, size, mtime, reason=None, acl=None):
         doc_id = _doc_id(tenant_id, corpus_id, path)
         with self._lock:
+            self._ocr_tokens.pop(doc_id, None)  # an OCR of an earlier version must not land
             self._ensure_corpus(corpus_id, tenant_id)
             previous = self._acl_snapshot(doc_id)
             self._conn.execute(
@@ -418,22 +446,15 @@ class SqliteVecStore:
                 self._pending.pop(token, None)
                 return None
             self._pending.pop(token, None)
-        pages = extract.extract_pages(raw, meta["source_path"])
-        return self._index_document(
-            corpus_id=meta["corpus_id"],
-            tenant_id=meta["tenant_id"],
-            source_path=meta["source_path"],
-            title=meta["title"],
-            pages=pages,
-            mtime=meta["mtime"],
-            size=meta["size"],
-            acl=meta.get("acl"),
-        )
+        return self._ingest_raw(meta["corpus_id"], meta["tenant_id"], meta["source_path"],
+                                meta["title"], raw, meta["mtime"], meta["size"], meta.get("acl"))
 
     # ----- direct ingest -----------------------------------------------------
     def ingest_text(self, corpus_id, tenant_id, source_path, title, text, metadata):
         metadata = metadata or {}
         pages = [(1, "root", text.strip())] if text and text.strip() else []
+        with self._lock:
+            self._ocr_tokens.pop(_doc_id(tenant_id, corpus_id, norm_path(source_path)), None)
         return self._index_document(
             corpus_id=corpus_id,
             tenant_id=tenant_id,
@@ -447,17 +468,128 @@ class SqliteVecStore:
 
     def ingest_content(self, corpus_id, tenant_id, path, title, raw, metadata):
         metadata = metadata or {}
-        pages = extract.extract_pages(raw, path)
-        return self._index_document(
-            corpus_id=corpus_id,
-            tenant_id=tenant_id,
-            source_path=norm_path(path),
-            title=title or os.path.basename(path),
-            pages=pages,
-            mtime=metadata.get("mtime"),
-            size=metadata.get("size"),
-            acl=metadata.get("acl"),
-        )
+        return self._ingest_raw(corpus_id, tenant_id, norm_path(path),
+                                title or os.path.basename(path), raw, metadata.get("mtime"),
+                                metadata.get("size"), metadata.get("acl"))
+
+    # ----- OCR (E10b) --------------------------------------------------------
+    def _ingest_raw(self, corpus_id, tenant_id, source_path, title, raw, mtime, size, acl):
+        """Index an upload. Pages without a text layer (and image files) are
+        queued for OCR: the text pages are searchable at once, the rest follows
+        when the background reader is done (documents.ocr_state 'pending')."""
+        pages = extract.extract_pages(raw, source_path)
+        doc_id = _doc_id(tenant_id, corpus_id, source_path)
+        need = (ocr.pages_to_read(raw, source_path, pages, extract.pdf_page_breaks())
+                if ocr.available() else [])
+        if not need:
+            with self._lock:
+                self._ocr_tokens.pop(doc_id, None)
+            return self._index_document(corpus_id=corpus_id, tenant_id=tenant_id,
+                                        source_path=source_path, title=title, pages=pages,
+                                        mtime=mtime, size=size, acl=acl)
+        token = uuid.uuid4().hex
+        with self._lock:
+            queued = self._ocr_bytes + len(raw) <= OCR_QUEUE_BYTES
+            if queued:
+                self._ocr_tokens[doc_id] = token
+                self._ocr_bytes += len(raw)
+            else:
+                self._ocr_tokens.pop(doc_id, None)
+        state = "pending" if queued else "deferred"
+        result = self._index_document(corpus_id=corpus_id, tenant_id=tenant_id,
+                                      source_path=source_path, title=title, pages=pages,
+                                      mtime=mtime, size=size, acl=acl, ocr_state=state)
+        if queued:
+            self._ocr_queue.put({"doc_id": doc_id, "token": token, "corpus_id": corpus_id,
+                                 "tenant_id": tenant_id, "source_path": source_path,
+                                 "title": title, "raw": raw, "pages": pages, "need": need,
+                                 "mtime": mtime, "size": size})
+            self._start_ocr_worker()
+        result["ocr"] = {"state": state, "pages": len(need)}
+        if "warning" in result:
+            result["warning"] = _OCR_SKIP[state]
+        return result
+
+    def _recover_ocr(self):
+        """Uploads waiting for OCR lived in memory only, so after a restart their
+        documents are marked for a resync instead of waiting forever."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE documents SET ocr_state='interrupted', skip_reason=CASE WHEN chunks=0 "
+                "THEN 'ocr_interrupted' ELSE skip_reason END WHERE ocr_state='pending'")
+            self._conn.commit()
+
+    def _start_ocr_worker(self):
+        with self._lock:
+            if self._ocr_thread is None or not self._ocr_thread.is_alive():
+                self._ocr_thread = threading.Thread(target=self._ocr_loop, name="ocr",
+                                                    daemon=True)
+                self._ocr_thread.start()
+
+    def _ocr_current(self, job):
+        with self._lock:
+            return self._ocr_tokens.get(job["doc_id"]) == job["token"]
+
+    def _ocr_loop(self):
+        while True:
+            job = self._ocr_queue.get()
+            try:
+                self._ocr_job(job)
+            except Exception as error:  # noqa: BLE001 -- one bad file must not stop the queue
+                sys.stderr.write("ocr: %s failed: %s\n" % (job["source_path"], error))
+                with self._lock:
+                    if self._ocr_tokens.get(job["doc_id"]) == job["token"]:
+                        self._ocr_tokens.pop(job["doc_id"], None)
+                        self._conn.execute(
+                            "UPDATE documents SET ocr_state='failed', skip_reason=CASE WHEN "
+                            "chunks=0 THEN 'ocr_failed' ELSE skip_reason END WHERE doc_id=?",
+                            (job["doc_id"],))
+                        self._conn.commit()
+            finally:
+                with self._lock:
+                    self._ocr_bytes -= len(job["raw"])
+                self._ocr_queue.task_done()
+
+    def _ocr_job(self, job):
+        if not self._ocr_current(job):
+            return  # replaced or deleted while it waited
+        results = ocr.read_pages(job["raw"], job["source_path"], job["need"],
+                                 lambda: self._ocr_current(job))
+        if not self._ocr_current(job):
+            return
+        pages = list(job["pages"])
+        meta = {}
+        for number, read in results.items():
+            meta[number] = {"status": read["status"], "quality": read["quality"],
+                            "lang": read["lang"], "rotation": read["rotation"]}
+            if read["status"] == "ok":
+                pages.append((number, "root", read["text"]))
+        pages.sort(key=lambda page: page[0])
+        # acl=None keeps the ACL stored with the upload (or changed since).
+        self._index_document(corpus_id=job["corpus_id"], tenant_id=job["tenant_id"],
+                             source_path=job["source_path"], title=job["title"], pages=pages,
+                             mtime=job["mtime"], size=job["size"], acl=None, ocr_state="done",
+                             page_meta=meta, still_current=lambda: self._ocr_current(job))
+        with self._lock:
+            if self._ocr_tokens.get(job["doc_id"]) == job["token"]:
+                self._ocr_tokens.pop(job["doc_id"], None)
+
+    def ocr_idle(self, timeout=None):
+        """Wait until the OCR queue is empty (tests, maintenance); True when it is."""
+        deadline = None if timeout is None else time.time() + timeout
+        while self._ocr_queue.unfinished_tasks:
+            if deadline is not None and time.time() > deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
+    def _page_ocr(self, page_id):
+        """{"quality", "lang"} of a recognised page, None for a text layer."""
+        row = self._conn.execute(
+            "SELECT kind, ocr_quality, ocr_lang FROM pages WHERE page_id=?", (page_id,)).fetchone()
+        if row and row[0] == "ocr":
+            return {"quality": row[1], "lang": row[2]}
+        return None
 
     # ----- core indexing -----------------------------------------------------
     def _delete_doc_rows(self, doc_id):
@@ -476,11 +608,19 @@ class SqliteVecStore:
         self._conn.execute("DELETE FROM pages WHERE doc_id=?", (doc_id,))
 
     def _index_document(self, corpus_id, tenant_id, source_path, title, pages, mtime, size,
-                        acl=None):
+                        acl=None, ocr_state=None, page_meta=None, still_current=None):
+        """(Re)index one document. `page_meta` {page: {status, quality, lang,
+        rotation}} marks recognised pages ('ocr') and unreadable ones ('skipped',
+        recorded without text); `still_current()` is checked under the write lock
+        so an OCR result never overwrites a newer upload or a deletion."""
         doc_id = _doc_id(tenant_id, corpus_id, source_path)
+        page_meta = page_meta or {}
         page_records = []
         chunk_records = []
         chunk_texts = []
+        numbers = {number for number, _, _ in pages}
+        for number in sorted(n for n in page_meta if n not in numbers):
+            page_records.append(("%s-p%d" % (doc_id, number), number, "root"))
         for (page_number, section_path, page_text) in pages:
             page_id = "%s-p%d" % (doc_id, page_number)
             page_records.append((page_id, page_number, section_path))
@@ -503,6 +643,8 @@ class SqliteVecStore:
         vectors = self._embed(chunk_texts) if chunk_texts else []
 
         with self._lock:
+            if still_current is not None and not still_current():
+                return {"doc_id": doc_id, "superseded": True}
             # The corpus may have been reconfigured while we were embedding.
             self._corpus_embedding_guard(corpus_id, tenant_id)
             self._note_dim(vectors)
@@ -510,10 +652,14 @@ class SqliteVecStore:
             self._delete_doc_rows(doc_id)
 
             for page_id, page_number, section_path in page_records:
+                read = page_meta.get(page_number)
+                kind = None if read is None else ("ocr" if read["status"] == "ok" else "skipped")
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO pages(page_id, doc_id, page_number, section_path) "
-                    "VALUES(?,?,?,?)",
-                    (page_id, doc_id, page_number, section_path),
+                    "INSERT OR REPLACE INTO pages(page_id, doc_id, page_number, section_path, "
+                    "kind, ocr_status, ocr_quality, ocr_lang, ocr_rotation) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (page_id, doc_id, page_number, section_path, kind,
+                     read and read["status"], read and read["quality"], read and read["lang"],
+                     read and read["rotation"]),
                 )
 
             for idx, rec in enumerate(chunk_records):
@@ -535,15 +681,16 @@ class SqliteVecStore:
             # A file that yielded no text (typically a scanned PDF) is kept so
             # the operator can see it exists, but not counted as indexed -- it
             # is not searchable, and the reason is what drives the OCR backlog.
-            skip_reason = None if chunk_records else EMPTY_EXTRACTION_WARNING
+            skip_reason = None if chunk_records else _OCR_SKIP.get(ocr_state,
+                                                                   EMPTY_EXTRACTION_WARNING)
             previous = self._acl_snapshot(doc_id)
             self._conn.execute(
                 "INSERT OR REPLACE INTO documents("
                 "doc_id, corpus_id, tenant_id, source_path, title, file, mtime, size, "
-                "pages, chunks, indexed, skip_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "pages, chunks, indexed, skip_reason, ocr_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (doc_id, corpus_id, tenant_id, source_path, title, 1, mtime, size,
                  len(page_records), len(chunk_records), 1 if chunk_records else 0,
-                 skip_reason),
+                 skip_reason, ocr_state),
             )
             # Same transaction as the chunks: a search never sees the new
             # chunks without the ACL that guards them.
@@ -569,6 +716,7 @@ class SqliteVecStore:
                     continue
                 victims.append(doc_id)
             for doc_id in victims:
+                self._ocr_tokens.pop(doc_id, None)  # a queued OCR must not bring it back
                 deleted_pages += self._conn.execute(
                     "SELECT COUNT(*) FROM pages WHERE doc_id=?", (doc_id,)
                 ).fetchone()[0]
@@ -807,6 +955,9 @@ class SqliteVecStore:
                         "size": size,
                     },
                 })
+                recognised = self._page_ocr(page_id)
+                if recognised:
+                    contexts[-1]["ocr"] = recognised
                 if len(contexts) >= k:
                     break
             return contexts, {"chunk_hits_count": total, "estimated_tokens": used_tokens,
@@ -856,6 +1007,10 @@ class SqliteVecStore:
             used_tokens += est
             contexts.append(_document_chunk_context(
                 corpus_id, meta, chunk_id, page_id, page_number, section_path, text))
+            with self._lock:
+                recognised = self._page_ocr(page_id)
+            if recognised:
+                contexts[-1]["ocr"] = recognised
         return contexts, _document_debug(meta, len(rows), len(contexts), used_tokens)
 
     # ----- full-coverage enumeration -----------------------------------------
@@ -886,11 +1041,19 @@ class SqliteVecStore:
                 [expression] + bindings).fetchone()
             rows = self._conn.execute(
                 "SELECT c.chunk_id, c.doc_id, c.corpus_id, d.title, d.source_path, "
-                "c.page_number, c.text " + base +
+                "c.page_number, c.text, c.page_id " + base +
                 " ORDER BY d.source_path, c.page_number, c.rowid LIMIT ? OFFSET ?",
                 [expression] + bindings + [int(limit), int(offset)]).fetchall()
-        keys = ("chunk_id", "doc_id", "corpus_id", "title", "source_path", "page_number", "text")
-        return [dict(zip(keys, row)) for row in rows], {"total": total, "documents": documents}
+            keys = ("chunk_id", "doc_id", "corpus_id", "title", "source_path", "page_number",
+                    "text")
+            out = []
+            for row in rows:
+                chunk = dict(zip(keys, row[:-1]))
+                recognised = self._page_ocr(row[-1])
+                if recognised:
+                    chunk["ocr"] = recognised
+                out.append(chunk)
+        return out, {"total": total, "documents": documents}
 
     # ----- stats -------------------------------------------------------------
     def stats(self):
@@ -914,13 +1077,30 @@ class SqliteVecStore:
         This is what tells an operator which documents need OCR or a format fix,
         instead of them silently never appearing in any answer.
         """
-        sql = ("SELECT source_path, corpus_id, size, skip_reason FROM documents "
-               "WHERE file=1 AND skip_reason IS NOT NULL")
+        sql = ("SELECT d.doc_id, d.source_path, d.corpus_id, d.size, d.skip_reason, d.ocr_state "
+               "FROM documents d WHERE d.file=1 AND (d.skip_reason IS NOT NULL OR d.ocr_state "
+               "IN ('pending', 'deferred', 'interrupted', 'failed') OR EXISTS(SELECT 1 FROM pages p "
+               "WHERE p.doc_id=d.doc_id AND p.kind='skipped'))")
         params = ()
         if corpus_id:
-            sql += " AND corpus_id=?"
+            sql += " AND d.corpus_id=?"
             params = (corpus_id,)
+        out = []
         with self._lock:
-            rows = self._conn.execute(sql + " ORDER BY source_path", params).fetchall()
-        return [{"source_path": r[0], "corpus_id": r[1], "size": r[2], "reason": r[3]}
-                for r in rows]
+            rows = self._conn.execute(sql + " ORDER BY d.source_path", params).fetchall()
+            for doc_id, path, corpus, size, reason, state in rows:
+                item = {"source_path": path, "corpus_id": corpus, "size": size,
+                        "reason": reason or (_OCR_SKIP.get(state) if state != "done" else None)
+                        or "ocr_pages_skipped"}
+                if state:
+                    item["ocr_state"] = state
+                # E10b: the pages OCR could not read, listed even when the rest of
+                # the document is searchable.
+                pages = self._conn.execute(
+                    "SELECT page_number, ocr_status, ocr_quality FROM pages "
+                    "WHERE doc_id=? AND kind='skipped' ORDER BY page_number", (doc_id,)).fetchall()
+                if pages:
+                    item["skipped_pages"] = [{"page": n, "reason": s, "quality": q}
+                                             for n, s, q in pages]
+                out.append(item)
+        return out

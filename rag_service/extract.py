@@ -40,6 +40,10 @@ TABULAR_EXTS = OPENPYXL_EXTS | {".csv", ".tsv"}
 
 SUPPORTED_EXTS = TEXT_EXTS | MARKITDOWN_EXTS | OPENPYXL_EXTS
 
+# Image files carry no text layer: accepted only where OCR runs (ocr.py), which
+# reads them after the upload; extract_pages itself returns no pages for them.
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+
 # pdfminer separates pages with a form feed; plain text sources may too.
 PAGE_BREAK = "\f"
 
@@ -322,7 +326,15 @@ def ext_of(path):
 
 
 def is_supported(path):
-    return ext_of(path) in SUPPORTED_EXTS
+    return ext_of(path) in SUPPORTED_EXTS or ext_of(path) in IMAGE_EXTS
+
+
+def _ocr_available():
+    try:
+        import ocr
+    except ImportError:  # loaded by path (graph_service): no OCR module beside it
+        return False
+    return ocr.available()
 
 
 def is_tabular(path):
@@ -349,6 +361,12 @@ def needs_markitdown(path):
     return ext_of(path) in MARKITDOWN_EXTS
 
 
+def pdf_page_breaks():
+    """True when PDFs are read by pdfminer, whose page breaks number the pages
+    exactly -- so a page missing from the result had no text layer."""
+    return _pdfminer_extract_text() is not None
+
+
 def extractor_available(path):
     """Can we actually extract this file here and now?
 
@@ -359,6 +377,8 @@ def extractor_available(path):
     ext = ext_of(path)
     if ext in TEXT_EXTS:
         return True
+    if ext in IMAGE_EXTS:
+        return _ocr_available()
     if ext == ".pdf":
         return _pdfminer_extract_text() is not None or _markitdown() is not None
     if ext in OPENPYXL_EXTS:
@@ -430,6 +450,8 @@ def extract_pages(raw, path):
     ext = ext_of(path)
     if not raw:
         return []
+    if ext in IMAGE_EXTS:
+        return []  # no text layer; ocr.py reads it
     if ext in TEXT_EXTS:
         text = _decode_text(raw)
         if ext in (".csv", ".tsv"):

@@ -186,6 +186,11 @@ const M: Record<string, Tri> = {
     "Befunde werden zusammengefasst",
   ],
   "Full analysis": ["Teljes elemzés", "Fuld analyse", "Vollständige Analyse"],
+  "Recognised text (OCR) — may contain recognition errors": [
+    "Felismert szöveg (OCR) – felismerési hibákat tartalmazhat",
+    "Genkendt tekst (OCR) – kan indeholde genkendelsesfejl",
+    "Erkannter Text (OCR) – kann Erkennungsfehler enthalten",
+  ],
   "Read and analyse this whole document (may take minutes)": [
     "A teljes dokumentum elolvasása és elemzése (percekig tarthat)",
     "Læs og analysér hele dokumentet (kan tage minutter)",

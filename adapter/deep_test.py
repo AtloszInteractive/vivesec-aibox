@@ -18,15 +18,16 @@ CHUNKS = [chunk(n, "Bejegyzés %d: Bogdán Balázs látogatója Fazekas Péter v
 
 
 class FakeRag:
-    def __init__(self, chunks, skipped=0):
+    def __init__(self, chunks, skipped=0, ocr_pending=0):
         self.chunks = chunks
         self.skipped = skipped
+        self.ocr_pending = ocr_pending
         self.calls = []
 
     def __call__(self, path, body):
         self.calls.append((path, body))
         if path == "/rag/scope_stats":
-            return {"stats": {"skipped": self.skipped}}
+            return {"stats": {"skipped": self.skipped, "ocr_pending": self.ocr_pending}}
         page = self.chunks[body["offset"]:body["offset"] + body["limit"]]
         end = body["offset"] + len(page)
         return {"chunks": page, "total": len(self.chunks), "documents": 4,
@@ -94,6 +95,22 @@ class DeepTest(unittest.TestCase):
         self.assertEqual({"corpus_ids": ["k"], "access": None}, stats)
         contexts, info, _, _, _ = self.run_deep()
         self.assertNotIn("olvashat\u00f3 sz\u00f6vege", contexts[0]["text"])
+
+    def test_scans_waiting_for_ocr_are_named_apart_and_ocr_text_is_marked(self):
+        chunks = [dict(CHUNKS[0], ocr={"quality": 81, "lang": "hu"})]
+        rag = FakeRag(chunks, skipped=5, ocr_pending=2)
+        contexts, info = deep.read_all(rag, {"corpus_ids": ["k"], "access": None}, "Ki?",
+                                       ["Bogdán Balázs"], lang="Hungarian", chat=model)
+        self.assertEqual((3, 2), (info["unreadable"], info["ocr_pending"]))
+        self.assertIn("3-nak nincs olvashat\u00f3 sz\u00f6vege", contexts[0]["text"])
+        self.assertIn("2 szkennelt dokumentum sz\u00f6vegfelismer\u00e9se", contexts[0]["text"])
+        self.assertEqual({"quality": 81, "lang": "hu"}, contexts[1]["ocr"])
+        block, citations = llm.build_context(contexts[1:])
+        self.assertIn("(p.1) [OCR 81%]", block)
+        self.assertEqual(81, citations[0]["ocr_quality"])
+        import confidence
+        footer = confidence.footer({"score": 90, "band": "green"}, citations, "a1", "Hungarian")
+        self.assertIn("r00.txt, p.1 (OCR 81%)", footer)
 
     def test_no_match_reads_nothing(self):
         contexts, info, _, calls, _ = self.run_deep(chunks=[])

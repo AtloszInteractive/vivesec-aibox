@@ -148,6 +148,17 @@ _TEXT = {
               "(z. B. gescannte PDFs ohne OCR oder nicht unterst\u00fctzte Formate); sie "
               "konnten nicht gelesen werden.",
     },
+    "ocr_pending": {
+        "en": "%d of the documents you may see are scans still being read by OCR; they are "
+              "not covered yet.",
+        "hu": "Az \u00d6n sz\u00e1m\u00e1ra l\u00e1that\u00f3 dokumentumok k\u00f6z\u00fcl %d "
+              "szkennelt dokumentum sz\u00f6vegfelismer\u00e9se (OCR) m\u00e9g folyamatban "
+              "van; ezek m\u00e9g nem szerepelnek az eredm\u00e9nyben.",
+        "da": "%d af de dokumenter, du har adgang til, er scanninger, som OCR stadig "
+              "l\u00e6ser; de er ikke d\u00e6kket endnu.",
+        "de": "%d der Dokumente, die Sie sehen d\u00fcrfen, sind Scans, die noch per OCR "
+              "gelesen werden; sie sind noch nicht erfasst.",
+    },
     "cut": {
         "en": "In %d places a single passage held more findings than one model reply can "
               "carry, so some may be missing; the result is partial. Ask about a narrower "
@@ -363,7 +374,7 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
     if progress:
         progress("collect", 0, 0)
     chunks, total, documents = collect(post, scope_body, terms, mode, path_prefixes)
-    unreadable = _unreadable(post, scope_body)
+    unreadable, ocr_pending = _unreadable(post, scope_body)
     groups = batches(chunks)
     findings, cut = [], 0
     for i, group in enumerate(groups):
@@ -386,6 +397,8 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
         notes.append(_t("partial", lang) % (total, len(chunks)))
     if unreadable:
         notes.append(_t("unreadable", lang) % unreadable)
+    if ocr_pending:
+        notes.append(_t("ocr_pending", lang) % ocr_pending)
     if cut:
         notes.append(_t("cut", lang) % cut)
     found = [_finding_context(f) for f in unique]
@@ -406,7 +419,8 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
                  "origin": "search-note"}] + found
     info = {"terms": list(terms), "mode": mode, "matched": total, "read": len(chunks),
             "documents": documents, "groups": len(groups), "findings": len(unique),
-            "unreadable": unreadable, "condensed": reduced["level"], "cut": cut,
+            "unreadable": unreadable, "ocr_pending": ocr_pending, "condensed": reduced["level"],
+            "cut": cut,
             "partial": total > len(chunks) or bool(cut or reduced["lost"] or reduced["trimmed"]),
             "seconds": round(time.time() - started, 1)}
     return contexts, info
@@ -425,10 +439,13 @@ def _finding_line(finding):
 
 def _finding_context(finding):
     chunk = finding["chunk"]
-    return {"text": '%s "%s"' % (finding["note"], finding["quote"]),
-            "source_path": chunk.get("source_path"), "corpus_id": chunk.get("corpus_id"),
-            "page_number": chunk.get("page_number"), "chunk_id": chunk.get("chunk_id"),
-            "score": 1.0, "origin": "deep"}
+    context = {"text": '%s "%s"' % (finding["note"], finding["quote"]),
+               "source_path": chunk.get("source_path"), "corpus_id": chunk.get("corpus_id"),
+               "page_number": chunk.get("page_number"), "chunk_id": chunk.get("chunk_id"),
+               "score": 1.0, "origin": "deep"}
+    if chunk.get("ocr"):
+        context["ocr"] = chunk["ocr"]
+    return context
 
 
 def _document_context(path, findings, text):
@@ -675,11 +692,13 @@ def read_document(chunks, task, lang=None, name=None, chunks_total=None,
 
 
 def _unreadable(post, scope_body):
-    """Visible documents without readable text, which no reading can cover; 0
-    when the RAG cannot tell (the note is advisory)."""
+    """(visible documents without readable text, of which still waiting for OCR);
+    (0, 0) when the RAG cannot tell (the note is advisory)."""
     try:
         stats = post("/rag/scope_stats", {"corpus_ids": scope_body.get("corpus_ids") or [],
                                           "access": scope_body.get("access")})
-        return int((stats.get("stats") or {}).get("skipped") or 0)
+        stats = stats.get("stats") or {}
+        pending = int(stats.get("ocr_pending") or 0)
+        return max(0, int(stats.get("skipped") or 0) - pending), pending
     except Exception:  # noqa: BLE001
-        return 0
+        return 0, 0

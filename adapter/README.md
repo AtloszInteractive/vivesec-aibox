@@ -522,6 +522,20 @@ condensed, partial, seconds}`.
 Tests: `deep_test`, `scheduler_test`, `graph_integration_test`; RAG side:
 `rag_service/match_chunks_test.py`.
 
+#### Recognised text (E10b OCR)
+
+The RAG reads scanned PDF pages and image files with Tesseract in the background
+(`rag_service/ocr.py`; `RAG_OCR*` in `CONFIGURATION.md`). A passage from such a
+page carries `ocr {quality, lang}` from the RAG; the adapter tags it in the
+prompt (`[#3] scan.pdf (p.2) [OCR 87%]`) so the model knows it may hold
+recognition errors, returns `ocr_quality` on the citation, and the footer lists
+the source as `scan.pdf, p.2 (OCR 87%)`; the UI shows an OCR badge on the source
+card. A full reading names the visible documents still waiting for OCR apart
+from those without readable text (`scope_stats.ocr_pending`). Skipped pages and
+documents waiting, interrupted or deferred are listed by the RAG's
+`/index/skipped`; documents indexed before OCR become readable after a resync
+from the ViVeSecBox (the box keeps no raw file).
+
 #### Whole-document analysis of large files (E10a)
 
 `analyze` (one named file) fetches every passage of the file

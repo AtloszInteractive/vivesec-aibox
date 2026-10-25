@@ -30,6 +30,8 @@ export type AdapterCitation = {
   chunk_id: string | null;
   score: number | null;
   snippet: string;
+  /** E10b: mean OCR confidence (0-100) when the passage is recognised text. */
+  ocr_quality?: number;
 };
 
 export type AdapterHit = {

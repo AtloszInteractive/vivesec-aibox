@@ -171,6 +171,8 @@ type Citation = {
   snippet?: string;
   terms?: string[];
   score?: number;
+  /** Recognised (OCR) text: its quality, 0-100. */
+  ocrQuality?: number;
 };
 
 /** A file whose NAME matches the search term (spec F7 2.A), shown alongside
@@ -1291,6 +1293,7 @@ function ViveSecAppInner() {
       snippet: c.snippet,
       score: c.score,
       terms: [],
+      ocrQuality: c.ocrQuality,
     }));
     const { body, audit } = splitAuditFooter(res.answer);
     const base = {
@@ -5276,6 +5279,14 @@ function SearchCard({
                     <FileText className="h-3 w-3 text-rose-400" />
                     {c.rank && <span className="shrink-0 text-white/55">[#{c.rank}]</span>}
                     <span className="truncate font-medium text-white/85">{c.label}</span>
+                    {typeof c.ocrQuality === "number" && (
+                      <span
+                        title={tm("Recognised text (OCR) — may contain recognition errors")}
+                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${c.ocrQuality < 70 ? "border-amber-300/40 text-amber-200/90" : "border-white/15 text-white/60"}`}
+                      >
+                        OCR {c.ocrQuality}%
+                      </span>
+                    )}
                     {crossDrive && driveNameOf(c.fileId) && (
                       <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
                         {driveNameOf(c.fileId)}
