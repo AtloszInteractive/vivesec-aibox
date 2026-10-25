@@ -13,6 +13,13 @@ prepare adds Tesseract (hun, deu, dan; eng and osd come with it) to a RAG image
 that lacks it (E10b OCR), which needs the package mirrors once, and prints the
 installed OCR languages; RELEASE_RAG_OCR=off skips that.
 
+Every release builds on the running image, so layers pile up and overlay2
+refuses an image deeper than ~125 layers ("max depth exceeded"). prepare
+therefore first squashes a base image with RELEASE_FLATTEN_LAYERS (default 80,
+at most 110; 0 = never) or more layers into one layer (vivesec-<kind>:flat-<stamp>),
+keeping its environment, user, workdir, entrypoint, command, ports, labels and
+health check; the running image is left for the rollback.
+
 A successful verify prunes old releases: it keeps the current stage and the
 previous deployed one (one rollback level), removes stopped parked containers
 (vivesec-{rag,adapter,ui}-{prev,failed}-<stamp>) no newer than the previous
@@ -155,6 +162,84 @@ def ready(url, output):
             "--max-time", "10", url, "-o", str(output))
 
 
+def flatten_limit():
+    value = os.environ.get("RELEASE_FLATTEN_LAYERS", "").strip()
+    try:
+        limit = int(value) if value else FLATTEN_LAYERS
+    except ValueError:
+        limit = FLATTEN_LAYERS
+    # overlay2 refuses a container on more than ~125 layers; a limit above
+    # that would let the build fail as before, so it is capped.
+    return max(0, min(limit, FLATTEN_LAYERS_MAX))
+
+
+def _seconds(nanoseconds):
+    return "%ds" % max(1, int(nanoseconds) // 1_000_000_000)
+
+
+def _quoted(value):
+    # Dockerfile ENV/LABEL values are substituted, so a literal $ is escaped.
+    return json.dumps(value).replace("$", "\\$")
+
+
+def flatten_dockerfile(image, config):
+    """A one-layer copy of an image that keeps its runtime configuration."""
+    lines = ["FROM " + image + " AS previous", "FROM scratch", "COPY --from=previous / /"]
+    for entry in config.get("Env") or []:
+        key, _, value = entry.partition("=")
+        lines.append("ENV " + key + "=" + _quoted(value))
+    for key, value in sorted((config.get("Labels") or {}).items()):
+        lines.append("LABEL " + _quoted(key) + "=" + _quoted(value))
+    for port in sorted(config.get("ExposedPorts") or {}):
+        lines.append("EXPOSE " + port)
+    if config.get("WorkingDir"):
+        lines.append("WORKDIR " + config["WorkingDir"])
+    if config.get("User"):
+        lines.append("USER " + config["User"])
+    if config.get("StopSignal"):
+        lines.append("STOPSIGNAL " + config["StopSignal"])
+    health = config.get("Healthcheck") or {}
+    test = health.get("Test") or []
+    if test[:1] == ["NONE"]:
+        lines.append("HEALTHCHECK NONE")
+    elif test[:1] in (["CMD"], ["CMD-SHELL"]):
+        options = "".join(" --" + flag + "=" + _seconds(health[key]) for flag, key in
+                          (("interval", "Interval"), ("timeout", "Timeout"), ("start-period", "StartPeriod"))
+                          if health.get(key))
+        if health.get("Retries"):
+            options += " --retries=%d" % health["Retries"]
+        body = json.dumps(test[1:]) if test[0] == "CMD" else test[1]
+        lines.append("HEALTHCHECK" + options + " CMD " + body)
+    if config.get("Entrypoint"):
+        lines.append("ENTRYPOINT " + json.dumps(config["Entrypoint"]))
+    if config.get("Cmd"):
+        lines.append("CMD " + json.dumps(config["Cmd"]))
+    return "\n".join(lines) + "\n"
+
+
+def release_base(kind, image, stamp, stage):
+    """The image a release builds on: the running one, or a flattened copy of it.
+
+    Each release adds its layers on top of the previous release's image, and
+    overlay2 cannot stack more than ~125 layers, so a deep image is first
+    squashed into one layer. The original image stays for the rollback."""
+    limit = flatten_limit()
+    if not limit:
+        return image
+    details = json.loads(command("docker", "image", "inspect", image))[0]
+    layers = len(details["RootFS"]["Layers"])
+    if layers < limit:
+        return image
+    context = stage / ("flatten-" + kind)
+    context.mkdir()
+    (context / "Dockerfile").write_text(flatten_dockerfile(image, details["Config"]), encoding="utf-8")
+    flat = "vivesec-" + kind + ":flat-" + stamp
+    command("docker", "build", "-q", "-t", flat, str(context))
+    shutil.rmtree(context, ignore_errors=True)
+    print("FLATTENED=%s layers=%d -> %s" % (kind, layers, flat), flush=True)
+    return flat
+
+
 def prepare(source_archive, ui_archive):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     stage = Path(tempfile.mkdtemp(prefix="vivesec-release-" + stamp + "-", dir=Path.home()))
@@ -191,7 +276,11 @@ def prepare(source_archive, ui_archive):
     persist(stage, manifest)
     for kind in ("rag", "adapter", "ui"):
         copied = ["poc", "rag_service"] if kind == "rag" else (["adapter"] if kind == "adapter" else [".output"])
-        dockerfile = "FROM " + old[kind]["Image"] + "\nWORKDIR /app\n"
+        base = release_base(kind, old[kind]["Image"], stamp, stage)
+        if base != old[kind]["Image"]:
+            manifest.setdefault("flattened", {})[kind] = base
+            persist(stage, manifest)
+        dockerfile = "FROM " + base + "\nWORKDIR /app\n"
         if kind == "rag" and RAG_OCR_PACKAGES:
             # E10b: images built before OCR lack Tesseract; the first release
             # after it adds the packages (needs the package mirrors once), later
@@ -277,6 +366,10 @@ def check(stage, manifest):
 
 
 HYBRID_ATTEMPTS = 3
+# Base images with at least this many layers are squashed before a release
+# builds on them (RELEASE_FLATTEN_LAYERS; 0 = never).
+FLATTEN_LAYERS = 80
+FLATTEN_LAYERS_MAX = 110
 # System packages the RAG image needs for OCR (E10b); RELEASE_RAG_OCR=off
 # leaves the image as it is (a box without package mirrors), and the RAG then
 # reports OCR as unavailable instead of reading scans.
