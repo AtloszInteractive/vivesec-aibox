@@ -13,6 +13,12 @@ from text_source import document_pages
 
 MIN_NAME_CHARS = 3
 MIN_PROSE_CHARS = 20  # a chunk with less text than this is not worth a model call
+LLM_COUNTERS = ("calls", "seconds", "prompt_tokens", "output_tokens", "prompt_seconds",
+                "eval_seconds", "load_seconds", "truncated")
+
+
+def _llm_counters(llm) -> dict:
+    return {k: getattr(llm, k, 0) for k in LLM_COUNTERS}
 
 
 class _Union:
@@ -165,7 +171,7 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
     read by the model.
     """
     started = time.time()
-    calls_before, seconds_before = llm.calls, llm.seconds
+    before = _llm_counters(llm)
     pages, how = document_pages(raw, meta["source_path"])
     stats = {"doc_id": meta["doc_id"], "text": how, "pages": len(pages), "chunks": 0,
              "llm_errors": 0}
@@ -269,11 +275,18 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
         if all(ev["quote"] != r.quote for ev in rel["evidence"]):
             rel["evidence"].append({"quote": r.quote, "page": r.page, "method": r.method,
                                     "confidence": r.confidence})
+    after = _llm_counters(llm)
     stats.update({"entities": len(entities), "mentions": len(mentions),
                   "relations": sum(1 for r in relations.values() if r["type"] != "CO_MENTIONED"),
                   "co_mentions": sum(1 for r in relations.values() if r["type"] == "CO_MENTIONED"),
-                  "llm_calls": llm.calls - calls_before,
-                  "llm_seconds": round(llm.seconds - seconds_before, 1),
+                  "llm_calls": after["calls"] - before["calls"],
+                  "llm_seconds": round(after["seconds"] - before["seconds"], 1),
+                  "llm_prompt_tokens": after["prompt_tokens"] - before["prompt_tokens"],
+                  "llm_output_tokens": after["output_tokens"] - before["output_tokens"],
+                  "llm_prompt_seconds": round(after["prompt_seconds"] - before["prompt_seconds"], 2),
+                  "llm_eval_seconds": round(after["eval_seconds"] - before["eval_seconds"], 2),
+                  "llm_load_seconds": round(after["load_seconds"] - before["load_seconds"], 2),
+                  "llm_truncated": after["truncated"] - before["truncated"],
                   "seconds": round(time.time() - started, 1)})
     return {"document": document, "entities": list(entities.values()), "mentions": mentions,
             "relations": list(relations.values())}, stats
