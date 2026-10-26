@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 
-from graph_store import GraphView, StoreError, _rel_key
+from graph_store import GraphView, StoreError, _rel_key, with_subtype_attribute
 from model import AttributeValue, Document, Entity, Evidence, Mention, Relation
 
 SCHEMA = [
@@ -86,6 +86,7 @@ class Neo4jGraphStore:
 
     def put_document(self, doc: Document, entities: list[Entity], mentions: list[Mention],
                      relations: list[Relation]) -> dict:
+        entities = with_subtype_attribute(doc.doc_id, entities)
         with self._session() as s:
             s.execute_write(self._put_tx, doc, entities, mentions, relations)
         return {"entities": len(entities), "mentions": len(mentions), "relations": len(relations)}

@@ -14,7 +14,8 @@ import threading
 import unicodedata
 from collections import Counter
 
-from model import AttributeValue, Document, Entity, Evidence, Mention, Relation, WEAK_METHODS
+from model import (SUBTYPE_ATTR, WEAK_METHODS, AttributeValue, Document, Entity, Evidence,
+                   Mention, Relation)
 
 
 class StoreError(ValueError):
@@ -29,6 +30,24 @@ def _words(text: str) -> list[str]:
 def _rel_key(r: Relation) -> tuple:
     a, b = (r.a, r.b)
     return (r.type, a, b, r.start or "", r.end or "")
+
+
+def _visible_subtype(attrs) -> str:
+    """The subtype most of the given (visible) documents give; ties by name."""
+    counts = Counter(a.value for a in attrs if a.name == SUBTYPE_ATTR)
+    return min(counts, key=lambda s: (-counts[s], s)) if counts else ""
+
+
+def with_subtype_attribute(doc_id: str, entities: list[Entity]) -> list[Entity]:
+    """Entities as stored for a document: the subtype the document gives one is
+    also kept as that document's attribute, the only form views read it in."""
+    out = []
+    for e in entities:
+        attrs = [a for a in e.attributes if a.name != SUBTYPE_ATTR]
+        if e.subtype:
+            attrs.append(AttributeValue(SUBTYPE_ATTR, e.subtype, doc_id, None))
+        out.append(Entity(e.id, e.type, e.subtype, e.label, attrs, e.status, e.merged_into))
+    return out
 
 
 class MemoryGraphStore:
@@ -109,6 +128,7 @@ class MemoryGraphStore:
     def put_document(self, doc: Document, entities: list[Entity], mentions: list[Mention],
                      relations: list[Relation]) -> dict:
         """Replace everything previously derived from this document."""
+        entities = with_subtype_attribute(doc.doc_id, entities)
         with self._lock:
             self.drop_document(doc.doc_id)
             self.documents[doc.doc_id] = doc
@@ -343,11 +363,14 @@ class GraphView:
             doc = self._docs.get(e.id.rsplit("@doc:", 1)[1])
             if doc is not None:
                 label = "%s (%s)" % (label, doc.title or doc.source_path.rsplit("/", 1)[-1])
-        return {"id": e.id, "type": e.type, "subtype": e.subtype, "label": label,
+        return {"id": e.id, "type": e.type,
+                # Only what readable documents say: another document may type the
+                # same person (an inmate) for readers of that document alone.
+                "subtype": _visible_subtype(attrs), "label": label,
                 "aliases": sorted(surfaces), "mentions": len(mentions),
                 "documents": sorted({m.doc_id for m in mentions} | {a.doc_id for a in attrs}),
                 "attributes": [{"name": a.name, "value": a.value, "doc_id": a.doc_id,
-                                "page": a.page} for a in attrs]}
+                                "page": a.page} for a in attrs if a.name != SUBTYPE_ATTR]}
 
     def node(self, eid: str) -> dict | None:
         if eid not in self._node_cache:

@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import re
 
-from model import CORE_TYPES, METHODS, AttributeValue, Document, Entity, Evidence, Mention, Relation
+from model import (CORE_TYPES, METHODS, SUBTYPE_ATTR, AttributeValue, Document, Entity, Evidence,
+                   Mention, Relation)
 from visibility import parse_doc_acl
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -106,6 +107,8 @@ def parse_document_payload(body: dict, profile: dict):
         for j, a in enumerate(_list(e.get("attributes"), where + ".attributes")):
             if not isinstance(a, dict):
                 raise IngestError("%s.attributes[%d] must be an object" % (where, j))
+            if a.get("name") == SUBTYPE_ATTR:
+                raise IngestError("%s.attributes[%d]: %r is reserved" % (where, j, SUBTYPE_ATTR))
             attrs.append(AttributeValue(_str(a.get("name"), "attribute name", limit=100),
                                         _str(a.get("value"), "attribute value"), doc.doc_id,
                                         _page(a.get("page"), "attribute page")))

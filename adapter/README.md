@@ -408,6 +408,21 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `ADAPTER_GRAPH_CHAT=off` disables it; a graph error never blocks the answer.
 - **Progress**: `POST /api/v1/ui/graph/status` lists only files the caller may
   see; queue sizes and totals are box-wide numbers.
+- **Derived data leaks** (concept 5.1, pilot step 4): the graph computes every
+  answer on the caller's visible subgraph -- an edge, attribute, name variant or
+  subtype only from documents they may read (a subtype is stored per document
+  as a reserved `subtype` attribute since extractor revision 5; before, the
+  first document's subtype was global and a hidden document could type a
+  visible person). `graph_service/leakage_test.py` proves it differentially:
+  for 730 requests over every query, analytics with and without namesake
+  joining, `documents/profile` and the review list/history, a caller restricted
+  by group ACL, classification, a deny rule and the drive scope gets byte for
+  byte what a graph of only their documents answers (also after a merge), while
+  a caller who may read everything gets different answers for every query
+  kind. Neo4j variants (direct and cached) run with `GRAPH_TEST_NEO4J_URI`.
+  Not covered by it: the identity of a person is global -- whether two visible
+  mentions are one person may have been decided using a document the caller
+  cannot read (resolution by a registry number in a hidden document).
 - **Review and profile**: `/api/v1/ui/graph/review/list` (scoped; `q` filters
   on the two names, `reason` on the match reason, `offset`/`limit` page; the
   response adds `open_total` and the `reasons` counts), `/review/decide` (one

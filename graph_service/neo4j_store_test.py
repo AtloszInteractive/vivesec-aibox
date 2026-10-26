@@ -10,6 +10,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import queries  # noqa: E402
+import leakage_test  # noqa: E402
 import review_undo_test  # noqa: E402
 import visibility_test  # noqa: E402
 from model import Document, Entity, Evidence, Mention, Relation  # noqa: E402
@@ -118,6 +119,30 @@ class Neo4jStoreTest(unittest.TestCase):
                                           "", [Evidence(doc.doc_id, "q")])])
         path = queries.shortest_path(self.s.view(Scope(["c1"])), "P0", "P4")
         self.assertEqual(["P0", "P1", "P2", "P3", "P4"], [n["id"] for n in path["nodes"]])
+
+
+@unittest.skipUnless(URI and PASSWORD_FILE, "GRAPH_TEST_NEO4J_URI not set")
+class Neo4jLeakageTest(leakage_test.LeakageTest):
+    """The full graph in Neo4j (Cypher reads), the oracle in memory."""
+
+    def make_store(self):
+        return neo4j_store()
+
+    def close_store(self, store):
+        store.close()
+
+
+@unittest.skipUnless(URI and PASSWORD_FILE, "GRAPH_TEST_NEO4J_URI not set")
+class CachedNeo4jLeakageTest(leakage_test.LeakageTest):
+    """As served on the box: Neo4j with the in-memory read cache."""
+
+    def make_store(self):
+        from neo4j_store import CachedNeo4jStore
+
+        return CachedNeo4jStore(neo4j_store())
+
+    def close_store(self, store):
+        store.close()
 
 
 if __name__ == "__main__":

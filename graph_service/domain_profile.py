@@ -68,8 +68,10 @@ SCOPED_TYPES = ("place", "organization")
 # the profile): documents extracted before then count as stale and can be
 # reprocessed. 2: places scoped by their container, common nouns kept local;
 # 3: also common nouns with digits (an untyped "102. számú zárka");
-# 4: "Label: value" forms read by a learnt mapping, minified model output.
-EXTRACTOR_REVISION = 4
+# 4: "Label: value" forms read by a learnt mapping, minified model output;
+# 5: an entity's subtype kept per document (a reader sees only what their
+#    documents say), so older documents must be read again to show one.
+EXTRACTOR_REVISION = 5
 
 
 def profile_tag(profile: dict) -> str:
