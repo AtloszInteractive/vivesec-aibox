@@ -95,6 +95,11 @@ class MetaMirror:
         with self._lock:
             return [p for p in self._docs if under(p, base)]
 
+    def files(self):
+        """Every synced file's {path, file, mtime, size} (graph catch-up)."""
+        with self._lock:
+            return [dict(m) for m in self._docs.values() if m.get("file")]
+
     def find(self, prefix, pattern, files_only=True, limit=50, visible=None):
         """Filename lookup under `prefix` (the #search files quick action):
         case-insensitive substring match on the basename; empty pattern lists

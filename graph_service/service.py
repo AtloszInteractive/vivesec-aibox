@@ -129,7 +129,7 @@ def documents_by_profile(state: State, body: dict) -> dict:
     store = getattr(state.store, "mirror", state.store)
     with store._lock:
         docs = list(store.documents.values())
-    counts, stale = {}, []
+    counts, stale, paths = {}, [], []
     for doc in docs:
         if not scope.allows(doc):
             continue
@@ -137,12 +137,19 @@ def documents_by_profile(state: State, body: dict) -> dict:
             continue
         tag = doc.profile or "unknown"
         counts[tag] = counts.get(tag, 0) + 1
+        paths.append([doc.corpus_id, doc.source_path])
         if doc.profile != current:
             stale.append({"doc_id": doc.doc_id, "corpus_id": doc.corpus_id,
                           "source_path": doc.source_path, "profile": doc.profile or None})
-    stale.sort(key=lambda d: d["source_path"])
-    return {"current": current, "counts": counts, "stale_total": len(stale),
-            "stale": stale[:limit]}
+    stale.sort(key=lambda d: (not (d["profile"] or "").endswith("/partial"), d["source_path"]))
+    out = {"current": current, "counts": counts, "stale_total": len(stale),
+           "partial_total": sum(n for tag, n in counts.items() if tag.endswith("/partial")),
+           "stale": stale[:limit]}
+    if body.get("with_paths"):
+        # Every document of the scope the graph holds: the adapter compares them
+        # with the synced files to find those that never reached the graph.
+        out["paths"] = sorted(paths)
+    return out
 
 
 def run_query(state: State, name: str, body: dict) -> dict:
@@ -328,6 +335,8 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
         except (binascii.Error, ValueError):
             raise HttpError(400, "content_b64 is not valid base64")
         try:
+            if worker.unchanged(meta, raw):
+                return {"queued": 0, "unchanged": True}
             return {"queued": worker.submit(meta, raw)}
         except QueueFull as e:
             raise HttpError(429, str(e))

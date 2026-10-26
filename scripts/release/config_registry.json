@@ -2648,6 +2648,19 @@
       ]
     },
     {
+      "name": "GRAPH_DEFER_PROSE_QUEUE",
+      "component": "graph",
+      "category": "jobs",
+      "type": "int",
+      "default": "50",
+      "allowed": "documents >= 0 (0 = never defer)",
+      "fail_safe": "An invalid value is the default (50). Deferred documents are tagged <profile>/partial and listed as stale, so nothing is lost: a reprocessing run reads their running text later.",
+      "impact": "While this many documents wait for extraction, the next ones get rules, tables and forms only, so a large sync drains in seconds per file instead of holding raw files in memory.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "GRAPH_OCR",
       "component": "graph",
       "category": "files",

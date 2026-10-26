@@ -164,7 +164,7 @@ class GraphIntegrationTest(unittest.TestCase):
         patches = {"RAG_URL": self.rag_url, "MIRROR": self.mirror, "ACL": self.policy,
                    "DIRECTORY": FakeDirectory(), "HTTP_SCOPE": service.HTTP_SCOPE_FULL,
                    "ENTITLEMENTS": None, "GRAPH": client, "GRAPH_FORWARD": self.forward,
-                   "GRAPH_ADMINS": frozenset({"hanna"}),
+                   "GRAPH_ADMINS": frozenset({"hanna"}), "_GRAPH_PATHS": {},
                    "_ACL_SYNC": {"fingerprint": None, "generation": 0}}
         for name, value in patches.items():
             patcher = patch.object(service, name, value)
@@ -629,6 +629,50 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertEqual({"Kovács János"}, self.people("lars", "Kovács"))
         self.assertNotIn("Titkos", json.dumps(self.call("/api/v1/ui/graph/reprocess/status", {},
                                                         user="lars")[1], ensure_ascii=False))
+
+    def test_synced_files_the_graph_never_got_are_caught_up(self):
+        import corpus
+        import reprocess
+
+        service = self.service
+        source = tempfile.TemporaryDirectory()
+        self.addCleanup(source.cleanup)
+        for path, text in DOCS.items():
+            local = os.path.join(source.name, path[len("/storage/drives/"):])
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            with open(local, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        corpus_id = corpus.corpus_id_of_path(HIDDEN)
+        raw = DOCS[HIDDEN].encode()
+        _, check = self.call("/api/v1/index/upsert/file/check",
+                             {"path": HIDDEN, "size": len(raw), "mtime": 1700000001,
+                              "head": base64.b64encode(raw[:64]).decode()})
+        status, done = self.call("/api/v1/index/upsert/file/content/" + check["token"],
+                                 raw=raw, extra={"Content-Type": "text/plain"})
+        # The id the adapter gives a file it sends itself is the RAG's.
+        self.assertEqual(corpus.doc_id_of(service.TENANT_ID, corpus_id, HIDDEN), done["doc_id"])
+        self.settle()
+        # The graph lost it (a full forward queue during a large sync, say).
+        graph.GraphClient(self.graph_url).post("/graph/document/drop_tree",
+                                               {"corpus_id": corpus_id, "path": HIDDEN})
+        runner = reprocess.Reprocessor(service.GRAPH, self.forward, service._reprocess_fetch,
+                                       idle_wait=0.05)
+        with patch.object(service, "REPROCESS_SOURCE_DIR", source.name), \
+                patch.object(service, "REPROCESS", runner):
+            _, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="hanna")
+            self.assertEqual((1, 0), (out["absent_total"], out["stale_total"]))
+            # A file the caller may not see is not counted for them.
+            self.assertEqual(0, self.call("/api/v1/ui/graph/reprocess/status", {},
+                                          user="lars")[1]["absent_total"])
+            self.assertEqual(set(), self.people("hanna", "Titkos"))
+            status, out = self.call("/api/v1/ui/graph/reprocess/start", {}, user="hanna")
+            self.assertEqual((200, 1), (status, out["run"]["total"]))
+            self.assertTrue(runner.wait(30))
+            self.settle()
+            _, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="hanna")
+            self.assertEqual((0, 1), (out["absent_total"], out["run"]["sent"]))
+        self.assertIn("Titkos Tamás", self.people("hanna", "Titkos"))
+        self.assertEqual(set(), self.people("lars", "Titkos"))
 
     def test_unreadable_documents_are_listed_within_the_callers_view(self):
         for path in (DRIVE + "/reports/diagram.vsd", DRIVE + "/hr/org.vsd"):

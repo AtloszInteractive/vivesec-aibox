@@ -38,6 +38,9 @@ class Document:
     # The domain profile it was extracted with ("bv@3/e3"); "" when unknown (before
     # this was recorded, or put directly). A profile change makes it stale.
     profile: str = ""
+    # SHA-256 of the file it was extracted from; "" when unknown. The same file
+    # sent again (a drive re-sync) is not extracted again.
+    content_sha256: str = ""
 
 
 @dataclass

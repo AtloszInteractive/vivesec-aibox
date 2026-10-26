@@ -269,6 +269,16 @@ const M: Record<string, Tri> = {
     "Alle dokumenter er behandlet med den nuværende profil.",
     "Alle Dokumente wurden mit dem aktuellen Profil verarbeitet.",
   ],
+  "Synced files not yet in the graph": [
+    "Szinkronizált, de a gráfba még be nem került fájlok",
+    "Synkroniserede filer, der endnu ikke er i grafen",
+    "Synchronisierte Dateien, die noch nicht im Graphen sind",
+  ],
+  "Waiting for the language model": [
+    "A nyelvi modellre vár",
+    "Venter på sprogmodellen",
+    "Wartet auf das Sprachmodell",
+  ],
   unknown: ["ismeretlen", "ukendt", "unbekannt"],
   "Reprocessing…": ["Újrafeldolgozás…", "Genbehandler…", "Wird neu verarbeitet…"],
   "Reprocessing finished": [

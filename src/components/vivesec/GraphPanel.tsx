@@ -1441,9 +1441,10 @@ const RUN_STATE: Record<GraphReprocessRun["state"], string> = {
   failed: "Reprocessing stopped with an error",
 };
 
-/** After a domain profile change: which profile the documents were extracted
- *  with, and (graph administrators) reprocessing those of an older one. The
- *  files are fetched again from the ViVeSecBox, one at a time, in the background. */
+/** Which profile the documents were extracted with, and (graph administrators)
+ *  sending through extraction again: synced files the graph never got, those
+ *  read without the language model during a long queue, and those of an older
+ *  profile. The files are fetched again from the ViVeSecBox, one at a time. */
 function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean }) {
   const { tm } = useLang();
   const { run: call, notice } = useFailure();
@@ -1472,6 +1473,8 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
   const run = data.run;
   const running = run.state === "running";
   const versions = Object.entries(data.counts).sort(([a], [b]) => a.localeCompare(b));
+  const partial = data.partial_total ?? 0;
+  const older = data.stale_total - partial;
   return (
     <div className="mt-6">
       <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/45">
@@ -1483,10 +1486,20 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
         {tm("Current profile")}: <span className="font-medium text-white">{data.current}</span>
       </div>
       <div className="mt-1 text-xs text-white/70">
-        {data.stale_total
-          ? `${tm("Extracted with an older or unknown profile")}: ${data.stale_total}`
+        {older
+          ? `${tm("Extracted with an older or unknown profile")}: ${older}`
           : tm("Every document was extracted with the current profile.")}
       </div>
+      {partial > 0 && (
+        <div className="mt-1 text-xs text-white/70">
+          {`${tm("Waiting for the language model")}: ${partial}`}
+        </div>
+      )}
+      {data.absent_total > 0 && (
+        <div className="mt-1 text-xs text-white/70">
+          {`${tm("Synced files not yet in the graph")}: ${data.absent_total}`}
+        </div>
+      )}
       {versions.length > 1 && (
         <div className="mt-1 text-[11px] text-white/45">
           {versions.map(([v, n]) => `${v === "unknown" ? tm("unknown") : v}: ${n}`).join(" · ")}
@@ -1535,7 +1548,7 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
           ) : (
             <button
               onClick={() => void act(() => graphApi.reprocessStart(drive, folder.trim()))}
-              disabled={busy || !data.stale_total || !data.source_ready}
+              disabled={busy || !(data.stale_total || data.absent_total) || !data.source_ready}
               className="rounded-lg px-3 py-1 text-xs font-medium text-black disabled:opacity-50"
               style={{ backgroundColor: LIME }}
             >

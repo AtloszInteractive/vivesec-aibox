@@ -166,13 +166,16 @@ def _containers(profile: dict, pages, ents: dict[str, LocalEntity], rels: list[L
     return out
 
 
-def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, tables=None
-                     ) -> tuple[dict, dict]:
+def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, tables=None,
+                     prose: bool = True) -> tuple[dict, dict]:
     """(ingest payload, stats). meta: doc_id, corpus_id, source_path, title?, kind?, acl?
 
     tables: a TableMapper; tables it can map are read row by row by rule, the
     rest of the text goes to the model in chunks. Without it every table is
     read by the model.
+    prose=False leaves the running text to a later pass (stats `prose_deferred`
+    counts its chunks): rules, tables and forms only, the model at most maps a
+    new table or form layout.
     """
     started = time.time()
     before = _llm_counters(llm)
@@ -226,6 +229,9 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
             prose_pages.append((page, rest))
     chunks = [c for c in chunk_pages(prose_pages) if len(c.text.strip()) >= MIN_PROSE_CHARS]
     stats["chunks"] = len(chunks)
+    if not prose and chunks:
+        stats["prose_deferred"] = len(chunks)
+        chunks = []
     for chunk in chunks:
         try:
             results.append(llm_extract(chunk, profile, llm, meta.get("title", "")))

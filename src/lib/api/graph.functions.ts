@@ -240,11 +240,15 @@ export type GraphReprocessRun = {
   error?: string | null;
 };
 
-/** Which profile the documents of this scope were extracted with. */
+/** Which profile the documents of this scope were extracted with, and how many
+ *  synced files never reached the graph (a reprocessing run sends them first). */
 export type GraphReprocessStatus = {
   current: string;
   counts: Record<string, number>;
   stale_total: number;
+  /** Of stale_total: read without the language model during a long queue. */
+  partial_total?: number;
+  absent_total: number;
   can_start: boolean;
   source: "local" | "ws-fs";
   source_ready: boolean;

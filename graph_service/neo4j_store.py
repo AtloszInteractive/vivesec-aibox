@@ -1,8 +1,8 @@
 """Neo4j-backed graph store (E26): persistent, same behaviour as the memory store.
 
 Layout (Neo4j Community 5):
-  (:Document {doc_id, corpus_id, source_path, title, kind, pages, acl_json,
-              rel_ids, attr_entities})
+  (:Document {doc_id, corpus_id, source_path, title, kind, pages, profile, sha256,
+              acl_json, rel_ids, attr_entities})
   (:Entity {id, type, subtype, label, status, merged_into})
   (:Mention {id, doc_id, text, page, start, end, method, confidence})-[:OF]->(:Entity)
   (:Attr {doc_id, name, value, page})-[:OF]->(:Entity)
@@ -51,6 +51,13 @@ def _ev_load(raw: str) -> list[Evidence]:
 def _relation(props: dict, a: str, b: str) -> Relation:
     return Relation(props["id"], props["type"], a, b, props.get("start"), props.get("end"),
                     props.get("raw_label") or "", _ev_load(props.get("ev")))
+
+
+def _document(d: dict) -> Document:
+    return Document(d["doc_id"], d["corpus_id"], d["source_path"], d.get("title") or "",
+                    json.loads(d["acl_json"]) if d.get("acl_json") else None,
+                    d.get("kind") or "", d.get("pages") or 0, d.get("profile") or "",
+                    d.get("sha256") or "")
 
 
 class Neo4jGraphStore:
@@ -130,9 +137,11 @@ class Neo4jGraphStore:
         rel_ids = self._add_relations_tx(tx, relations)
         tx.run("CREATE (d:Document {doc_id: $doc_id, corpus_id: $corpus_id, "
                "source_path: $source_path, title: $title, kind: $kind, pages: $pages, "
-               "profile: $profile, acl_json: $acl, rel_ids: $rel_ids, attr_entities: $attr_entities})",
+               "profile: $profile, sha256: $sha256, acl_json: $acl, rel_ids: $rel_ids, "
+               "attr_entities: $attr_entities})",
                doc_id=doc.doc_id, corpus_id=doc.corpus_id, source_path=doc.source_path,
                title=doc.title, kind=doc.kind, pages=doc.pages, profile=doc.profile,
+               sha256=doc.content_sha256,
                acl=json.dumps(doc.acl) if doc.acl is not None else None,
                rel_ids=sorted(set(rel_ids.values())),
                attr_entities=sorted({a["eid"] for a in attrs}))
@@ -271,12 +280,8 @@ class Neo4jGraphStore:
     def export(self):
         """Everything as model objects: (documents, entities, mentions, relations)."""
         with self._session() as s:
-            documents = [Document(d["doc_id"], d["corpus_id"], d["source_path"],
-                                  d.get("title") or "",
-                                  json.loads(d["acl_json"]) if d.get("acl_json") else None,
-                                  d.get("kind") or "", d.get("pages") or 0,
-                                  d.get("profile") or "")
-                         for d in (r["d"] for r in s.run("MATCH (d:Document) RETURN d {.*} AS d"))]
+            documents = [_document(d) for d in (r["d"] for r in s.run(
+                "MATCH (d:Document) RETURN d {.*} AS d"))]
             entities = {}
             for r in s.run("MATCH (e:Entity) RETURN e {.*} AS e"):
                 e = r["e"]
@@ -393,12 +398,7 @@ class Neo4jView(GraphView):
         out = {}
         for r in self._run("MATCH (d:Document) WHERE d.doc_id IN $ids RETURN d {.*} AS d",
                            ids=list(doc_ids)):
-            d = r["d"]
-            out[d["doc_id"]] = Document(d["doc_id"], d["corpus_id"], d["source_path"],
-                                        d.get("title") or "",
-                                        json.loads(d["acl_json"]) if d.get("acl_json") else None,
-                                        d.get("kind") or "", d.get("pages") or 0,
-                                        d.get("profile") or "")
+            out[r["d"]["doc_id"]] = _document(r["d"])
         return out
 
     def _load_nodes(self, eids):

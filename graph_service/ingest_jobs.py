@@ -5,7 +5,10 @@ extracts it (pipeline.extract_document) and writes the result to the store.
 One worker on purpose: the extraction model shares the GPU with chat and
 embedding, so documents are processed one at a time and the queue is bounded
 (a full queue answers 429, the caller retries later). Queued bytes stay in
-memory only; no cleartext copy is written to disk.
+memory only; no cleartext copy is written to disk. When many documents wait
+(GRAPH_DEFER_PROSE_QUEUE), the next ones get rules, tables and forms only and a
+"/partial" profile tag; reprocessing fetches them again for the running text.
+The same file sent again (same content, current profile) is not extracted again.
 
 Possible same-person pairs the resolver did not dare to merge are kept as a
 review list; an administrator decides merge (store.merge_entities) or keep apart.
@@ -34,8 +37,24 @@ from domain_profile import profile_tag  # noqa: F401 (re-exported)
 from pipeline import extract_document
 from resolution import Resolver
 from table_mapping import TableMapper
+from visibility import parse_doc_acl
 
 RECENT = 200
+
+
+def _defer_queue() -> int:
+    try:
+        return max(0, int(os.environ.get("GRAPH_DEFER_PROSE_QUEUE", "50") or 0))
+    except ValueError:
+        return 50
+
+
+# Documents waiting above which the next ones are read without the prose model
+# (0: never). See IngestWorker._process.
+DEFER_PROSE_QUEUE = _defer_queue()
+# Appended to the profile tag of a document whose running text was not (fully)
+# read by the model: it stays stale, so reprocessing completes it.
+PARTIAL_SUFFIX = "/partial"
 
 
 class QueueFull(Exception):
@@ -111,6 +130,35 @@ class IngestWorker:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
 
     # -- queue ---------------------------------------------------------------------
+
+    def unchanged(self, meta: dict, raw: bytes) -> bool:
+        """True when exactly this file is already in the graph, extracted with the
+        current profile (a drive re-sync sends every file again): nothing to
+        extract, only an ACL sent with it is applied. Never while another version
+        of the document waits or runs -- the last one sent must win."""
+        digest = hashlib.sha256(raw).hexdigest()
+        key = (meta.get("corpus_id"), meta.get("source_path"))
+        store = getattr(self.state.store, "mirror", self.state.store)
+        with self.cond:
+            busy = [m for m, _, _ in self.queue] + ([self.running] if self.running else [])
+            if any(m.get("doc_id") == meta["doc_id"]
+                   or (m.get("corpus_id"), m.get("source_path")) == key for m in busy):
+                return False
+            with store._lock:
+                doc = store.documents.get(meta["doc_id"])
+            if (doc is None or not doc.content_sha256 or doc.content_sha256 != digest
+                    or doc.profile != profile_tag(self.state.profile)
+                    or (doc.corpus_id, doc.source_path) != key
+                    or set(self.state.store.doc_ids_by_path(*key)) != {doc.doc_id}):
+                return False
+            # The same ACL a re-extraction would store (none when none was sent).
+            acl = parse_doc_acl(meta.get("acl"))
+            if acl != doc.acl:
+                self.state.store.set_acl(doc.doc_id, acl)
+            self.totals["unchanged"] += 1
+            self.recent.append({"doc_id": meta["doc_id"], "source_path": key[1],
+                                "waited": 0.0, "status": "unchanged"})
+            return True
 
     def submit(self, meta: dict, raw: bytes) -> int:
         with self.cond:
@@ -228,14 +276,26 @@ class IngestWorker:
         profile = self.state.profile
         if (profile["id"], profile["version"]) != self.profile_version:
             self._reset_models()
+        with self.cond:
+            waiting = len(self.queue)
+        # A long queue (a large sync) is drained by rules, tables and forms first; the
+        # running text is read later, when reprocessing fetches the file again --
+        # raw files are never kept on disk, nor piled up in memory.
+        prose = not (DEFER_PROSE_QUEUE and waiting >= DEFER_PROSE_QUEUE)
         self.resolver.sticky = self._sticky_people(meta)
         try:
             payload, stats = extract_document(raw, meta, profile, self.llm, self.resolver,
-                                              self.tables)
+                                              self.tables, prose=prose)
         finally:
             self.resolver.sticky = {}
         doc, entities, mentions, relations = parse_document_payload(payload, profile)
         doc.profile = profile_tag(profile)
+        incomplete = stats.get("prose_deferred") or (
+            stats["text"] in ("text", "ocr") and stats["llm_errors"])
+        if incomplete:
+            # Stale on purpose: listed for reprocessing until fully read.
+            doc.profile += PARTIAL_SUFFIX
+        doc.content_sha256 = hashlib.sha256(raw).hexdigest()
         with self.cond:
             if self.running and self.running.get("cancelled"):
                 return {"status": "cancelled"}
@@ -251,6 +311,8 @@ class IngestWorker:
         self._saved = len(self.resolver.review)
         status = "done" if stats["text"] in ("text", "ocr") and not stats["llm_errors"] else (
             "partial" if stats["text"] in ("text", "ocr") else stats["text"])
+        if stats.get("prose_deferred"):
+            status = "deferred"
         return {"status": status, "stats": {k: v for k, v in stats.items()
                                             if k != "llm_error_detail"}}
 

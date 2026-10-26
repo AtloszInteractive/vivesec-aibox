@@ -90,3 +90,10 @@ def corpus_id_of_drive(vvs_drive):
     if not root or not root.startswith(norm(DRIVE_PREFIX) + "/"):
         raise ValueError("invalid VVS-Drive: %s" % vvs_drive)
     return corpus_id_of_drive_root(root)
+
+
+def doc_id_of(tenant_id, corpus_id, path):
+    """The doc_id the RAG gives a file (rag_service/store.py `_doc_id`); the graph
+    keeps the same id, so a file the adapter sends itself must carry it too."""
+    raw = "%s\x00%s\x00%s" % (tenant_id, corpus_id, norm(path))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]

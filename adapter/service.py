@@ -124,7 +124,7 @@ import chat_policy
 import storage  # noqa: E402
 import voice  # noqa: E402
 import wsfs  # noqa: E402
-from meta import MetaMirror  # noqa: E402
+from meta import MetaMirror, under as _under_path  # noqa: E402
 
 HOST = os.environ.get("ADAPTER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ADAPTER_PORT", "8080"))
@@ -520,6 +520,39 @@ def _reprocess_fetch(user, path):
 
 
 REPROCESS = reprocess.Reprocessor(GRAPH, GRAPH_FORWARD, _reprocess_fetch)
+# (user, corpus ids, folder) -> (when, {(corpus_id, path)} the graph holds, how
+# many): the reprocessing panel polls every few seconds, the list is the scope.
+_GRAPH_PATHS = {}
+GRAPH_PATHS_TTL = 30.0
+
+
+def _graph_absent(known, req_scope, visible, prefix=""):
+    """Synced files of the scope the graph holds no document for -- the forward
+    queue was full during a large sync, the graph was down, an extraction
+    failed. They go first in a reprocessing run (sorted by path)."""
+    out = []
+    for item in MIRROR.files():
+        path = item["path"]
+        if prefix and not _under_path(path, prefix):
+            continue
+        if os.path.splitext(path)[1].lower() not in graph.GRAPH_EXTS:
+            continue
+        size = item.get("size")
+        if size is not None and (size <= 0 or size > GRAPH_FORWARD.max_file_bytes):
+            continue
+        if not req_scope.contains_path(path) or not visible(path):
+            continue
+        try:
+            corpus_id = corpus.corpus_id_of_path(path)
+        except ValueError:
+            continue
+        if (corpus_id, path) in known:
+            continue
+        out.append({"doc_id": corpus.doc_id_of(TENANT_ID, corpus_id, path),
+                    "corpus_id": corpus_id, "source_path": path, "profile": None,
+                    "absent": True})
+    out.sort(key=lambda d: d["source_path"])
+    return out
 # Who may change the shared graph (merge people, edit the domain profile). Empty:
 # nobody through the UI.
 GRAPH_ADMINS = frozenset(u.strip().casefold() for u in
@@ -2825,20 +2858,48 @@ class Handler(BaseHTTPRequestHandler):
     def _reprocess_source_ready(self):
         return bool(REPROCESS_SOURCE_DIR) or WSFS.connected()
 
+    def _graph_known_paths(self, user, scope_body, prefix, fresh, limit):
+        """{(corpus_id, path)} of the documents the graph holds in this scope (and
+        the /documents/profile answer); None after a refusal was sent. The list is
+        reused per user and scope while the graph's document count stays the same
+        (at most GRAPH_PATHS_TTL seconds)."""
+        key = ((user or "").casefold(), tuple(sorted(scope_body.get("corpus_ids") or [])),
+               prefix)
+        body = dict(scope_body, path_prefix=prefix, limit=limit)
+        cached = _GRAPH_PATHS.get(key)
+        if not fresh and cached and time.time() - cached[0] < GRAPH_PATHS_TTL:
+            res = self._graph_post("/documents/profile", body)
+            if res is None:
+                return None
+            if sum((res.get("counts") or {}).values()) == cached[2]:
+                return cached[1], res
+        res = self._graph_post("/documents/profile", dict(body, with_paths=True))
+        if res is None:
+            return None
+        known = {(c, corpus.norm(p)) for c, p in res.pop("paths", None) or []}
+        if len(_GRAPH_PATHS) > 64:
+            _GRAPH_PATHS.clear()
+        _GRAPH_PATHS[key] = (time.time(), known, sum((res.get("counts") or {}).values()))
+        return known, res
+
     def _graph_reprocess_status(self):
         """Which profile the documents of the caller's scope were extracted with
-        (counts only), and the current or last reprocessing run."""
+        (counts only), how many synced files never reached the graph, and the
+        current or last reprocessing run."""
         ctx = self._graph_request()
         if ctx is None:
             return
         user, _, req_scope, access, scope_body = ctx
-        res = self._graph_post("/documents/profile", dict(scope_body, limit=1))
-        if res is None:
-            return
         visible = _visible(access)
+        got = self._graph_known_paths(user, scope_body, "", fresh=False, limit=1)
+        if got is None:
+            return
+        known, res = got
         self._send(200, {"ok": True, "current": res.get("current"),
                          "counts": res.get("counts") or {},
                          "stale_total": res.get("stale_total", 0),
+                         "partial_total": res.get("partial_total", 0),
+                         "absent_total": len(_graph_absent(known, req_scope, visible)),
                          "can_start": (user or "").casefold() in GRAPH_ADMINS,
                          "source": "local" if REPROCESS_SOURCE_DIR else "ws-fs",
                          "source_ready": self._reprocess_source_ready(),
@@ -2846,8 +2907,9 @@ class Handler(BaseHTTPRequestHandler):
                              lambda p: req_scope.contains_path(p) and visible(p))})
 
     def _graph_reprocess_start(self):
-        """A graph administrator reprocesses the documents of their scope that an
-        older or unknown profile extracted, optionally below one folder."""
+        """A graph administrator sends the documents of their scope through
+        extraction again: first the synced files the graph never got, then those
+        an older or unknown profile extracted; optionally below one folder."""
         ctx = self._graph_request()
         if ctx is None:
             return
@@ -2863,14 +2925,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(503, {"ok": False, "error": "ViVeSecBox not connected: the files "
                                                    "cannot be fetched again"})
             return
-        res = self._graph_post("/documents/profile",
-                               dict(scope_body, path_prefix=prefix, limit=20000))
-        if res is None:
+        got = self._graph_known_paths(user, scope_body, prefix, fresh=True, limit=20000)
+        if got is None:
             return
+        known, res = got
         visible = _visible(access)
-        docs = [d for d in res.get("stale") or []
-                if req_scope.contains_path(d.get("source_path") or "")
-                and visible(d.get("source_path") or "")]
+        docs = _graph_absent(known, req_scope, visible, prefix) + [
+            d for d in res.get("stale") or []
+            if req_scope.contains_path(d.get("source_path") or "")
+            and visible(d.get("source_path") or "")]
         try:
             run = REPROCESS.start(user, docs, res.get("current"), prefix)
         except reprocess.ReprocessError as e:

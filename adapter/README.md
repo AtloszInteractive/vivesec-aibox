@@ -435,10 +435,17 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   count as stale too; empty for documents from
   before this was recorded). `POST /api/v1/ui/graph/reprocess/status` gives the
   caller's view: current profile, counts per profile, `stale_total` (older or
-  unknown), `can_start`, the file `source` (`ws-fs` or `local`) and the current or
-  last run. `/reprocess/start {path_prefix?}` (graph administrators; the folder
-  must be inside the scope) re-reads the stale documents the administrator may
-  see: each file is fetched again -- from the ViVeSecBox over ws-fs as that
+  unknown), `partial_total` (of those: read without the language model, see
+  below), `absent_total` (synced files of the caller's view the graph holds no
+  document for -- a full forward queue during a large sync, the graph down, a
+  failed extraction; the adapter's metadata mirror compared with the graph's
+  paths, cached per user and scope while the graph's document count is
+  unchanged, at most 30 s), `can_start`, the file `source` (`ws-fs` or `local`)
+  and the current or last run. `/reprocess/start {path_prefix?}` (graph
+  administrators; the folder must be inside the scope) re-reads, in this order,
+  the absent files, the partial documents and the other stale ones the
+  administrator may see (an absent file is sent with the RAG's doc_id,
+  `corpus.doc_id_of`): each file is fetched again -- from the ViVeSecBox over ws-fs as that
   administrator, or from `ADAPTER_REPROCESS_SOURCE_DIR` on a development box --
   only when the forwarder and the graph queue are empty, and handed to the
   forwarder like a synced file (its current ACL applies). A file gone from the
@@ -448,8 +455,20 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   to the same, merge-followed ids first, unless the document now conflicts), so
   merge and keep-apart decisions survive. The UI shows this under
   Relationships › Processing. Tests: `reprocess_test`, `graph_integration_test`
-  (`test_a_profile_change_is_reprocessed_from_the_file_source`), graph side
+  (`test_a_profile_change_is_reprocessed_from_the_file_source`,
+  `test_synced_files_the_graph_never_got_are_caught_up`), graph side
   `ingest_jobs_test`.
+- **Incremental extraction** (graph side): a file sent again with the same
+  content (SHA-256, kept per document) and already extracted with the current
+  profile is not extracted again -- a drive re-sync costs no model time; an ACL
+  sent with it is applied. While more than `GRAPH_DEFER_PROSE_QUEUE` documents
+  (default 50) wait, the next ones get rules, tables and forms only, with the
+  profile tag `<tag>/partial`: the queue drains in seconds per file instead of
+  holding raw files in memory for hours, and those documents count as stale
+  until a reprocessing run fetches them again for the running text. A document
+  whose model call failed is tagged partial too. Starting such a run is manual
+  (graph administrator); running it unattended needs an identity allowed to
+  fetch files from the ViVeSecBox -- a customer decision.
 - **Places inside places** (profile `entity_subtypes[].within`, in `bv` from
   version 3: a cell is within an institution): such a place's identity includes
   its container, so cell 102 of two prisons are two places. The container is the
