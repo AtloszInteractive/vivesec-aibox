@@ -453,7 +453,8 @@ class IngestWorker:
                 if node is None or not names:
                     continue
                 tomb = self._mirror().entities.get(pair[0])
-                entry.update(a_label=names.most_common(1)[0][0], b_label=node["label"],
+                entry.update(a_label=min(names, key=lambda n: (-names[n], n)),
+                             b_label=node["label"],
                              survivor=survivor,
                              undoable=bool(record) and tomb is not None
                              and tomb.status == "merged" and self._survivor(pair[0]) == survivor)

@@ -125,10 +125,17 @@ REVIEW = [{"a": A2, "b": A, "score": 0.7, "reason": "same name", "doc_id": "p4",
            "names": ["Kiss Ádám"]}]
 
 
-def build(store, docs, merge=False):
+def build(store, docs, merge=False, worker=True):
+    """A graph of `docs` with the review list (and a keep-apart decision) of the
+    people in it; merge: A2 folded into A. Without a worker (Neo4j read
+    directly cannot host ingestion) the merge is the store's own."""
     state = service.State(store, PROFILE)
     for body in docs:
         service.handle_post(state, "/graph/document/put", copy.deepcopy(body))
+    if not worker:
+        if merge:
+            store.merge_entities(A, A2)
+        return state
     state.worker = IngestWorker(state, FakeLLM())
     ids = getattr(store, "mirror", store).entities
     state.worker.resolver.review.extend(dict(i) for i in REVIEW if i["a"] in ids and i["b"] in ids)
@@ -206,6 +213,12 @@ def first_difference(got, want):
 
 
 class LeakageTest(unittest.TestCase):
+    with_worker = True
+    skip_paths = frozenset()
+
+    def requests(self):
+        return [(p, b) for p, b in requests() if p not in self.skip_paths]
+
     def make_store(self):
         return MemoryGraphStore()
 
@@ -214,19 +227,19 @@ class LeakageTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.oracle = build(MemoryGraphStore(), PUBLIC)
-        cls.oracle_merged = build(MemoryGraphStore(), PUBLIC, merge=True)
+        cls.oracle = build(MemoryGraphStore(), PUBLIC, worker=cls.with_worker)
+        cls.oracle_merged = build(MemoryGraphStore(), PUBLIC, merge=True, worker=cls.with_worker)
 
     def setUp(self):
         self.store = self.make_store()
-        self.full = build(self.store, PUBLIC + HIDDEN)
+        self.full = build(self.store, PUBLIC + HIDDEN, worker=self.with_worker)
 
     def tearDown(self):
         self.close_store(self.store)
 
     def assert_no_leak(self, full, oracle):
         leaks, shown = [], set()
-        for path, body in requests():
+        for path, body in self.requests():
             got = answer(full, path, body, LARS, ["c1"])
             want = answer(oracle, path, body, LARS, ["c1"])
             if got != want:
@@ -243,30 +256,35 @@ class LeakageTest(unittest.TestCase):
         # A2 (public only) folded into A (public and hidden documents).
         self.close_store(self.store)
         self.store = self.make_store()
-        self.assert_no_leak(build(self.store, PUBLIC + HIDDEN, merge=True), self.oracle_merged)
+        self.assert_no_leak(build(self.store, PUBLIC + HIDDEN, merge=True,
+                                  worker=self.with_worker), self.oracle_merged)
 
     def test_the_same_holds_across_drives_for_a_caller_who_may_read_everything(self):
         # hanna reads every c1 document; c2 stays out of a c1 scope.
-        full_c1 = build(MemoryGraphStore(), PUBLIC + HIDDEN[:-1])
-        for path, body in requests():
+        full_c1 = build(MemoryGraphStore(), PUBLIC + HIDDEN[:-1], worker=self.with_worker)
+        for path, body in self.requests():
             self.assertEqual(answer(full_c1, path, body, HANNA, ["c1"]),
                              answer(self.full, path, body, HANNA, ["c1"]), (path, body))
 
     def test_the_hidden_documents_matter_to_a_caller_who_may_read_them(self):
-        differs = {path for path, body in requests()
+        differs = {path for path, body in self.requests()
                    if answer(self.full, path, body, HANNA, ["c1"])
                    != answer(self.oracle, path, body, HANNA, ["c1"])}
         expected = {"/query/" + q for q in (
             "find", "mentioned", "entity", "copresence", "timeline", "neighborhood", "path",
             "common", "shared", "communities", "ranking", "match", "aggregate", "sequence")}
-        expected |= {"/documents/profile", "/review/list", "/review/history"}
-        self.assertEqual(set(), expected - differs)
+        expected.add("/documents/profile")
+        if self.with_worker:
+            expected |= {"/review/list", "/review/history"}
+        self.assertEqual(set(), expected - self.skip_paths - differs)
 
     def test_empty_scope_and_unknown_drive_see_nothing(self):
         for corpora in ([], ["c9"]):
             out = json.loads(answer(self.full, "/query/ranking", {"types": list(TYPES)}, HANNA,
                                     corpora))
             self.assertEqual([], out["ranking"])
+            if "/documents/profile" in self.skip_paths:
+                continue
             out = json.loads(answer(self.full, "/documents/profile", {"with_paths": True}, HANNA,
                                     corpora))
             self.assertEqual(({}, []), (out["counts"], out["paths"]))

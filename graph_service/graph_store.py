@@ -32,10 +32,15 @@ def _rel_key(r: Relation) -> tuple:
     return (r.type, a, b, r.start or "", r.end or "")
 
 
+def _most_common(counts: Counter) -> str:
+    """The most frequent value; a tie goes by name, not by storage order."""
+    return min(counts, key=lambda v: (-counts[v], v))
+
+
 def _visible_subtype(attrs) -> str:
     """The subtype most of the given (visible) documents give; ties by name."""
     counts = Counter(a.value for a in attrs if a.name == SUBTYPE_ATTR)
-    return min(counts, key=lambda s: (-counts[s], s)) if counts else ""
+    return _most_common(counts) if counts else ""
 
 
 def with_subtype_attribute(doc_id: str, entities: list[Entity]) -> list[Entity]:
@@ -351,12 +356,12 @@ class GraphView:
             return None
         surfaces = Counter(m.text for m in mentions)
         name = [a.value for a in attrs if a.name == "name"]
-        label = surfaces.most_common(1)[0][0] if surfaces else (name[0] if name else e.id)
+        label = _most_common(surfaces) if surfaces else (name[0] if name else e.id)
         within = Counter(a.value for a in attrs if a.name == "within")
         if within:
             # "102. számú zárka (Kőhegyi Intézet)": the container, as a visible
             # document names it, tells apart places that share a name.
-            label = "%s (%s)" % (label, within.most_common(1)[0][0])
+            label = "%s (%s)" % (label, _most_common(within))
         elif "@doc:" in e.id:
             # A document-local place or thing ("101. számú zárka" of a list that
             # names no institution): its document tells it apart.
@@ -370,7 +375,9 @@ class GraphView:
                 "aliases": sorted(surfaces), "mentions": len(mentions),
                 "documents": sorted({m.doc_id for m in mentions} | {a.doc_id for a in attrs}),
                 "attributes": [{"name": a.name, "value": a.value, "doc_id": a.doc_id,
-                                "page": a.page} for a in attrs if a.name != SUBTYPE_ATTR]}
+                                "page": a.page}
+                               for a in sorted(attrs, key=lambda a: (a.name, a.value, a.doc_id))
+                               if a.name != SUBTYPE_ATTR]}
 
     def node(self, eid: str) -> dict | None:
         if eid not in self._node_cache:

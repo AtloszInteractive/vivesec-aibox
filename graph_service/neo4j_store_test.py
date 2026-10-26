@@ -125,6 +125,10 @@ class Neo4jStoreTest(unittest.TestCase):
 class Neo4jLeakageTest(leakage_test.LeakageTest):
     """The full graph in Neo4j (Cypher reads), the oracle in memory."""
 
+    with_worker = False  # ingestion needs the read cache
+    # Answered from the read cache only (no cache: no ingestion, no reprocessing).
+    skip_paths = frozenset({"/documents/profile"})
+
     def make_store(self):
         return neo4j_store()
 
