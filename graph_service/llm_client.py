@@ -20,6 +20,11 @@ class LLMError(RuntimeError):
     pass
 
 
+class LLMTruncated(LLMError):
+    """The reply ran into max_tokens. Not retried: at temperature 0 the same
+    input runs into it again; a shorter input (half the excerpt) may not."""
+
+
 class LLMClient:
     def __init__(self, api: str | None = None, url: str | None = None, model: str | None = None,
                  timeout: float | None = None, num_ctx: int | None = None,
@@ -52,6 +57,8 @@ class LLMClient:
         for attempt in range(retries + 1):
             try:
                 return self._json_call(system, user, schema, max_tokens)
+            except LLMTruncated:
+                raise
             except LLMError:
                 if attempt == retries:
                     raise
@@ -97,6 +104,8 @@ class LLMClient:
                                           max_tokens=max_tokens, ok=payload is not None))
         content = payload["message"]["content"] if self.api == "ollama" \
             else payload["choices"][0]["message"]["content"]
+        if usage.get("truncated"):
+            raise LLMTruncated("model reply cut off at %d tokens" % max_tokens)
         try:
             return json.loads(content)
         except ValueError:

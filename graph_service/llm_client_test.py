@@ -7,7 +7,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from llm_client import LLMClient, LLMError  # noqa: E402
+from llm_client import LLMClient, LLMError, LLMTruncated  # noqa: E402
 
 
 class _Resp(io.BytesIO):
@@ -44,13 +44,20 @@ class LLMClientUsageTest(unittest.TestCase):
         self.assertEqual(llm.call_log[0]["input_chars"], len("sys") + len("user"))
         self.assertTrue(all(c["ok"] for c in llm.call_log))
 
-    def test_truncated_reply_is_counted_on_every_attempt(self):
+    def test_truncated_reply_is_counted_and_not_retried(self):
         llm = LLMClient(api="ollama", url="http://x", model="m", num_ctx=1024)
         cut = lambda *a, **k: ollama_reply('{"entities": [', done_reason="length")  # noqa: E731
         with mock.patch("urllib.request.urlopen", side_effect=cut):
-            with self.assertRaises(LLMError):
+            with self.assertRaises(LLMTruncated):
                 llm.json_call("sys", "user", {}, retries=1)
-        self.assertEqual((llm.calls, llm.truncated, llm.output_tokens), (2, 2, 600))
+        self.assertEqual((llm.calls, llm.truncated, llm.output_tokens), (1, 1, 300))
+
+    def test_other_failures_are_retried(self):
+        llm = LLMClient(api="ollama", url="http://x", model="m", num_ctx=1024)
+        replies = [ollama_reply("not json"), ollama_reply('{"ok": 1}')]
+        with mock.patch("urllib.request.urlopen", side_effect=replies):
+            self.assertEqual({"ok": 1}, llm.json_call("sys", "user", {}, retries=1))
+        self.assertEqual(2, llm.calls)
 
     def test_failed_call_counts_time_but_no_tokens(self):
         import urllib.error

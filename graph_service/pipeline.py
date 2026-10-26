@@ -6,9 +6,9 @@ import os
 import re
 import time
 
-from extraction import (LocalEntity, LocalRelation, chunk_pages, co_mentions, find_identifiers,
-                        fold, llm_extract, squash)
-from llm_client import LLMError
+from extraction import (Chunk, LocalEntity, LocalRelation, chunk_pages, co_mentions,
+                        find_identifiers, fold, llm_extract, squash)
+from llm_client import LLMError, LLMTruncated
 from table_mapping import apply_mapping, blank_tables, find_form, find_tables, form_spans
 from text_source import document_pages
 
@@ -23,6 +23,49 @@ LLM_COUNTERS = ("calls", "seconds", "prompt_tokens", "output_tokens", "prompt_se
 
 def _llm_counters(llm) -> dict:
     return {k: getattr(llm, k, 0) for k in LLM_COUNTERS}
+
+
+# How many times an excerpt whose reading ran into the output limit is halved.
+MAX_SPLITS = 2
+
+
+def _halves(chunk: Chunk) -> list[Chunk]:
+    """The excerpt cut in two at the line nearest its middle ([] for one line)."""
+    lines = chunk.text.split("\n")
+    if len(lines) < 2:
+        return []
+    total, pos, best = len(chunk.text), 0, None
+    for i in range(1, len(lines)):
+        pos += len(lines[i - 1]) + 1
+        if best is None or abs(pos - total / 2) < abs(best[1] - total / 2):
+            best = (i, pos)
+    i, cut = best
+    return [Chunk(chunk.page, chunk.offset, "\n".join(lines[:i])),
+            Chunk(chunk.page, chunk.offset + cut, "\n".join(lines[i:]))]
+
+
+def _llm_error(stats: dict, error: Exception) -> None:
+    stats["llm_errors"] += 1
+    stats.setdefault("llm_error_detail", []).append(str(error)[:200])
+
+
+def _read_chunk(chunk: Chunk, profile: dict, llm, title: str, stats: dict, depth: int = 0
+                ) -> list[tuple[list, list]]:
+    """The model's reading of an excerpt (failures counted in stats). A reply cut
+    off at the output limit (a long register, or the model repeating itself) is
+    not retried as it was: each half of the excerpt is read on its own instead."""
+    try:
+        return [llm_extract(chunk, profile, llm, title)]
+    except LLMTruncated as e:
+        halves = [h for h in _halves(chunk) if len(h.text.strip()) >= MIN_PROSE_CHARS]
+        if depth < MAX_SPLITS and len(halves) == 2:
+            stats["llm_splits"] = stats.get("llm_splits", 0) + 1
+            return [part for half in halves
+                    for part in _read_chunk(half, profile, llm, title, stats, depth + 1)]
+        _llm_error(stats, e)
+    except LLMError as e:
+        _llm_error(stats, e)
+    return []
 
 
 class _Union:
@@ -233,11 +276,7 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
         stats["prose_deferred"] = len(chunks)
         chunks = []
     for chunk in chunks:
-        try:
-            results.append(llm_extract(chunk, profile, llm, meta.get("title", "")))
-        except LLMError as e:
-            stats["llm_errors"] += 1
-            stats.setdefault("llm_error_detail", []).append(str(e)[:200])
+        results += _read_chunk(chunk, profile, llm, meta.get("title", ""), stats)
     ents, rels = _consolidate(results, id_hits)
     spans = _spans(pages, ents)
     ents = {ref: e for ref, e in ents.items() if ref in spans}
