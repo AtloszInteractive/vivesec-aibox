@@ -11,6 +11,7 @@ something no document says.
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -21,6 +22,10 @@ from model import CORE_TYPES
 MAX_CHUNK_CHARS = 3000
 TABLE_ROWS_PER_CHUNK = 15
 ATTRIBUTE_KEYS = ("birth_date", "birth_place", "mother_name", "id_number", "registry_number")
+
+# Ask for minified JSON: indentation was a third of what the model wrote, and
+# on the synthetic corpus the minified run was 38% faster with no loss in recall.
+COMPACT = os.environ.get("GRAPH_EXTRACT_COMPACT", "on").strip().lower() != "off"
 
 
 def fold(text: str) -> str:
@@ -136,7 +141,7 @@ def _schema(profile: dict) -> dict:
         "relations": {"type": "array", "items": relation}}, "required": ["entities", "relations"]}
 
 
-def _system_prompt(profile: dict) -> str:
+def _system_prompt(profile: dict, compact: bool = False) -> str:
     subtypes = "; ".join("%s (%s)" % (s["id"], s["type"]) for s in profile["entity_subtypes"])
     rels = "\n".join(relation_line(r)
                      for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
@@ -163,6 +168,7 @@ def _system_prompt(profile: dict) -> str:
         "When a sentence refers back to a named person ('nevezett', 'the inmate'), attach the "
         "relation to that named person.\n"
         "Never add a relation the excerpt does not state. Return JSON only."
+        + (" Write it minified on one line: no line breaks, no indentation." if compact else "")
     )
 
 
@@ -177,10 +183,12 @@ def _dates_in(text: str) -> set[str]:
     return out
 
 
-def llm_extract(chunk: Chunk, profile: dict, llm, doc_title: str = "") -> tuple[list, list]:
+def llm_extract(chunk: Chunk, profile: dict, llm, doc_title: str = "",
+                compact: bool | None = None) -> tuple[list, list]:
     """Validated (entities, relations) of one chunk; refs are chunk-local."""
+    compact = COMPACT if compact is None else compact
     user = "Document: %s\n---\n%s\n---" % (doc_title, chunk.text)
-    raw = llm.json_call(_system_prompt(profile), user, _schema(profile), max_tokens=8192)
+    raw = llm.json_call(_system_prompt(profile, compact), user, _schema(profile), max_tokens=8192)
     text_folded = fold(chunk.text)
     dates = _dates_in(chunk.text)
     subtypes = {s["id"]: s["type"] for s in profile["entity_subtypes"]}

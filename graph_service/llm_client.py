@@ -2,7 +2,7 @@
 
 Two wire formats, chosen by GRAPH_LLM_API, so the same pipeline runs against
 the shared Ollama (default) or a vLLM server (OpenAI-compatible):
-  ollama  POST {GRAPH_LLM_URL}/api/chat              think:false, format:<schema>
+  ollama  POST {GRAPH_LLM_URL}/api/chat              think (GRAPH_LLM_THINK), format:<schema>
   openai  POST {GRAPH_LLM_URL}/v1/chat/completions   response_format json_schema
 On the appliance GRAPH_LLM_URL points at the adapter's GPU broker, not at the
 model server directly, so extraction queues behind interactive chat.
@@ -22,7 +22,8 @@ class LLMError(RuntimeError):
 
 class LLMClient:
     def __init__(self, api: str | None = None, url: str | None = None, model: str | None = None,
-                 timeout: float | None = None, num_ctx: int | None = None):
+                 timeout: float | None = None, num_ctx: int | None = None,
+                 think: bool | None = None):
         self.api = (api or os.environ.get("GRAPH_LLM_API", "ollama")).strip().lower()
         if self.api not in ("ollama", "openai"):
             raise ValueError("GRAPH_LLM_API must be ollama or openai")
@@ -30,6 +31,10 @@ class LLMClient:
         self.model = model or os.environ.get("GRAPH_LLM_MODEL", "qwen3.6:35b")
         self.timeout = float(timeout or os.environ.get("GRAPH_LLM_TIMEOUT", "600"))
         self.num_ctx = int(num_ctx or os.environ.get("GRAPH_LLM_NUM_CTX", "16384"))
+        # Reasoning before the answer: off unless GRAPH_LLM_THINK=on (it multiplies the
+        # tokens generated, and generation is nearly all of the extraction time).
+        self.think = (think if think is not None else
+                      os.environ.get("GRAPH_LLM_THINK", "off").strip().lower() == "on")
         self.calls = 0
         self.seconds = 0.0
         # What the model server reports (Ollama: *_count, *_duration; OpenAI: usage).
@@ -55,8 +60,8 @@ class LLMClient:
         messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
         if self.api == "ollama":
             path = "/api/chat"
-            body = {"model": self.model, "messages": messages, "stream": False, "think": False,
-                    "format": schema,
+            body = {"model": self.model, "messages": messages, "stream": False,
+                    "think": self.think, "format": schema,
                     "options": {"temperature": 0, "num_ctx": self.num_ctx,
                                 "num_predict": max_tokens}}
         else:
@@ -65,7 +70,7 @@ class LLMClient:
                     "max_tokens": max_tokens,
                     "response_format": {"type": "json_schema",
                                         "json_schema": {"name": "extraction", "schema": schema}},
-                    "chat_template_kwargs": {"enable_thinking": False}}
+                    "chat_template_kwargs": {"enable_thinking": self.think}}
         req = urllib.request.Request(self.url + path, data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json"}, method="POST")
         started = time.time()

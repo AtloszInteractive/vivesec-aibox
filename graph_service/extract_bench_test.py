@@ -72,6 +72,8 @@ class ExtractBenchTest(unittest.TestCase):
         self.assertEqual(len(records), 3)
         for r in records:
             self.assertIsNone(r["error"])
+            self.assertTrue(r["payload"]["relations"])
+            self.assertEqual(r["config"]["compact"], True)
             self.assertEqual(r["stats"]["llm_calls"], 1)
             self.assertEqual(r["stats"]["llm_output_tokens"], 300)
             self.assertEqual(r["stats"]["llm_prompt_tokens"], 1200)
@@ -84,7 +86,21 @@ class ExtractBenchTest(unittest.TestCase):
         text = printed.getvalue()
         self.assertIn("## baseline", text)
         self.assertIn("| jelentesek/feljegyzesek/*.txt | 2 / 3 |", text)
-        self.assertIn("1000 documents in one queue", text)
+        fixed = os.path.join(self.tmp.name, "fixed.jsonl")
+        with io.open(fixed, "w", encoding="utf-8") as f:
+            for i, r in enumerate(records):
+                f.write(json.dumps(dict(r, wall=10.0, started_at=10.0 * i,
+                                        finished_at=10.0 * i + 10), ensure_ascii=False) + "\n")
+        self.assertIn("10.0 s/document, 360 documents/hour; 1000 documents in one queue: 0.1 days",
+                      extract_bench.report([fixed], 1000))
+        # Three documents of 10 s each, all in flight at once: 3.3 s each in effect.
+        with io.open(fixed, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(dict(r, wall=10.0, started_at=0.0, finished_at=10.0),
+                                   ensure_ascii=False) + "\n")
+        overall = extract_bench.summarize(extract_bench._load(fixed))["overall"]
+        self.assertAlmostEqual(overall["overlap"], 3.0)
+        self.assertAlmostEqual(overall["effective_s"], 10.0 / 3)
 
         # A second run resumes: nothing left to do, no model call.
         with mock.patch("urllib.request.urlopen", side_effect=AssertionError("no call")), \
@@ -92,6 +108,16 @@ class ExtractBenchTest(unittest.TestCase):
             extract_bench.main(argv)
         report = extract_bench.report([out, out])
         self.assertIn("## Comparison (mean s/document)", report)
+
+    def test_kinds_filter(self):
+        out = os.path.join(self.tmp.name, "only.jsonl")
+        with mock.patch("urllib.request.urlopen", side_effect=scripted), \
+                redirect_stdout(io.StringIO()):
+            extract_bench.main(["--source", self.src, "--out", out, "--profile", "bv",
+                                "--per-kind", "0", "--kinds", "egyeb/*.txt", "--parallel", "3",
+                                "--llm-url", "http://model"])
+        with io.open(out, encoding="utf-8") as f:
+            self.assertEqual(["egyeb/x.txt"], [json.loads(line)["path"] for line in f])
 
 
 if __name__ == "__main__":

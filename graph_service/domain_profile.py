@@ -67,8 +67,9 @@ SCOPED_TYPES = ("place", "organization")
 # Raised when extraction itself changes what it produces from the same text (not
 # the profile): documents extracted before then count as stale and can be
 # reprocessed. 2: places scoped by their container, common nouns kept local;
-# 3: also common nouns with digits (an untyped "102. számú zárka").
-EXTRACTOR_REVISION = 3
+# 3: also common nouns with digits (an untyped "102. számú zárka");
+# 4: "Label: value" forms read by a learnt mapping, minified model output.
+EXTRACTOR_REVISION = 4
 
 
 def profile_tag(profile: dict) -> str:
@@ -225,7 +226,9 @@ def validate(raw: dict) -> dict:
         where = "table_mappings.%s" % name
         if not isinstance(m, dict):
             raise ProfileError("%s must be an object" % where)
-        _keys(m, ("header", "columns", "relations"), where)
+        _keys(m, ("header", "columns", "relations", "form"), where)
+        if not isinstance(m.get("form", False), bool):
+            raise ProfileError("%s.form must be true or false" % where)
         header = m.get("header")
         if not isinstance(header, list) or not header or not all(
                 isinstance(h, str) and h.strip() for h in header):
@@ -247,6 +250,8 @@ def validate(raw: dict) -> dict:
                 raise ProfileError("%s.relations: unknown type or column" % where)
             relations.append(dict(r))
         pinned[name] = {"header": list(header), "columns": columns, "relations": relations}
+        if m.get("form"):
+            pinned[name]["form"] = True
     if pinned:
         out["table_mappings"] = pinned
     return out

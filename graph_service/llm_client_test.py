@@ -71,6 +71,19 @@ class LLMClientUsageTest(unittest.TestCase):
             llm.json_call("s", "u", {})
         self.assertEqual((llm.prompt_tokens, llm.output_tokens, llm.truncated), (10, 4, 0))
 
+    def test_think_is_off_unless_asked_for(self):
+        sent = []
+
+        def capture(req, timeout=None):
+            sent.append(json.loads(req.data.decode("utf-8")))
+            return ollama_reply("{}")
+        with mock.patch("urllib.request.urlopen", side_effect=capture):
+            with mock.patch.dict(os.environ, {"GRAPH_LLM_THINK": "maybe"}):
+                LLMClient(api="ollama", url="http://x", model="m", num_ctx=1).json_call("s", "u", {})
+            LLMClient(api="ollama", url="http://x", model="m", num_ctx=1,
+                      think=True).json_call("s", "u", {})
+        self.assertEqual([False, True], [b["think"] for b in sent])
+
 
 if __name__ == "__main__":
     unittest.main()

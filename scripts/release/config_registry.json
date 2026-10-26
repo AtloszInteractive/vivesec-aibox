@@ -2597,6 +2597,57 @@
       "internal": false
     },
     {
+      "name": "GRAPH_LLM_THINK",
+      "component": "graph",
+      "category": "model",
+      "type": "enum",
+      "default": "off",
+      "allowed": "on | off",
+      "fail_safe": "Anything but on is off: extraction answers without a reasoning pass.",
+      "impact": "Lets the extraction model reason before answering. Generation is nearly all of the extraction time, and reasoning multiplies the tokens generated.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "on",
+        "off"
+      ]
+    },
+    {
+      "name": "GRAPH_EXTRACT_COMPACT",
+      "component": "graph",
+      "category": "model",
+      "type": "enum",
+      "default": "on",
+      "allowed": "on | off",
+      "fail_safe": "Only off turns it off; the answer is parsed the same way either way.",
+      "impact": "Asks the extraction model for minified JSON. Indentation was a third of its output; minified was 38% faster on the synthetic corpus with no loss in recall.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "on",
+        "off"
+      ]
+    },
+    {
+      "name": "GRAPH_EXTRACT_FORMS",
+      "component": "graph",
+      "category": "model",
+      "type": "enum",
+      "default": "on",
+      "allowed": "on | off",
+      "fail_safe": "Only off turns it off. A page counts as a form only with 3+ distinct labels making up 40%+ of its lines; anything else, and every field the mapping ignores, still goes to the model.",
+      "impact": "Reads \"Label: value\" forms (intake sheets) by a mapping the model gives once per layout, like tables; the person's name and unmapped lines stay with the model.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "on",
+        "off"
+      ]
+    },
+    {
       "name": "GRAPH_OCR",
       "component": "graph",
       "category": "files",

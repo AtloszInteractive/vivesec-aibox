@@ -6,7 +6,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import domain_profile  # noqa: E402
 import pipeline  # noqa: E402
-from extraction import Chunk, LocalEntity, chunk_pages, co_mentions, find_identifiers, llm_extract  # noqa: E402
+from extraction import (Chunk, LocalEntity, chunk_pages, co_mentions, find_identifiers,  # noqa: E402
+                        llm_extract)
 from resolution import Resolver  # noqa: E402
 
 PROFILE = domain_profile.load("bv")
@@ -72,6 +73,25 @@ class LlmValidationTest(unittest.TestCase):
             [{"type": "BRIBED", "from": "a", "to": "b",
               "quote": "Kovács János és Nagy Éva találkozott."}]))
         self.assertEqual([], rels)
+
+
+class CompactOutputTest(unittest.TestCase):
+    """GRAPH_EXTRACT_COMPACT: the model is asked for minified JSON (on by default)."""
+
+    def test_prompt_asks_for_minified_json_unless_switched_off(self):
+        llm = SpyLLM()
+        llm_extract(Chunk(1, 0, TEXT), PROFILE, llm)
+        self.assertIn("minified", llm.system)
+        llm_extract(Chunk(1, 0, TEXT), PROFILE, llm, compact=False)
+        self.assertNotIn("minified", llm.system)
+        self.assertIn(TEXT, llm.user)
+        self.assertIn("quote", llm.schema["properties"]["relations"]["items"]["required"])
+
+
+class SpyLLM(FakeLLM):
+    def json_call(self, system, user, schema, max_tokens=4096, retries=1):
+        self.system, self.user, self.schema = system, user, schema
+        return super().json_call(system, user, schema, max_tokens, retries)
 
 
 class RulesAndChunksTest(unittest.TestCase):
