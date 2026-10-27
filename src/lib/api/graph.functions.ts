@@ -2,7 +2,14 @@
 // Plain async functions like rag.functions.ts: the embedded UI reaches the
 // adapter through the ViVeSecBox tunnel, never through framework routes.
 
-import { adapterGraph, AdapterGraphError } from "../rag/adapter-client";
+import {
+  adapterGraph,
+  AdapterGraphError,
+  adapterSkipped,
+  type AdapterSkipped,
+} from "../rag/adapter-client";
+
+export type IndexSkipped = AdapterSkipped;
 
 export type GraphEntityType =
   | "person"
@@ -84,6 +91,28 @@ export type GraphReviewItem = {
   b_label?: string;
 };
 
+export type GraphReviewList = {
+  review: GraphReviewItem[];
+  /** After the name and reason filters. */
+  total: number;
+  /** Every open pair in the caller's scope. */
+  open_total: number;
+  reasons: Record<string, number>;
+};
+
+export type GraphReviewDecision = {
+  a: string;
+  b: string;
+  decision: "merge" | "separate";
+  by: string;
+  at: number | null;
+  score: number | null;
+  reason: string;
+  a_label: string;
+  b_label: string;
+  undoable: boolean;
+};
+
 export type GraphStatus = {
   queued: number;
   busy: boolean;
@@ -101,10 +130,17 @@ export type GraphStatus = {
 };
 
 /** Why a graph call failed, as the UI shows it. */
-export type GraphFailure = "disabled" | "extraction_off" | "forbidden" | "syncing" | "error";
+export type GraphFailure =
+  | "disabled"
+  | "extraction_off"
+  | "forbidden"
+  | "syncing"
+  | "purpose"
+  | "error";
 
 export function graphFailure(err: unknown): GraphFailure {
   if (err instanceof AdapterGraphError) {
+    if (err.status === 428) return "purpose";
     if (err.status === 403) return "forbidden";
     if (err.status === 503 && /synchronis/i.test(err.message)) return "syncing";
     if (err.status === 503 && /extraction/i.test(err.message)) return "extraction_off";
@@ -139,14 +175,34 @@ export const graphApi = {
   timeline: (drive: string, id: string) =>
     query<{ timeline: GraphTimelineItem[] }>(drive, "timeline", { id }),
   status: (drive: string) => adapterGraph<GraphStatus>("status", {}, drive),
-  reviewList: (drive: string) =>
-    adapterGraph<{ review: GraphReviewItem[]; total: number }>(
-      "review/list",
-      { limit: 200 },
-      drive,
-    ),
+  /** E10b: what the search cannot read in this scope (not a graph call). */
+  skipped: (drive: string) => adapterSkipped(drive),
+  reviewList: (drive: string, filter: { q?: string; reason?: string; offset?: number } = {}) =>
+    adapterGraph<GraphReviewList>("review/list", { limit: 200, ...filter }, drive),
   reviewDecide: (drive: string, a: string, b: string, decision: "merge" | "separate") =>
     adapterGraph<{ decided: string }>("review/decide", { a, b, decision }, drive),
+  reviewDecideMany: (
+    drive: string,
+    pairs: { a: string; b: string }[],
+    decision: "merge" | "separate",
+  ) =>
+    adapterGraph<{
+      decided: string;
+      done: number;
+      skipped: { a: string; b: string; error: string }[];
+    }>("review/decide", { pairs, decision }, drive),
+  reviewHistory: (drive: string, offset = 0) =>
+    adapterGraph<{ history: GraphReviewDecision[]; total: number; can_undo: boolean }>(
+      "review/history",
+      { limit: 100, offset },
+      drive,
+    ),
+  reviewUndo: (drive: string, a: string, b: string) =>
+    adapterGraph<{ undone: string; documents: number; failed: unknown[] }>(
+      "review/undo",
+      { a, b },
+      drive,
+    ),
   profile: (drive: string) =>
     adapterGraph<{ profile: GraphProfile; templates: unknown[]; can_edit: boolean }>(
       "profile/get",
@@ -157,6 +213,46 @@ export const graphApi = {
     adapterGraph<{ profile: GraphProfile }>("profile/set", { profile }, drive),
   dossier: (drive: string, id: string, format: "docx" | "pdf", lang: string) =>
     adapterGraph<GraphDossier>("dossier", { id, format, lang }, drive),
+  reprocessStatus: (drive: string) =>
+    adapterGraph<GraphReprocessStatus>("reprocess/status", {}, drive),
+  reprocessStart: (drive: string, pathPrefix: string) =>
+    adapterGraph<{ run: GraphReprocessRun }>(
+      "reprocess/start",
+      { path_prefix: pathPrefix || undefined },
+      drive,
+    ),
+  reprocessCancel: (drive: string) =>
+    adapterGraph<{ run: GraphReprocessRun }>("reprocess/cancel", {}, drive),
+};
+
+/** A reprocessing run after a profile change (adapter/reprocess.py). */
+export type GraphReprocessRun = {
+  state: "idle" | "running" | "done" | "cancelled" | "failed";
+  started_by?: string;
+  profile?: string;
+  path_prefix?: string | null;
+  total?: number;
+  done?: number;
+  sent?: number;
+  missing?: number;
+  failed?: number;
+  current?: string;
+  error?: string | null;
+};
+
+/** Which profile the documents of this scope were extracted with, and how many
+ *  synced files never reached the graph (a reprocessing run sends them first). */
+export type GraphReprocessStatus = {
+  current: string;
+  counts: Record<string, number>;
+  stale_total: number;
+  /** Of stale_total: read without the language model during a long queue. */
+  partial_total?: number;
+  absent_total: number;
+  can_start: boolean;
+  source: "local" | "ws-fs";
+  source_ready: boolean;
+  run: GraphReprocessRun;
 };
 
 /** A rendered entity dossier: the file (base64) and its markdown source. */

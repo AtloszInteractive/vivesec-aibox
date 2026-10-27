@@ -237,6 +237,7 @@ def timeline(view, eid: str, date_from: str | None = None, date_to: str | None =
         if date_from and (e["end"] or e["start"]) < date_from or date_to and e["start"] > date_to:
             continue
         events.append({"date": e["start"], "end": e["end"], "type": e["type"],
+                       "a": e["a"], "b": e["b"],
                        "other": view.node(_other(e, eid)), "evidence": e["evidence"]})
     events.sort(key=lambda x: (x["date"], x["type"], x["other"]["label"]))
     return events[:MAX_RESULTS]

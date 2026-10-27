@@ -1,9 +1,40 @@
+"""Release adapter + RAG + UI on a box in place, with automatic rollback.
+
+  python3 172-release-box.py pack <src.tgz>                (dev machine)
+  python3 172-release-box.py prepare <src.tgz> <ui.tgz>    -> ~/vivesec-release-<stamp>-*/
+  python3 172-release-box.py promote|check|verify|rollback|prune <stage>
+
+verify asks a general question in the hybrid profile and expects an answer
+without document citations; the model now and then cites a related passage
+anyway, so it asks up to 3 times (a fresh user each time) and passes on the
+first uncited answer.
+
+prepare adds Tesseract (hun, deu, dan; eng and osd come with it) to a RAG image
+that lacks it (E10b OCR), which needs the package mirrors once, and prints the
+installed OCR languages; RELEASE_RAG_OCR=off skips that.
+
+Every release builds on the running image, so layers pile up and overlay2
+refuses an image deeper than ~125 layers ("max depth exceeded"). prepare
+therefore first squashes a base image with RELEASE_FLATTEN_LAYERS (default 80,
+at most 110; 0 = never) or more layers into one layer (vivesec-<kind>:flat-<stamp>),
+keeping its environment, user, workdir, entrypoint, command, ports, labels and
+health check; the running image is left for the rollback.
+
+A successful verify prunes old releases: it keeps the current stage and the
+previous deployed one (one rollback level), removes stopped parked containers
+(vivesec-{rag,adapter,ui}-{prev,failed}-<stamp>) no newer than the previous
+release, then deletes older stage directories no container binds. Stages newer
+than the current one and other containers are never touched; pruning errors
+only print PRUNE_WARNING. RELEASE_KEEP_STAGES (default 2, minimum 2; 0 turns
+pruning off) sets how many deployed stages to keep.
+"""
 import hashlib
 import base64
 import http.client
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import socket
 import subprocess
@@ -131,6 +162,84 @@ def ready(url, output):
             "--max-time", "10", url, "-o", str(output))
 
 
+def flatten_limit():
+    value = os.environ.get("RELEASE_FLATTEN_LAYERS", "").strip()
+    try:
+        limit = int(value) if value else FLATTEN_LAYERS
+    except ValueError:
+        limit = FLATTEN_LAYERS
+    # overlay2 refuses a container on more than ~125 layers; a limit above
+    # that would let the build fail as before, so it is capped.
+    return max(0, min(limit, FLATTEN_LAYERS_MAX))
+
+
+def _seconds(nanoseconds):
+    return "%ds" % max(1, int(nanoseconds) // 1_000_000_000)
+
+
+def _quoted(value):
+    # Dockerfile ENV/LABEL values are substituted, so a literal $ is escaped.
+    return json.dumps(value).replace("$", "\\$")
+
+
+def flatten_dockerfile(image, config):
+    """A one-layer copy of an image that keeps its runtime configuration."""
+    lines = ["FROM " + image + " AS previous", "FROM scratch", "COPY --from=previous / /"]
+    for entry in config.get("Env") or []:
+        key, _, value = entry.partition("=")
+        lines.append("ENV " + key + "=" + _quoted(value))
+    for key, value in sorted((config.get("Labels") or {}).items()):
+        lines.append("LABEL " + _quoted(key) + "=" + _quoted(value))
+    for port in sorted(config.get("ExposedPorts") or {}):
+        lines.append("EXPOSE " + port)
+    if config.get("WorkingDir"):
+        lines.append("WORKDIR " + config["WorkingDir"])
+    if config.get("User"):
+        lines.append("USER " + config["User"])
+    if config.get("StopSignal"):
+        lines.append("STOPSIGNAL " + config["StopSignal"])
+    health = config.get("Healthcheck") or {}
+    test = health.get("Test") or []
+    if test[:1] == ["NONE"]:
+        lines.append("HEALTHCHECK NONE")
+    elif test[:1] in (["CMD"], ["CMD-SHELL"]):
+        options = "".join(" --" + flag + "=" + _seconds(health[key]) for flag, key in
+                          (("interval", "Interval"), ("timeout", "Timeout"), ("start-period", "StartPeriod"))
+                          if health.get(key))
+        if health.get("Retries"):
+            options += " --retries=%d" % health["Retries"]
+        body = json.dumps(test[1:]) if test[0] == "CMD" else test[1]
+        lines.append("HEALTHCHECK" + options + " CMD " + body)
+    if config.get("Entrypoint"):
+        lines.append("ENTRYPOINT " + json.dumps(config["Entrypoint"]))
+    if config.get("Cmd"):
+        lines.append("CMD " + json.dumps(config["Cmd"]))
+    return "\n".join(lines) + "\n"
+
+
+def release_base(kind, image, stamp, stage):
+    """The image a release builds on: the running one, or a flattened copy of it.
+
+    Each release adds its layers on top of the previous release's image, and
+    overlay2 cannot stack more than ~125 layers, so a deep image is first
+    squashed into one layer. The original image stays for the rollback."""
+    limit = flatten_limit()
+    if not limit:
+        return image
+    details = json.loads(command("docker", "image", "inspect", image))[0]
+    layers = len(details["RootFS"]["Layers"])
+    if layers < limit:
+        return image
+    context = stage / ("flatten-" + kind)
+    context.mkdir()
+    (context / "Dockerfile").write_text(flatten_dockerfile(image, details["Config"]), encoding="utf-8")
+    flat = "vivesec-" + kind + ":flat-" + stamp
+    command("docker", "build", "-q", "-t", flat, str(context))
+    shutil.rmtree(context, ignore_errors=True)
+    print("FLATTENED=%s layers=%d -> %s" % (kind, layers, flat), flush=True)
+    return flat
+
+
 def prepare(source_archive, ui_archive):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     stage = Path(tempfile.mkdtemp(prefix="vivesec-release-" + stamp + "-", dir=Path.home()))
@@ -167,7 +276,18 @@ def prepare(source_archive, ui_archive):
     persist(stage, manifest)
     for kind in ("rag", "adapter", "ui"):
         copied = ["poc", "rag_service"] if kind == "rag" else (["adapter"] if kind == "adapter" else [".output"])
-        dockerfile = "FROM " + old[kind]["Image"] + "\nWORKDIR /app\n"
+        base = release_base(kind, old[kind]["Image"], stamp, stage)
+        if base != old[kind]["Image"]:
+            manifest.setdefault("flattened", {})[kind] = base
+            persist(stage, manifest)
+        dockerfile = "FROM " + base + "\nWORKDIR /app\n"
+        if kind == "rag" and RAG_OCR_PACKAGES:
+            # E10b: images built before OCR lack Tesseract; the first release
+            # after it adds the packages (needs the package mirrors once), later
+            # ones find them in the base and skip both steps.
+            dockerfile += ("RUN command -v tesseract >/dev/null 2>&1 || (apt-get update && apt-get install -y "
+                           "--no-install-recommends " + RAG_OCR_PACKAGES + " && rm -rf /var/lib/apt/lists/*)\n"
+                           "RUN python -c 'import pypdfium2, PIL' 2>/dev/null || pip install --no-cache-dir pypdfium2 pillow\n")
         for directory in copied:
             dockerfile += "RUN rm -rf /app/" + directory + "\nCOPY " + directory + " /app/" + directory + "\n"
         dockerfile += ("LABEL vivesec.source-sha256=" + fingerprint + " vivesec.version=" + json.dumps(builds[kind]["version"])
@@ -181,6 +301,10 @@ def prepare(source_archive, ui_archive):
         manifest["images"][kind] = image
         persist(stage, manifest)
         print("BUILT=" + image, flush=True)
+        if kind == "rag" and RAG_OCR_PACKAGES:
+            langs = command("docker", "run", "--rm", "--network", "none", "--entrypoint", "tesseract", image,
+                            "--list-langs").splitlines()[1:]
+            print("OCR_LANGS=" + "+".join(lang.strip() for lang in langs if lang.strip()), flush=True)
         if kind != "ui":
             output = command("docker", "run", "--rm", "--network", "none", "-e", "VIVESEC_BACKEND=fallback",
                              "--entrypoint", "python", image, "-m", "unittest", "discover", "-s",
@@ -241,6 +365,49 @@ def check(stage, manifest):
                       "policy": status["chat_policy"], "ws_fs": status.get("ws_fs")}), flush=True)
 
 
+HYBRID_ATTEMPTS = 3
+# Base images with at least this many layers are squashed before a release
+# builds on them (RELEASE_FLATTEN_LAYERS; 0 = never).
+FLATTEN_LAYERS = 80
+FLATTEN_LAYERS_MAX = 110
+# System packages the RAG image needs for OCR (E10b); RELEASE_RAG_OCR=off
+# leaves the image as it is (a box without package mirrors), and the RAG then
+# reports OCR as unavailable instead of reading scans.
+RAG_OCR_PACKAGES = ("" if os.environ.get("RELEASE_RAG_OCR", "on").strip().lower() == "off"
+                    else "tesseract-ocr tesseract-ocr-hun tesseract-ocr-deu tesseract-ocr-dan")
+
+
+def hybrid_probe(ask, attempts=HYBRID_ATTEMPTS):
+    """A general-knowledge question in the hybrid profile must be answered by the
+    model without document citations. The model still cites a retrieved passage
+    it finds related now and then (about one release in five), which failed
+    verified releases; one uncited answer out of `attempts` proves the profile.
+    Every answer must be a hybrid model answer. Returns (result, attempts used)."""
+    cited, result = [], {}
+    for attempt in range(1, attempts + 1):
+        result = ask(attempt)
+        assert result.get("ok") and result.get("answer") and "ollama:" in result.get("backend", ""), \
+            json.dumps({k: result.get(k) for k in ("ok", "backend", "error")}, ensure_ascii=False)[:400]
+        assert result.get("profile") == "hybrid", result.get("profile")
+        if result.get("citations") == []:
+            return result, attempt
+        cited.append([c.get("path") for c in result.get("citations") or []])
+    raise AssertionError(json.dumps({"hybrid answers cited documents": cited, "graph": result.get("graph")},
+                                    ensure_ascii=False)[:800])
+
+
+def verification_purpose(stage, manifest):
+    """The purpose the verification questions carry where the box requires one
+    (concept 5.2): the first allowed legal basis, else a named verification. The
+    queries are then in the query log like any other."""
+    status = json.loads((Path(stage) / "status.json").read_text())
+    config = (status.get("app") or {}).get("purpose") or {}
+    if config.get("mode", "off") == "off":
+        return {}
+    bases = config.get("legal_bases") or []
+    return {"legal_basis": bases[0] if bases else "release verification " + manifest["stamp"]}
+
+
 def verify(stage, manifest):
     check(stage, manifest)
     adapter_env = environment(manifest["old"]["adapter"])
@@ -255,12 +422,13 @@ def verify(stage, manifest):
         with urllib.request.urlopen(request, timeout=180) as response:
             return json.load(response)
 
-    result = post(base + "/api/v1/ui/query", {"query": "Mi\u00e9rt k\u00e9k az \u00e9g?", "profile": "hybrid", "top_k": 5}, headers)
-    assert result.get("ok") and result.get("answer") and "ollama:" in result.get("backend", "")
-    assert result.get("profile") == "hybrid" and result.get("citations") == [], json.dumps(
-        {"profile": result.get("profile"),
-         "cited": [c.get("path") for c in result.get("citations") or []],
-         "graph": result.get("graph")}, ensure_ascii=False)[:800]
+    def ask(attempt):
+        # A fresh user per attempt: an earlier answer must not become history.
+        return post(base + "/api/v1/ui/query", dict({"query": "Mi\u00e9rt k\u00e9k az \u00e9g?", "profile": "hybrid",
+                                                     "top_k": 5}, **verification_purpose(stage, manifest)),
+                    dict(headers, **{"VVS-User": headers["VVS-User"] + "-%d" % attempt}))
+
+    result, attempts = hybrid_probe(ask)
     rag_env = environment(manifest["old"]["rag"])
     missing = post("http://127.0.0.1:" + rag_env["RAG_PORT"] + "/rag/search_context",
                    {"corpus_id": result["corpus_id"], "question": "report", "source_paths": ["release-test-file-that-does-not-exist.txt"],
@@ -272,11 +440,128 @@ def verify(stage, manifest):
         copied = stage / ("verified-" + relative.replace("/", "-"))
         command("docker", "cp", "vivesec-" + kind + ":/app/" + relative, str(copied))
         assert copied.read_bytes() == (stage / "build" / relative).read_bytes()
-    summary = {"verification": "ok", "profile": result["profile"], "backend": result["backend"],
+    summary = {"verification": "ok", "profile": result["profile"], "backend": result["backend"], "hybrid_attempts": attempts,
                "answer": result["answer"], "scope": result["corpus_id"], "retrieval": missing.get("debug"),
                "code_hashes": "match release"}
     (stage / "verification.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False), flush=True)
+    try:
+        prune(stage, manifest)
+    except Exception as error:
+        # Housekeeping must never turn a verified release into a failed one.
+        print("PRUNE_WARNING=" + str(error).replace("\n", " ")[:400], flush=True)
+
+
+STAGE_RE = re.compile(r"^vivesec-release-(\d{8}-\d{6})-[A-Za-z0-9_]+$")
+# Containers parked by this tool (-prev/-failed) and by the 19x helper scripts
+# (-prev with a minute or second stamp).
+PARKED_RE = re.compile(r"^vivesec-(?:rag|adapter|ui)-(?:prev|failed)-(\d{8}-\d{4}(?:\d{2})?)$")
+
+
+def keep_count():
+    # Every release leaves a ~1.6 GB stage (index backup) behind; on the eMMC
+    # they filled the disk. Unset or invalid -> 2 (current + one rollback
+    # level); 0 disables pruning; values below 2 are raised to 2.
+    raw = os.environ.get("RELEASE_KEEP_STAGES", "2").strip()
+    if raw == "0":
+        return 0
+    try:
+        return max(2, int(raw))
+    except ValueError:
+        return 2
+
+
+def _kept(stages, current, keep):
+    current_stamp = stages[current][0]
+    older = sorted((stamp, path) for path, (stamp, state) in stages.items()
+                   if path != current and stamp < current_stamp and state == "deployed")
+    return {current} | {path for _, path in older[max(0, len(older) - (keep - 1)):]}
+
+
+def parked_to_remove(stages, current, containers, keep):
+    """Stopped -prev/-failed containers no older than the oldest kept stage.
+
+    stages: {path: (stamp, state)}, current: path of the live release stage,
+    containers: {name: {"running": bool, "binds": [source, ...]}}.
+    A container parked by release X is what rolling X back needs, so with the
+    current and the previous release kept, only the current release's parked
+    containers (and later helper ones) survive.
+    """
+    cutoff = min(stages[path][0] for path in _kept(stages, current, keep))
+    parked = []
+    for name, info in sorted(containers.items()):
+        match = PARKED_RE.match(name)
+        if match and not info["running"] and match.group(1).ljust(15, "0") <= cutoff:
+            parked.append(name)
+    return parked
+
+
+def stages_to_remove(stages, current, containers, keep):
+    """Stage directories older than the current one, outside the kept set and
+    not bound by any existing container (running or not)."""
+    kept = _kept(stages, current, keep)
+    current_stamp = stages[current][0]
+    binds = [source.rstrip("/") for info in containers.values() for source in info["binds"]]
+    removable = []
+    for path, (stamp, _) in sorted(stages.items()):
+        if path in kept or stamp >= current_stamp:
+            continue
+        if any(source == path or source.startswith(path + "/") for source in binds):
+            continue
+        removable.append(path)
+    return removable
+
+
+def inventory(root):
+    stages = {}
+    for entry in sorted(root.iterdir()):
+        match = STAGE_RE.match(entry.name)
+        if not match or entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            state = json.loads((entry / "manifest.json").read_text()).get("state")
+        except (OSError, ValueError):
+            state = None
+        stages[str(entry)] = (match.group(1), state)
+    containers = {}
+    ids = command("docker", "ps", "-aq").split()
+    if ids:
+        for container in json.loads(command("docker", "inspect", *ids)):
+            containers[container["Name"].lstrip("/")] = {
+                "running": bool(container["State"]["Running"]),
+                "binds": [mount["Source"] for mount in container.get("Mounts") or [] if mount.get("Type") == "bind"]}
+    return stages, containers
+
+
+def prune(stage, manifest):
+    keep = keep_count()
+    if not keep:
+        print("PRUNE_SKIPPED=RELEASE_KEEP_STAGES=0", flush=True)
+        return
+    stage = Path(stage).resolve()
+    assert manifest["state"] == "deployed", "Only a deployed release stage can anchor pruning"
+    live = [mount["Source"].rstrip("/") for mount in inspect("vivesec-ui").get("Mounts") or []
+            if mount.get("Destination") == "/app/.output"]
+    assert live and live[0].startswith(str(stage) + "/"), "The live UI does not run from this stage"
+    stages, containers = inventory(stage.parent)
+    parked = parked_to_remove(stages, str(stage), containers, keep)
+    for name in parked:
+        try:
+            command("docker", "rm", name)
+            print("PRUNED_CONTAINER=" + name, flush=True)
+        except RuntimeError as error:
+            print("PRUNE_WARNING=" + name + ": " + str(error).replace("\n", " ")[:200], flush=True)
+    # Re-read the containers so a parked one that could not be removed keeps
+    # protecting the stage it binds.
+    stages, containers = inventory(stage.parent)
+    removable = stages_to_remove(stages, str(stage), containers, keep)
+    for path in removable:
+        try:
+            shutil.rmtree(path)
+            print("PRUNED_STAGE=" + path, flush=True)
+        except OSError as error:
+            print("PRUNE_WARNING=" + path + ": " + str(error)[:200], flush=True)
+    print("PRUNE_OK kept=%d removed_containers=%d removed_stages=%d" % (keep, len(parked), len(removable)), flush=True)
 
 
 def rollback(stage, manifest):
@@ -349,7 +634,7 @@ if __name__ == "__main__":
         prepare(*sys.argv[2:4])
     elif operation == "promote":
         promote(sys.argv[2])
-    elif operation in ("check", "rollback", "verify"):
+    elif operation in ("check", "rollback", "verify", "prune"):
         root = Path(sys.argv[2])
         globals()[operation](root, json.loads((root / "manifest.json").read_text()))
     else:

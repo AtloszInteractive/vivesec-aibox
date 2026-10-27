@@ -408,10 +408,97 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `ADAPTER_GRAPH_CHAT=off` disables it; a graph error never blocks the answer.
 - **Progress**: `POST /api/v1/ui/graph/status` lists only files the caller may
   see; queue sizes and totals are box-wide numbers.
-- **Review and profile**: `/api/v1/ui/graph/review/list` (scoped),
-  `/review/decide` and `/profile/set` only for users in `ADAPTER_GRAPH_ADMINS`
-  (empty: nobody); `/profile/get` returns the profile, the templates and
-  `can_edit`.
+- **Derived data leaks** (concept 5.1, pilot step 4): the graph computes every
+  answer on the caller's visible subgraph -- an edge, attribute, name variant or
+  subtype only from documents they may read (a subtype is stored per document
+  as a reserved `subtype` attribute since extractor revision 5; before, the
+  first document's subtype was global and a hidden document could type a
+  visible person). `graph_service/leakage_test.py` proves it differentially:
+  for 730 requests over every query, analytics with and without namesake
+  joining, `documents/profile` and the review list/history, a caller restricted
+  by group ACL, classification, a deny rule and the drive scope gets byte for
+  byte what a graph of only their documents answers (also after a merge), while
+  a caller who may read everything gets different answers for every query
+  kind. Neo4j variants (direct and cached) run with `GRAPH_TEST_NEO4J_URI`.
+  Not covered by it: the identity of a person is global -- whether two visible
+  mentions are one person may have been decided using a document the caller
+  cannot read (resolution by a registry number in a hidden document).
+- **Review and profile**: `/api/v1/ui/graph/review/list` (scoped; `q` filters
+  on the two names, `reason` on the match reason, `offset`/`limit` page; the
+  response adds `open_total` and the `reasons` counts), `/review/decide` (one
+  `{a, b}` or up to 1000 `pairs`; a pair no longer open in scope -- e.g. folded
+  by an earlier pair of the batch -- comes back under `skipped`),
+  `/review/undo {a, b}` and `/profile/set` only for users in
+  `ADAPTER_GRAPH_ADMINS` (empty: nobody); `/review/history` lists the decisions
+  newest first (who, when, `undoable`) as far as the caller may see both people
+  as they were before the decision, plus `can_undo`; `/profile/get` returns the
+  profile, the templates and `can_edit`. A merge records what the folded person
+  brought (mentions, attributes and relationship evidence per document, with the
+  document paths); undoing it revives that person and writes those documents
+  back onto it: a document only that person was named in moves back whole (also
+  a resynced, newer version at the same path), a document both were named in
+  moves back what the record lists, and a relationship between the two, which
+  the merge removed, returns. A document that reached the merged person later
+  through the folded person's details stays with it. Undoing either decision
+  reopens the pair. Merges decided before this existed cannot be undone. The
+  graph keeps every decision and undo, with the deciding user, in
+  `GRAPH_REVIEW_PATH`. Tests: graph `review_undo_test`, adapter
+  `graph_integration_test` (`test_review_in_bulk_with_history_and_undo`).
+- **Reprocessing after a profile change** (`reprocess.py`): the graph records
+  the profile and extractor revision each document was extracted with (`bv@3/e2`:
+  a software update that changes extraction raises the revision, so its documents
+  count as stale too; empty for documents from
+  before this was recorded). `POST /api/v1/ui/graph/reprocess/status` gives the
+  caller's view: current profile, counts per profile, `stale_total` (older or
+  unknown), `partial_total` (of those: read without the language model, see
+  below), `absent_total` (synced files of the caller's view the graph holds no
+  document for -- a full forward queue during a large sync, the graph down, a
+  failed extraction; the adapter's metadata mirror compared with the graph's
+  paths, cached per user and scope while the graph's document count is
+  unchanged, at most 30 s), `can_start`, the file `source` (`ws-fs` or `local`)
+  and the current or last run. `/reprocess/start {path_prefix?}` (graph
+  administrators; the folder must be inside the scope) re-reads, in this order,
+  the absent files, the partial documents and the other stale ones the
+  administrator may see (an absent file is sent with the RAG's doc_id,
+  `corpus.doc_id_of`): each file is fetched again -- from the ViVeSecBox over ws-fs as that
+  administrator, or from `ADAPTER_REPROCESS_SOURCE_DIR` on a development box --
+  only when the forwarder and the graph queue are empty, and handed to the
+  forwarder like a synced file (its current ACL applies). A file gone from the
+  drive counts as missing, a refused one as failed; a lost ws-fs channel stops
+  the run. `/reprocess/cancel` stops after the current file. A re-extracted
+  document keeps its people's ids (the graph resolves the names it named before
+  to the same, merge-followed ids first, unless the document now conflicts), so
+  merge and keep-apart decisions survive. The UI shows this under
+  Relationships › Processing. Tests: `reprocess_test`, `graph_integration_test`
+  (`test_a_profile_change_is_reprocessed_from_the_file_source`,
+  `test_synced_files_the_graph_never_got_are_caught_up`), graph side
+  `ingest_jobs_test`.
+- **Incremental extraction** (graph side): a file sent again with the same
+  content (SHA-256, kept per document) and already extracted with the current
+  profile is not extracted again -- a drive re-sync costs no model time; an ACL
+  sent with it is applied. While more than `GRAPH_DEFER_PROSE_QUEUE` documents
+  (default 50) wait, the next ones get rules, tables and forms only, with the
+  profile tag `<tag>/partial`: the queue drains in seconds per file instead of
+  holding raw files in memory for hours, and those documents count as stale
+  until a reprocessing run fetches them again for the running text. A document
+  whose model call failed is tagged partial too. Starting such a run is manual
+  (graph administrator); running it unattended needs an identity allowed to
+  fetch files from the ViVeSecBox -- a customer decision.
+- **Places inside places** (profile `entity_subtypes[].within`, in `bv` from
+  version 3: a cell is within an institution): such a place's identity includes
+  its container, so cell 102 of two prisons are two places. The container is the
+  one a `PART_OF` relation in the document names, else the only one the document
+  names, else the one named last before the place on its page (within 300
+  characters). The graph then adds `PART_OF` with the text between the two as
+  the verbatim quote, keeps the container as the place's `within` attribute and
+  labels the node "102. számú zárka (Kőhegyi …)" -- from documents the caller may
+  see only. A place whose document names no container stays that document's own
+  (no cross-document link), the safer choice: a placement list without the
+  institution cannot tell whose cell 102 it lists. Likewise a place,
+  organization or object named only by a common noun (no capital letter, no
+  digit: "intézet", "gépjármű") stays its document's own. (German capitalises
+  every noun, so there this rule does not catch common nouns.) Tests: graph
+  `place_scope_test`.
 - **Dossier**: `POST /api/v1/ui/graph/dossier` `{id, format: docx|pdf|md, lang,
   drives?}` renders one entity's basic data, direct relations, timeline and a
   numbered source list (path, page, verbatim quote) with `docgen.py`.
@@ -450,10 +537,18 @@ a summary of the results (rankings with their top lines) and may add calls, at
 most 3 rounds; a call already run is not repeated, and a round of repeats ends
 the planning. The adapter runs
 the tools itself in the caller's scope; the model only names entities, kinds and
-relations, a kind word passed as a name ("Fogvatartott") filters by that kind,
-and an unknown kind or relation skips that query with a note (never
+relations, a kind word passed as a name ("Fogvatartott") filters by that kind
+where the tool takes a kind, and is skipped without a note where it needs a
+named entity (`common {a, b: "cell"}`); an unknown kind or relation skips that query with a note (never
 a wider search). Counts come from the graph, never from the model. Either end
-of a link may be the counted or pattern-starting side.
+of a link may be the counted or pattern-starting side. For the entities the
+message names, the adapter also counts their repeated dated links itself
+(distinct dates per relation and other side, by name as the facts read, before
+the facts cap; the graph's built-in `RELATED_TO`/`CO_MENTIONED` are not counted)
+and gives the figure and the span as a note, so "how many times" is not left to
+the model. Timeline facts keep the direction of their link (the graph's
+`timeline` items carry `a`/`b`). Entity types in ask-back options are named in
+the user's language.
 Namesakes (separate records with the same name) are used together with a note
 when named directly; a partial name that fits different entities is asked back
 with the options. Patterns, sequences and per-entity counts follow node ids, so
@@ -491,21 +586,132 @@ a term word of 4+ letters matches as a prefix, so inflected forms are found;
 the words of a multi-word term must lie close together). The passages are read
 in groups of `ADAPTER_DEEP_BATCH_CHARS` characters (default 9000); each group
 is one JSON model call that returns findings with a verbatim quote, and a
-finding whose quote does not occur in its passage is dropped. The findings
-(at most `ADAPTER_DEEP_MAX_FINDINGS`, default 120) become cited contexts for
-the usual answer step, with a coverage note ("N passages in M documents were
-read"). At most `ADAPTER_DEEP_MAX_CHUNKS` passages are read (default 400); when
-more match, the note says the result is partial and asks for a narrower
-question. Graph tools of the same plan still run.
+finding whose quote does not occur in its passage is dropped. A reply cut off
+at the output limit (4096 tokens; a register passage can hold dozens of facts)
+keeps the findings finished before the cut and the group is read again in two
+halves (at most 3 levels), so no passage goes unread; a single passage still cut
+off alone is named in the note and makes the result partial. The findings
+become cited contexts for the usual answer step, with a coverage note ("N
+passages in M documents were read"). At most `ADAPTER_DEEP_MAX_CHUNKS` passages
+are read (default 400); when more match, the note says the result is partial
+and asks for a narrower question. Graph tools of the same plan still run.
+
+Findings beyond `ADAPTER_DEEP_MAX_FINDINGS` (default 120) or
+`ADAPTER_DEEP_ANSWER_CHARS` characters (default 60000) are condensed, not cut:
+first one context per document (so every citation still names one document),
+the documents over their fair share of the budget summarised by the model in
+batched JSON calls (phase `condense`); only if that still does not fit are the
+documents merged into digests across documents, which name their documents in
+the text (at most 3 rounds). The note says how it was condensed; a summary the
+model fails to write keeps the findings cut to the share and marks the result
+partial, and only what still does not fit after the rounds is dropped (also
+partial).
 
 The reading holds the heavy scheduler slot (`HeavyScheduler.slot`), so its
 model calls queue with the other heavy jobs; cancelling the job stops it before
 the next group. The job reports `progress_phase` (`queued`, `collect`, `read`,
-`write`) with `progress_done`/`progress_total` in `/ui/poll` and `/ui/jobs`, and
-the UI shows them in the waiting bubble and the job list. The response carries
-`deep {terms, matched, read, documents, groups, findings, partial, seconds}`.
+`condense`, `write`) with `progress_done`/`progress_total` in `/ui/poll` and
+`/ui/jobs`, and the UI shows them in the waiting bubble and the job list. The
+response carries `deep {terms, matched, read, documents, groups, findings,
+condensed, partial, seconds}`.
 Tests: `deep_test`, `scheduler_test`, `graph_integration_test`; RAG side:
 `rag_service/match_chunks_test.py`.
+
+#### Recognised text (E10b OCR)
+
+The RAG reads scanned PDF pages and image files with Tesseract in the background
+(`rag_service/ocr.py`; `RAG_OCR*` in `CONFIGURATION.md`). A passage from such a
+page carries `ocr {quality, lang}` from the RAG; the adapter tags it in the
+prompt (`[#3] scan.pdf (p.2) [OCR 87%]`) so the model knows it may hold
+recognition errors, returns `ocr_quality` on the citation, and the footer lists
+the source as `scan.pdf, p.2 (OCR 87%)`; the UI shows an OCR badge on the source
+card. A full reading names the visible documents still waiting for OCR apart
+from those without readable text (`scope_stats.ocr_pending`). Skipped pages and
+documents waiting, interrupted or deferred are listed by the RAG's
+`/index/skipped`; documents indexed before OCR become readable after a resync
+from the ViVeSecBox (the box keeps no raw file).
+
+`POST /api/v1/ui/index/skipped` gives a user the same list for their own scope:
+the RAG filters by the scope's corpora and the caller's ACL in its query, and
+the adapter checks every path again (scope + `_visible`), as it does for graph
+answers. The answer has `count`, `reasons` (counts per reason), `pages_skipped`
+and up to 500 `documents` with `reason`, `ocr_state` and `skipped_pages`; the
+UI shows it under Relationships › Processing ("Not readable for search").
+
+#### Purpose-bound queries and the query log (concept 5.2-5.3)
+
+With `ADAPTER_PURPOSE=required` every content query -- a question (`/ui/query`,
+`/ui/ask`, including quick actions and the file-name search), a graph query, the
+review list and a dossier export -- must carry `case_ref` (ügyszám) and/or
+`legal_basis` (jogalap) in its body; without one it gets 428
+`purpose_required` (400 `purpose_invalid` for a value outside
+`ADAPTER_LEGAL_BASES` or not matching `ADAPTER_CASE_REF_PATTERN`). Status and
+processing views need none. `/status` reports `app.purpose {mode, legal_bases,
+case_ref_pattern}`; the UI asks for the purpose once per browser session (a
+chip in the chat header, a dialog) and sends it with every such call.
+
+With `optional` or `required` each of those queries is written to the query log
+(`querylog.py`): an append-only daily JSONL under `ADAPTER_QUERY_LOG_DIR` with
+user, drive and scope, kind (`ask`, a quick action, `graph:<query>`,
+`graph:review`, `export:dossier`), the purpose, the question's SHA-256 (its text
+only with `ADAPTER_QUERY_LOG_TEXT=on`) and the result (audit id, citation
+count, cited document paths, graph tools, full reading). Every record carries
+the previous record's hash, so `querylog.verify(path)` finds an edited, inserted
+or removed line; signing and anchoring the log is E06. When the purpose is
+required and the log cannot be written, the query is refused (503) or its
+answer withheld -- an unlogged answer is never returned. A job logs its outcome
+when it finishes. Tests: `purpose_test`, `graph_integration_test`
+(`test_graph_queries_and_exports_carry_their_purpose`).
+
+#### Whole-document analysis of large files (E10a)
+
+`analyze` (one named file) fetches every passage of the file
+(`ADAPTER_ANALYZE_DOC_MAX_TOKENS`, default 3000000, bounds the fetch; beyond it
+the result is marked partial). A file that fits `ADAPTER_ANALYZE_MAX_CHARS`
+keeps the single-call path. A larger one is no longer cut off: `deep.read_document`
+reads all passages in reading order in parts of `ADAPTER_ANALYZE_SECTION_CHARS`
+characters (default 24000); each part yields up to 8 findings with verified
+quotes and a page label (a part summary), a malformed reply is retried once and
+then counted as failed (partial), and part summaries that do not fit are merged
+into digests that keep the document as source. The final analysis runs on the
+part summaries; the coverage note ("all N passages of X were read in K parts",
+plus any partial reason) is shown under the answer and the response carries
+`deep {kind: "document", read, total, groups, failed, resumed, parts, condensed,
+partial, seconds}`. All calls use `ADAPTER_ANALYZE_NUM_CTX`, so the model is not reloaded
+between parts. The job reports `read`/`condense`/`write` progress like a full
+reading. `ADAPTER_ANALYZE_FULL=off` restores the old cut at the window (any other
+value keeps full coverage). Tests: `analyze_full_test`, `deep_test`.
+
+An analysis that stops before its end (adapter restart, cancel, a failed model
+call) continues where it stopped: every part read is kept at once
+(`analysis_checkpoint.py`), and the same analysis run again takes those parts
+instead of reading them again; the coverage note then says how many parts an
+earlier run read. "The same analysis" means the same user, the very passages the
+RAG returned for this request (hashed, so access is checked anew on every run
+and a changed document starts afresh), task, language, part size, prompt and
+model -- one user never picks up another's parts. A part whose reply failed is
+not kept, so it is read again. The UI offers "Resume analysis" under a failed
+"Full analysis" in the chat and on a stopped analysis in the background job list
+(`/ui/jobs` now lists each job's `files`); asking the planner the same question
+again resumes too. The final synthesis is not kept (it is one call).
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `ADAPTER_ANALYSIS_DIR` | `analysis` beside `ADAPTER_JOBS_DIR` (`/data/analysis` on the box) | Where the parts read are kept (files 0600, named by a hash). `off`, or no job store, turns resuming off: an analysis then always reads every part. A store that cannot be written never stops the analysis. |
+| `ADAPTER_ANALYSIS_RETENTION_DAYS` | `7` | Entries untouched for longer are deleted (checked at most hourly); an invalid value means 7. |
+
+Tests: `analysis_checkpoint_test`, `analyze_full_test`
+(`test_an_interrupted_analysis_continues_where_it_stopped`).
+
+On an analyst box (where quick actions are off) the analysis starts two ways:
+the planner's `analyze_document {file}` tool (first round, offered with
+`read_all`; the named file is resolved among the files the caller may see, and
+the analysis takes the heavy slot inside the plain ask), or the "Full analysis"
+button next to a cited document, which sends `action: "analyze"` with that file
+-- the one action an analyst box accepts (any other is still 403). The button's
+analysis goes to the default thread like a quick action. Tests:
+`graph_integration_test` (`test_analyst_analyses_one_named_file_in_full`),
+`orchestrator_test`.
 
 ## Test
 

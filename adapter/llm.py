@@ -473,7 +473,12 @@ def build_context(contexts):
     for i, c in enumerate(contexts, 1):
         src = c.get("source_path") or c.get("title") or "document"
         page = c.get("page_number")
-        tag = "[#%d] %s%s" % (i, src, (" (p.%s)" % page) if page else "")
+        # E10b: recognised (OCR) text is marked, with its quality, so the model
+        # and the reader know it may hold recognition errors.
+        recognised = c.get("ocr") or {}
+        quality = recognised.get("quality") if isinstance(recognised, dict) else None
+        tag = "[#%d] %s%s%s" % (i, src, (" (p.%s)" % page) if page else "",
+                                (" [OCR %s%%]" % quality) if quality is not None else "")
         blocks.append("%s\n%s" % (tag, (c.get("text") or "").strip()))
         citations.append({
             "ref": i,
@@ -483,6 +488,8 @@ def build_context(contexts):
             "score": c.get("score"),
             "snippet": " ".join((c.get("text") or "")[:200].split()),
         })
+        if quality is not None:
+            citations[-1]["ocr_quality"] = quality
     return "\n\n".join(blocks), citations
 
 

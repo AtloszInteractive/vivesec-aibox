@@ -13,3 +13,8 @@ markitdown[all]
 # RAG_STORE_BACKEND=sqlite (the SqliteVecStore backend). Ships an arm64 wheel
 # (verified on the Jetson container), so no build step is required.
 sqlite-vec
+
+# OCR (E10b): pypdfium2 renders PDF pages, Pillow handles page images; the
+# Tesseract binary itself is a system package (see the Dockerfile).
+pypdfium2
+pillow

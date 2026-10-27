@@ -63,6 +63,22 @@ def _types(raw, where):
     return list(raw)
 
 
+SCOPED_TYPES = ("place", "organization")
+# Raised when extraction itself changes what it produces from the same text (not
+# the profile): documents extracted before then count as stale and can be
+# reprocessed. 2: places scoped by their container, common nouns kept local;
+# 3: also common nouns with digits (an untyped "102. számú zárka");
+# 4: "Label: value" forms read by a learnt mapping, minified model output;
+# 5: an entity's subtype kept per document (a reader sees only what their
+#    documents say), so older documents must be read again to show one.
+EXTRACTOR_REVISION = 5
+
+
+def profile_tag(profile: dict) -> str:
+    """"bv@3/e3": the profile and extractor revision a document is extracted with."""
+    return "%s@%s/e%d" % (profile["id"], profile["version"], EXTRACTOR_REVISION)
+
+
 def reversed_by_subtypes(spec: dict, sub_a: str, sub_b: str) -> bool:
     """True when a relation read a -> b only fits its profile the other way round
     (an inmate "visited" a visitor). An unknown subtype fits either end."""
@@ -99,12 +115,28 @@ def validate(raw: dict) -> dict:
     subtypes = {}
     for i, s in enumerate(raw.get("entity_subtypes", [])):
         where = "entity_subtypes[%d]" % i
-        _keys(s, ("id", "type", "label"), where)
+        _keys(s, ("id", "type", "label", "within"), where)
         if not isinstance(s.get("id"), str) or not _ID.match(s["id"]) or s["id"] in subtypes:
             raise ProfileError("%s.id must be a unique lowercase identifier" % where)
         if s.get("type") not in CORE_TYPES:
             raise ProfileError("%s.type must be one of %s" % (where, CORE_TYPES))
         subtypes[s["id"]] = {"id": s["id"], "type": s["type"], "label": _label(s.get("label"), where)}
+        if "within" in s:
+            subtypes[s["id"]]["within"] = s["within"]
+    # within: a place known only inside a larger one (a cell inside an institution).
+    # Its identity then includes that container, so cell 102 of two prisons are
+    # two places; without a container in the document it stays document-local.
+    for i, s in enumerate(subtypes.values()):
+        if "within" not in s:
+            continue
+        where = "entity_subtypes[%d].within" % i
+        within = s["within"]
+        if s["type"] not in SCOPED_TYPES or not isinstance(within, list) or not within \
+                or any(not isinstance(x, str) or x == s["id"] or x not in subtypes
+                       or subtypes[x]["type"] not in SCOPED_TYPES for x in within):
+            raise ProfileError("%s must list other place or organization subtypes (and the "
+                               "subtype itself must be a place or organization)" % where)
+        s["within"] = list(within)
     out["entity_subtypes"] = list(subtypes.values())
 
     patterns = {}
@@ -196,7 +228,9 @@ def validate(raw: dict) -> dict:
         where = "table_mappings.%s" % name
         if not isinstance(m, dict):
             raise ProfileError("%s must be an object" % where)
-        _keys(m, ("header", "columns", "relations"), where)
+        _keys(m, ("header", "columns", "relations", "form"), where)
+        if not isinstance(m.get("form", False), bool):
+            raise ProfileError("%s.form must be true or false" % where)
         header = m.get("header")
         if not isinstance(header, list) or not header or not all(
                 isinstance(h, str) and h.strip() for h in header):
@@ -218,6 +252,8 @@ def validate(raw: dict) -> dict:
                 raise ProfileError("%s.relations: unknown type or column" % where)
             relations.append(dict(r))
         pinned[name] = {"header": list(header), "columns": columns, "relations": relations}
+        if m.get("form"):
+            pinned[name]["form"] = True
     if pinned:
         out["table_mappings"] = pinned
     return out

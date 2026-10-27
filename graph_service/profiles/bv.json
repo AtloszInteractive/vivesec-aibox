@@ -1,6 +1,6 @@
 {
   "id": "bv",
-  "version": 2,
+  "version": 3,
   "name": {"en": "Corrections and law enforcement", "hu": "Büntetés-végrehajtás és rendészet", "da": "Kriminalforsorg og retshåndhævelse", "de": "Justizvollzug und Strafverfolgung"},
   "description": "People, institutions, cells, visits, calls, transfers and incidents. Hungarian identifier formats. Shows connections; it never scores or predicts individuals.",
   "entity_subtypes": [
@@ -8,7 +8,7 @@
     {"id": "visitor", "type": "person", "label": {"en": "Visitor", "hu": "Látogató", "da": "Besøgende", "de": "Besucher"}},
     {"id": "staff", "type": "person", "label": {"en": "Staff member", "hu": "Munkatárs", "da": "Medarbejder", "de": "Mitarbeiter"}},
     {"id": "institution", "type": "place", "label": {"en": "Institution", "hu": "Intézet", "da": "Institution", "de": "Anstalt"}},
-    {"id": "cell", "type": "place", "label": {"en": "Cell", "hu": "Zárka", "da": "Celle", "de": "Haftraum"}},
+    {"id": "cell", "type": "place", "label": {"en": "Cell", "hu": "Zárka", "da": "Celle", "de": "Haftraum"}, "within": ["institution"]},
     {"id": "address", "type": "place", "label": {"en": "Address", "hu": "Cím", "da": "Adresse", "de": "Adresse"}},
     {"id": "phone", "type": "identifier", "label": {"en": "Phone number", "hu": "Telefonszám", "da": "Telefonnummer", "de": "Telefonnummer"}},
     {"id": "id_card", "type": "identifier", "label": {"en": "Identity card number", "hu": "Személyi igazolvány száma", "da": "ID-kortnummer", "de": "Ausweisnummer"}},

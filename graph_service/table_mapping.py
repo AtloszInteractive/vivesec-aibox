@@ -26,6 +26,7 @@ from extraction import (ATTRIBUTE_KEYS, LocalEntity, LocalRelation, _dates_in, f
 from model import CORE_TYPES
 
 SAMPLE_ROWS = 6
+MAPPING_MAX_TOKENS = 2048
 SHEET_LINE = "Sheet: "
 COLUMNS_LINE = "Columns: "
 
@@ -35,6 +36,7 @@ class Row:
     start: int  # offset of the row line in the page text
     text: str
     cells: dict[int, str]
+    lines: dict[int, tuple[int, str]] = field(default_factory=dict)  # form: column -> (offset, line)
 
 
 @dataclass
@@ -44,10 +46,12 @@ class Table:
     end: int
     header: list[str]
     rows: list[Row] = field(default_factory=list)
+    form: bool = False  # "Label: value" lines read as one record
+    spans: list[tuple[int, int]] | None = None  # what blank_tables blanks (default start-end)
 
     @property
     def signature(self) -> str:
-        return " | ".join(fold(h) for h in self.header)
+        return ("form: " if self.form else "") + " | ".join(fold(h) for h in self.header)
 
 
 # -- finding tables in page text --------------------------------------------------
@@ -156,10 +160,57 @@ def blank_tables(text: str, tables: list[Table]) -> str:
     """The page text with table areas blanked (offsets kept) for the prose model."""
     chars = list(text)
     for t in tables:
-        for k in range(t.start, min(t.end, len(chars))):
-            if chars[k] != "\n":
-                chars[k] = " "
+        for s, e in t.spans if t.spans is not None else [(t.start, t.end)]:
+            for k in range(s, min(e, len(chars))):
+                if chars[k] != "\n":
+                    chars[k] = " "
     return "".join(chars)
+
+
+# -- forms ----------------------------------------------------------------------------
+
+# "Születési hely, idő: Veszprém, 1976. 05. 28." - a label is a short capitalised
+# phrase without digits, brackets or separators; "Kardos Gyula (nagybátyja),
+# telefon: ..." and "14:20" are not labels, nor is a name ("Fehér Krisztina,
+# munkakör: ...": two capitalised words in a row).
+FORM_LINE = re.compile(r"^[ \t]*([A-ZÁÉÍÓÖŐÚÜŰ][^:;|()\[\]\d\n]{0,47}?)[ \t]*:[ \t]+(\S.*?)[ \t]*$")
+_NAME_LIKE = re.compile(r"[A-ZÁÉÍÓÖŐÚÜŰ][^\s,]*\s+[A-ZÁÉÍÓÖŐÚÜŰ]")
+MIN_FORM_FIELDS = 3
+# Field lines must be this share of the page's lines: a report with a few
+# "Tárgy: ..." lines is prose, and its one-off labels would cost a mapping call each.
+MIN_FORM_SHARE = 0.4
+
+
+def find_form(page: int, text: str) -> Table | None:
+    """The page's "Label: value" lines as one record, or None (too few, too
+    little of the page, or a label repeats: a list of records is not one form)."""
+    fields, lines = [], 0
+    for pos, line in _lines(text):
+        lines += bool(line.strip())
+        m = FORM_LINE.match(line)
+        if m and not _NAME_LIKE.search(m.group(1)):
+            fields.append((pos, line, m.group(1).strip(), m.group(2)))
+    labels = [fold(f[2]) for f in fields]
+    if len(fields) < MIN_FORM_FIELDS or len(fields) < MIN_FORM_SHARE * lines \
+            or len(set(labels)) != len(labels):
+        return None
+    table = Table(page, fields[0][0], fields[-1][0] + len(fields[-1][1]),
+                  [f[2] for f in fields], form=True)
+    table.rows.append(Row(fields[0][0], "\n".join(f[1] for f in fields),
+                          {k: f[3] for k, f in enumerate(fields)},
+                          {k: (f[0], f[1]) for k, f in enumerate(fields)}))
+    return table
+
+
+def form_spans(table: Table, mapping: "Mapping") -> list[tuple[int, int]]:
+    """Lines whose facts the mapping already holds. Person names stay for the
+    prose model (it relates the people the rest of the page names to them), and
+    so do ignored fields: a remark may state a relation the mapping cannot."""
+    taken = {k for k, (t, _) in mapping.entities.items() if t != "person"}
+    taken |= set(mapping.attributes)
+    taken |= {k for k in (mapping.date, mapping.end_date) if k is not None}
+    lines = table.rows[0].lines
+    return [(lines[k][0], lines[k][0] + len(lines[k][1])) for k in sorted(taken) if k in lines]
 
 
 # -- the mapping -------------------------------------------------------------------
@@ -189,7 +240,8 @@ def _mapping_prompt(profile: dict) -> str:
                      for r in profile["relation_types"] if r["id"] != "CO_MENTIONED")
     return (
         "You map the columns of a table to a knowledge graph. You see the header and sample "
-        "rows; the same mapping is applied to every row.\n"
+        "rows; the same mapping is applied to every row. A form is a table with one row: its "
+        "field labels are the columns.\n"
         "For EVERY column give one entry with `column` = the header text exactly and a role:\n"
         "- entity: the cell names a person, organization, place, identifier (phone, ID card, "
         "plate, account, case number) or object; give entity_type and a subtype from the list "
@@ -305,7 +357,7 @@ class TableMapper:
         self.cache: dict[str, Mapping | None] = {}
         self.headers: dict[str, list[str]] = {}
         for raw in (pinned or {}).values():
-            sig = " | ".join(fold(h) for h in raw["header"])
+            sig = ("form: " if raw.get("form") else "") + " | ".join(fold(h) for h in raw["header"])
             self.cache[sig] = parse_mapping(raw, raw["header"], profile)
             self.headers[sig] = raw["header"]
 
@@ -314,11 +366,15 @@ class TableMapper:
         with self.lock:
             if sig in self.cache:
                 return self.cache[sig]
-        sample = "\n".join(r.text for r in table.rows[:SAMPLE_ROWS])
-        user = "Document: %s\nHeader: %s\nSample rows:\n%s" % (
-            title, " | ".join(table.header), sample)
+        if table.form:
+            user = "Document: %s\nA form: one record, each label is a column.\nHeader: %s\n" \
+                   "Sample rows:\n%s" % (title, " | ".join(table.header), table.rows[0].text)
+        else:
+            sample = "\n".join(r.text for r in table.rows[:SAMPLE_ROWS])
+            user = "Document: %s\nHeader: %s\nSample rows:\n%s" % (
+                title, " | ".join(table.header), sample)
         raw = self.llm.json_call(_mapping_prompt(self.profile), user,
-                                 _mapping_schema(self.profile), max_tokens=2048)
+                                 _mapping_schema(self.profile), max_tokens=MAPPING_MAX_TOKENS)
         mapping = parse_mapping(raw, table.header, self.profile)
         if not mapping.entities:
             mapping = None
@@ -328,7 +384,13 @@ class TableMapper:
         return mapping
 
     def export(self) -> dict:
-        return {sig: m.to_json(self.headers[sig]) for sig, m in self.cache.items() if m}
+        out = {}
+        for sig, m in self.cache.items():
+            if m:
+                out[sig] = m.to_json(self.headers[sig])
+                if sig.startswith("form: "):
+                    out[sig]["form"] = True
+        return out
 
 
 def _identifier_value(cell: str, subtype: str, profile: dict) -> str:
@@ -355,10 +417,8 @@ def apply_mapping(table: Table, mapping: Mapping, profile: dict, prefix: str
         for k, (owner, attr) in mapping.attributes.items():
             cell = row.cells.get(k)
             if cell and owner in refs:
-                if attr == "birth_date":
-                    cell = next(iter(sorted(_dates_in(cell))), "")
-                if cell:
-                    refs[owner].attrs[attr] = (cell, table.page)
+                for name, value in _attribute_values(attr, cell):
+                    refs[owner].attrs.setdefault(name, (value, table.page))
         ents += refs.values()
         start = end = None
         if mapping.date is not None and row.cells.get(mapping.date):
@@ -368,7 +428,30 @@ def apply_mapping(table: Table, mapping: Mapping, profile: dict, prefix: str
         label = row.cells.get(mapping.label, "") if mapping.label is not None else ""
         for type_, a, b in mapping.relations:
             if a in refs and b in refs:
-                rels.append(LocalRelation(type_, refs[a].ref, refs[b].ref, squash(row.text),
+                rels.append(LocalRelation(type_, refs[a].ref, refs[b].ref,
+                                          _row_quote(row, (a, b, mapping.date, mapping.end_date)),
                                           table.page, "structured", start, end, label[:120],
                                           confidence=0.9))
     return ents, rels
+
+
+def _attribute_values(attr: str, cell: str) -> list[tuple[str, str]]:
+    """A birth field may hold the place and the date together ("Születési hely,
+    idő: Veszprém, 1976. 05. 28."): the date is the birth date, the rest the place."""
+    if attr not in ("birth_date", "birth_place"):
+        return [(attr, cell)]
+    found = re.search(r"\d{4}[.\-/] ?\d{1,2}[.\-/] ?\d{1,2}\.?", cell)
+    date = next(iter(sorted(_dates_in(cell))), "")
+    place = (cell[:found.start()] + cell[found.end():]).strip(" ,;") if found else cell
+    out = [("birth_date", date)] if date else []
+    if place and any(c.isalpha() for c in place) and (attr == "birth_place" or found):
+        out.append(("birth_place", place))
+    return out
+
+
+def _row_quote(row: Row, columns) -> str:
+    """A table row is its own evidence; a form's is the lines of the fields used."""
+    if not row.lines:
+        return squash(row.text)
+    return squash(" ".join(row.lines[k][1] for k in sorted({c for c in columns if c is not None})
+                           if k in row.lines))

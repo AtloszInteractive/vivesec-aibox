@@ -1,17 +1,71 @@
 """Document -> graph payload: text, rules, model, co-mentions, resolution (E26)."""
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import time
 
-from extraction import (LocalEntity, LocalRelation, chunk_pages, co_mentions, find_identifiers,
-                        fold, llm_extract)
-from llm_client import LLMError
-from table_mapping import apply_mapping, blank_tables, find_tables
+from extraction import (Chunk, LocalEntity, LocalRelation, chunk_pages, co_mentions,
+                        find_identifiers, fold, llm_extract, squash)
+from llm_client import LLMError, LLMTruncated
+from table_mapping import apply_mapping, blank_tables, find_form, find_tables, form_spans
 from text_source import document_pages
 
 MIN_NAME_CHARS = 3
 MIN_PROSE_CHARS = 20  # a chunk with less text than this is not worth a model call
+# "Label: value" forms read by a mapping learnt once per layout (like tables).
+# On the synthetic intake sheets: 37% faster and more precise than the model alone.
+FORMS = os.environ.get("GRAPH_EXTRACT_FORMS", "on").strip().lower() != "off"
+LLM_COUNTERS = ("calls", "seconds", "prompt_tokens", "output_tokens", "prompt_seconds",
+                "eval_seconds", "load_seconds", "truncated")
+
+
+def _llm_counters(llm) -> dict:
+    return {k: getattr(llm, k, 0) for k in LLM_COUNTERS}
+
+
+# How many times an excerpt whose reading ran into the output limit is halved.
+MAX_SPLITS = 2
+
+
+def _halves(chunk: Chunk) -> list[Chunk]:
+    """The excerpt cut in two at the line nearest its middle ([] for one line)."""
+    lines = chunk.text.split("\n")
+    if len(lines) < 2:
+        return []
+    total, pos, best = len(chunk.text), 0, None
+    for i in range(1, len(lines)):
+        pos += len(lines[i - 1]) + 1
+        if best is None or abs(pos - total / 2) < abs(best[1] - total / 2):
+            best = (i, pos)
+    i, cut = best
+    return [Chunk(chunk.page, chunk.offset, "\n".join(lines[:i])),
+            Chunk(chunk.page, chunk.offset + cut, "\n".join(lines[i:]))]
+
+
+def _llm_error(stats: dict, error: Exception) -> None:
+    stats["llm_errors"] += 1
+    stats.setdefault("llm_error_detail", []).append(str(error)[:200])
+
+
+def _read_chunk(chunk: Chunk, profile: dict, llm, title: str, stats: dict, depth: int = 0
+                ) -> list[tuple[list, list]]:
+    """The model's reading of an excerpt (failures counted in stats). A reply cut
+    off at the output limit (a long register, or the model repeating itself) is
+    not retried as it was: each half of the excerpt is read on its own instead."""
+    try:
+        return [llm_extract(chunk, profile, llm, title)]
+    except LLMTruncated as e:
+        halves = [h for h in _halves(chunk) if len(h.text.strip()) >= MIN_PROSE_CHARS]
+        if depth < MAX_SPLITS and len(halves) == 2:
+            stats["llm_splits"] = stats.get("llm_splits", 0) + 1
+            return [part for half in halves
+                    for part in _read_chunk(half, profile, llm, title, stats, depth + 1)]
+        _llm_error(stats, e)
+    except LLMError as e:
+        _llm_error(stats, e)
+    return []
 
 
 class _Union:
@@ -95,16 +149,79 @@ def _spans(pages, ents: dict[str, LocalEntity]) -> dict[str, list[tuple[int, int
     return out
 
 
-def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, tables=None
-                     ) -> tuple[dict, dict]:
+# Places, organizations and objects named without a capital letter ("intézet",
+# "gépjármű", "102. számú zárka"): a common noun, not a name, so each document
+# keeps its own -- the same words in two documents are not the same thing. A
+# cell the model typed as such and placed in an institution is the exception.
+GENERIC_TYPES = ("place", "organization", "object")
+
+
+
+def _generic(e: LocalEntity) -> bool:
+    return e.type in GENERIC_TYPES and not e.value and bool(e.names) and all(
+        not any(c.isupper() for c in name) for name in e.names)
+
+
+# How far apart (characters, same page) a place and its container may be named
+# for the text between them to serve as the evidence that one is inside the other.
+CONTAINER_WINDOW = 300
+
+
+def _containers(profile: dict, pages, ents: dict[str, LocalEntity], rels: list[LocalRelation],
+                spans) -> dict[str, tuple[str | None, LocalRelation | None]]:
+    """ref of a place that only exists inside a larger one (profile `within`, e.g. a
+    cell) -> (ref of its container in this document or None, a PART_OF relation
+    to add). The container is the one a PART_OF relation names, else the only
+    one the document names, else the one named last before the place on its page."""
+    within = {s["id"]: set(s["within"]) for s in profile["entity_subtypes"] if s.get("within")}
+    text = dict(pages)
+    out: dict[str, tuple[str | None, LocalRelation | None]] = {}
+    for ref, e in ents.items():
+        allowed = within.get(e.subtype)
+        if not allowed:
+            continue
+        holders = [x for x, c in ents.items() if x != ref and c.subtype in allowed and x in spans]
+        explicit = {r.b if r.a == ref else r.a for r in rels if r.type == "PART_OF"
+                    and ref in (r.a, r.b) and (r.b if r.a == ref else r.a) in holders}
+        container = None
+        if len(explicit) == 1:
+            container = explicit.pop()
+        elif not explicit and len(holders) == 1:
+            container = holders[0]
+        elif not explicit and holders:
+            for page, start, _, _ in sorted(spans.get(ref, ())):
+                before = [(h_end, h) for h in holders for h_page, _, h_end, _ in spans[h]
+                          if h_page == page and h_end <= start and start - h_end <= CONTAINER_WINDOW]
+                if before:
+                    container = max(before)[1]
+                    break
+        evidence = None
+        if container is not None and not explicit and container in holders:
+            near = sorted((max(s, hs) - min(e_, he), page, min(s, hs), max(e_, he))
+                          for page, s, e_, _ in spans.get(ref, ())
+                          for h_page, hs, he, _ in spans[container] if h_page == page)
+            if near and near[0][0] <= CONTAINER_WINDOW:
+                _, page, start, end = near[0]
+                evidence = LocalRelation("PART_OF", ref, container,
+                                         squash(text[page][start:end]), page, "rule",
+                                         confidence=1.0)
+        out[ref] = (container, evidence)
+    return out
+
+
+def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, tables=None,
+                     prose: bool = True) -> tuple[dict, dict]:
     """(ingest payload, stats). meta: doc_id, corpus_id, source_path, title?, kind?, acl?
 
     tables: a TableMapper; tables it can map are read row by row by rule, the
     rest of the text goes to the model in chunks. Without it every table is
     read by the model.
+    prose=False leaves the running text to a later pass (stats `prose_deferred`
+    counts its chunks): rules, tables and forms only, the model at most maps a
+    new table or form layout.
     """
     started = time.time()
-    calls_before, seconds_before = llm.calls, llm.seconds
+    before = _llm_counters(llm)
     pages, how = document_pages(raw, meta["source_path"])
     stats = {"doc_id": meta["doc_id"], "text": how, "pages": len(pages), "chunks": 0,
              "llm_errors": 0}
@@ -137,15 +254,29 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
                     mapped.append(t)
                     stats["tables"] += 1
                     stats["table_rows"] += len(t.rows)
-            prose_pages.append((page, blank_tables(text, mapped)))
+            rest = blank_tables(text, mapped)
+            form = find_form(page, rest) if FORMS else None
+            mapping = None
+            if form is not None:
+                try:
+                    mapping = tables.mapping_for(form, meta.get("title", ""))
+                except LLMError as e:
+                    stats["llm_errors"] += 1
+                    stats.setdefault("llm_error_detail", []).append(str(e)[:200])
+            if mapping:
+                results.append(apply_mapping(form, mapping, profile, "f%d" % len(results)))
+                form.spans = form_spans(form, mapping)
+                rest = blank_tables(rest, [form])
+                stats["forms"] = stats.get("forms", 0) + 1
+                stats["form_fields"] = stats.get("form_fields", 0) + len(form.spans)
+            prose_pages.append((page, rest))
     chunks = [c for c in chunk_pages(prose_pages) if len(c.text.strip()) >= MIN_PROSE_CHARS]
     stats["chunks"] = len(chunks)
+    if not prose and chunks:
+        stats["prose_deferred"] = len(chunks)
+        chunks = []
     for chunk in chunks:
-        try:
-            results.append(llm_extract(chunk, profile, llm, meta.get("title", "")))
-        except LLMError as e:
-            stats["llm_errors"] += 1
-            stats.setdefault("llm_error_detail", []).append(str(e)[:200])
+        results += _read_chunk(chunk, profile, llm, meta.get("title", ""), stats)
     ents, rels = _consolidate(results, id_hits)
     spans = _spans(pages, ents)
     ents = {ref: e for ref, e in ents.items() if ref in spans}
@@ -155,6 +286,13 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
                         profile["cooccurrence"]["max_entities"])
 
     doc_id = meta["doc_id"]
+    scoped = _containers(profile, pages, ents, rels, spans)
+    for ref, (container, evidence) in scoped.items():
+        if container is not None:
+            first = min(spans[ref])[0] if spans.get(ref) else None
+            ents[ref].attrs.setdefault("within", (ents[container].names[0], first))
+        if evidence is not None:
+            rels.append(evidence)
     strong = resolver.strong_key_subtypes()
     held: dict[str, set[str]] = {}
     for r in rels:
@@ -164,6 +302,14 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
                 held.setdefault(r.a, set()).add("%s:%s" % (e.subtype, e.value))
     gid = {ref: resolver.resolve(doc_id, e, frozenset(held.get(ref, ())))
            for ref, e in ents.items()}
+    for ref, e in ents.items():
+        # Cell 102 of one prison is not cell 102 of another; with no container
+        # named, the place stays this document's own (no cross-document link).
+        container = scoped.get(ref, (None, None))[0]
+        if container is not None:
+            gid[ref] = "%s@%s" % (gid[ref], gid[container])
+        elif ref in scoped or _generic(e):
+            gid[ref] = "%s@doc:%s" % (gid[ref], doc_id)
     entities, mentions, relations = {}, [], {}
     for ref, e in ents.items():
         g = gid[ref]
@@ -183,17 +329,28 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
         if spec[r.type]["symmetric"] and b < a:
             a, b = b, a
         key = (r.type, a, b, r.start, r.end)
-        rel = relations.setdefault(key, {"id": "%s:r%d" % (doc_id, len(relations)), "type": r.type,
+        # The id follows the relation's key: a relationship keeps the id of the
+        # document that created it while others add evidence, so a positional id
+        # could meet a different relationship when that document is read again.
+        rid = "%s:r%s" % (doc_id, hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:12])
+        rel = relations.setdefault(key, {"id": rid, "type": r.type,
                                          "a": a, "b": b, "start": r.start, "end": r.end,
                                          "raw_label": r.raw_label, "evidence": []})
         if all(ev["quote"] != r.quote for ev in rel["evidence"]):
             rel["evidence"].append({"quote": r.quote, "page": r.page, "method": r.method,
                                     "confidence": r.confidence})
+    after = _llm_counters(llm)
     stats.update({"entities": len(entities), "mentions": len(mentions),
                   "relations": sum(1 for r in relations.values() if r["type"] != "CO_MENTIONED"),
                   "co_mentions": sum(1 for r in relations.values() if r["type"] == "CO_MENTIONED"),
-                  "llm_calls": llm.calls - calls_before,
-                  "llm_seconds": round(llm.seconds - seconds_before, 1),
+                  "llm_calls": after["calls"] - before["calls"],
+                  "llm_seconds": round(after["seconds"] - before["seconds"], 1),
+                  "llm_prompt_tokens": after["prompt_tokens"] - before["prompt_tokens"],
+                  "llm_output_tokens": after["output_tokens"] - before["output_tokens"],
+                  "llm_prompt_seconds": round(after["prompt_seconds"] - before["prompt_seconds"], 2),
+                  "llm_eval_seconds": round(after["eval_seconds"] - before["eval_seconds"], 2),
+                  "llm_load_seconds": round(after["load_seconds"] - before["load_seconds"], 2),
+                  "llm_truncated": after["truncated"] - before["truncated"],
                   "seconds": round(time.time() - started, 1)})
     return {"document": document, "entities": list(entities.values()), "mentions": mentions,
             "relations": list(relations.values())}, stats

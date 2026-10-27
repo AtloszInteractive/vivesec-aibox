@@ -98,6 +98,8 @@ export type RagCitation = {
   score: number;
   label: string;
   snippet: string;
+  /** Recognised (OCR) text and its quality, 0-100. */
+  ocrQuality?: number;
 };
 
 export type RagAskResult = {
@@ -117,6 +119,8 @@ export type RagAskResult = {
   citations: RagCitation[];
   confidence?: { score: number; band: "green" | "amber" | "red"; auditId?: string };
   refused?: boolean;
+  /** The analyst planner asked back instead of answering. */
+  clarify?: boolean;
   error?: string;
   backgroundJobId?: string;
 };
@@ -263,6 +267,7 @@ function ragResultFromAdapter(result: AdapterAnswer): RagAskResult {
       score: Math.round((c.score ?? 0) * 100),
       label: baseName(c.path),
       snippet: c.snippet,
+      ...(typeof c.ocr_quality === "number" ? { ocrQuality: c.ocr_quality } : {}),
     }));
   const sources = Array.from(new Set(citations.map((c) => c.label)));
   const answer = result.answer?.trim() ? result.answer : (result.hits[0]?.snippet ?? "");
@@ -287,6 +292,7 @@ function ragResultFromAdapter(result: AdapterAnswer): RagAskResult {
         }
       : undefined,
     refused,
+    clarify: result.clarify,
   };
 }
 

@@ -22,6 +22,9 @@ CORE_TYPES = (PERSON, ORGANIZATION, PLACE, IDENTIFIER, EVENT, OBJECT)
 METHODS = ("structured", "rule", "ner", "llm", "cooccurrence", "manual")
 # Edges below this strength are "weak" (co-mentions) and excluded unless asked for.
 WEAK_METHODS = ("cooccurrence",)
+# A document's subtype for an entity is kept as this attribute of that document,
+# so a caller sees a subtype only from documents they can read.
+SUBTYPE_ATTR = "subtype"
 
 ENTITY_STATUSES = ("active", "merged", "rejected")
 
@@ -35,6 +38,12 @@ class Document:
     acl: dict | None = None
     kind: str = ""
     pages: int = 0
+    # The domain profile it was extracted with ("bv@3/e3"); "" when unknown (before
+    # this was recorded, or put directly). A profile change makes it stale.
+    profile: str = ""
+    # SHA-256 of the file it was extracted from; "" when unknown. The same file
+    # sent again (a drive re-sync) is not extracted again.
+    content_sha256: str = ""
 
 
 @dataclass

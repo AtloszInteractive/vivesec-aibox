@@ -31,7 +31,8 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/admin/acl/effective         {user[,upn,groups,roles,paths,under]}
                                               (mutual TLS or loopback only)
     POST /api/v1/ui/graph/query               {query,params[,drives]}  (E26, graph.py)
-    POST /api/v1/ui/graph/status | review/list | review/decide | profile/get | profile/set
+    POST /api/v1/ui/graph/status | review/list | review/decide | review/history | review/undo
+                            | profile/get | profile/set
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -75,6 +76,7 @@ externally; this adapter is the only thing in front of it.
 """
 import json
 import base64
+import hashlib
 import ipaddress
 import mimetypes
 import os
@@ -91,6 +93,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import acl  # noqa: E402
+import analysis_checkpoint  # noqa: E402
 import build_info  # noqa: E402
 import confidence  # noqa: E402
 import conversations  # noqa: E402
@@ -112,6 +115,9 @@ import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
 import orchestrator  # noqa: E402
+import purpose  # noqa: E402
+import querylog  # noqa: E402
+import reprocess  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -120,7 +126,7 @@ import chat_policy
 import storage  # noqa: E402
 import voice  # noqa: E402
 import wsfs  # noqa: E402
-from meta import MetaMirror  # noqa: E402
+from meta import MetaMirror, under as _under_path  # noqa: E402
 
 HOST = os.environ.get("ADAPTER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ADAPTER_PORT", "8080"))
@@ -145,6 +151,14 @@ ANALYZE_NUM_CTX = int(os.environ.get("ADAPTER_ANALYZE_NUM_CTX", "65536") or 0)
 # derived from the WORST measured ratio:
 #   (num_ctx - num_predict - prompt overhead) * 1.75 ~= 109k chars at 65536.
 ANALYZE_MAX_CHARS = int(os.environ.get("ADAPTER_ANALYZE_MAX_CHARS", "100000"))
+# E10a: a document larger than that window is analysed in full, part by part
+# (deep.read_document) instead of being cut. Only "off" restores the cut; the
+# token bound caps what is fetched of one document (beyond it: "partial").
+ANALYZE_FULL = (os.environ.get("ADAPTER_ANALYZE_FULL", "on") or "on").strip().lower() != "off"
+ANALYZE_DOC_MAX_TOKENS = max(1000, int(
+    os.environ.get("ADAPTER_ANALYZE_DOC_MAX_TOKENS", "3000000") or 3000000))
+ANALYZE_DEFAULT_TASK = ("Analyse the document: its purpose, parties, key facts, obligations, "
+                        "dates, amounts, risks and conclusions.")
 # A structured analysis is never this short; anything shorter means generation
 # was starved of context window.
 ANALYZE_MIN_ANSWER_CHARS = int(
@@ -371,6 +385,14 @@ def _visible(access):
     return ACL.checker(access, MIRROR.acl_of)
 
 
+def _review_int(payload, key, default):
+    """A paging number of a review call; anything odd falls back to the default
+    (the graph checks the range)."""
+    value = payload.get(key, default)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 \
+        else default
+
+
 def _flat_acl(path):
     return ACL.effective(path, MIRROR.acl_of).as_rag()
 
@@ -469,10 +491,76 @@ def _acl_loop():
 # Relationship analysis (E26): internal graph service, off unless GRAPH_URL is set.
 GRAPH = graph.GraphClient.from_env()
 GRAPH_FORWARD = graph.Forwarder.from_env(GRAPH, _flat_acl)
+# Reprocessing after a profile change fetches each file again: from the
+# ViVeSecBox (ws-fs), or -- on a development box without that channel -- from
+# this mirror of the drives (<dir>/<drive>/... for /storage/drives/<drive>/...).
+REPROCESS_SOURCE_DIR = (os.environ.get("ADAPTER_REPROCESS_SOURCE_DIR", "") or "").strip()
+
+
+def _reprocess_fetch(user, path):
+    """A file's content for reprocessing; None when it no longer exists."""
+    if REPROCESS_SOURCE_DIR:
+        root = os.path.realpath(REPROCESS_SOURCE_DIR)
+        prefix = corpus.DRIVE_PREFIX.rstrip("/") + "/"
+        if not path.startswith(prefix):
+            return None
+        local = os.path.realpath(os.path.join(root, path[len(prefix):]))
+        if not local.startswith(root + os.sep) or not os.path.isfile(local):
+            return None
+        with open(local, "rb") as handle:
+            return handle.read()
+    try:
+        header, content = WSFS.get_file(user, path, timeout=GETFILE_TIMEOUT)
+    except wsfs.ChannelError as e:
+        raise reprocess.ReprocessError("ViVeSecBox not connected: %s" % e)
+    error = (header or {}).get("error")
+    if error in ("not-found", "missing"):
+        return None
+    if error:
+        raise RuntimeError(error)
+    return content or None
+
+
+REPROCESS = reprocess.Reprocessor(GRAPH, GRAPH_FORWARD, _reprocess_fetch)
+# (user, corpus ids, folder) -> (when, {(corpus_id, path)} the graph holds, how
+# many): the reprocessing panel polls every few seconds, the list is the scope.
+_GRAPH_PATHS = {}
+GRAPH_PATHS_TTL = 30.0
+
+
+def _graph_absent(known, req_scope, visible, prefix=""):
+    """Synced files of the scope the graph holds no document for -- the forward
+    queue was full during a large sync, the graph was down, an extraction
+    failed. They go first in a reprocessing run (sorted by path)."""
+    out = []
+    for item in MIRROR.files():
+        path = item["path"]
+        if prefix and not _under_path(path, prefix):
+            continue
+        if os.path.splitext(path)[1].lower() not in graph.GRAPH_EXTS:
+            continue
+        size = item.get("size")
+        if size is not None and (size <= 0 or size > GRAPH_FORWARD.max_file_bytes):
+            continue
+        if not req_scope.contains_path(path) or not visible(path):
+            continue
+        try:
+            corpus_id = corpus.corpus_id_of_path(path)
+        except ValueError:
+            continue
+        if (corpus_id, path) in known:
+            continue
+        out.append({"doc_id": corpus.doc_id_of(TENANT_ID, corpus_id, path),
+                    "corpus_id": corpus_id, "source_path": path, "profile": None,
+                    "absent": True})
+    out.sort(key=lambda d: d["source_path"])
+    return out
 # Who may change the shared graph (merge people, edit the domain profile). Empty:
 # nobody through the UI.
 GRAPH_ADMINS = frozenset(u.strip().casefold() for u in
                          os.environ.get("ADAPTER_GRAPH_ADMINS", "").split(",") if u.strip())
+# Documents listed at most by one /ui/index/skipped answer (the counts cover all).
+SKIPPED_LIST_LIMIT = 500
 # Plain chat questions get the graph's relations among the named entities;
 # only an explicit off disables it.
 GRAPH_CHAT = (os.environ.get("ADAPTER_GRAPH_CHAT", "on").strip().lower() != "off")
@@ -508,10 +596,43 @@ GRAPH_NAME_JOIN = (os.environ.get("ADAPTER_GRAPH_NAME_JOIN", "off") or "off").st
     == "same_name"
 
 
+# Purpose-bound queries (concept 5.2) and their log (5.3): see purpose.py and
+# querylog.py. Off by default; required on a box that serves case work.
+PURPOSE = purpose.settings()
+QUERY_LOG = querylog.QueryLog.from_env()
+
+
 def app_settings():
     analyst = APP_MODE == APP_ANALYST
     return {"mode": APP_MODE, "drive_browser": not analyst, "quick_actions": not analyst,
-            "orchestrator": analyst and GRAPH.enabled}
+            "orchestrator": analyst and GRAPH.enabled, "purpose": purpose.public(PURPOSE)}
+
+
+def _answer_summary(result):
+    """What the query log keeps of an answer: never its text."""
+    citations = result.get("citations") or []
+    return {"ok": bool(result.get("ok")), "audit_id": result.get("audit_id"),
+            "citations": len(citations), "sources": querylog.sources_of(citations),
+            "graph_calls": [c.get("tool") for c in (result.get("graph") or {}).get("calls") or []],
+            "full_reading": bool(result.get("deep")), "clarify": bool(result.get("clarify")),
+            "error": result.get("error")}
+
+
+def _log_query(user, drive, req_scope, kind, bound, question, result):
+    """Record one bound query (purpose on). False only when the log is required
+    and could not be written -- the caller then withholds the answer."""
+    if PURPOSE["mode"] == "off":
+        return True
+    entry = {"user": user, "drive": corpus.norm(drive),
+             "drives": list(req_scope.drive_roots) if req_scope is not None else [],
+             "kind": kind, "case_ref": bound.get("case_ref"),
+             "legal_basis": bound.get("legal_basis"), "question": question, "result": result}
+    try:
+        QUERY_LOG.record(entry)
+        return True
+    except OSError as e:
+        sys.stderr.write("[adapter] query log: %s\n" % e)
+        return PURPOSE["mode"] != "required"
 
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
@@ -565,6 +686,9 @@ LONGPOLL_SECONDS = float(os.environ.get("ADAPTER_LONGPOLL_SECONDS", "25") or 25)
 LONGPOLL_MAX = float(os.environ.get("ADAPTER_LONGPOLL_MAX", "55") or 55)
 JOBS = jobstore.JobStore.from_env()
 JOB_QUEUE_MAX = int(os.environ.get("ADAPTER_JOB_QUEUE_MAX", "5") or 5)
+# E10a: the parts of a whole-document analysis read so far, so that one that
+# stopped before its end continues where it stopped.
+ANALYSIS_CHECKPOINTS = analysis_checkpoint.CheckpointStore.from_env()
 
 
 def status_payload(trusted=True):
@@ -955,6 +1079,65 @@ def _read_all(args, query, lang, req_scope, access, job_id, user, drive, cancel_
     return contexts[:1], found, info
 
 
+def _analyze_document(target, req_scope, access, query, lang, cancel_event, stage_callback,
+                      slot=None, user=None):
+    """Every passage of ONE file for an analysis: (contexts, document, coverage
+    note, info). A file that fits the window is the context as is; a larger one
+    is read in parts (E10a), inside the heavy slot when `slot` (job_id, user,
+    drive) says the caller does not hold it yet. The parts `user` read in an
+    earlier, unfinished run of the same analysis are not read again."""
+    try:
+        target_corpus = req_scope.corpus_id_for_path(target)
+    except ValueError:
+        # A bare filename (no drive prefix) is resolved by name inside the
+        # first corpus in scope; a path outside the scope is never reached.
+        target_corpus = req_scope.corpus_ids[0]
+    res = rag_post_json("/rag/document_context",
+                        {"corpus_id": target_corpus, "tenant_id": TENANT_ID,
+                         "source_path": corpus.norm(target),
+                         "max_context_tokens": ANALYZE_DOC_MAX_TOKENS if ANALYZE_FULL
+                         else ANALYZE_MAX_CONTEXT_TOKENS,
+                         "access": access.as_rag()})
+    contexts = res.get("contexts", [])
+    document = res.get("document") or {}
+    if not (ANALYZE_FULL and contexts and (document.get("truncated") or sum(
+            len(c.get("text") or "") for c in contexts) > ANALYZE_MAX_CHARS)):
+        contexts, document = _fit_analyze_window(contexts, document)
+        return contexts, document, [], None
+    if slot is None:
+        note, parts, info = _read_document(contexts, document, query, lang, cancel_event,
+                                           stage_callback, user)
+    else:
+        if stage_callback:
+            stage_callback("queued", 0, 0)
+        try:
+            with HEAVY_SCHEDULER.slot(*slot) as slot_cancel:
+                note, parts, info = _read_document(contexts, document, query, lang,
+                                                   _AnyEvent(cancel_event, slot_cancel),
+                                                   stage_callback, user)
+        except scheduler.QueueCancelled:
+            raise llm.GenerationCancelled("cancelled while waiting for the heavy slot")
+    return parts, dict(document, truncated=False), note, info
+
+
+def _read_document(chunks, document, query, lang, cancel_event, stage_callback, user=None):
+    """E10a whole-document analysis of a file too large for one call (deep.py):
+    every passage of it, in parts. The caller already runs in the heavy slot
+    (analyze is a heavy job). Returns (coverage note, part summaries, info)."""
+    name = (document.get("source_path") or document.get("title") or "").rsplit("/", 1)[-1]
+    task = (query or "").strip() or ANALYZE_DEFAULT_TASK
+    num_ctx = ANALYZE_NUM_CTX or None
+    checkpoint = ANALYSIS_CHECKPOINTS.open(
+        user, chunks, task, lang, llm.GEN_MODEL,
+        {"part_chars": deep.DOC_BATCH_CHARS, "num_ctx": num_ctx,
+         "prompt": hashlib.sha256(deep.SECTION_SYSTEM.encode("utf-8")).hexdigest()})
+    contexts, info = deep.read_document(
+        chunks, task, lang, name or None, chunks_total=document.get("chunks_total"),
+        cancel_event=cancel_event, progress=stage_callback, num_ctx=num_ctx,
+        budget=ANALYZE_MAX_CHARS * 6 // 10, checkpoint=checkpoint)
+    return contexts[:1], contexts[1:], dict(info, kind="document")
+
+
 def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             params=None, agent=None, history_snapshot=None, cancel_event=None,
             progress_callback=None, req_scope=None, profile="grounded",
@@ -1012,11 +1195,16 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         vocab = orchestrator.vocabulary(domain, lang)
         planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ)
     deep_call = None
+    doc_call = None
     if planned is not None and planned["action"] == "tools":
-        # A full reading is the document side of the plan, not a graph query.
+        # A full reading is the document side of the plan, not a graph query;
+        # so is the full analysis of one named file (E10a), which replaces it.
         reads = [c for c in planned["calls"] if c["tool"] == "read_all"]
-        deep_call = reads[0] if reads and DEEP_READ else None
-        planned = dict(planned, calls=[c for c in planned["calls"] if c["tool"] != "read_all"])
+        docs = [c for c in planned["calls"] if c["tool"] == "analyze_document"]
+        doc_call = docs[0] if docs and DEEP_READ else None
+        deep_call = reads[0] if reads and DEEP_READ and doc_call is None else None
+        planned = dict(planned, calls=[c for c in planned["calls"]
+                                       if c["tool"] not in orchestrator.DOCUMENT_TOOLS])
     if planned is not None:
         check = _visible(access)
         run = orchestrator.Run(
@@ -1061,28 +1249,30 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         evidence_ids = followup_evidence(query, history, req_scope.corpus_ids)
     if source_paths or evidence_ids:
         chat_only = False
-    if action == "analyze":
-        # The user pointed at ONE file and asked what is in it. Similarity
-        # retrieval would only return the parts that match the question, so the
-        # whole document is fetched instead — that is the point of the action.
-        target = next((str(f) for f in (files or []) if f), "")
+    doc_target = None
+    if doc_call is not None:
+        # The planner names the file as the user wrote it; the mirror knows the
+        # real path among the files the caller may see.
+        name = doc_call["args"]["file"]
+        found = named_files.resolve(MIRROR, req_scope.drive_roots, name,
+                                    fallback=llm.source_files(name) or [name],
+                                    visible=_visible(access))
+        doc_target = found[0] if found else None
+    analysing = action == "analyze" or doc_target is not None
+    if analysing:
+        # ONE file, read whole: similarity retrieval would only return the parts
+        # that match the question. Started as the analyze action (quick action
+        # or the citation button) or by the analyst planner.
+        target = doc_target or next((str(f) for f in (files or []) if f), "")
         if not target:
             raise RagError(400, {"ok": False,
                                  "error": "analyze requires a source file"})
-        try:
-            target_corpus = req_scope.corpus_id_for_path(target)
-        except ValueError:
-            # A bare filename (no drive prefix) is resolved by name inside the
-            # first corpus in scope; a path outside the scope is never reached.
-            target_corpus = req_scope.corpus_ids[0]
-        res = rag_post_json("/rag/document_context",
-                            {"corpus_id": target_corpus, "tenant_id": TENANT_ID,
-                             "source_path": corpus.norm(target),
-                             "max_context_tokens": ANALYZE_MAX_CONTEXT_TOKENS,
-                             "access": access.as_rag()})
-        contexts = res.get("contexts", [])
-        document = res.get("document") or {}
-        contexts, document = _fit_analyze_window(contexts, document)
+        contexts, document, deep_note, deep_info = _analyze_document(
+            target, req_scope, access, query, lang, cancel_event, stage_callback,
+            # A planned analysis runs inside a plain ask, not a heavy job.
+            slot=None if action == "analyze" else (job_id or uuid.uuid4().hex, user, drive),
+            user=user)
+        res = {"debug": {"retrieval": "whole-document"}}
     elif chat_only:
         contexts = []
     elif deep_call is not None:
@@ -1101,8 +1291,10 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                              "include_debug": True})
         contexts = res.get("contexts", [])
     contexts = _visible_contexts(contexts, access)
-    if deep_call is not None:
-        contexts = deep_note + contexts  # the coverage note has no path to check
+    if deep_note:
+        # Last, so the passages are [#1]... (the model cited one off with the
+        # note first) and the first source card is a document. No path to check.
+        contexts = contexts + deep_note
     graph_info = None
     if orchestrated is not None:
         contexts = orchestrated[0] + contexts
@@ -1126,14 +1318,15 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                      "page_number": c.get("page_number"),
                      "score": c.get("score"), "snippet": snippet})
     answer, backend = llm.generate(query, contexts, lang=lang, history=history,
-                                   task=action, params=params,
-                                   num_ctx=ANALYZE_NUM_CTX if action == "analyze"
+                                   task=action or ("analyze" if analysing else None),
+                                   params=params,
+                                   num_ctx=ANALYZE_NUM_CTX if analysing
                                    or deep_call is not None else None,
                                    chat_only=chat_only, agent=agent,
                                    cancel_event=cancel_event,
                                    progress_callback=progress_callback,
                                    **({"profile": profile} if profile == "hybrid" else {}))
-    degenerate = (action == "analyze" and contexts and answer is not None
+    degenerate = (analysing and contexts and answer is not None
                   and len(answer.strip()) < ANALYZE_MIN_ANSWER_CHARS)
     if degenerate:
         sys.stderr.write("[adapter] analyze: generation starved (%d chars, %s/%s chunks) %r\n"
@@ -1317,6 +1510,11 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
         code, payload = e.status, e.body
     except Exception as e:  # noqa: BLE001
         code, payload = 500, {"ok": False, "error": str(e)}
+    request = job.get("request") or {}
+    if not _log_query(user, drive, req_scope, action or "ask", request.get("purpose") or {},
+                      query, dict(_answer_summary(payload if isinstance(payload, dict) else {}),
+                                  status=code)) and code == 200:
+        code, payload = 503, {"ok": False, "error": "query log unavailable"}
     JOBS.finish(user, drive, job_id, code, payload)
 
 
@@ -1643,9 +1841,15 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/status": self._graph_status,
                 "/api/v1/ui/graph/review/list": self._graph_review_list,
                 "/api/v1/ui/graph/review/decide": self._graph_review_decide,
+                "/api/v1/ui/graph/review/history": self._graph_review_history,
+                "/api/v1/ui/graph/review/undo": self._graph_review_undo,
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
+                "/api/v1/ui/graph/reprocess/status": self._graph_reprocess_status,
+                "/api/v1/ui/graph/reprocess/start": self._graph_reprocess_start,
+                "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
+                "/api/v1/ui/index/skipped": self._index_skipped,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -1890,12 +2094,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "Missing 'query'"})
             return None
         if APP_MODE == APP_ANALYST:
-            if payload.get("action"):
+            requested = str(payload.get("action") or "").strip().lower()
+            if requested and requested != "analyze":
                 self._send(403, {"ok": False,
                                  "error": "quick actions are not available on this box"})
                 return None
             # A typed "/summary" is just text here: every message goes to the chat.
-            action, mode = None, None
+            # The one action kept is the full analysis of one document (E10a),
+            # started from a cited document.
+            action, mode = ("analyze", None) if requested else (None, None)
         else:
             action, mode, query = parse_action(payload, query)
         if action in _BARE_QUERY and not query:
@@ -1923,6 +2130,22 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             self._send(403, {"ok": False, "error": str(e)})
             return None
+
+    def _purpose_for(self, payload):
+        """The request's purpose ({} when none is needed), or None after the
+        refusal: 428 when one is required but missing, 400 when it is not
+        acceptable, 503 when it is required and the query log cannot be written."""
+        try:
+            bound = purpose.parse(payload, PURPOSE)
+        except purpose.PurposeError as e:
+            self._send(428 if e.code == "purpose_required" else 400,
+                       {"ok": False, "error": e.code, "message": str(e),
+                        "purpose": purpose.public(PURPOSE)})
+            return None
+        if PURPOSE["mode"] == "required" and not QUERY_LOG.available():
+            self._send(503, {"ok": False, "error": "query log unavailable"})
+            return None
+        return bound
 
     def _profile_for(self, payload, action):
         try:
@@ -1964,8 +2187,16 @@ class Handler(BaseHTTPRequestHandler):
         conversation_id = self._conversation_for(payload, parsed[0], req_scope, profile)
         if conversation_id is False:
             return
-        self._send(200, _answer(*parsed, req_scope=req_scope, profile=profile,
-                                conversation_id=conversation_id, access=self._access()))
+        bound = self._purpose_for(payload)
+        if bound is None:
+            return
+        result = _answer(*parsed, req_scope=req_scope, profile=profile,
+                         conversation_id=conversation_id, access=self._access())
+        if not _log_query(parsed[0], parsed[1], req_scope, parsed[5] or "ask", bound, parsed[2],
+                          _answer_summary(result)):
+            self._send(503, {"ok": False, "error": "query log unavailable"})
+            return
+        self._send(200, result)
 
     # -- async UI channel: submit a job, then long-poll for it (spec sec 2.4) -
     def _ask(self):
@@ -1986,6 +2217,9 @@ class Handler(BaseHTTPRequestHandler):
         conversation_id = self._conversation_for(payload, user, req_scope, profile)
         if conversation_id is False:
             return
+        bound = self._purpose_for(payload)
+        if bound is None:
+            return
         history_snapshot = SESSIONS.history(
             user, chat_policy.history_scope(req_scope.session_scope, profile), conversation_id)
         # Where the request was STARTED decides where its result belongs: a chat
@@ -1999,7 +2233,7 @@ class Handler(BaseHTTPRequestHandler):
                    "scope_drives": list(req_scope.drive_roots),
                    "origin": origin, "history": history_snapshot, "profile": profile,
                    "conversation_id": conversation_id,
-                   "access": self._access().to_dict()}
+                   "access": self._access().to_dict(), "purpose": bound}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
         heavy = action is not None and not (action == "search" and mode == "files")
@@ -2068,6 +2302,8 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             jobs.append({"job_id": job.get("job_id"), "status": job.get("status"),
                          "action": request.get("action"), "query": request.get("query"),
+                         # A stopped analysis can be run again from the list (E10a).
+                         "files": list(request.get("files") or []),
                          "created": job.get("created"), "started": job.get("started"),
                          "finished": job.get("finished"), "seen_ts": job.get("seen_ts"),
                          "error": job.get("error"),
@@ -2491,11 +2727,47 @@ class Handler(BaseHTTPRequestHandler):
             "sessions": {"active": SESSIONS.stats().get("active")},
             **totals})
 
+    # -- unreadable documents (E10b) --------------------------------------------
+    def _index_skipped(self):
+        """The documents of the caller's own scope the search cannot read --
+        scans waiting for OCR or interrupted, unsupported or empty files, pages
+        OCR skipped -- with the reason. The RAG filters by scope and ACL in its
+        query; the paths are checked here again, as for graph answers."""
+        if self._locked_guard():
+            return
+        vvs = self._read_vvs()
+        if vvs is None:
+            return
+        user, drive = vvs
+        payload = self._read_json()
+        req_scope = self._scope_for(user, drive, payload)
+        if req_scope is None:
+            return
+        access = self._access()
+        res = rag_post_json("/index/skipped", {"corpus_ids": list(req_scope.corpus_ids),
+                                               "access": access.as_rag()})
+        visible = _visible(access)
+        docs = [d for d in res.get("skipped") or []
+                if req_scope.contains_path(d.get("source_path") or "")
+                and visible(d.get("source_path") or "")]
+        reasons = {}
+        for d in docs:
+            reasons[d.get("reason") or "unknown"] = reasons.get(d.get("reason") or "unknown", 0) + 1
+        limit = max(1, min(int(payload.get("limit") or SKIPPED_LIST_LIMIT), SKIPPED_LIST_LIMIT))
+        self._send(200, {"ok": True, "count": len(docs), "reasons": reasons,
+                         "pages_skipped": sum(len(d.get("skipped_pages") or []) for d in docs),
+                         "documents": [{k: d.get(k) for k in ("source_path", "reason", "ocr_state",
+                                                              "skipped_pages", "size") if d.get(k)
+                                        is not None} for d in docs[:limit]],
+                         "truncated": len(docs) > limit})
+
     # -- relationship analysis (E26) ------------------------------------------
-    def _graph_request(self):
+    def _graph_request(self, bound=False):
         """(user, payload, scope, access, scope body) of a graph call, or None
         after the refusal. The scope body is what the graph filters on; the
-        client can narrow the drives (`drives`) but never send its own."""
+        client can narrow the drives (`drives`) but never send its own. A
+        `bound` call (one that reveals content) must carry its purpose, kept in
+        self._bound for the query log."""
         if self._locked_guard():
             return None
         vvs = self._read_vvs()
@@ -2506,6 +2778,12 @@ class Handler(BaseHTTPRequestHandler):
         req_scope = self._scope_for(user, drive, payload)
         if req_scope is None:
             return None
+        self._bound = {}
+        if bound:
+            self._bound = self._purpose_for(payload)
+            if self._bound is None:
+                return None
+            self._bound_drive = drive
         access = self._access()
         return (user, payload, req_scope, access,
                 {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()})
@@ -2525,7 +2803,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _graph_query(self):
-        ctx = self._graph_request()
+        ctx = self._graph_request(bound=True)
         if ctx is None:
             return
         _, payload, req_scope, access, scope_body = ctx
@@ -2549,7 +2827,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(503, {"ok": False, "error": "access rules are being synchronised, "
                                                        "retry shortly"})
                 return
+        if not self._log_graph(ctx, "graph:" + name, json.dumps(params, sort_keys=True),
+                               [d.get("source_path") for d in (res.get("documents") or {}).values()]):
+            return
         self._send(200, res)
+
+    def _log_graph(self, ctx, kind, question, sources):
+        """Query log of a bound graph call; False after refusing it (log required
+        and unwritable)."""
+        if _log_query(ctx[0], self._bound_drive, ctx[2], kind, self._bound, question,
+                      {"ok": True, "sources": querylog.sources_of(sources)}):
+            return True
+        self._send(503, {"ok": False, "error": "query log unavailable"})
+        return False
 
     def _graph_status(self):
         """Processing progress over what this caller may see; queue sizes and
@@ -2579,29 +2869,168 @@ class Handler(BaseHTTPRequestHandler):
             "forward": {"pending": forward["pending"], "counts": forward["counts"]},
             "gpu": gpu_gate.GATE.stats()})
 
-    def _graph_review_list(self):
+    def _reprocess_source_ready(self):
+        return bool(REPROCESS_SOURCE_DIR) or WSFS.connected()
+
+    def _graph_known_paths(self, user, scope_body, prefix, fresh, limit):
+        """{(corpus_id, path)} of the documents the graph holds in this scope (and
+        the /documents/profile answer); None after a refusal was sent. The list is
+        reused per user and scope while the graph's document count stays the same
+        (at most GRAPH_PATHS_TTL seconds)."""
+        key = ((user or "").casefold(), tuple(sorted(scope_body.get("corpus_ids") or [])),
+               prefix)
+        body = dict(scope_body, path_prefix=prefix, limit=limit)
+        cached = _GRAPH_PATHS.get(key)
+        if not fresh and cached and time.time() - cached[0] < GRAPH_PATHS_TTL:
+            res = self._graph_post("/documents/profile", body)
+            if res is None:
+                return None
+            if sum((res.get("counts") or {}).values()) == cached[2]:
+                return cached[1], res
+        res = self._graph_post("/documents/profile", dict(body, with_paths=True))
+        if res is None:
+            return None
+        known = {(c, corpus.norm(p)) for c, p in res.pop("paths", None) or []}
+        if len(_GRAPH_PATHS) > 64:
+            _GRAPH_PATHS.clear()
+        _GRAPH_PATHS[key] = (time.time(), known, sum((res.get("counts") or {}).values()))
+        return known, res
+
+    def _graph_reprocess_status(self):
+        """Which profile the documents of the caller's scope were extracted with
+        (counts only), how many synced files never reached the graph, and the
+        current or last reprocessing run."""
         ctx = self._graph_request()
         if ctx is None:
             return
+        user, _, req_scope, access, scope_body = ctx
+        visible = _visible(access)
+        got = self._graph_known_paths(user, scope_body, "", fresh=False, limit=1)
+        if got is None:
+            return
+        known, res = got
+        self._send(200, {"ok": True, "current": res.get("current"),
+                         "counts": res.get("counts") or {},
+                         "stale_total": res.get("stale_total", 0),
+                         "partial_total": res.get("partial_total", 0),
+                         "absent_total": len(_graph_absent(known, req_scope, visible)),
+                         "can_start": (user or "").casefold() in GRAPH_ADMINS,
+                         "source": "local" if REPROCESS_SOURCE_DIR else "ws-fs",
+                         "source_ready": self._reprocess_source_ready(),
+                         "run": REPROCESS.status(
+                             lambda p: req_scope.contains_path(p) and visible(p))})
+
+    def _graph_reprocess_start(self):
+        """A graph administrator sends the documents of their scope through
+        extraction again: first the synced files the graph never got, then those
+        an older or unknown profile extracted; optionally below one folder."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, req_scope, access, scope_body = ctx
+        if not self._graph_admin(user):
+            return
+        prefix = str(payload.get("path_prefix") or "").strip()
+        prefix = corpus.norm(prefix).rstrip("/") if prefix else ""
+        if prefix and not req_scope.contains_path(prefix):
+            self._send(403, {"ok": False, "error": "folder outside the request scope"})
+            return
+        if not self._reprocess_source_ready():
+            self._send(503, {"ok": False, "error": "ViVeSecBox not connected: the files "
+                                                   "cannot be fetched again"})
+            return
+        got = self._graph_known_paths(user, scope_body, prefix, fresh=True, limit=20000)
+        if got is None:
+            return
+        known, res = got
+        visible = _visible(access)
+        docs = _graph_absent(known, req_scope, visible, prefix) + [
+            d for d in res.get("stale") or []
+            if req_scope.contains_path(d.get("source_path") or "")
+            and visible(d.get("source_path") or "")]
+        try:
+            run = REPROCESS.start(user, docs, res.get("current"), prefix)
+        except reprocess.ReprocessError as e:
+            self._send(409, {"ok": False, "error": str(e)})
+            return
+        sys.stderr.write("[adapter] graph: reprocessing %d documents (%s) by %s\n"
+                         % (len(docs), prefix or "whole scope", user))
+        self._send(200, {"ok": True, "run": run})
+
+    def _graph_reprocess_cancel(self):
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user = ctx[0]
+        if not self._graph_admin(user):
+            return
+        REPROCESS.cancel()
+        sys.stderr.write("[adapter] graph: reprocessing cancelled by %s\n" % user)
+        self._send(200, {"ok": True, "run": REPROCESS.status()})
+
+    def _graph_review_list(self):
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
+            return
         _, payload, _, _, scope_body = ctx
-        res = self._graph_post("/review/list", dict(scope_body,
-                                                    limit=int(payload.get("limit") or 100)))
-        if res is not None:
+        body = dict(scope_body, limit=_review_int(payload, "limit", 100) or 100,
+                    offset=_review_int(payload, "offset", 0))
+        for key in ("q", "reason"):
+            if payload.get(key):
+                body[key] = str(payload[key])[:200]
+        res = self._graph_post("/review/list", body)
+        if res is not None and self._log_graph(ctx, "graph:review", "", []):
             self._send(200, res)
 
     def _graph_review_decide(self):
+        """One pair ({a, b}) or many ({pairs: [{a, b}]}); the graph skips, and
+        reports, a pair that is no longer open in the caller's scope."""
         ctx = self._graph_request()
         if ctx is None:
             return
         user, payload, _, _, scope_body = ctx
         if not self._graph_admin(user):
             return
-        res = self._graph_post("/review/decide", dict(
-            scope_body, a=str(payload.get("a") or ""), b=str(payload.get("b") or ""),
-            decision=str(payload.get("decision") or "")))
+        body = dict(scope_body, decision=str(payload.get("decision") or ""), by=user)
+        if "pairs" in payload:
+            pairs = payload.get("pairs")
+            body["pairs"] = [{"a": str(p.get("a") or ""), "b": str(p.get("b") or "")}
+                             for p in pairs if isinstance(p, dict)] \
+                if isinstance(pairs, list) else pairs
+        else:
+            body.update(a=str(payload.get("a") or ""), b=str(payload.get("b") or ""))
+        res = self._graph_post("/review/decide", body)
         if res is not None:
-            sys.stderr.write("[adapter] graph: review %s by %s\n" % (res.get("decided"), user))
+            sys.stderr.write("[adapter] graph: review %s x%s by %s\n" % (
+                res.get("decided"), res.get("done", 1), user))
             self._send(200, res)
+
+    def _graph_review_history(self):
+        """Decisions newest first, as far as the caller may see both people."""
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
+            return
+        user, payload, _, _, scope_body = ctx
+        res = self._graph_post("/review/history", dict(
+            scope_body, limit=_review_int(payload, "limit", 100) or 100,
+            offset=_review_int(payload, "offset", 0)))
+        if res is not None and self._log_graph(ctx, "graph:review-history", "", []):
+            self._send(200, dict(res, can_undo=(user or "").casefold() in GRAPH_ADMINS))
+
+    def _graph_review_undo(self):
+        """A graph administrator takes a decision back; the pair is open again."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, _, _, scope_body = ctx
+        if not self._graph_admin(user):
+            return
+        res = self._graph_post("/review/undo", dict(
+            scope_body, a=str(payload.get("a") or ""), b=str(payload.get("b") or ""), by=user))
+        if res is not None:
+            sys.stderr.write("[adapter] graph: review %s undone by %s (%s documents)\n" % (
+                res.get("undone"), user, res.get("documents", 0)))
+            self._send(200, dict(res, ok=True))
 
     def _graph_profile_get(self):
         ctx = self._graph_request()
@@ -2636,11 +3065,12 @@ class Handler(BaseHTTPRequestHandler):
         """One entity's relations as DOCX/PDF with a source list. Returned as
         base64 JSON (the ViVeSecBox tunnel does not carry binary bodies) plus
         the markdown, so the UI can also save it to the drive via /ui/save."""
-        ctx = self._graph_request()
+        ctx = self._graph_request(bound=True)
         if ctx is None:
             return
         user, payload, req_scope, access, scope_body = ctx
         fmt = docgen.normalize_format(payload.get("format") or "docx")
+        bound_id = str(payload.get("id") or "")
         if fmt not in ("docx", "pdf", "md"):
             self._send(400, {"ok": False, "error": "format must be docx, pdf or md"})
             return
@@ -2657,6 +3087,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"ok": False, "error": "not found"})
             return
         text, title = built
+        if not self._log_graph(ctx, "export:dossier", bound_id, []):
+            return
         content, fmt = docgen.render(text, fmt, title=title)
         safe = re.sub(r"[^\w\- ]+", "", title, flags=re.UNICODE).strip().replace(" ", "_")
         sys.stderr.write("[adapter] graph: dossier (%s) by %s\n" % (fmt, user))

@@ -11,6 +11,13 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
+# E10b: Tesseract reads scanned pages and image files (rag_service/ocr.py).
+# eng and osd (orientation) come with tesseract-ocr; the UI languages are added.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-hun \
+    tesseract-ocr-deu tesseract-ocr-dan \
+ && rm -rf /var/lib/apt/lists/*
+
 # MarkItDown's PDF/Office handlers are pure-Python wheels, so no system build
 # toolchain is required for the default set. Install deps first for layer cache.
 COPY rag_service/requirements.txt ./rag_service/requirements.txt

@@ -6,7 +6,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import domain_profile  # noqa: E402
 import pipeline  # noqa: E402
-from extraction import Chunk, LocalEntity, chunk_pages, co_mentions, find_identifiers, llm_extract  # noqa: E402
+from extraction import (Chunk, LocalEntity, chunk_pages, co_mentions, find_identifiers,  # noqa: E402
+                        llm_extract)
+from llm_client import LLMTruncated  # noqa: E402
 from resolution import Resolver  # noqa: E402
 
 PROFILE = domain_profile.load("bv")
@@ -74,6 +76,25 @@ class LlmValidationTest(unittest.TestCase):
         self.assertEqual([], rels)
 
 
+class CompactOutputTest(unittest.TestCase):
+    """GRAPH_EXTRACT_COMPACT: the model is asked for minified JSON (on by default)."""
+
+    def test_prompt_asks_for_minified_json_unless_switched_off(self):
+        llm = SpyLLM()
+        llm_extract(Chunk(1, 0, TEXT), PROFILE, llm)
+        self.assertIn("minified", llm.system)
+        llm_extract(Chunk(1, 0, TEXT), PROFILE, llm, compact=False)
+        self.assertNotIn("minified", llm.system)
+        self.assertIn(TEXT, llm.user)
+        self.assertIn("quote", llm.schema["properties"]["relations"]["items"]["required"])
+
+
+class SpyLLM(FakeLLM):
+    def json_call(self, system, user, schema, max_tokens=4096, retries=1):
+        self.system, self.user, self.schema = system, user, schema
+        return super().json_call(system, user, schema, max_tokens, retries)
+
+
 class RulesAndChunksTest(unittest.TestCase):
     def test_identifier_patterns_normalise(self):
         hits = find_identifiers([(1, TEXT)], PROFILE)
@@ -113,6 +134,48 @@ class PipelineTest(unittest.TestCase):
 
 def person(names, **attrs):
     return LocalEntity("r", "person", "", names, {k: (v, 1) for k, v in attrs.items()})
+
+
+class TruncationTest(unittest.TestCase):
+    """A reply cut off at the output limit: the excerpt is read in halves."""
+
+    LINES = ["%d. sor: Kovács János és Nagy Éva %d. napon találkozott." % (i, i) for i in range(8)]
+
+    class CutLLM(FakeLLM):
+        def __init__(self, limit):
+            super().__init__()
+            self.limit = limit
+            self.sizes = []
+
+        def json_call(self, system, user, schema, max_tokens=4096, retries=1):
+            self.calls += 1
+            body = user.split("---\n", 1)[1].rsplit("\n---", 1)[0]
+            self.sizes.append(len(body.split("\n")))
+            if len(body) > self.limit:
+                raise LLMTruncated("model reply cut off at %d tokens" % max_tokens)
+            return answer([{"ref": "a", "type": "person", "names": ["Kovács János"]},
+                           {"ref": "b", "type": "person", "names": ["Nagy Éva"]}], [])
+
+    def run_doc(self, limit):
+        llm = self.CutLLM(limit)
+        meta = {"doc_id": "d1", "corpus_id": "c1", "source_path": "/c1/d1.txt"}
+        _, stats = pipeline.extract_document("\n".join(self.LINES).encode("utf-8"), meta,
+                                             PROFILE, llm, Resolver(PROFILE))
+        return llm, stats
+
+    def test_halves_are_read_instead_of_retrying_the_same_excerpt(self):
+        llm, stats = self.run_doc(limit=300)
+        self.assertEqual([8, 4, 4], llm.sizes)
+        self.assertEqual((1, 0), (stats["llm_splits"], stats["llm_errors"]))
+        self.assertEqual(2, stats["entities"])
+
+    def test_splitting_stops_after_two_levels_and_reads_every_half(self):
+        llm, stats = self.run_doc(limit=10)
+        self.assertEqual([8, 4, 2, 2, 4, 2, 2], llm.sizes)
+        self.assertEqual((3, 4), (stats["llm_splits"], stats["llm_errors"]))
+        llm, stats = self.run_doc(limit=150)  # quarters fit
+        self.assertEqual([8, 4, 2, 2, 4, 2, 2], llm.sizes)
+        self.assertEqual((3, 0, 2), (stats["llm_splits"], stats["llm_errors"], stats["entities"]))
 
 
 class ResolverTest(unittest.TestCase):

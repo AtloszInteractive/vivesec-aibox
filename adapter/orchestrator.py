@@ -25,8 +25,10 @@ import llm
 
 TOOLS = ("relations", "connection", "common", "timeline", "copresence",
          "shared_identifiers", "most_connected", "find_pattern", "count", "sequence",
-         "read_all")
-GRAPH_TOOLS = TOOLS[:-1]
+         "read_all", "analyze_document")
+# The document side of a plan: the caller runs these, not the graph.
+DOCUMENT_TOOLS = ("read_all", "analyze_document")
+GRAPH_TOOLS = tuple(t for t in TOOLS if t not in DOCUMENT_TOOLS)
 MAX_READ_TERMS = 6
 ENTITY_TYPES = ["person", "organization", "place", "identifier", "event", "object"]
 GROUP_BY = {"entity": "focus", "other": "other", "month": "month", "year": "year",
@@ -40,6 +42,9 @@ MIN_PREFIX = 4
 PROFILE_TTL = 60.0
 SUMMARY_LINES = 6
 MAX_JOINED_LISTED = 10
+MAX_TALLY_LINES = 10
+# The graph's built-in links: neither is an occurrence worth counting.
+UNTALLIED = ("RELATED_TO", "CO_MENTIONED")
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 # Capitalised words after the first one: candidate names in a question.
 _NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
@@ -118,6 +123,10 @@ DEEP_TOOL = (
     "words as the documents would write them, word stems for inflected words "
     "(\"látogat\"), never generic words; mode all when every term must appear in the "
     "same passage, else any.\n"
+    "- analyze_document {file}: reads ONE document from beginning to end and analyses "
+    "all of it (takes minutes for a long file). Use it instead of read_all when the "
+    "message asks for the analysis, summary or review of one specific file it names by "
+    "its file name; file: that file name exactly as written in the message.\n"
 )
 
 _TEXT = {
@@ -227,6 +236,37 @@ _TEXT = {
              "da": "%d dage senere", "de": "%d Tage sp\u00e4ter"},
     "together": {"en": "both at", "hu": "egyszerre itt:", "da": "begge ved",
                  "de": "beide bei"},
+    "types": {
+        "en": {"person": "Person", "organization": "Organisation", "place": "Place",
+               "identifier": "Identifier", "event": "Event", "object": "Object"},
+        "hu": {"person": "Szem\u00e9ly", "organization": "Szervezet", "place": "Hely",
+               "identifier": "Azonos\u00edt\u00f3", "event": "Esem\u00e9ny",
+               "object": "T\u00e1rgy"},
+        "da": {"person": "Person", "organization": "Organisation", "place": "Sted",
+               "identifier": "Identifikator", "event": "H\u00e6ndelse",
+               "object": "Genstand"},
+        "de": {"person": "Person", "organization": "Organisation", "place": "Ort",
+               "identifier": "Kennung", "event": "Ereignis", "object": "Gegenstand"},
+    },
+    "tally": {
+        "en": "Graph count -- repeated links of the entities asked about, counted once per "
+              "date over the documents you may see (use these figures for how many times):",
+        "hu": "Gr\u00e1f-sz\u00e1ml\u00e1l\u00e1s -- a k\u00e9rdezett szerepl\u0151k "
+              "ism\u00e9tl\u0151d\u0151 kapcsolatai, d\u00e1tumonk\u00e9nt egyszer "
+              "sz\u00e1molva, az \u00d6n sz\u00e1m\u00e1ra l\u00e1that\u00f3 dokumentumok "
+              "alapj\u00e1n (a \u201eh\u00e1nyszor\u201d k\u00e9rd\u00e9sekhez ezeket a "
+              "sz\u00e1mokat haszn\u00e1lja):",
+        "da": "Graft\u00e6lling -- gentagne forbindelser for de adspurgte enheder, talt \u00e9n "
+              "gang pr. dato i de dokumenter, du har adgang til (brug disse tal til hvor "
+              "mange gange):",
+        "de": "Graphz\u00e4hlung -- wiederholte Verbindungen der erfragten Eintr\u00e4ge, einmal "
+              "pro Datum gez\u00e4hlt, in den Dokumenten, die Sie sehen d\u00fcrfen (verwenden "
+              "Sie diese Zahlen f\u00fcr \u201ewie oft\u201c):",
+    },
+    "tally_row": {"en": "- %s -- %s -- %s: %d times (%s to %s)",
+                  "hu": "- %s -- %s -- %s: %d alkalommal (%s \u00e9s %s k\u00f6z\u00f6tt)",
+                  "da": "- %s -- %s -- %s: %d gange (fra %s til %s)",
+                  "de": "- %s -- %s -- %s: %d-mal (von %s bis %s)"},
     "joined": {
         "en": "Linked by name: the records of these people from different documents were "
               "joined only by the same name; no birth date or ID number confirms it: %s.",
@@ -275,6 +315,12 @@ _TEXT = {
               "Geburtsdaten), daher wurden sie nicht dokument\u00fcbergreifend verkn\u00fcpft; "
               "das Ergebnis kann unvollst\u00e4ndig sein.",
     },
+    "qualified": {
+        "en": "Same name, different place: %s -- the name in brackets (institution or source document) tells them apart. Keep it with the name in the answer and do not add up their figures.",
+        "hu": "Azonos n\u00e9v, k\u00fcl\u00f6nb\u00f6z\u0151 hely: %s -- a z\u00e1r\u00f3jeles r\u00e9sz (int\u00e9zet vagy forr\u00e1sdokumentum) k\u00fcl\u00f6nb\u00f6zteti meg \u0151ket. A v\u00e1laszban is a z\u00e1r\u00f3jeles r\u00e9sszel egy\u00fctt nevezze meg \u0151ket, \u00e9s ne adja \u00f6ssze a sz\u00e1maikat.",
+        "da": "Samme navn, forskelligt sted: %s -- navnet i parentes (institution eller kildedokument) skelner dem. Behold det sammen med navnet i svaret, og l\u00e6g ikke deres tal sammen.",
+        "de": "Gleicher Name, anderer Ort: %s -- der Name in Klammern (Anstalt oder Quelldokument) unterscheidet sie. Behalten Sie ihn in der Antwort beim Namen und addieren Sie ihre Zahlen nicht.",
+    },
     "unmerged": {
         "en": "Graph search: %d pairs of same-named records in the documents you may see "
               "await an administrator's merge decision. Until merged, links recorded in "
@@ -296,6 +342,9 @@ _TEXT = {
     },
 }
 LANG_CODES = {"Hungarian": "hu", "English": "en", "Danish": "da", "German": "de"}
+
+
+_QUALIFIED = re.compile(r"^(.*\S) \(([^()]+)\)$")
 
 
 def _t(key, code):
@@ -368,6 +417,9 @@ def _side_args(value):
 
 def _clean_args(tool, args):
     args = args if isinstance(args, dict) else {}
+    if tool == "analyze_document":
+        name = _text(args.get("file"), 260)
+        return {"file": name} if name else None
     if tool == "read_all":
         raw = args.get("terms")
         raw = [raw] if isinstance(raw, str) else raw
@@ -534,6 +586,10 @@ class Run:
         self._call_facts = 0
         self._call_budget = max_facts
         self._call_labels = set()
+        # Distinct dates of each link of a named entity: how many times, counted here.
+        self._tally = {}
+        # A kind word passed as a name ("cell"): its query is skipped quietly.
+        self._kind_as_name = False
         self._unmerged = None
         self._unmerged_noted = False
         # Shown under the answer when a cross-document query came back empty
@@ -570,6 +626,13 @@ class Run:
 
     def _label(self, entries, key):
         return _label_of((entries.get(key) or {}).get("label"), self.code, key)
+
+    def _kind_label(self, kind):
+        """A subtype or entity type id in the user's language."""
+        _, subtypes = self._label_maps()
+        if kind in subtypes:
+            return self._label(subtypes, kind)
+        return _t("types", self.code).get(kind) or kind
 
     def kind_spec(self, kind):
         """A side filter for a kind (type or subtype, by id or label); None if unknown."""
@@ -627,9 +690,8 @@ class Run:
 
     def describe(self, nodes):
         """One option line for records sharing a name (namesakes are one choice)."""
-        _, subtypes = self._label_maps()
         node = nodes[0]
-        kind = self._label(subtypes, node.get("subtype")) if node.get("subtype") else node["type"]
+        kind = self._kind_label(node.get("subtype") or node["type"])
         docs = sum(len(n.get("documents") or []) for n in nodes)
         count = ("1 document" if docs == 1 and self.code == "en"
                  else _t("documents", self.code) % docs)
@@ -677,6 +739,11 @@ class Run:
         key = fold(name)
         if key in self._names:
             return self._names[key]
+        if self.kind_of_word(name):
+            # A planner slip ("common: Kovács, cell"): a kind is no one's name, and
+            # a "nothing named cell" note would reach the answer.
+            self._kind_as_name = True
+            return []
         found = self.query("find", text=name, limit=8, types=ENTITY_TYPES).get("entities") or []
         exact = [n for n in found if key in {fold(x) for x in [n["label"], *n.get("aliases", [])]}]
         if exact:
@@ -738,6 +805,7 @@ class Run:
         evidence = self._evidence(edge)
         if not evidence:
             return 0
+        self._count_date(edge)
         name = self._relation_name(edge["type"])
         raw = edge.get("raw_label") or ""
         if raw and raw != edge["type"] and not re.fullmatch(r"[A-Z0-9_]+", raw):
@@ -756,6 +824,48 @@ class Run:
         for node in res.get("nodes") or []:
             if node:
                 self.nodes.setdefault(node["id"], node)
+
+    def _count_date(self, edge):
+        """Tallies a dated, visible link of an entity the message named, before
+        the facts cap: the answer's "how many times" comes from here."""
+        if not edge.get("start"):
+            return
+        named = {i for ids in self._names.values() for i in ids}
+        if not named & {edge["a"], edge["b"]}:
+            return
+        relations, _ = self._label_maps()
+        # A free-form link (RELATED_TO "testvére" beside each visit row) or a
+        # co-mention is no event of its own.
+        if edge["type"] in UNTALLIED or edge["type"] not in relations:
+            return
+        self._tally.setdefault((edge["type"], edge["a"], edge["b"]), set()).add(edge["start"])
+
+    def _tally_note(self):
+        # By name, as the facts read: namesakes are kept together like in resolve()
+        # (one person's visits recorded in several documents are several records).
+        relations, _ = self._label_maps()
+        groups = {}
+        for (rtype, a, b), dates in self._tally.items():
+            a, b = self._name(a), self._name(b)
+            if (relations.get(rtype) or {}).get("symmetric") and b < a:
+                a, b = b, a
+            groups.setdefault((rtype, a, b), set()).update(dates)
+        rows = []
+        for (rtype, a, b), dates in groups.items():
+            # "2025-03" beside "2025-03-13" is the same occasion, less precisely dated.
+            dates = sorted(d for d in dates
+                           if not any(o != d and o.startswith(d) for o in dates))
+            if len(dates) > 1:
+                rows.append((len(dates), a, self._relation_name(rtype), b, dates))
+        if not rows:
+            return None
+        rows.sort(key=lambda r: (-r[0], r[1], r[2], r[3]))
+        lines = []
+        for n, a, rel, b, dates in rows[:MAX_TALLY_LINES]:
+            # The span, not the dates: listed here, they were answered from the
+            # note and the cited facts were left out.
+            lines.append(_t("tally_row", self.code) % (a, rel, b, n, dates[0], dates[-1]))
+        return _t("tally", self.code) + "\n" + "\n".join(lines)
 
     def _edges(self, edges):
         ordered = sorted(edges, key=lambda e: (not e.get("start"), e.get("start") or "", e["id"]))
@@ -803,7 +913,11 @@ class Run:
                 other = item.get("other") or {}
                 if other:
                     self.nodes.setdefault(other["id"], other)
-                edge = {"id": "", "a": eid, "b": other.get("id", ""), "type": item["type"],
+                # The link's own direction (a visit is the visitor's, not the visited's).
+                a, b = item.get("a"), item.get("b")
+                if {a, b} != {eid, other.get("id", "")}:
+                    a, b = eid, other.get("id", "")
+                edge = {"id": "", "a": a, "b": b, "type": item["type"],
                         "start": item.get("date"), "end": item.get("end"),
                         "evidence": item.get("evidence") or []}
                 facts += self.edge_fact(edge)
@@ -899,7 +1013,7 @@ class Run:
                           date_from=args.get("from"), date_to=args.get("to")).get("rows") or []
         if not rows:
             return 0
-        relations_map, subtypes = self._label_maps()
+        relations_map, _ = self._label_maps()
         what = ", ".join(self._relation_name(r) for r in relations) if relations \
             else _t("all_links", self.code)
         lines = []
@@ -911,7 +1025,7 @@ class Run:
             if group == "relation":
                 label = self._label(relations_map, row["key"])
             elif group == "other_kind":
-                label = self._label(subtypes, row["key"])
+                label = self._kind_label(row["key"])
             if counted:
                 lines.append(_t("count_row_kind", self.code) % (
                     i, label, counted, row["distinct"], row["count"]))
@@ -992,11 +1106,12 @@ class Run:
             noted = len(self.notes)
             self._call_facts = 0
             self._call_labels = set()
+            self._kind_as_name = False
             facts = getattr(self, call["tool"])(call["args"])
             self.calls.append({"tool": call["tool"], "args": call["args"], "facts": facts,
                                "round": round_no, "entities": sorted(self._call_labels)[:20]})
             cross = call["tool"] in ("find_pattern", "sequence")
-            if not facts and len(self.notes) == noted:
+            if not facts and len(self.notes) == noted and not self._kind_as_name:
                 text = _t("nothing", self.code) % call["tool"]
                 reason = self._empty_reason() if cross and not self._unmerged_noted else None
                 if reason:
@@ -1054,11 +1169,27 @@ class Run:
             self._unmerged_noted = True
             self.notes.append(_t("unmerged", self.code) % self._pending())
 
+    def _qualified_note(self):
+        """Places that share a name ("102. sz\u00e1m\u00fa z\u00e1rka" of two prisons, or of
+        a list naming no prison) carry their container or document in brackets; a
+        model tends to drop the brackets and add the figures up."""
+        labels = {label for c in self.calls for label in c["entities"]}
+        labels |= {n["label"] for n in self.nodes.values() if n.get("label")}
+        bases = {}
+        for label in labels:
+            m = _QUALIFIED.match(label)
+            if m:
+                bases.setdefault(m.group(1), set()).add(label)
+        same = sorted(b for b, variants in bases.items() if len(variants) > 1 or b in labels)
+        return _t("qualified", self.code) % ", ".join(same[:5]) if same else None
+
     def output(self):
         joined = self._joined_note()
+        qualified = self._qualified_note()
+        tally = self._tally_note()
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,
                   "page_number": None, "chunk_id": None, "score": 1.0, "origin": "graph-note"}
-                 for n in self.notes + ([joined] if joined else [])]
+                 for n in self.notes + [x for x in (tally, joined, qualified) if x]]
         return notes + self.contexts
 
     def summary(self):

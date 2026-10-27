@@ -14,6 +14,8 @@ import { DataInsightCard } from "./DataInsightCard";
 import { getDataInsightCopy } from "./data-insight";
 import { DriveExplorerModal } from "./DriveExplorerModal";
 import {
+  answerBlocks,
+  optionValue,
   parseMemoTitle,
   parseReport,
   parseSlides,
@@ -60,6 +62,12 @@ import {
   type AdapterJobProgress,
 } from "@/lib/api/rag.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
+import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib/ui-update";
+import {
+  setRequestPurpose,
+  type AdapterPurposeConfig,
+  type RequestPurpose,
+} from "@/lib/rag/adapter-client";
 import { useVoice } from "./use-voice";
 import {
   ArrowLeft,
@@ -119,6 +127,8 @@ import {
   ThumbsDown,
   Trash2,
   Network,
+  FileSearch,
+  RotateCcw,
 } from "lucide-react";
 import { GraphPanel, type GraphSource } from "./GraphPanel";
 
@@ -167,6 +177,8 @@ type Citation = {
   snippet?: string;
   terms?: string[];
   score?: number;
+  /** Recognised (OCR) text: its quality, 0-100. */
+  ocrQuality?: number;
 };
 
 /** A file whose NAME matches the search term (spec F7 2.A), shown alongside
@@ -219,6 +231,8 @@ type Message =
       kind: "text";
       text: string;
       tone?: "normal" | "error";
+      /** A whole-document analysis (E10a) that stopped: the file, to resume it. */
+      retryAnalyze?: string;
     }
   | {
       id: string;
@@ -272,6 +286,8 @@ type Message =
       answer: string;
       citations: Citation[];
       fileHits?: FileHit[];
+      /** An ask-back: its "- option" lines become buttons in the conversation. */
+      clarify?: boolean;
     } & LiveMeta)
   | ({
       id: string;
@@ -464,6 +480,8 @@ type LiveExtras = {
   aspect?: string;
   keywords?: string;
   outcome?: string;
+  /** An action set by the UI itself (the citation "Full analysis" button), not typed. */
+  action?: LiveAction;
 };
 
 /* ---------- Guided dialogs (spec F1/F3/F5 "UX logic") ----------
@@ -830,6 +848,34 @@ function ViveSecAppInner() {
   // Analyst boxes (ADAPTER_APP_MODE=analyst) offer chat + relationships only; the
   // drive browser and quick actions stay in the code but are not shown.
   const [analyst, setAnalyst] = useState(false);
+  // Concept 5.2: the case reference / legal basis of this session's queries,
+  // and whether the box requires one (/status app.purpose).
+  const [purposeConfig, setPurposeConfig] = useState<AdapterPurposeConfig>({
+    mode: "off",
+    legalBases: [],
+    caseRefPattern: null,
+  });
+  const [purposeValue, setPurposeValue] = useState<RequestPurpose>({});
+  const [purposeDialog, setPurposeDialog] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem("vivesec.purpose");
+      if (saved) setPurposeValue(JSON.parse(saved) as RequestPurpose);
+    } catch {
+      // Unreadable storage: ask again.
+    }
+  }, []);
+  useEffect(() => {
+    setRequestPurpose(purposeValue);
+    try {
+      sessionStorage.setItem("vivesec.purpose", JSON.stringify(purposeValue));
+    } catch {
+      // The purpose still travels with this tab's queries.
+    }
+  }, [purposeValue]);
+  const purposeMissing =
+    purposeConfig.mode === "required" && !purposeValue.caseRef && !purposeValue.legalBasis;
+  const purposeLabel = [purposeValue.caseRef, purposeValue.legalBasis].filter(Boolean).join(" · ");
 
   const probeBox = useCallback(async () => {
     setBoxState((s) => (s === "online" ? s : "probing"));
@@ -840,6 +886,7 @@ function ViveSecAppInner() {
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
       if (h.ok) setBoxVersion(h.version ?? null);
       if (h.ok) setAnalyst(h.app?.mode === "analyst");
+      if (h.ok && h.app) setPurposeConfig(h.app.purpose);
       if (h.ok) {
         const policy = h.chatPolicy;
         setChatPolicy(policy && ["locked_hybrid", "selectable_grounded", "selectable_hybrid"].includes(policy.policy)
@@ -867,6 +914,15 @@ function ViveSecAppInner() {
     }, 15_000);
     return () => window.clearInterval(id);
   }, [probeBox]);
+
+  // A box restart (release) brings it back online, possibly with a new UI bundle.
+  const uiUpdateAvailable = useUiUpdateAvailable(
+    boxState === "online" ? (boxVersion?.release ?? "online") : boxState,
+  );
+  useEffect(() => {
+    const draft = takeReloadDraft();
+    if (draft) setInput((current) => current || draft);
+  }, []);
 
   /* ---------- Drive (the ACL boundary: one drive = one corpus) ----------
      In production the ViVeSecBox session pins the drive. The picker below is a
@@ -1274,6 +1330,7 @@ function ViveSecAppInner() {
       snippet: c.snippet,
       score: c.score,
       terms: [],
+      ocrQuality: c.ocrQuality,
     }));
     const { body, audit } = splitAuditFooter(res.answer);
     const base = {
@@ -1297,6 +1354,7 @@ function ViveSecAppInner() {
       answer: res.answer,
       citations,
       fileHits,
+      clarify: res.clarify,
     };
     if (res.refused || !body.trim()) return plain;
 
@@ -1778,6 +1836,20 @@ function ViveSecAppInner() {
           </button>
         )}
         {!running &&
+          job.status !== "done" &&
+          job.action === "analyze" &&
+          job.files?.[0] &&
+          confirmDeleteJobId !== job.job_id && (
+            <button
+              onClick={() => resumeAnalysis(job)}
+              disabled={liveBusy || boxState !== "online"}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white disabled:opacity-40"
+              title={`${tm("Resume analysis")} — ${tm("Continues the analysis; the parts already read are not read again")}`}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          )}
+        {!running &&
           (confirmDeleteJobId === job.job_id ? (
             <span className="flex shrink-0 items-center gap-1">
               <button
@@ -1853,7 +1925,7 @@ function ViveSecAppInner() {
     // commands must be translated, otherwise the structured task instruction
     // (F1-F7) is lost and every command degrades to a plain question.
     const { cmd, rest } = analyst ? { cmd: null, rest: v } : splitCommand(v);
-    const action = cmd ? LIVE_ACTIONS[cmd] : undefined;
+    const action = extras?.action ?? (cmd ? LIVE_ACTIONS[cmd] : undefined);
     // The dialog answers that describe WHAT to produce belong in the question;
     // audience/purpose only shape tone and travel as adapter PARAMETERS. The
     // picked file names go in too: the adapter filters retrieved contexts on
@@ -1889,7 +1961,7 @@ function ViveSecAppInner() {
       drives: selectedDrives.length ? selectedDrives : undefined,
       // Quick actions are standalone commands and keep using the default
       // thread; only chat turns belong to the conversation on screen.
-      conversationId: pane === "chat" && conversationId ? conversationId : undefined,
+      conversationId: pane === "chat" && conversationId && !action ? conversationId : undefined,
     };
     if (pane === "results" && jobsSupported === true) {
       try {
@@ -1968,6 +2040,8 @@ function ViveSecAppInner() {
     } catch (err) {
       // No mock fallback: the failure is shown as a failure.
       const detail = err instanceof Error ? err.message : "error";
+      // The box asked for the purpose (its setting changed under the tab).
+      if (/purpose_required/.test(detail)) setPurposeDialog(true);
       setMessages((all) =>
         all.map((m) =>
           m.id === loadingId
@@ -1979,6 +2053,10 @@ function ViveSecAppInner() {
                 kind: "text",
                 tone: "error" as const,
                 text: `${tm("The AI Box did not answer this question.")} (${detail})`,
+                // The box kept the parts it read; running it again continues there.
+                ...(action === "analyze" && pane === "chat" && extras?.files?.[0]
+                  ? { retryAnalyze: extras.files[0] }
+                  : {}),
               }
             : m,
         ),
@@ -1994,10 +2072,41 @@ function ViveSecAppInner() {
     sendText(input.trim());
   }
 
+  /** E10a: a stopped background analysis, sent again as it was; the box skips
+   *  the parts the stopped run already read. */
+  function resumeAnalysis(job: BackgroundJob) {
+    if (purposeMissing) {
+      setPurposeDialog(true);
+      return;
+    }
+    if (boxState !== "online" || liveBusy || !job.files?.length) return;
+    void runLive(job.query ?? "", { files: job.files, action: "analyze" }, "results");
+  }
+
+  /** E10a from a cited document: the whole file, read and analysed in full. */
+  function analyzeCited(path: string) {
+    if (purposeMissing) {
+      setPurposeDialog(true);
+      return;
+    }
+    if (boxState !== "online") {
+      toast.error(tm("AI Box unreachable — no answer can be produced."));
+      return;
+    }
+    if (liveBusy) return;
+    const text = `${tm("Full analysis")}: ${path.split("/").pop() ?? path}`;
+    pushUser(text);
+    void runLive(text, { files: [path], action: "analyze" });
+  }
+
   /** One submit path for typed and spoken input alike: a dictated question is
    *  routed, grounded and cited exactly like a typed one. */
   function sendText(v: string) {
     if (!v) return;
+    if (purposeMissing) {
+      setPurposeDialog(true);
+      return;
+    }
     if (boxState !== "online") {
       toast.error(tm("AI Box unreachable — no answer can be produced."));
       return;
@@ -2364,6 +2473,17 @@ function ViveSecAppInner() {
                 <div className="hidden xl:block text-xs text-white/55">
                   Encrypted channel · Edge inference only
                 </div>
+                {purposeConfig.mode !== "off" && (
+                  <button
+                    type="button"
+                    onClick={() => setPurposeDialog(true)}
+                    className={`inline-flex min-h-8 max-w-[16rem] shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition hover:bg-white/10 ${purposeMissing ? "border-amber-300/50 text-amber-100" : "border-white/10 text-white/70"}`}
+                    title={tm("Purpose of the queries")}
+                  >
+                    <Scale className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                    <span className="truncate">{purposeLabel || tm("Set the purpose")}</span>
+                  </button>
+                )}
                 {conversationsSupported && (
                   <div className="relative flex shrink-0 items-center gap-1">
                     <button
@@ -2582,6 +2702,8 @@ function ViveSecAppInner() {
                         onUpdateSlide={(sid, patch) => updateSlide(m.id, sid, patch)}
                         onEdit={(patch) => patchMessage(m.id, patch)}
                         onOpenFile={openFile}
+                        onAsk={sendText}
+                        onAnalyze={liveBusy ? undefined : analyzeCited}
                       />
                     </div>
                   ))}
@@ -2691,6 +2813,39 @@ function ViveSecAppInner() {
                     >
                       <RefreshCw className="mr-1 inline h-3 w-3" />
                       {tm("Retry")}
+                    </button>
+                  </div>
+                )}
+
+                {purposeMissing && boxState === "online" && (
+                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-50">
+                    <Scale className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">
+                      {tm("Give the case reference or the legal basis before asking.")}
+                    </span>
+                    <button
+                      onClick={() => setPurposeDialog(true)}
+                      className="shrink-0 rounded-lg border border-amber-300/40 px-2 py-1 text-[11px] font-semibold transition hover:bg-amber-400/20"
+                    >
+                      {tm("Set the purpose")}
+                    </button>
+                  </div>
+                )}
+
+                {uiUpdateAvailable && (
+                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-lime-300/40 bg-lime-400/10 px-3 py-2 text-[12px] text-lime-50">
+                    <Sparkles className="h-4 w-4 shrink-0" />
+                    <span className="flex-1">
+                      {tm("A new version of the interface is available.")}
+                      {input.trim() ? ` ${tm("Unsent text is kept.")}` : ""}
+                    </span>
+                    <button
+                      onClick={() => reloadKeepingDraft(input)}
+                      disabled={liveBusy}
+                      className="shrink-0 rounded-lg border border-lime-300/40 px-2 py-1 text-[11px] font-semibold transition hover:bg-lime-400/20 disabled:opacity-50"
+                    >
+                      <RefreshCw className="mr-1 inline h-3 w-3" />
+                      {tm("Reload")}
                     </button>
                   </div>
                 )}
@@ -3278,6 +3433,17 @@ function ViveSecAppInner() {
           onClose={() => setExplorerOpen(false)}
         />
       )}
+      {purposeDialog && (
+        <PurposeDialog
+          config={purposeConfig}
+          value={purposeValue}
+          onCancel={() => setPurposeDialog(false)}
+          onSave={(value) => {
+            setPurposeValue(value);
+            setPurposeDialog(false);
+          }}
+        />
+      )}
       {threadDialog && (
         <ThreadDialog
           mode={threadDialog.mode}
@@ -3295,6 +3461,123 @@ function ViveSecAppInner() {
 }
 
 /* ---------- Subcomponents ---------- */
+
+/** Concept 5.2: what the following queries are for -- a case reference and/or a
+ *  legal basis. Kept for this browser session and sent with every content
+ *  query; the box logs it with each query. */
+function PurposeDialog({
+  config,
+  value,
+  onCancel,
+  onSave,
+}: {
+  config: AdapterPurposeConfig;
+  value: RequestPurpose;
+  onCancel: () => void;
+  onSave: (value: RequestPurpose) => void;
+}) {
+  const { tm } = useLang();
+  const [caseRef, setCaseRef] = useState(value.caseRef ?? "");
+  const [legalBasis, setLegalBasis] = useState(value.legalBasis ?? "");
+  const caseOk = (() => {
+    if (!caseRef.trim() || !config.caseRefPattern) return true;
+    try {
+      return new RegExp(`^(?:${config.caseRefPattern})$`).test(caseRef.trim());
+    } catch {
+      return true; // the box checks it anyway
+    }
+  })();
+  const missing = config.mode === "required" && !caseRef.trim() && !legalBasis.trim();
+  const disabled = missing || !caseOk;
+  const save = () => {
+    if (!disabled) onSave({ caseRef: caseRef.trim(), legalBasis: legalBasis.trim() });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
+        style={{ backgroundColor: "#1B1F22" }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onCancel();
+          if (e.key === "Enter") save();
+        }}
+      >
+        <div className="mb-1 flex items-center gap-2 text-[13px] font-semibold">
+          <Scale className="h-4 w-4" style={{ color: LIME }} />
+          {tm("Purpose of the queries")}
+        </div>
+        <p className="mb-3 text-[12px] text-white/60">
+          {tm(
+            config.mode === "required"
+              ? "Give the case reference or the legal basis of your queries. It is logged with every question."
+              : "You may give the case reference or the legal basis of your queries. It is logged with every question.",
+          )}
+        </p>
+        <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+          {tm("Case reference")}
+        </label>
+        <input
+          autoFocus
+          value={caseRef}
+          onChange={(e) => setCaseRef(e.target.value)}
+          maxLength={64}
+          className={`mb-1 w-full rounded-lg border bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30 ${caseOk ? "border-white/15" : "border-rose-400/60"}`}
+        />
+        <div className="mb-3 min-h-4 text-[11px] text-rose-300">
+          {caseOk ? "" : tm("The case reference does not have the expected form.")}
+        </div>
+        <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+          {tm("Legal basis")}
+        </label>
+        {config.legalBases.length ? (
+          <select
+            value={legalBasis}
+            onChange={(e) => setLegalBasis(e.target.value)}
+            className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+          >
+            <option value="">—</option>
+            {config.legalBases.map((basis) => (
+              <option key={basis} value={basis}>
+                {basis}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            value={legalBasis}
+            onChange={(e) => setLegalBasis(e.target.value)}
+            maxLength={200}
+            className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+          />
+        )}
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/5"
+          >
+            {tm("Cancel")}
+          </button>
+          <button
+            onClick={save}
+            disabled={disabled}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+            style={{ backgroundColor: LIME, color: "#15181B" }}
+          >
+            {tm("Save")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Rename / delete a conversation. In-app rather than window.prompt/confirm:
  *  embedded in the ViVeSecBox iframe a native dialog is the host page's, not
@@ -3949,6 +4232,8 @@ function MessageView({
   onUpdateSlide,
   onEdit,
   onOpenFile,
+  onAsk,
+  onAnalyze,
   inChat,
 }: {
   msg: Message;
@@ -3957,6 +4242,10 @@ function MessageView({
   onUpdateSlide: (sid: string, patch: Partial<Slide>) => void;
   onEdit: (patch: Record<string, unknown>) => void;
   onOpenFile: (id: string) => void;
+  /** Sends a message as if typed (an ask-back option); absent outside the chat. */
+  onAsk?: (text: string) => void;
+  /** Starts the full analysis of a cited document; absent outside the chat. */
+  onAnalyze?: (path: string) => void;
   /** In the conversation the user's own message already states the request. */
   inChat?: boolean;
 }) {
@@ -4010,6 +4299,16 @@ function MessageView({
           style={{ backgroundColor: msg.tone === "error" ? "rgba(244,63,94,0.12)" : PANEL }}
         >
           {renderInline(msg.text)}
+          {msg.retryAnalyze && onAnalyze && (
+            <button
+              onClick={() => onAnalyze(msg.retryAnalyze as string)}
+              title={tm("Continues the analysis; the parts already read are not read again")}
+              className="mt-2 flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.04] px-2.5 py-1 text-[12px] text-white/80 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+            >
+              <RotateCcw className="h-3.5 w-3.5" style={{ color: LIME }} />
+              {tm("Resume analysis")}
+            </button>
+          )}
         </div>
       )}
 
@@ -4021,7 +4320,14 @@ function MessageView({
       {msg.kind === "report" && <ReportCard msg={msg} />}
       {msg.kind === "memo" && <MemoCard msg={msg} onEdit={onEdit} />}
       {msg.kind === "search" && (
-        <SearchCard msg={msg} onCitation={onCitation} onOpenFile={onOpenFile} showQuery={!inChat} />
+        <SearchCard
+          msg={msg}
+          onCitation={onCitation}
+          onOpenFile={onOpenFile}
+          onAsk={onAsk}
+          onAnalyze={onAnalyze}
+          showQuery={!inChat}
+        />
       )}
       {msg.kind === "deck" && (
         <DeckCard msg={msg} onUpdateSlide={onUpdateSlide} onCitation={onCitation} />
@@ -4050,6 +4356,8 @@ function stageLabel(
       return tm("Collecting every matching passage…");
     case "read":
       return `${tm("Reading passages")} ${(stage.done ?? 0) + 1}/${stage.total ?? 0}`;
+    case "condense":
+      return `${tm("Condensing the findings")} ${(stage.done ?? 0) + 1}/${stage.total ?? 0}`;
     case "write":
       return tm("Writing the answer…");
     default:
@@ -4105,6 +4413,70 @@ function renderInline(text: string) {
     ) : (
       <span key={i}>{p}</span>
     ),
+  );
+}
+
+/** A plain answer laid out from its markdown: lists, the box's "> " notes and
+ *  headings. With `onChoose` (an ask-back in the conversation) the options
+ *  become buttons that send the chosen name, as if it had been typed. */
+function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string) => void }) {
+  const blocks = answerBlocks(text);
+  const choices = onChoose ? blocks.findIndex((b) => b.kind === "list") : -1;
+  return (
+    <div className="space-y-2 text-[13.5px] leading-relaxed text-white/85">
+      {blocks.map((b, i) => {
+        if (b.kind === "list" && i === choices && onChoose) {
+          return (
+            <div key={i} className="flex flex-col items-start gap-1.5 pt-1">
+              {b.items.map((item, j) => (
+                <button
+                  key={j}
+                  onClick={() => onChoose(optionValue(item.text))}
+                  className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-left text-[13px] text-white/85 transition hover:border-lime-300/50 hover:bg-white/10"
+                >
+                  {renderInline(item.text)}
+                </button>
+              ))}
+            </div>
+          );
+        }
+        if (b.kind === "list") {
+          return (
+            <ul key={i} className="space-y-1">
+              {b.items.map((item, j) => (
+                <li key={j} className={`flex gap-2 ${item.depth ? "pl-5" : ""}`}>
+                  <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-white/50" />
+                  <span className="min-w-0">{renderInline(item.text)}</span>
+                </li>
+              ))}
+            </ul>
+          );
+        }
+        if (b.kind === "note") {
+          return (
+            <div
+              key={i}
+              className="whitespace-pre-wrap rounded-lg border-l-2 px-3 py-2 text-[12.5px] text-white/70"
+              style={{ borderColor: LIME, backgroundColor: "rgba(255,255,255,0.03)" }}
+            >
+              {renderInline(b.text)}
+            </div>
+          );
+        }
+        if (b.kind === "heading") {
+          return (
+            <p key={i} className="font-semibold text-white">
+              {renderInline(b.text.replace(/\*\*/g, ""))}
+            </p>
+          );
+        }
+        return (
+          <p key={i} className="whitespace-pre-wrap">
+            {renderInline(b.text)}
+          </p>
+        );
+      })}
+    </div>
   );
 }
 
@@ -5077,11 +5449,15 @@ function SearchCard({
   msg,
   onCitation,
   onOpenFile,
+  onAsk,
+  onAnalyze,
   showQuery,
 }: {
   msg: Extract<Message, { kind: "search" }>;
   onCitation: (c: Citation, siblings?: Citation[]) => void;
   onOpenFile: (id: string) => void;
+  onAsk?: (text: string) => void;
+  onAnalyze?: (path: string) => void;
   showQuery: boolean;
 }) {
   const { tm } = useLang();
@@ -5127,36 +5503,53 @@ function SearchCard({
           </div>
         </div>
       )}
-      <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-white/85">
-        {renderInline(answerBody)}
-      </p>
+      <AnswerBody text={answerBody} onChoose={msg.clarify ? onAsk : undefined} />
       {msg.citations.length > 0 && (
         <div className="mt-3">
           <div
             className={`space-y-2 ${showAllSources && msg.citations.length > 4 ? "vvs-scroll max-h-72 overflow-y-auto pr-1" : ""}`}
           >
             {visibleCitations.map((c, i) => (
-              <button
-                key={i}
-                onClick={() => onCitation(c, msg.citations)}
-                className="group w-full rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-left transition hover:border-white/20 hover:bg-white/[0.06]"
-              >
-                <div className="flex items-center gap-1.5 text-[11.5px]">
-                  <FileText className="h-3 w-3 text-rose-400" />
-                  {c.rank && <span className="shrink-0 text-white/55">[#{c.rank}]</span>}
-                  <span className="truncate font-medium text-white/85">{c.label}</span>
-                  {crossDrive && driveNameOf(c.fileId) && (
-                    <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
-                      {driveNameOf(c.fileId)}
-                    </span>
-                  )}
-                </div>
-                {c.snippet && (
-                  <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-white/65">
-                    <HighlightedText text={c.snippet} terms={c.terms ?? []} />
+              <div key={i} className="flex items-stretch gap-1.5">
+                <button
+                  onClick={() => onCitation(c, msg.citations)}
+                  className="group min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-left transition hover:border-white/20 hover:bg-white/[0.06]"
+                >
+                  <div className="flex items-center gap-1.5 text-[11.5px]">
+                    <FileText className="h-3 w-3 text-rose-400" />
+                    {c.rank && <span className="shrink-0 text-white/55">[#{c.rank}]</span>}
+                    <span className="truncate font-medium text-white/85">{c.label}</span>
+                    {typeof c.ocrQuality === "number" && (
+                      <span
+                        title={tm("Recognised text (OCR) — may contain recognition errors")}
+                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${c.ocrQuality < 70 ? "border-amber-300/40 text-amber-200/90" : "border-white/15 text-white/60"}`}
+                      >
+                        OCR {c.ocrQuality}%
+                      </span>
+                    )}
+                    {crossDrive && driveNameOf(c.fileId) && (
+                      <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
+                        {driveNameOf(c.fileId)}
+                      </span>
+                    )}
                   </div>
+                  {c.snippet && (
+                    <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-white/65">
+                      <HighlightedText text={c.snippet} terms={c.terms ?? []} />
+                    </div>
+                  )}
+                </button>
+                {onAnalyze && c.fileId.startsWith("/") && (
+                  <button
+                    onClick={() => onAnalyze(c.fileId)}
+                    title={tm("Read and analyse this whole document (may take minutes)")}
+                    className="flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] px-1.5 text-center text-[10.5px] leading-tight text-white/65 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white/90"
+                  >
+                    <FileSearch className="h-3.5 w-3.5" style={{ color: LIME }} />
+                    {tm("Full analysis")}
+                  </button>
                 )}
-              </button>
+              </div>
             ))}
           </div>
           {msg.citations.length > 1 && (

@@ -804,12 +804,15 @@ class RagStore:
         return {"documents": documents, "pages": pages, "chunks": chunks,
                 "corpora": corpora, "skipped": skipped}
 
-    def skipped_documents(self, corpus_id=None):
-        """Files we know about but cannot answer from, with the reason."""
+    def skipped_documents(self, corpus_id=None, corpus_ids=None, access=None):
+        """Files we know about but cannot answer from, with the reason; with
+        `corpus_ids`/`access` only what that user may see."""
+        scope = set(normalize_corpus_ids(corpus_id, corpus_ids))
         with self._lock:
             docs = [d for d in self._docs.values()
                     if d.get("file", True) and d.get("skip_reason")
-                    and (not corpus_id or d.get("corpus_id") == corpus_id)]
+                    and (not scope or d.get("corpus_id") in scope)
+                    and (access is None or access_filter.doc_allowed(d.get("acl"), access))]
         return sorted(
             ({"source_path": d["source_path"], "corpus_id": d["corpus_id"],
               "size": d.get("size"), "reason": d["skip_reason"]} for d in docs),

@@ -73,6 +73,8 @@ class Resolver:
         self._pending: set[str] = set()
         self._pairs: set[tuple[str, str]] = set()
         self._pending_n = 0
+        # {folded name: person id} for the document being re-extracted (ingest_jobs).
+        self.sticky: dict[str, str] = {}
 
     def strong_key_subtypes(self) -> set[str]:
         return set((self.rules.get("person") or {}).get("strong_keys") or [])
@@ -110,6 +112,16 @@ class Resolver:
             p["keys"] |= gone["keys"]
             for k, v in gone["attrs"].items():
                 p["attrs"].setdefault(k, set()).update(v)
+
+    def rebuild(self, store) -> None:
+        """Re-read every person from the store (after an undone merge split one)."""
+        with self.lock:
+            self.people.clear()
+            self.by_full.clear()
+            self.by_initial.clear()
+            self.by_key.clear()
+            with store._lock:
+                self.load_from_store(store)
 
     def load_from_store(self, store) -> None:
         """Rebuild the person index from an existing (mirror) memory store."""
@@ -188,6 +200,14 @@ class Resolver:
         auto, review = self._thresholds("person")
         attrs = {k: v for k, (v, _) in ent.attrs.items()}
         with self.lock:
+            # A person this document named before keeps its id (unless the
+            # document now says something that conflicts with it).
+            for name in ent.names:
+                target = self.sticky.get(fold(name))
+                if target in self.people and \
+                        not self._score(ent, target, keys)[1].startswith("conflicting"):
+                    self.remember_person(target, ent.names, attrs, keys)
+                    return target
             scored = sorted(((*self._score(ent, pid, keys), pid)
                              for pid in self._candidates(ent, keys) - {new_id}), reverse=True)
             if scored and scored[0][0] >= auto:

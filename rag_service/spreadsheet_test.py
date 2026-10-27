@@ -169,5 +169,40 @@ class ChunkRowsTest(unittest.TestCase):
         self.assertEqual(["id,name,amount\n1,Anna,10\n2,Bela,20", "id,name,amount\n3,Cili,30"], chunks)
 
 
+class DelimitedExtractionTest(unittest.TestCase):
+    def text(self, raw, path="/d/log.csv"):
+        pages = extract.extract_pages(raw.encode("utf-8"), path)
+        self.assertEqual(1, len(pages))
+        return pages[0][2]
+
+    def test_rows_are_labelled_like_a_sheet(self):
+        text = self.text("\ufeffDátum;Fogvatartott neve;Látogató neve\n"
+                         "2025-07-03;Szűcs András;Kiss Anna\n2025-07-05;Nagy Máté;\n")
+        self.assertEqual(["Columns: Dátum | Fogvatartott neve | Látogató neve",
+                          "Dátum: 2025-07-03; Fogvatartott neve: Szűcs András; Látogató neve: Kiss Anna",
+                          "Dátum: 2025-07-05; Fogvatartott neve: Nagy Máté"], text.split("\n"))
+
+    def test_comma_tab_quoting_and_extra_columns(self):
+        text = self.text('id,name,note\n1,"Kovács, Péter","two\nlines",x\n')
+        self.assertEqual("id: 1; name: Kovács, Péter; note: two lines; D: x", text.split("\n")[1])
+        self.assertEqual("Columns: a | b", self.text("a\tb\n1\t2\n", "/d/t.tsv").split("\n")[0])
+
+    def test_without_a_label_row_the_text_stays_raw(self):
+        for raw in ("2025-01-01,Anna,10\n2025-01-02,Bela,20\n",  # first row is data
+                    "name\nAnna\nBela\n",                       # one column
+                    "a,a\n1,2\n",                               # duplicate labels
+                    "id,name\n"):                               # no data rows
+            self.assertEqual(raw.strip(), self.text(raw), raw)
+
+    def test_labelled_csv_chunks_repeat_the_columns_line(self):
+        rows = "\n".join("%d;Name %d;Visitor %d" % (i, i, i) for i in range(30))
+        text = self.text("No;Inmate;Visitor\n" + rows)
+        self.assertEqual(1, extract.header_lines("/d/log.csv", text))
+        chunks = chunk_rows(text, size=20, overlap=0, header_lines=1)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertTrue(chunk.startswith("Columns: No | Inmate | Visitor\nNo: "), chunk)
+
+
 if __name__ == "__main__":
     unittest.main()

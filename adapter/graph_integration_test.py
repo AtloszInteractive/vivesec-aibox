@@ -164,7 +164,7 @@ class GraphIntegrationTest(unittest.TestCase):
         patches = {"RAG_URL": self.rag_url, "MIRROR": self.mirror, "ACL": self.policy,
                    "DIRECTORY": FakeDirectory(), "HTTP_SCOPE": service.HTTP_SCOPE_FULL,
                    "ENTITLEMENTS": None, "GRAPH": client, "GRAPH_FORWARD": self.forward,
-                   "GRAPH_ADMINS": frozenset({"hanna"}),
+                   "GRAPH_ADMINS": frozenset({"hanna"}), "_GRAPH_PATHS": {},
                    "_ACL_SYNC": {"fingerprint": None, "generation": 0}}
         for name, value in patches.items():
             patcher = patch.object(service, name, value)
@@ -497,6 +497,197 @@ class GraphIntegrationTest(unittest.TestCase):
                                                job["job"]["progress_done"],
                                                job["job"]["progress_total"]))
 
+    def test_analyst_analyses_one_named_file_in_full(self):
+        import deep
+        import llm
+
+        service = self.service
+        prompts, generated = [], []
+
+        def model(system, user, **kw):
+            prompts.append((system, user))
+            if system == deep.SECTION_SYSTEM:
+                return ('{"findings": [{"excerpt": 1, "quote": "Kovács János és Nagy Éva", '
+                        '"note": "Találkoztak."}]}'), 0, 0
+            name = "secret.txt" if "secret" in user else "note.txt"
+            return ('{"action": "tools", "calls": [{"tool": "analyze_document", "args": '
+                    '{"file": "%s"}}], "search": "elemzés"}' % name), 0, 0
+
+        def echo(query, contexts, **kw):
+            generated.append(kw.get("task"))
+            # An analysis shorter than ANALYZE_MIN_ANSWER_CHARS counts as starved.
+            return ("\n".join(c.get("text") or "" for c in contexts) or "NO-CONTEXT") + \
+                "\n" + "." * 130, "echo"
+
+        with patch.object(service, "APP_MODE", service.APP_ANALYST), \
+                patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", model), \
+                patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False):
+            # Small enough for one call: the whole file is the context.
+            status, out = self.call("/api/v1/ui/query", {"query": "Elemezd a note.txt fájlt!"},
+                                    user="lars")
+            self.assertEqual(200, status, out)
+            self.assertIn(DOCS[PUBLIC], out["answer"])
+            self.assertEqual(["analyze"], generated)
+            self.assertIn("analyze_document", prompts[0][0])
+            # Over the window: read in parts inside the heavy slot.
+            with patch.object(service, "ANALYZE_MAX_CHARS", 10):
+                status, out = self.call("/api/v1/ui/query",
+                                        {"query": "Elemezd a note.txt fájlt!"}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertEqual(("document", 1, False), (out["deep"]["kind"], out["deep"]["read"],
+                                                      out["deep"]["partial"]))
+            self.assertIn("Találkoztak.", out["answer"])
+            self.assertIn("\n\n> Teljes lefedetts\u00e9g\u0171 elemz\u00e9s", out["answer"])
+            # A file the caller may not see is never read, by name or otherwise.
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Elemezd a secret.txt fájlt!"}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+            self.assertNotIn("Titkos", "".join(u for _, u in prompts))
+            # The citation button: analyze is the one action the analyst box takes.
+            status, out = self.call("/api/v1/ui/query", {"query": "Teljes elemzés",
+                                                         "action": "analyze",
+                                                         "files": [PUBLIC]}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertEqual("analyze", out["action"])
+            self.assertIn(DOCS[PUBLIC], out["answer"])
+            status, out = self.call("/api/v1/ui/query", {"query": "Teljes elemzés",
+                                                         "action": "analyze",
+                                                         "files": [HIDDEN]}, user="lars")
+            self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))
+
+    def test_graph_queries_and_exports_carry_their_purpose(self):
+        import purpose
+        import querylog
+
+        service = self.service
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+        with patch.object(service, "PURPOSE", purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name)):
+            status, out = self.query("lars", "find", text="Kovács", types=["person"])
+            self.assertEqual((428, "purpose_required"), (status, out["error"]))
+            status, out = self.call("/api/v1/ui/graph/query",
+                                    {"query": "find", "case_ref": "BV-2026/7",
+                                     "params": {"text": "Kovács", "types": ["person"]}},
+                                    user="lars")
+            self.assertEqual(200, status, out)
+            status, out = self.call("/api/v1/ui/graph/review/list", {}, user="lars")
+            self.assertEqual(428, status)
+            # Status is not content: it needs no purpose.
+            status, _ = self.call("/api/v1/ui/graph/status", {}, user="lars")
+            self.assertEqual(200, status)
+        name, = os.listdir(logdir.name)
+        path = os.path.join(logdir.name, name)
+        with open(path, encoding="utf-8") as handle:
+            record, = [json.loads(line) for line in handle]
+        self.assertEqual(("lars", "graph:find", "BV-2026/7"),
+                         (record["user"], record["kind"], record["case_ref"]))
+        self.assertEqual([PUBLIC], record["result"]["sources"])
+        self.assertEqual((True, 1, None), querylog.verify(path))
+
+    def test_a_profile_change_is_reprocessed_from_the_file_source(self):
+        import reprocess
+
+        service = self.service
+        source = tempfile.TemporaryDirectory()
+        self.addCleanup(source.cleanup)
+        for path, text in DOCS.items():
+            local = os.path.join(source.name, path[len("/storage/drives/"):])
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            with open(local, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        runner = reprocess.Reprocessor(service.GRAPH, self.forward, service._reprocess_fetch,
+                                       idle_wait=0.05)
+        with patch.object(service, "REPROCESS_SOURCE_DIR", source.name), \
+                patch.object(service, "REPROCESS", runner):
+            status, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="lars")
+            self.assertEqual((200, 0, False, "local"), (status, out["stale_total"],
+                                                         out["can_start"], out["source"]))
+            _, prof = self.call("/api/v1/ui/graph/profile/get", {}, user="hanna")
+            newer = dict(prof["profile"], version=prof["profile"]["version"] + 1)
+            status, _ = self.call("/api/v1/ui/graph/profile/set", {"profile": newer}, user="hanna")
+            self.assertEqual(200, status)
+            # Counts cover only what the caller may see.
+            self.assertEqual(1, self.call("/api/v1/ui/graph/reprocess/status", {},
+                                          user="lars")[1]["stale_total"])
+            self.assertEqual(2, self.call("/api/v1/ui/graph/reprocess/status", {},
+                                          user="hanna")[1]["stale_total"])
+            status, _ = self.call("/api/v1/ui/graph/reprocess/start", {}, user="lars")
+            self.assertEqual(403, status)
+            status, out = self.call("/api/v1/ui/graph/reprocess/start",
+                                    {"path_prefix": "/storage/drives/other"}, user="hanna")
+            self.assertEqual(403, status)
+            status, out = self.call("/api/v1/ui/graph/reprocess/start", {}, user="hanna")
+            self.assertEqual((200, 2), (status, out["run"]["total"]))
+            self.assertTrue(runner.wait(30))
+            self.settle()
+            _, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="hanna")
+            self.assertEqual((0, "done", 2), (out["stale_total"], out["run"]["state"],
+                                              out["run"]["sent"]))
+            self.assertTrue(out["current"].startswith("%s@%s/e" % (newer["id"], newer["version"])))
+        self.assertEqual({"Kovács János"}, self.people("lars", "Kovács"))
+        self.assertNotIn("Titkos", json.dumps(self.call("/api/v1/ui/graph/reprocess/status", {},
+                                                        user="lars")[1], ensure_ascii=False))
+
+    def test_synced_files_the_graph_never_got_are_caught_up(self):
+        import corpus
+        import reprocess
+
+        service = self.service
+        source = tempfile.TemporaryDirectory()
+        self.addCleanup(source.cleanup)
+        for path, text in DOCS.items():
+            local = os.path.join(source.name, path[len("/storage/drives/"):])
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            with open(local, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        corpus_id = corpus.corpus_id_of_path(HIDDEN)
+        raw = DOCS[HIDDEN].encode()
+        _, check = self.call("/api/v1/index/upsert/file/check",
+                             {"path": HIDDEN, "size": len(raw), "mtime": 1700000001,
+                              "head": base64.b64encode(raw[:64]).decode()})
+        status, done = self.call("/api/v1/index/upsert/file/content/" + check["token"],
+                                 raw=raw, extra={"Content-Type": "text/plain"})
+        # The id the adapter gives a file it sends itself is the RAG's.
+        self.assertEqual(corpus.doc_id_of(service.TENANT_ID, corpus_id, HIDDEN), done["doc_id"])
+        self.settle()
+        # The graph lost it (a full forward queue during a large sync, say).
+        graph.GraphClient(self.graph_url).post("/graph/document/drop_tree",
+                                               {"corpus_id": corpus_id, "path": HIDDEN})
+        runner = reprocess.Reprocessor(service.GRAPH, self.forward, service._reprocess_fetch,
+                                       idle_wait=0.05)
+        with patch.object(service, "REPROCESS_SOURCE_DIR", source.name), \
+                patch.object(service, "REPROCESS", runner):
+            _, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="hanna")
+            self.assertEqual((1, 0), (out["absent_total"], out["stale_total"]))
+            # A file the caller may not see is not counted for them.
+            self.assertEqual(0, self.call("/api/v1/ui/graph/reprocess/status", {},
+                                          user="lars")[1]["absent_total"])
+            self.assertEqual(set(), self.people("hanna", "Titkos"))
+            status, out = self.call("/api/v1/ui/graph/reprocess/start", {}, user="hanna")
+            self.assertEqual((200, 1), (status, out["run"]["total"]))
+            self.assertTrue(runner.wait(30))
+            self.settle()
+            _, out = self.call("/api/v1/ui/graph/reprocess/status", {}, user="hanna")
+            self.assertEqual((0, 1), (out["absent_total"], out["run"]["sent"]))
+        self.assertIn("Titkos Tamás", self.people("hanna", "Titkos"))
+        self.assertEqual(set(), self.people("lars", "Titkos"))
+
+    def test_unreadable_documents_are_listed_within_the_callers_view(self):
+        for path in (DRIVE + "/reports/diagram.vsd", DRIVE + "/hr/org.vsd"):
+            status, _ = self.call("/api/v1/index/upsert/file/check",
+                                  {"path": path, "size": 10, "mtime": 1700000000, "head": ""})
+            self.assertEqual(200, status)
+        status, out = self.call("/api/v1/ui/index/skipped", {}, user="lars")
+        self.assertEqual(200, status, out)
+        self.assertEqual([DRIVE + "/reports/diagram.vsd"],
+                         [d["source_path"] for d in out["documents"]])
+        self.assertEqual({"unsupported_type": 1}, out["reasons"])
+        self.assertNotIn("org.vsd", json.dumps(out))
+        status, out = self.call("/api/v1/ui/index/skipped", {}, user="hanna")
+        self.assertEqual(2, out["count"])
+
     def test_only_graph_admins_change_shared_state(self):
         status, out = self.call("/api/v1/ui/graph/profile/get", {}, user="lars")
         self.assertEqual((200, False), (status, out["can_edit"]))
@@ -506,6 +697,32 @@ class GraphIntegrationTest(unittest.TestCase):
         status, out = self.call("/api/v1/ui/graph/review/decide",
                                 {"a": "x", "b": "y", "decision": "merge"}, user="hanna")
         self.assertEqual(404, status)  # admin, but no such pair in scope
+        status, out = self.call("/api/v1/ui/graph/review/undo", {"a": "x", "b": "y"},
+                                user="lars")
+        self.assertEqual(403, status)
+
+    def test_review_in_bulk_with_history_and_undo(self):
+        status, review = self.call("/api/v1/ui/graph/review/list", {"q": "kovacs"}, user="hanna")
+        self.assertEqual((200, 1, {"same name": 1}),
+                         (status, review["total"], review["reasons"]), review)
+        pair = {k: review["review"][0][k] for k in ("a", "b")}
+        status, out = self.call("/api/v1/ui/graph/review/decide", {
+            "decision": "merge", "pairs": [pair, {"a": "x", "b": "y"}]}, user="hanna")
+        self.assertEqual((200, 1, 1), (status, out["done"], len(out["skipped"])), out)
+        status, hist = self.call("/api/v1/ui/graph/review/history", {}, user="hanna")
+        self.assertEqual(200, status, hist)
+        [entry] = hist["history"]
+        self.assertEqual(("merge", "hanna", True, True),
+                         (entry["decision"], entry["by"], entry["undoable"], hist["can_undo"]))
+        # lars sees only one of the two Kovács János: no history for him.
+        status, hist = self.call("/api/v1/ui/graph/review/history", {}, user="lars")
+        self.assertEqual((200, [], False), (status, hist["history"], hist["can_undo"]))
+        status, out = self.call("/api/v1/ui/graph/review/undo", pair, user="hanna")
+        self.assertEqual((200, "merge"), (status, out["undone"]), out)
+        status, review = self.call("/api/v1/ui/graph/review/list", {}, user="hanna")
+        self.assertEqual(1, review["total"])
+        status, out = self.call("/api/v1/ui/graph/review/undo", pair, user="hanna")
+        self.assertEqual(404, status)  # nothing left to undo
 
 
 class ForwarderTest(unittest.TestCase):
