@@ -387,7 +387,7 @@ class RunTest(unittest.TestCase):
         notes = [c["text"] for c in out if c["text"].startswith("Gráf-számlálás -- a kérdezett")]
         self.assertEqual(1, len(notes), [c["text"] for c in out])
         self.assertEqual(["- Nagy Éva -- meglátogatta -- Kovács Péter: 3 alkalommal "
-                          "(2025-03-01, 2025-04-01, 2025-05-02)"], notes[0].split("\n")[1:])
+                          "(2025-03-01 és 2025-05-02 között)"], notes[0].split("\n")[1:])
         # Links of entities nobody asked about are not tallied.
         r = orchestrator.Run(Visits(), {"corpus_ids": ["c"]}, lambda p: True, "English")
         out = r.run([{"tool": "most_connected", "args": {"kind": "person"}}])
@@ -397,7 +397,7 @@ class RunTest(unittest.TestCase):
                         lang="English")
         notes = [c["text"] for c in out if c["text"].startswith("Graph count -- repeated")]
         self.assertEqual(["- Nagy Éva -- visited -- Kovács János: 2 times "
-                          "(2025-03-13, 2026-01-02)"], notes[0].split("\n")[1:])
+                          "(2025-03-13 to 2026-01-02)"], notes[0].split("\n")[1:])
 
     def test_pending_namesake_merges_are_noted_once(self):
         graph = FakeGraph(pending=3)

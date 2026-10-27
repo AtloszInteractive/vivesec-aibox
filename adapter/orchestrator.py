@@ -43,7 +43,6 @@ PROFILE_TTL = 60.0
 SUMMARY_LINES = 6
 MAX_JOINED_LISTED = 10
 MAX_TALLY_LINES = 10
-MAX_TALLY_DATES = 12
 # The graph's built-in links: neither is an occurrence worth counting.
 UNTALLIED = ("RELATED_TO", "CO_MENTIONED")
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
@@ -264,10 +263,10 @@ _TEXT = {
               "pro Datum gez\u00e4hlt, in den Dokumenten, die Sie sehen d\u00fcrfen (verwenden "
               "Sie diese Zahlen f\u00fcr \u201ewie oft\u201c):",
     },
-    "tally_row": {"en": "- %s -- %s -- %s: %d times (%s)",
-                  "hu": "- %s -- %s -- %s: %d alkalommal (%s)",
-                  "da": "- %s -- %s -- %s: %d gange (%s)",
-                  "de": "- %s -- %s -- %s: %d-mal (%s)"},
+    "tally_row": {"en": "- %s -- %s -- %s: %d times (%s to %s)",
+                  "hu": "- %s -- %s -- %s: %d alkalommal (%s \u00e9s %s k\u00f6z\u00f6tt)",
+                  "da": "- %s -- %s -- %s: %d gange (fra %s til %s)",
+                  "de": "- %s -- %s -- %s: %d-mal (von %s bis %s)"},
     "joined": {
         "en": "Linked by name: the records of these people from different documents were "
               "joined only by the same name; no birth date or ID number confirms it: %s.",
@@ -863,9 +862,9 @@ class Run:
         rows.sort(key=lambda r: (-r[0], r[1], r[2], r[3]))
         lines = []
         for n, a, rel, b, dates in rows[:MAX_TALLY_LINES]:
-            shown = ", ".join(dates[:MAX_TALLY_DATES]) + (
-                ", ..." if len(dates) > MAX_TALLY_DATES else "")
-            lines.append(_t("tally_row", self.code) % (a, rel, b, n, shown))
+            # The span, not the dates: listed here, they were answered from the
+            # note and the cited facts were left out.
+            lines.append(_t("tally_row", self.code) % (a, rel, b, n, dates[0], dates[-1]))
         return _t("tally", self.code) + "\n" + "\n".join(lines)
 
     def _edges(self, edges):
