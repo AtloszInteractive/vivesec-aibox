@@ -128,6 +128,7 @@ import {
   Trash2,
   Network,
   FileSearch,
+  RotateCcw,
 } from "lucide-react";
 import { GraphPanel, type GraphSource } from "./GraphPanel";
 
@@ -230,6 +231,8 @@ type Message =
       kind: "text";
       text: string;
       tone?: "normal" | "error";
+      /** A whole-document analysis (E10a) that stopped: the file, to resume it. */
+      retryAnalyze?: string;
     }
   | {
       id: string;
@@ -1833,6 +1836,20 @@ function ViveSecAppInner() {
           </button>
         )}
         {!running &&
+          job.status !== "done" &&
+          job.action === "analyze" &&
+          job.files?.[0] &&
+          confirmDeleteJobId !== job.job_id && (
+            <button
+              onClick={() => resumeAnalysis(job)}
+              disabled={liveBusy || boxState !== "online"}
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white disabled:opacity-40"
+              title={`${tm("Resume analysis")} — ${tm("Continues the analysis; the parts already read are not read again")}`}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
+          )}
+        {!running &&
           (confirmDeleteJobId === job.job_id ? (
             <span className="flex shrink-0 items-center gap-1">
               <button
@@ -2036,6 +2053,10 @@ function ViveSecAppInner() {
                 kind: "text",
                 tone: "error" as const,
                 text: `${tm("The AI Box did not answer this question.")} (${detail})`,
+                // The box kept the parts it read; running it again continues there.
+                ...(action === "analyze" && pane === "chat" && extras?.files?.[0]
+                  ? { retryAnalyze: extras.files[0] }
+                  : {}),
               }
             : m,
         ),
@@ -2049,6 +2070,17 @@ function ViveSecAppInner() {
 
   function handleSend() {
     sendText(input.trim());
+  }
+
+  /** E10a: a stopped background analysis, sent again as it was; the box skips
+   *  the parts the stopped run already read. */
+  function resumeAnalysis(job: BackgroundJob) {
+    if (purposeMissing) {
+      setPurposeDialog(true);
+      return;
+    }
+    if (boxState !== "online" || liveBusy || !job.files?.length) return;
+    void runLive(job.query ?? "", { files: job.files, action: "analyze" }, "results");
   }
 
   /** E10a from a cited document: the whole file, read and analysed in full. */
@@ -4267,6 +4299,16 @@ function MessageView({
           style={{ backgroundColor: msg.tone === "error" ? "rgba(244,63,94,0.12)" : PANEL }}
         >
           {renderInline(msg.text)}
+          {msg.retryAnalyze && onAnalyze && (
+            <button
+              onClick={() => onAnalyze(msg.retryAnalyze as string)}
+              title={tm("Continues the analysis; the parts already read are not read again")}
+              className="mt-2 flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.04] px-2.5 py-1 text-[12px] text-white/80 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+            >
+              <RotateCcw className="h-3.5 w-3.5" style={{ color: LIME }} />
+              {tm("Resume analysis")}
+            </button>
+          )}
         </div>
       )}
 

@@ -186,6 +186,12 @@ const M: Record<string, Tri> = {
     "Befunde werden zusammengefasst",
   ],
   "Full analysis": ["Teljes elemzés", "Fuld analyse", "Vollständige Analyse"],
+  "Resume analysis": ["Elemzés folytatása", "Genoptag analysen", "Analyse fortsetzen"],
+  "Continues the analysis; the parts already read are not read again": [
+    "Folytatja az elemzést; a már elolvasott részeket nem olvassa újra",
+    "Fortsætter analysen; de allerede læste dele læses ikke igen",
+    "Setzt die Analyse fort; bereits gelesene Teile werden nicht erneut gelesen",
+  ],
   "Recognised text (OCR) — may contain recognition errors": [
     "Felismert szöveg (OCR) – felismerési hibákat tartalmazhat",
     "Genkendt tekst (OCR) – kan indeholde genkendelsesfejl",

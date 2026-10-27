@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import analysis_checkpoint
 import deep
 import llm
 
@@ -54,6 +55,13 @@ class AnalyzeFullTest(unittest.TestCase):
         self.addCleanup(chat.stop)
         self.requests = []
         self.document = chunks(30)
+        self.user = "tester"
+        analysis = tempfile.TemporaryDirectory()
+        self.addCleanup(analysis.cleanup)
+        store = patch.object(self.service, "ANALYSIS_CHECKPOINTS",
+                             analysis_checkpoint.CheckpointStore(analysis.name))
+        store.start()
+        self.addCleanup(store.stop)
 
     def chat(self, system, user, **opts):
         self.calls.append((system, opts))
@@ -74,7 +82,7 @@ class AnalyzeFullTest(unittest.TestCase):
 
     def analyze(self):
         with patch.object(self.service, "rag_post_json", side_effect=self.rag):
-            return self.service._answer("tester", DRIVE, "Elemezd a szerződést", 5, "Hungarian",
+            return self.service._answer(self.user, DRIVE, "Elemezd a szerződést", 5, "Hungarian",
                                         action="analyze", files=[PATH])
 
     def sections(self):
@@ -107,6 +115,34 @@ class AnalyzeFullTest(unittest.TestCase):
         # The passages come first; the coverage note is the last context.
         self.assertEqual(PATH, result["citations"][0]["path"])
         self.assertIsNone(result["citations"][-1]["path"])
+
+    def test_an_interrupted_analysis_continues_where_it_stopped(self):
+        down = {"after": 2}
+
+        def chat(system, user, **opts):
+            if system == deep.SECTION_SYSTEM:
+                if down["after"] == 0:
+                    raise OSError("model server gone")  # e.g. the adapter going down
+                down["after"] -= 1
+            return self.chat(system, user, **opts)
+
+        with patch.object(self.service, "ANALYZE_MAX_CHARS", 600), \
+                patch.object(deep, "DOC_BATCH_CHARS", 400), \
+                patch.object(llm, "_chat", side_effect=chat):
+            with self.assertRaises(OSError):
+                self.analyze()
+            self.calls.clear()
+            down["after"] = -1
+            result = self.analyze()
+            read_again = len(self.sections())
+            self.calls.clear()
+            with patch.object(self, "user", "someone-else"):
+                other = self.analyze()
+        groups = result["deep"]["groups"]
+        self.assertEqual((2, groups - 2), (result["deep"]["resumed"], read_again))
+        self.assertFalse(result["deep"]["partial"])
+        self.assertIn("2 r\u00e9szt a(z) %d k\u00f6z\u00fcl" % groups, result["answer"])
+        self.assertEqual((0, groups), (other["deep"]["resumed"], len(self.sections())))
 
     def test_a_small_document_keeps_the_single_call(self):
         self.document = chunks(4)

@@ -212,6 +212,7 @@ export type AdapterJobSummary = {
   status: AdapterJobStatus;
   action?: AdapterAction | null;
   query?: string;
+  files?: string[];
   created?: number;
   started?: number | null;
   finished?: number | null;

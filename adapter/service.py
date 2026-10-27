@@ -76,6 +76,7 @@ externally; this adapter is the only thing in front of it.
 """
 import json
 import base64
+import hashlib
 import ipaddress
 import mimetypes
 import os
@@ -92,6 +93,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import acl  # noqa: E402
+import analysis_checkpoint  # noqa: E402
 import build_info  # noqa: E402
 import confidence  # noqa: E402
 import conversations  # noqa: E402
@@ -684,6 +686,9 @@ LONGPOLL_SECONDS = float(os.environ.get("ADAPTER_LONGPOLL_SECONDS", "25") or 25)
 LONGPOLL_MAX = float(os.environ.get("ADAPTER_LONGPOLL_MAX", "55") or 55)
 JOBS = jobstore.JobStore.from_env()
 JOB_QUEUE_MAX = int(os.environ.get("ADAPTER_JOB_QUEUE_MAX", "5") or 5)
+# E10a: the parts of a whole-document analysis read so far, so that one that
+# stopped before its end continues where it stopped.
+ANALYSIS_CHECKPOINTS = analysis_checkpoint.CheckpointStore.from_env()
 
 
 def status_payload(trusted=True):
@@ -1075,11 +1080,12 @@ def _read_all(args, query, lang, req_scope, access, job_id, user, drive, cancel_
 
 
 def _analyze_document(target, req_scope, access, query, lang, cancel_event, stage_callback,
-                      slot=None):
+                      slot=None, user=None):
     """Every passage of ONE file for an analysis: (contexts, document, coverage
     note, info). A file that fits the window is the context as is; a larger one
     is read in parts (E10a), inside the heavy slot when `slot` (job_id, user,
-    drive) says the caller does not hold it yet."""
+    drive) says the caller does not hold it yet. The parts `user` read in an
+    earlier, unfinished run of the same analysis are not read again."""
     try:
         target_corpus = req_scope.corpus_id_for_path(target)
     except ValueError:
@@ -1100,7 +1106,7 @@ def _analyze_document(target, req_scope, access, query, lang, cancel_event, stag
         return contexts, document, [], None
     if slot is None:
         note, parts, info = _read_document(contexts, document, query, lang, cancel_event,
-                                           stage_callback)
+                                           stage_callback, user)
     else:
         if stage_callback:
             stage_callback("queued", 0, 0)
@@ -1108,22 +1114,27 @@ def _analyze_document(target, req_scope, access, query, lang, cancel_event, stag
             with HEAVY_SCHEDULER.slot(*slot) as slot_cancel:
                 note, parts, info = _read_document(contexts, document, query, lang,
                                                    _AnyEvent(cancel_event, slot_cancel),
-                                                   stage_callback)
+                                                   stage_callback, user)
         except scheduler.QueueCancelled:
             raise llm.GenerationCancelled("cancelled while waiting for the heavy slot")
     return parts, dict(document, truncated=False), note, info
 
 
-def _read_document(chunks, document, query, lang, cancel_event, stage_callback):
+def _read_document(chunks, document, query, lang, cancel_event, stage_callback, user=None):
     """E10a whole-document analysis of a file too large for one call (deep.py):
     every passage of it, in parts. The caller already runs in the heavy slot
     (analyze is a heavy job). Returns (coverage note, part summaries, info)."""
     name = (document.get("source_path") or document.get("title") or "").rsplit("/", 1)[-1]
     task = (query or "").strip() or ANALYZE_DEFAULT_TASK
+    num_ctx = ANALYZE_NUM_CTX or None
+    checkpoint = ANALYSIS_CHECKPOINTS.open(
+        user, chunks, task, lang, llm.GEN_MODEL,
+        {"part_chars": deep.DOC_BATCH_CHARS, "num_ctx": num_ctx,
+         "prompt": hashlib.sha256(deep.SECTION_SYSTEM.encode("utf-8")).hexdigest()})
     contexts, info = deep.read_document(
         chunks, task, lang, name or None, chunks_total=document.get("chunks_total"),
-        cancel_event=cancel_event, progress=stage_callback, num_ctx=ANALYZE_NUM_CTX or None,
-        budget=ANALYZE_MAX_CHARS * 6 // 10)
+        cancel_event=cancel_event, progress=stage_callback, num_ctx=num_ctx,
+        budget=ANALYZE_MAX_CHARS * 6 // 10, checkpoint=checkpoint)
     return contexts[:1], contexts[1:], dict(info, kind="document")
 
 
@@ -1259,7 +1270,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         contexts, document, deep_note, deep_info = _analyze_document(
             target, req_scope, access, query, lang, cancel_event, stage_callback,
             # A planned analysis runs inside a plain ask, not a heavy job.
-            slot=None if action == "analyze" else (job_id or uuid.uuid4().hex, user, drive))
+            slot=None if action == "analyze" else (job_id or uuid.uuid4().hex, user, drive),
+            user=user)
         res = {"debug": {"retrieval": "whole-document"}}
     elif chat_only:
         contexts = []
@@ -2290,6 +2302,8 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             jobs.append({"job_id": job.get("job_id"), "status": job.get("status"),
                          "action": request.get("action"), "query": request.get("query"),
+                         # A stopped analysis can be run again from the list (E10a).
+                         "files": list(request.get("files") or []),
                          "created": job.get("created"), "started": job.get("started"),
                          "finished": job.get("finished"), "seen_ts": job.get("seen_ts"),
                          "error": job.get("error"),

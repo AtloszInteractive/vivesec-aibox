@@ -537,10 +537,18 @@ a summary of the results (rankings with their top lines) and may add calls, at
 most 3 rounds; a call already run is not repeated, and a round of repeats ends
 the planning. The adapter runs
 the tools itself in the caller's scope; the model only names entities, kinds and
-relations, a kind word passed as a name ("Fogvatartott") filters by that kind,
-and an unknown kind or relation skips that query with a note (never
+relations, a kind word passed as a name ("Fogvatartott") filters by that kind
+where the tool takes a kind, and is skipped without a note where it needs a
+named entity (`common {a, b: "cell"}`); an unknown kind or relation skips that query with a note (never
 a wider search). Counts come from the graph, never from the model. Either end
-of a link may be the counted or pattern-starting side.
+of a link may be the counted or pattern-starting side. For the entities the
+message names, the adapter also counts their repeated dated links itself
+(distinct dates per relation and other side, by name as the facts read, before
+the facts cap; the graph's built-in `RELATED_TO`/`CO_MENTIONED` are not counted)
+and gives the figure and the span as a note, so "how many times" is not left to
+the model. Timeline facts keep the direction of their link (the graph's
+`timeline` items carry `a`/`b`). Entity types in ask-back options are named in
+the user's language.
 Namesakes (separate records with the same name) are used together with a note
 when named directly; a partial name that fits different entities is asked back
 with the options. Patterns, sequences and per-entity counts follow node ids, so
@@ -668,12 +676,32 @@ then counted as failed (partial), and part summaries that do not fit are merged
 into digests that keep the document as source. The final analysis runs on the
 part summaries; the coverage note ("all N passages of X were read in K parts",
 plus any partial reason) is shown under the answer and the response carries
-`deep {kind: "document", read, total, groups, failed, parts, condensed, partial,
-seconds}`. All calls use `ADAPTER_ANALYZE_NUM_CTX`, so the model is not reloaded
+`deep {kind: "document", read, total, groups, failed, resumed, parts, condensed,
+partial, seconds}`. All calls use `ADAPTER_ANALYZE_NUM_CTX`, so the model is not reloaded
 between parts. The job reports `read`/`condense`/`write` progress like a full
 reading. `ADAPTER_ANALYZE_FULL=off` restores the old cut at the window (any other
-value keeps full coverage). Not yet: resuming an interrupted analysis from its
-last part. Tests: `analyze_full_test`, `deep_test`.
+value keeps full coverage). Tests: `analyze_full_test`, `deep_test`.
+
+An analysis that stops before its end (adapter restart, cancel, a failed model
+call) continues where it stopped: every part read is kept at once
+(`analysis_checkpoint.py`), and the same analysis run again takes those parts
+instead of reading them again; the coverage note then says how many parts an
+earlier run read. "The same analysis" means the same user, the very passages the
+RAG returned for this request (hashed, so access is checked anew on every run
+and a changed document starts afresh), task, language, part size, prompt and
+model -- one user never picks up another's parts. A part whose reply failed is
+not kept, so it is read again. The UI offers "Resume analysis" under a failed
+"Full analysis" in the chat and on a stopped analysis in the background job list
+(`/ui/jobs` now lists each job's `files`); asking the planner the same question
+again resumes too. The final synthesis is not kept (it is one call).
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `ADAPTER_ANALYSIS_DIR` | `analysis` beside `ADAPTER_JOBS_DIR` (`/data/analysis` on the box) | Where the parts read are kept (files 0600, named by a hash). `off`, or no job store, turns resuming off: an analysis then always reads every part. A store that cannot be written never stops the analysis. |
+| `ADAPTER_ANALYSIS_RETENTION_DAYS` | `7` | Entries untouched for longer are deleted (checked at most hourly); an invalid value means 7. |
+
+Tests: `analysis_checkpoint_test`, `analyze_full_test`
+(`test_an_interrupted_analysis_continues_where_it_stopped`).
 
 On an analyst box (where quick actions are off) the analysis starts two ways:
 the planner's `analyze_document {file}` tool (first round, offered with

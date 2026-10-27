@@ -228,6 +228,17 @@ _TEXT = {
         "de": "%d der %d Teile konnten nicht zusammengefasst werden (keine verwertbare Antwort "
               "des Modells); die Analyse ist unvollst\u00e4ndig.",
     },
+    "doc_resumed": {
+        "en": "%d of the %d parts were read by an earlier run of this analysis that did not "
+              "finish; it was continued from there.",
+        "hu": "%d r\u00e9szt a(z) %d k\u00f6z\u00fcl ennek az elemz\u00e9snek egy "
+              "kor\u00e1bbi, f\u00e9lbeszakadt fut\u00e1sa olvasott el; az elemz\u00e9s "
+              "onnan folytat\u00f3dott.",
+        "da": "%d af de %d dele blev l\u00e6st af en tidligere, ufuldf\u00f8rt k\u00f8rsel af "
+              "denne analyse; den blev forts\u00e6t derfra.",
+        "de": "%d der %d Teile wurden von einem fr\u00fcheren, nicht beendeten Lauf dieser "
+              "Analyse gelesen; sie wurde dort fortgesetzt.",
+    },
     "doc_capped": {
         "en": "Only the first %d of the document's %d passages could be read; the analysis "
               "is partial.",
@@ -630,22 +641,32 @@ def _trim(contexts, budget):
 # -- whole-document analysis (E10a) -------------------------------------------------
 
 def read_document(chunks, task, lang=None, name=None, chunks_total=None,
-                  cancel_event=None, progress=None, chat=None, num_ctx=None, budget=None):
+                  cancel_event=None, progress=None, chat=None, num_ctx=None, budget=None,
+                  checkpoint=None):
     """Full-coverage analysis of ONE document too large for a single call: every
     passage, in reading order, in fixed groups; each group yields findings with
     verified quotes (a part summary with page references), and the part
     summaries, merged if they still do not fit, are the context of the final
     analysis. Returns (contexts, info): a coverage note (origin "search-note")
-    first, then the part summaries."""
+    first, then the part summaries. With a `checkpoint` (analysis_checkpoint),
+    each part read is kept, and the parts an earlier, unfinished run read are
+    taken from it instead of being read again."""
     chat = chat or llm._chat
     budget = ANSWER_CHARS if budget is None else budget
     started = time.time()
     groups = batches(chunks, DOC_BATCH_CHARS)
-    parts, failed = [], 0
+    parts, failed, resumed = [], 0, 0
     for i, group in enumerate(groups):
         _check(cancel_event)
         if progress:
             progress("read", i, len(groups))
+        if checkpoint is not None:
+            found, part = checkpoint.get(i)
+            if found:
+                resumed += 1
+                if part:
+                    parts.append(part)
+                continue
         findings = None
         for _ in range(2):  # one retry: a malformed reply must not pass for "nothing here"
             content, _, _ = chat(SECTION_SYSTEM, _map_user(task, group).replace(
@@ -661,18 +682,24 @@ def read_document(chunks, task, lang=None, name=None, chunks_total=None,
         pages = [c.get("page_number") for c in group if c.get("page_number")]
         label = ("pp. %s\u2013%s" % (pages[0], pages[-1]) if pages and pages[0] != pages[-1]
                  else "p. %s" % pages[0] if pages else "part %d" % (i + 1))
+        part = None
         if findings:
             first = group[0]
-            parts.append({"text": "%s:\n%s" % (label, "\n".join(_finding_line(f) for f in findings)),
-                          "source_path": first.get("source_path"),
-                          "corpus_id": first.get("corpus_id"),
-                          "page_number": first.get("page_number"),
-                          "chunk_id": first.get("chunk_id"), "score": 1.0, "origin": "deep"})
+            part = {"text": "%s:\n%s" % (label, "\n".join(_finding_line(f) for f in findings)),
+                    "source_path": first.get("source_path"),
+                    "corpus_id": first.get("corpus_id"),
+                    "page_number": first.get("page_number"),
+                    "chunk_id": first.get("chunk_id"), "score": 1.0, "origin": "deep"}
+            parts.append(part)
+        if checkpoint is not None:
+            checkpoint.put(i, part)
     parts, digests, rounds = _digest_rounds(task, parts, budget, chat, cancel_event, progress,
                                             keep_source=True, num_ctx=num_ctx)
     parts, trimmed = _trim(parts, budget)
     total = max(len(chunks), chunks_total or 0)
     notes = [_t("document", lang) % (len(chunks), name or "the document", len(groups))]
+    if resumed:
+        notes.append(_t("doc_resumed", lang) % (resumed, len(groups)))
     if total > len(chunks):
         notes.append(_t("doc_capped", lang) % (len(chunks), total))
     if failed:
@@ -685,6 +712,7 @@ def read_document(chunks, task, lang=None, name=None, chunks_total=None,
             "corpus_id": None, "page_number": None, "chunk_id": None, "score": 1.0,
             "origin": "search-note"}
     info = {"read": len(chunks), "total": total, "groups": len(groups), "failed": failed,
+            "resumed": resumed,
             "parts": len(parts), "condensed": rounds, "digests": digests,
             "partial": total > len(chunks) or bool(failed or trimmed),
             "seconds": round(time.time() - started, 1)}
