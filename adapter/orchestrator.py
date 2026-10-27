@@ -44,6 +44,8 @@ SUMMARY_LINES = 6
 MAX_JOINED_LISTED = 10
 MAX_TALLY_LINES = 10
 MAX_TALLY_DATES = 12
+# The graph's built-in links: neither is an occurrence worth counting.
+UNTALLIED = ("RELATED_TO", "CO_MENTIONED")
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 # Capitalised words after the first one: candidate names in a question.
 _NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
@@ -833,20 +835,29 @@ class Run:
         if not named & {edge["a"], edge["b"]}:
             return
         relations, _ = self._label_maps()
-        a, b = edge["a"], edge["b"]
-        if (relations.get(edge["type"]) or {}).get("symmetric") and b < a:
-            a, b = b, a
-        self._tally.setdefault((edge["type"], a, b), set()).add(edge["start"])
+        # A free-form link (RELATED_TO "testvére" beside each visit row) or a
+        # co-mention is no event of its own.
+        if edge["type"] in UNTALLIED or edge["type"] not in relations:
+            return
+        self._tally.setdefault((edge["type"], edge["a"], edge["b"]), set()).add(edge["start"])
 
     def _tally_note(self):
-        rows = []
+        # By name, as the facts read: namesakes are kept together like in resolve()
+        # (one person's visits recorded in several documents are several records).
+        relations, _ = self._label_maps()
+        groups = {}
         for (rtype, a, b), dates in self._tally.items():
+            a, b = self._name(a), self._name(b)
+            if (relations.get(rtype) or {}).get("symmetric") and b < a:
+                a, b = b, a
+            groups.setdefault((rtype, a, b), set()).update(dates)
+        rows = []
+        for (rtype, a, b), dates in groups.items():
             # "2025-03" beside "2025-03-13" is the same occasion, less precisely dated.
             dates = sorted(d for d in dates
                            if not any(o != d and o.startswith(d) for o in dates))
             if len(dates) > 1:
-                rows.append((len(dates), self._name(a), self._relation_name(rtype),
-                             self._name(b), dates))
+                rows.append((len(dates), a, self._relation_name(rtype), b, dates))
         if not rows:
             return None
         rows.sort(key=lambda r: (-r[0], r[1], r[2], r[3]))

@@ -367,6 +367,8 @@ class RunTest(unittest.TestCase):
                   edge("t4", "p4", "p3", start="2025-05"),  # the same, less precise
                   edge("t5", "p4", "p3", start="2025-06-01", doc="d2"),  # hidden
                   edge("t6", "p4", "p3"),  # undated
+                  edge("t8", "p3", "p4", typ="RELATED_TO", start="2025-03-01"),
+                  edge("t9", "p3", "p4", typ="RELATED_TO", start="2025-04-01"),
                   edge("t7", "p3", "p1", start="2025-07-01")]  # once only
 
         class Visits(FakeGraph):
@@ -390,6 +392,12 @@ class RunTest(unittest.TestCase):
         r = orchestrator.Run(Visits(), {"corpus_ids": ["c"]}, lambda p: True, "English")
         out = r.run([{"tool": "most_connected", "args": {"kind": "person"}}])
         self.assertFalse(any(c["text"].startswith("Graph count -- repeated") for c in out))
+        # Namesakes' links are counted together, as their facts are listed together.
+        _, out, _ = run([{"tool": "relations", "args": {"entity": "Kovács János"}}],
+                        lang="English")
+        notes = [c["text"] for c in out if c["text"].startswith("Graph count -- repeated")]
+        self.assertEqual(["- Nagy Éva -- visited -- Kovács János: 2 times "
+                          "(2025-03-13, 2026-01-02)"], notes[0].split("\n")[1:])
 
     def test_pending_namesake_merges_are_noted_once(self):
         graph = FakeGraph(pending=3)
