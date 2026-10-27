@@ -26,6 +26,7 @@ from extraction import (ATTRIBUTE_KEYS, LocalEntity, LocalRelation, _dates_in, f
 from model import CORE_TYPES
 
 SAMPLE_ROWS = 6
+MAPPING_MAX_TOKENS = 2048
 SHEET_LINE = "Sheet: "
 COLUMNS_LINE = "Columns: "
 
@@ -373,7 +374,7 @@ class TableMapper:
             user = "Document: %s\nHeader: %s\nSample rows:\n%s" % (
                 title, " | ".join(table.header), sample)
         raw = self.llm.json_call(_mapping_prompt(self.profile), user,
-                                 _mapping_schema(self.profile), max_tokens=2048)
+                                 _mapping_schema(self.profile), max_tokens=MAPPING_MAX_TOKENS)
         mapping = parse_mapping(raw, table.header, self.profile)
         if not mapping.entities:
             mapping = None

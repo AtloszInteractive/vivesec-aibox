@@ -26,6 +26,10 @@ ATTRIBUTE_KEYS = ("birth_date", "birth_place", "mother_name", "id_number", "regi
 # Ask for minified JSON: indentation was a third of what the model wrote, and
 # on the synthetic corpus the minified run was 38% faster with no loss in recall.
 COMPACT = os.environ.get("GRAPH_EXTRACT_COMPACT", "on").strip().lower() != "off"
+# The longest well-formed reply measured on the bench corpus was ~2200 tokens; a
+# reply that reaches this limit is a model stuck repeating itself, and the lower
+# the limit, the sooner the excerpt is halved instead.
+EXTRACT_MAX_TOKENS = 4096
 
 
 def fold(text: str) -> str:
@@ -188,7 +192,8 @@ def llm_extract(chunk: Chunk, profile: dict, llm, doc_title: str = "",
     """Validated (entities, relations) of one chunk; refs are chunk-local."""
     compact = COMPACT if compact is None else compact
     user = "Document: %s\n---\n%s\n---" % (doc_title, chunk.text)
-    raw = llm.json_call(_system_prompt(profile, compact), user, _schema(profile), max_tokens=8192)
+    raw = llm.json_call(_system_prompt(profile, compact), user, _schema(profile),
+                        max_tokens=EXTRACT_MAX_TOKENS)
     text_folded = fold(chunk.text)
     dates = _dates_in(chunk.text)
     subtypes = {s["id"]: s["type"] for s in profile["entity_subtypes"]}

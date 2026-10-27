@@ -86,6 +86,7 @@ class FakeGraph:
                     "documents": DOC}
         if path == "/query/timeline":
             items = [{"date": e["start"], "end": None, "type": e["type"],
+                      "a": e["a"], "b": e["b"],
                       "other": next(n for n in NODES if n["id"] == (e["a"] if e["b"] == body["id"]
                                                                   else e["b"])),
                       "evidence": e["evidence"]}
@@ -323,6 +324,72 @@ class RunTest(unittest.TestCase):
         body = next(b for p, b in graph.calls if p == "/query/aggregate")
         self.assertEqual({"subtypes": ["inmate"]}, body["focus"])
         self.assertFalse([b for p, b in graph.calls if p == "/query/find"])
+
+    def test_kind_given_as_an_entity_name_is_skipped_quietly(self):
+        # "common: Kovács, cell" once put "nothing named \u201ccell\u201d" into the answer.
+        r, contexts, graph = run([{"tool": "common", "args": {"a": "Kovács Péter",
+                                                              "b": "inmate"}}],
+                                 lang="English")
+        self.assertEqual([], contexts)
+        self.assertEqual(["Kovács Péter"], [b["text"] for p, b in graph.calls
+                                            if p == "/query/find"])
+        self.assertEqual(0, r.calls[0]["facts"])
+
+    def test_option_lines_name_entity_types_in_the_users_language(self):
+        r = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "Hungarian")
+        plain = dict(KP, subtype="", label="Kovács M.")
+        self.assertEqual("Kovács M. (Személy, 1 dokumentum)", r.describe([plain]))
+        self.assertEqual("Kovács Péter (Fogvatartott, 1 dokumentum)", r.describe([KP]))
+
+    def test_timeline_keeps_the_direction_of_a_link(self):
+        # Kovács János's timeline: he was visited, he did not visit.
+        _, contexts, _ = run([{"tool": "timeline", "args": {"entity": "Kovács János"}}])
+        facts = [c["text"] for c in contexts if c["origin"] == "graph"]
+        self.assertTrue(facts)
+        self.assertTrue(all(f.startswith("Nagy Éva -- meglátogatta -- Kovács János")
+                            for f in facts), facts)
+
+        class OldService(FakeGraph):
+            def post(self, path, body):
+                res = super().post(path, body)
+                for item in res.get("timeline") or []:
+                    item.pop("a"), item.pop("b")
+                return res
+
+        r = orchestrator.Run(OldService(), {"corpus_ids": ["c"]}, lambda p: True, "Hungarian")
+        out = r.run([{"tool": "timeline", "args": {"entity": "Nagy Éva"}}])
+        self.assertTrue(any(c["text"].startswith("Nagy Éva -- meglátogatta") for c in out))
+
+    def test_repeated_links_are_counted_by_the_code(self):
+        visits = [edge("t1", "p4", "p3", start="2025-03-01"),
+                  edge("t2", "p4", "p3", start="2025-04-01", quote="masodik"),
+                  edge("t3", "p4", "p3", start="2025-05-02"),
+                  edge("t4", "p4", "p3", start="2025-05"),  # the same, less precise
+                  edge("t5", "p4", "p3", start="2025-06-01", doc="d2"),  # hidden
+                  edge("t6", "p4", "p3"),  # undated
+                  edge("t7", "p3", "p1", start="2025-07-01")]  # once only
+
+        class Visits(FakeGraph):
+            def post(self, path, body):
+                if path == "/query/neighborhood":
+                    self.calls.append((path, body))
+                    return {"nodes": NODES, "documents": DOC,
+                            "edges": [e for e in visits if body["id"] in (e["a"], e["b"])]}
+                return super().post(path, body)
+
+        # The facts cap does not cap the count.
+        r = orchestrator.Run(Visits(), {"corpus_ids": ["c"]}, lambda p: "/hr/" not in p,
+                             "Hungarian", max_facts=1)
+        out = r.run([{"tool": "relations", "args": {"entity": "Kovács Péter"}}])
+        self.assertEqual(1, sum(c["origin"] == "graph" for c in out))
+        notes = [c["text"] for c in out if c["text"].startswith("Gráf-számlálás -- a kérdezett")]
+        self.assertEqual(1, len(notes), [c["text"] for c in out])
+        self.assertEqual(["- Nagy Éva -- meglátogatta -- Kovács Péter: 3 alkalommal "
+                          "(2025-03-01, 2025-04-01, 2025-05-02)"], notes[0].split("\n")[1:])
+        # Links of entities nobody asked about are not tallied.
+        r = orchestrator.Run(Visits(), {"corpus_ids": ["c"]}, lambda p: True, "English")
+        out = r.run([{"tool": "most_connected", "args": {"kind": "person"}}])
+        self.assertFalse(any(c["text"].startswith("Graph count -- repeated") for c in out))
 
     def test_pending_namesake_merges_are_noted_once(self):
         graph = FakeGraph(pending=3)

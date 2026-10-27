@@ -186,6 +186,8 @@ def _pct(values: list[float], q: float) -> float:
 
 def summarize(records: list[dict]) -> dict:
     """Per-kind and overall figures of one run."""
+    from table_mapping import MAPPING_MAX_TOKENS
+
     kinds: dict[str, list[dict]] = {}
     for r in records:
         kinds.setdefault(r["kind"], []).append(r)
@@ -210,11 +212,12 @@ def summarize(records: list[dict]) -> dict:
     prompt_s = sum(c.get("prompt_seconds", 0) for c in calls)
     eval_s = sum(c.get("eval_seconds", 0) for c in calls)
     load_s = sum(c.get("load_seconds", 0) for c in calls)
-    # Extraction calls ask for up to 8192 tokens, table mapping calls for the default.
+    # Table mapping calls have their own output limit; every other call is an
+    # extraction (whatever limit it ran with, so older runs read the same).
     out["calls"] = {
         "n": len(calls), "seconds": secs,
-        "extraction": sum(1 for c in calls if c.get("max_tokens") == 8192),
-        "table_mapping": sum(1 for c in calls if c.get("max_tokens") != 8192),
+        "extraction": sum(1 for c in calls if c.get("max_tokens") != MAPPING_MAX_TOKENS),
+        "table_mapping": sum(1 for c in calls if c.get("max_tokens") == MAPPING_MAX_TOKENS),
         "prompt_tokens": sum(c.get("prompt_tokens", 0) for c in calls),
         "output_tokens": sum(c.get("output_tokens", 0) for c in calls),
         "prompt_seconds": prompt_s, "eval_seconds": eval_s, "load_seconds": load_s,
