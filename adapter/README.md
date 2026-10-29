@@ -578,7 +578,11 @@ read. A registry or ID number is a name the planner may pass: the graph's `find`
 matches the exact value of a visible `registry_number` / `id_number` attribute.
 An identifier that is not in the graph (an e-mail address, a number) is reported
 as not found, never prefix-matched to people's names. The planner sees the
-profile's relation synonyms ("kapcsolattartó" for a relative) and is told to
+profile's relation synonyms ("kapcsolattartó" for a relative), with the graph's
+generic `RELATED_TO` / `CO_MENTIONED` listed last and marked generic; when a plan
+still uses a generic relation, the run replaces it with the one specific
+relation the message names by label or synonym (inflected forms too) that can
+join the step's two sides (several candidates: kept). The planner is told to
 start chains from identifiers and to query each level of a chain separately
 (a pattern returns only complete chains). The BV query requirements are
 measured with `graph-corpus/bv_eval.py` (gold answers), `bv_toolcheck.py` (tool

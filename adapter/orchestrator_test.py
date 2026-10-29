@@ -218,6 +218,58 @@ class PlanTest(unittest.TestCase):
             self.assertEqual("json", chat.call_args[1]["response_format"])
 
 
+class StatedRelationTest(unittest.TestCase):
+    """A generic relation the planner chose gives way to the kind of link the
+    message names; the vocabulary lists the generic ones last, marked."""
+
+    PROFILE = {"relation_types": [
+        {"id": "RELATED_TO", "label": {"hu": "Kapcsolatban áll"},
+         "from": orchestrator.ENTITY_TYPES, "to": orchestrator.ENTITY_TYPES},
+        {"id": "RELATIVE_OF", "label": {"hu": "Rokona"}, "from": ["person"], "to": ["person"],
+         "synonyms": ["testvére", "kapcsolattartó"]},
+        {"id": "INVOLVED_IN", "label": {"hu": "Érintett"}, "from": ["person"], "to": ["event"]},
+        {"id": "PART_OF", "label": {"hu": "Része"}, "from": ["place"], "to": ["place"]}],
+        "entity_subtypes": [{"id": "inmate", "type": "person", "label": {"hu": "Fogvatartott"}}]}
+
+    def run_for(self, message):
+        graph = FakeGraph()
+        return orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "Hungarian",
+                                prof=self.PROFILE, message=message), graph
+
+    def test_the_named_kind_replaces_a_generic_relation(self):
+        r, _ = self.run_for("Kik Csonka Tibor engedélyezett kapcsolattartói?")
+        self.assertEqual(["RELATIVE_OF"], r.relation_ids("RELATED_TO"))
+        self.assertEqual(["INVOLVED_IN"], r.relation_ids("INVOLVED_IN"))  # specific: kept
+        r, _ = self.run_for("Mi köti össze Csonka Tibort és Kardos Gyulát?")
+        self.assertEqual(["RELATED_TO"], r.relation_ids("RELATED_TO"))
+
+    def test_the_ends_of_a_step_pick_between_several_named_kinds(self):
+        r, _ = self.run_for("A vele közös eseményben érintett fogvatartottak kapcsolattartói")
+        self.assertEqual(["RELATED_TO"], r.relation_ids("RELATED_TO"))  # two fit: kept
+        self.assertEqual(["INVOLVED_IN"], r.relation_ids("RELATED_TO", (["event"], ["person"])))
+        self.assertEqual(["RELATIVE_OF"], r.relation_ids("RELATED_TO", (["person"], ["person"])))
+        # An unknown previous side: both still fit, so nothing is guessed.
+        self.assertEqual(["RELATED_TO"], r.relation_ids("RELATED_TO", (None, ["person"])))
+
+    def test_a_pattern_step_is_sent_with_the_named_relation(self):
+        r, graph = self.run_for("Csonka Tibor kapcsolattartói mely fogvatartottaknak "
+                                "kapcsolattartói még?")
+        r.run([{"tool": "find_pattern", "args": {
+            "start": {"kind": "inmate"},
+            "steps": [{"relation": "RELATED_TO", "kind": "person"},
+                      {"relation": "RELATED_TO", "kind": "Fogvatartott"}]}}])
+        body = next(b for p, b in graph.calls if p == "/query/match")
+        self.assertEqual([["RELATIVE_OF"], ["RELATIVE_OF"]],
+                         [s["relations"] for s in body["steps"]])
+
+    def test_vocabulary_lists_generic_relations_last_and_marked(self):
+        text = orchestrator.vocabulary(self.PROFILE, "Hungarian")
+        self.assertLess(text.index("RELATIVE_OF"), text.index("RELATED_TO"))
+        self.assertIn("RELATED_TO = Kapcsolatban áll (person/", text)
+        self.assertIn("-- generic:", text)
+        self.assertIn("[also: testvére, kapcsolattartó]", text)
+
+
 class RunTest(unittest.TestCase):
     def test_namesakes_are_kept_together_and_hidden_evidence_dropped(self):
         r, contexts, _ = run([{"tool": "relations", "args": {"entity": "Kovács János"}}])

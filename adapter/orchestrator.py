@@ -49,9 +49,17 @@ MAX_TALLY_LINES = 10
 ID_ATTRS = ("registry_number", "id_number")
 PERSONAL_ATTRS = ("birth_date", "birth_place", "mother_name")
 MAX_IDENTITY = 15
-MAX_SYNONYMS = 6
+MAX_SYNONYMS = 12
+# A one-word label or synonym shorter than this is too common to mean a relation.
+MIN_STATED = 5
 # The graph's built-in links: neither is an occurrence worth counting.
 UNTALLIED = ("RELATED_TO", "CO_MENTIONED")
+# ... nor the relation a named kind of link means ("Kapcsolatban áll" is not a
+# contact): the planner is told so beside them.
+GENERIC_RELATIONS = {
+    "RELATED_TO": "generic: a link of no stated kind, only when no other relation fits",
+    "CO_MENTIONED": "generic: named in the same sentence, not a relation",
+}
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 # Capitalised words after the first one: candidate names in a question.
 _NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
@@ -78,7 +86,10 @@ PLANNER = (
     "- find_pattern {start: {kind?, name?}, steps: [{relation?, kind?, name?}], from?, "
     "to?}: chains of up to 3 links, e.g. who visited the inmates placed in a given cell "
     "= start {kind: the visitors' kind}, steps [{relation: the visit relation, kind: "
-    "the inmates' kind}, {relation: the placement relation, name: the cell}]\n"
+    "the inmates' kind}, {relation: the placement relation, name: the cell}]; the other "
+    "inmates who share a named person's contacts = start {name: the person}, steps "
+    "[{relation: the contact relation, kind: person}, {relation: the contact relation, "
+    "kind: the inmates' kind}]\n"
     "- count {relation?, kind?, name?, other_kind?, group_by, from?, to?}: counts links "
     "and ranks the groups. kind/name pick the side being counted, other_kind the linked "
     "side. group_by entity ranks the kind/name side (the most visited inmate = relation: "
@@ -94,6 +105,10 @@ PLANNER = (
     "e.g. an incident within 30 days after a visit = first: the visit relation, then: "
     "the involvement relation, within_days: 30, kind: the visited side's kind\n"
     "{deep}"
+    "Relations: pick the one whose label or [also] words fit the user's word (a contact, "
+    "a visit, a call); a generic relation is never the answer to a named kind of link. "
+    "common needs two named entities: for the people of a kind linked to one named "
+    "entity through something, use find_pattern. "
     "Identifiers and addresses (a phone number, account number, e-mail address, registry "
     "or ID number, street address) are names like any other: relations {entity: it} "
     "shows who holds it, and find_pattern may start from it (who uses a number and whose "
@@ -404,7 +419,10 @@ def vocabulary(prof, lang=None):
     kinds = ["%s (%s)" % (t, ", ".join(subtypes[t])) if subtypes.get(t) else t
              for t in ENTITY_TYPES]
     relations = []
-    for r in prof.get("relation_types") or []:
+    # The generic built-ins last: listed first, they were picked for named links.
+    ordered = sorted(prof.get("relation_types") or [],
+                     key=lambda r: r.get("id") in GENERIC_RELATIONS)
+    for r in ordered:
         ends = ""
         if r.get("from") or r.get("to"):
             ends = " (%s -> %s)" % ("/".join(r.get("from") or ["any"]),
@@ -413,6 +431,8 @@ def vocabulary(prof, lang=None):
         also = [s for s in r.get("synonyms") or [] if isinstance(s, str) and s.strip()]
         if also:
             ends += " [also: %s]" % ", ".join(also[:MAX_SYNONYMS])
+        if r["id"] in GENERIC_RELATIONS:
+            ends += " -- %s" % GENERIC_RELATIONS[r["id"]]
         relations.append("%s = %s%s" % (r["id"], _label_of(r.get("label"), code, r["id"]), ends))
     return ("ENTITY KINDS (a kind is a type or one of its subtypes): %s\nRELATIONS: %s"
             % ("; ".join(kinds), "; ".join(relations)))
@@ -573,6 +593,19 @@ def orchestrate(run, first, replan, max_rounds=MAX_ROUNDS):
     return run.output(), run.info()
 
 
+def _links(relation, ends):
+    """Whether a profile relation can join the two sides (types or None for any)
+    in either direction."""
+    if not ends:
+        return True
+    a, b = ends
+    src, dst = relation.get("from") or ENTITY_TYPES, relation.get("to") or ENTITY_TYPES
+
+    def fits(side, allowed):
+        return side is None or bool(set(side) & set(allowed))
+    return (fits(a, src) and fits(b, dst)) or (fits(a, dst) and fits(b, src))
+
+
 # -- running the plan ----------------------------------------------------------
 class Clarify(Exception):
     """A name the user gave fits several different entities."""
@@ -586,12 +619,15 @@ class Run:
     """Executes plans against the graph within one caller's scope."""
 
     def __init__(self, client, scope_body, visible, lang=None, max_facts=40, prof=None,
-                 name_join=False):
+                 name_join=False, message=""):
         self.client = client
         self.scope = scope_body
         self.visible = visible
         self.code = LANG_CODES.get(lang or "", "en")
         self.max_facts = max_facts
+        # The user's message: a kind of link it names ("kapcsolattartói") overrides a
+        # generic relation the planner chose for it.
+        self.message = message or ""
         # Patterns, sequences and counts treat same-named records as one person
         # (graph_service/namesakes.py); the answer names who was joined so.
         self.name_join = name_join
@@ -676,9 +712,12 @@ class Run:
         self.notes.append(_t("unknown", self.code) % kind)
         return None
 
-    def relation_ids(self, relation):
+    def relation_ids(self, relation, ends=None):
         """Relation type ids for an id, label or synonym; [] when none is given,
-        None when it is unknown (a count over every relation would mislead)."""
+        None when it is unknown (a count over every relation would mislead).
+        `ends`: (types, types) a pattern step links -- the previous and the target
+        side, None for any --, used when a generic relation gives way to the
+        stated one."""
         if not relation:
             return []
         wanted = fold(relation)
@@ -689,7 +728,43 @@ class Run:
         if not ids:
             self.notes.append(_t("unknown", self.code) % relation)
             return None
+        if set(ids) <= set(GENERIC_RELATIONS):
+            stated = self._stated_relations(ends)
+            if len(stated) == 1:
+                return stated
         return ids
+
+    def _stated_relations(self, ends=None):
+        """The specific relations the message names by a label or synonym word
+        (inflected: "kapcsolattartói") that can link the two `ends`."""
+        words = re.findall(r"\w+", fold(self.message))
+        text = " ".join(words)
+        relations, _ = self._label_maps()
+        found = []
+        for rid, r in relations.items():
+            if rid in GENERIC_RELATIONS or not _links(r, ends):
+                continue
+            terms = [fold(t) for t in [*(r.get("label") or {}).values(), *(r.get("synonyms") or [])]
+                     if isinstance(t, str)]
+            for term in terms:
+                term = " ".join(re.findall(r"\w+", term))
+                if len(term) < MIN_STATED and " " not in term:
+                    continue
+                if (" " in term and term in text) or any(w.startswith(term) for w in words):
+                    found.append(rid)
+                    break
+        return found
+
+    def _types_of(self, spec):
+        """The entity types a side filter can match (None: any)."""
+        if not spec:
+            return None
+        if spec.get("types"):
+            return list(spec["types"])
+        _, subtypes = self._label_maps()
+        types = {(subtypes.get(s) or {}).get("type") for s in spec.get("subtypes") or []}
+        types |= {(self.nodes.get(i) or {}).get("type") for i in spec.get("ids") or []}
+        return sorted(t for t in types if t) or None
 
     def kind_of_word(self, word):
         """The kind id a word names ("Fogvatartott" -> inmate), else None."""
@@ -1063,12 +1138,17 @@ class Run:
     def find_pattern(self, args):
         start = self.side(**args.get("start") or {})
         steps = []
+        previous = self._types_of(start)
         for step in args["steps"]:
-            relations = self.relation_ids(step.get("relation"))
             target = self.side(step.get("kind"), step.get("name"))
-            if relations is None or target is None:
+            if target is None:
+                return 0
+            relations = self.relation_ids(step.get("relation"),
+                                          (previous, self._types_of(target)))
+            if relations is None:
                 return 0
             steps.append({"relations": relations or None, "target": target or None})
+            previous = self._types_of(target)
         if start is None:
             return 0
         res = self.query("match", start=start or None, steps=steps, limit=40,

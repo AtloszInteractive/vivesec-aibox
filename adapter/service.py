@@ -1210,7 +1210,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         run = orchestrator.Run(
             GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
             lambda path: req_scope.contains_path(path) and check(path), lang,
-            ORCHESTRATOR_MAX_FACTS, domain, name_join=GRAPH_NAME_JOIN)
+            ORCHESTRATOR_MAX_FACTS, domain, name_join=GRAPH_NAME_JOIN, message=query)
         if planned["action"] == "clarify":
             question = planned["question"]
             try:
