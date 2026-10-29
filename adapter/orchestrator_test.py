@@ -158,8 +158,9 @@ class PlanTest(unittest.TestCase):
                                        "Hungarian")
         self.assertIn("person (inmate = Fogvatartott)", text)
         self.assertIn("identifier (phone = Telefonszám)", text)
-        self.assertIn("VISITED = meglátogatta (person -> person)", text)
+        self.assertIn("VISITED = meglátogatta (person -> person) [also: látogatás]", text)
         self.assertIn("INVOLVED_IN = involved in", text)
+        self.assertNotIn("INVOLVED_IN = involved in [", text)
         with patch.object(llm, "GENERATE", "on"), \
                 patch.object(llm, "_chat", return_value=('{"action": "done"}', 0, 0)) as chat:
             orchestrator.plan("Ki?", [], "Hungarian", text, "- relations: 2 results")
@@ -254,6 +255,78 @@ class RunTest(unittest.TestCase):
         texts = [c["text"] for c in contexts]
         self.assertTrue(any("2025-03-13" in t for t in texts), texts)
         self.assertTrue(any("nothing named" in t for t in texts), texts)
+
+    def test_an_identifier_that_is_not_there_is_not_taken_for_a_name(self):
+        # Its first letters fit "Kovács ...": no question back about those people.
+        _, contexts, _ = run([{"tool": "relations",
+                               "args": {"entity": "kovacs.janos@example.hu"}}])
+        texts = [c["text"] for c in contexts]
+        self.assertEqual(1, len(texts), texts)
+        self.assertIn("kovacs.janos@example.hu", texts[0])
+        self.assertNotIn("Kovács", texts[0])
+
+    def test_identity_data_goes_with_the_people_found(self):
+        attrs = {"p4": [("mother_name", "Anya Anna", "d1"), ("id_number", "123456AB", "d1"),
+                        ("birth_date", "1990-01-01", "d2")],
+                 "p1": [("registry_number", "NY-100001", "d1"),
+                        ("mother_name", "Titok Teréz", "d1")]}
+
+        class Graph(FakeGraph):
+            def post(self, path, body):
+                out = json.loads(json.dumps(super().post(path, body)))
+                for n in out.get("nodes") or out.get("entities") or []:
+                    n["attributes"] = [{"name": k, "value": v, "doc_id": d, "page": 2}
+                                       for k, v, d in attrs.get(n["id"], [])]
+                return out
+
+        r = orchestrator.Run(Graph(), {"corpus_ids": ["c"], "access": None},
+                             lambda p: "/hr/" not in p, "Hungarian")
+        contexts = r.run([{"tool": "relations", "args": {"entity": "Nagy Éva"}}])
+        identity = [c for c in contexts if c["origin"] == "graph" and c["text"].count(" -- ") == 1]
+        # The person asked about: every identifying number and personal data the
+        # caller may see; the birth date stands in a hidden document only.
+        self.assertEqual("Nagy Éva -- Azonosító szám: 123456AB; Anyja neve: Anya Anna.",
+                         identity[0]["text"])
+        self.assertEqual(("/storage/drives/ops/a.txt", 2),
+                         (identity[0]["source_path"], identity[0]["page_number"]))
+        # A person the facts reach: the numbers only, not the mother's name.
+        self.assertEqual("Kovács János -- Nyilvántartási szám: NY-100001.", identity[1]["text"])
+        self.assertTrue(all("1990" not in c["text"] and "Titok" not in c["text"]
+                            for c in contexts))
+        self.assertEqual(2, len(identity))
+        self.assertNotIn("NY-100001", "\n".join(c["text"] for c in contexts
+                                                if c not in identity))
+        # A later round looking into a person found: still not asked about by the user.
+        contexts = r.run([{"tool": "relations", "args": {"entity": "Kovács János"}}], 2)
+        self.assertTrue(all("Titok" not in c["text"] for c in contexts))
+        self.assertIn("Kovács János -- Nyilvántartási szám: NY-100001.",
+                      [c["text"] for c in contexts])
+
+    def test_an_identity_fact_cites_the_page_of_its_own_values(self):
+        attrs = [("id_number", "123456AB", "d1", 1), ("birth_date", "1990-01-01", "d1", 1),
+                 ("id_number", "123456AB", "d3", 1), ("mother_name", "Anya Anna", "d3", 3)]
+        docs = dict(DOC, d3={"corpus_id": "c", "source_path": "/storage/drives/ops/b.txt",
+                             "title": "b", "kind": "txt"})
+
+        class Graph(FakeGraph):
+            def post(self, path, body):
+                out = json.loads(json.dumps(super().post(path, body)))
+                for n in out.get("nodes") or out.get("entities") or []:
+                    if n["id"] == "p4":
+                        n["attributes"] = [{"name": k, "value": v, "doc_id": d, "page": p}
+                                           for k, v, d, p in attrs]
+                if "documents" in out:
+                    out["documents"] = docs
+                return out
+
+        r = orchestrator.Run(Graph(), {"corpus_ids": ["c"], "access": None},
+                             lambda p: True, "Hungarian")
+        contexts = r.run([{"tool": "relations", "args": {"entity": "Nagy Éva"}}])
+        identity = {c["text"]: c for c in contexts if c["text"].startswith("Nagy Éva -- ")
+                    and c["text"].count(" -- ") == 1}
+        mother = identity["Nagy Éva -- Anyja neve: Anya Anna."]
+        self.assertEqual(("/storage/drives/ops/b.txt", 3),
+                         (mother["source_path"], mother["page_number"]))
 
     def test_connection_and_missing_path(self):
         _, contexts, _ = run([{"tool": "connection", "args": {"a": "Nagy Éva",

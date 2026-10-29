@@ -18,6 +18,8 @@ MAX_RESULTS = 500
 # A name's last word may carry a case ending in the question ("Kovács Jánoshoz").
 MAX_SUFFIX = 5
 MIN_NAME_CHARS = 4
+# Attributes that identify one person: a lookup by their exact value finds them.
+ID_ATTRS = ("registry_number", "id_number")
 
 
 def fold(text: str) -> str:
@@ -25,15 +27,22 @@ def fold(text: str) -> str:
                    if unicodedata.category(c) != "Mn")
 
 
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", fold(text))
+
+
 def _other(edge: dict, eid: str) -> str:
     return edge["b"] if edge["a"] == eid else edge["a"]
 
 
 def find_entities(view, text: str, types=None, limit: int = 20) -> list[dict]:
-    """Accent- and case-insensitive name lookup; every token must match."""
+    """Accent- and case-insensitive name lookup; every token must match. An
+    identifying attribute (registry or ID number) the caller may see matches
+    by its exact value."""
     tokens = fold(text).split()
     if not tokens:
         return []
+    wanted = _compact(text)
     hits = []
     for n in view.nodes(types):
         names = [fold(x) for x in [n["label"], *n["aliases"]]]
@@ -42,6 +51,9 @@ def find_entities(view, text: str, types=None, limit: int = 20) -> list[dict]:
             words = name.split()
             if all(any(w.startswith(t) for w in words) for t in tokens):
                 best = max(best, 2 if name == " ".join(tokens) else 1)
+        if any(a["name"] in ID_ATTRS and _compact(str(a["value"])) == wanted
+               for a in n.get("attributes") or []):
+            best = 2
         if best:
             hits.append((-best, -n["mentions"], n["label"], n))
     hits.sort(key=lambda h: h[:3])

@@ -22,6 +22,7 @@ import time
 import unicodedata
 
 import llm
+from dossier import TEXT as DOSSIER_TEXT
 
 TOOLS = ("relations", "connection", "common", "timeline", "copresence",
          "shared_identifiers", "most_connected", "find_pattern", "count", "sequence",
@@ -43,11 +44,19 @@ PROFILE_TTL = 60.0
 SUMMARY_LINES = 6
 MAX_JOINED_LISTED = 10
 MAX_TALLY_LINES = 10
+# Identity data of the people a result names: every identifying number, and the
+# personal data only of those the message itself named (data minimisation).
+ID_ATTRS = ("registry_number", "id_number")
+PERSONAL_ATTRS = ("birth_date", "birth_place", "mother_name")
+MAX_IDENTITY = 15
+MAX_SYNONYMS = 6
 # The graph's built-in links: neither is an occurrence worth counting.
 UNTALLIED = ("RELATED_TO", "CO_MENTIONED")
 _DATE_RE = re.compile(r"^\d{4}(-\d{2}(-\d{2})?)?$")
 # Capitalised words after the first one: candidate names in a question.
 _NAME_RE = re.compile(r"(?<=\s)[A-ZÁÉÍÓÖŐÚÜŰÄÆØÅ][\w\-]{2,}")
+# A word that may be the start of a name; numbers and addresses are not.
+_PLAIN_WORD = re.compile(r"[^\W\d_]+(?:-[^\W\d_]+)*")
 
 PLANNER = (
     "You plan how to answer a message about the entities and events in the user's "
@@ -85,6 +94,17 @@ PLANNER = (
     "e.g. an incident within 30 days after a visit = first: the visit relation, then: "
     "the involvement relation, within_days: 30, kind: the visited side's kind\n"
     "{deep}"
+    "Identifiers and addresses (a phone number, account number, e-mail address, registry "
+    "or ID number, street address) are names like any other: relations {entity: it} "
+    "shows who holds it, and find_pattern may start from it (who uses a number and whose "
+    "contacts they are = start {name: the number}, steps [{relation: the use relation}, "
+    "{relation: the contact relation, kind: the inmates' kind}]). find_pattern returns "
+    "only complete chains: when the message asks for each level of a chain (a person's "
+    "contacts, the other people those contacts are linked to, then their contacts), add "
+    "one find_pattern per level (1, 2 and 3 steps), not only the longest. For a chain of "
+    "more than 3 links, find the first links with more: true and continue from the names "
+    "found. The registry and ID numbers, birth data and mother's name of the people "
+    "found come with the results: no call is needed for them.\n"
     "Reply with one JSON object only, one of:\n"
     '{"action": "tools", "calls": [{"tool": "...", "args": {...}}], '
     '"search": "<the request as a standalone question for a document search, in the '
@@ -389,6 +409,10 @@ def vocabulary(prof, lang=None):
         if r.get("from") or r.get("to"):
             ends = " (%s -> %s)" % ("/".join(r.get("from") or ["any"]),
                                     "/".join(r.get("to") or ["any"]))
+        # The words a user may write for it ("kapcsolattartó" for a relative).
+        also = [s for s in r.get("synonyms") or [] if isinstance(s, str) and s.strip()]
+        if also:
+            ends += " [also: %s]" % ", ".join(also[:MAX_SYNONYMS])
         relations.append("%s = %s%s" % (r["id"], _label_of(r.get("label"), code, r["id"]), ends))
     return ("ENTITY KINDS (a kind is a type or one of its subtypes): %s\nRELATIONS: %s"
             % ("; ".join(kinds), "; ".join(relations)))
@@ -588,6 +612,12 @@ class Run:
         self._call_labels = set()
         # Distinct dates of each link of a named entity: how many times, counted here.
         self._tally = {}
+        # The people the facts name, in order: their identity data goes with them.
+        self._people = []
+        # The ids of the names the first planning round passed: the people the
+        # message itself is about (later rounds continue from names found).
+        self._asked = set()
+        self._round = 1
         # A kind word passed as a name ("cell"): its query is skipped quietly.
         self._kind_as_name = False
         self._unmerged = None
@@ -756,7 +786,9 @@ class Run:
             # Inflected forms ("Kovács Jánossal") are matched by the mention finder.
             picked = (self.query("mentioned", text=name, limit=1, types=ENTITY_TYPES)
                       .get("entities") or [])
-            if not picked and len(name.split()) == 1:
+            # A number, e-mail or address that is not there is just not there:
+            # its first letters ("kovacs.gabor@...") are nobody's name.
+            if not picked and len(name.split()) == 1 and _PLAIN_WORD.fullmatch(name):
                 stem, found = self._find_prefix(name)
                 question = self._options(stem, found)
                 if question:
@@ -769,6 +801,8 @@ class Run:
         elif len(picked) > 1:
             self.notes.append(_t("namesakes", self.code) % (len(picked), picked[0]["label"]))
         self._names[key] = [n["id"] for n in picked]
+        if self._round == 1:
+            self._asked.update(self._names[key])
         return self._names[key]
 
     def _evidence(self, edge):
@@ -818,7 +852,57 @@ class Run:
         added = int(self._add(text, evidence[0]))
         if added:
             self._call_labels.update((a, b))
+            self._note_people(edge["a"], edge["b"])
         return added
+
+    def _note_people(self, *ids):
+        for eid in ids:
+            if eid not in self._people and (self.nodes.get(eid) or {}).get("type") == "person":
+                self._people.append(eid)
+
+    def _identity(self):
+        """One fact per person and source document with the identity data the
+        caller may see: the people the message asked about first, then those the
+        facts name."""
+        named = [i for ids in self._names.values() for i in ids if i in self._asked]
+        labels = {k: v.get(self.code) or v["en"] for k, v in DOSSIER_TEXT["attr"].items()}
+        out = []
+        for eid in list(dict.fromkeys(named + self._people)):
+            node = self.nodes.get(eid) or {}
+            if node.get("type") != "person":
+                continue
+            wanted = ID_ATTRS + (PERSONAL_ATTRS if eid in named else ())
+            by_doc, pages = {}, {}
+            for attr in node.get("attributes") or []:
+                doc = self.documents.get(attr.get("doc_id"))
+                if attr.get("name") in wanted and doc is not None \
+                        and self.visible(doc.get("source_path") or ""):
+                    by_doc.setdefault(attr["doc_id"], {}).setdefault(
+                        attr["name"], set()).add(str(attr.get("value")))
+                    if isinstance(attr.get("page"), int):
+                        key = (attr["doc_id"], attr["name"])
+                        pages[key] = min(pages.get(key, attr["page"]), attr["page"])
+            values, sources = {}, []
+            # The documents stating the most first; another only for what is left.
+            for doc_id, attrs in sorted(by_doc.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+                new = {k: v for k, v in attrs.items() if k not in values}
+                if new:
+                    values.update(new)
+                    sources.append((doc_id, new))
+            for doc_id, attrs in sources:
+                if len(out) >= MAX_IDENTITY:
+                    return out
+                parts = ["%s: %s" % (labels.get(k, k), " / ".join(sorted(attrs[k])))
+                         for k in wanted if k in attrs]
+                doc = self.documents[doc_id]
+                # The page of a value this fact states, not of one another document gave.
+                stated = [pages[(doc_id, k)] for k in attrs if (doc_id, k) in pages]
+                out.append({"text": "%s -- %s." % (node.get("label") or eid, "; ".join(parts)),
+                            "source_path": doc.get("source_path"),
+                            "corpus_id": doc.get("corpus_id"),
+                            "page_number": min(stated) if stated else None,
+                            "chunk_id": None, "score": 1.0, "origin": "graph"})
+        return out
 
     def _remember(self, res):
         for node in res.get("nodes") or []:
@@ -941,6 +1025,8 @@ class Run:
                     if self._add(text, ev):
                         facts += 1
                         self._call_labels.add(item["other"]["label"])
+                        self.nodes.setdefault(item["other"]["id"], item["other"])
+                        self._note_people(item["other"]["id"])
         return facts
 
     def shared_identifiers(self, args):
@@ -1098,6 +1184,7 @@ class Run:
 
     def run(self, calls, round_no=1):
         """Runs one round of calls; raises Clarify on an ambiguous name."""
+        self._round = round_no
         # read_all is the document side of a plan; the caller runs it.
         calls = self.fresh([c for c in calls if c["tool"] in GRAPH_TOOLS])
         # One broad call (a crowded cell) must not crowd out the others' facts.
@@ -1190,7 +1277,7 @@ class Run:
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,
                   "page_number": None, "chunk_id": None, "score": 1.0, "origin": "graph-note"}
                  for n in self.notes + [x for x in (tally, joined, qualified) if x]]
-        return notes + self.contexts
+        return notes + self.contexts + self._identity()
 
     def summary(self):
         """What the calls so far found, for the next planning round. Rankings and

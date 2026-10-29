@@ -568,7 +568,22 @@ mentions how many names were left apart because their records conflict. This
 is an identity rule for the customer to confirm; a strong key in the source
 documents (e.g. an inmate registry number) is the better fix where available.
 Each fact becomes a cited context with its quote (at most
-`ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
+`ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. The people the
+facts name also get their identity data as cited facts (one line per person and
+source document, at most 15): the registry and ID numbers of everyone, and the
+birth date, birthplace and mother's name only of the people the message itself
+named (the first planning round's names, not those later rounds continue from:
+data minimisation); only attributes stated in documents the caller may
+read. A registry or ID number is a name the planner may pass: the graph's `find`
+matches the exact value of a visible `registry_number` / `id_number` attribute.
+An identifier that is not in the graph (an e-mail address, a number) is reported
+as not found, never prefix-matched to people's names. The planner sees the
+profile's relation synonyms ("kapcsolattartó" for a relative) and is told to
+start chains from identifiers and to query each level of a chain separately
+(a pattern returns only complete chains). The BV query requirements are
+measured with `graph-corpus/bv_eval.py` (gold answers), `bv_toolcheck.py` (tool
+ceiling on a perfect-extraction graph, no model) and `bv_eval_run.py` (live
+adapter). A question back
 is stored as the assistant's turn and answered with `clarify: true`. A failed or
 unusable plan falls back to the plain path (condense + graph facts).
 Tests: `orchestrator_test`, `graph_integration_test`; graph side:

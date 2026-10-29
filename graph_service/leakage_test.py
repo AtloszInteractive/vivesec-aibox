@@ -84,7 +84,8 @@ PUBLIC = [
             [("PLACED_IN", B, CELL, "2026-02-01", "2026-03-01"),
              ("PLACED_IN", C, CELL, "2026-02-10", "2026-02-20"),
              ("PART_OF", CELL, INST, None, None)],
-            attrs=[(B, "birth_date", "1980-01-02")], subtypes={CELL: "cell"}),
+            attrs=[(B, "birth_date", "1980-01-02"), (B, "registry_number", "NY-222222")],
+            subtypes={CELL: "cell"}),
     payload("p3", "c1", None, [C, D, X, Y],
             [("USES", C, X, None, None), ("USES", D, X, None, None), ("USES", D, Y, None, None)]),
     payload("p4", "c1", None, [C, D, ORG, A2, ADDR],
@@ -96,7 +97,8 @@ HIDDEN = [
     # A shortcut A-C, a second name and a birth date for A, a weak edge C-X.
     payload("h1", "c1", HR_ONLY, [A, C, X],
             [("MET", A, C, "2026-01-10", "2026-01-10"), ("CO_MENTIONED", C, X, None, None)],
-            attrs=[(A, "birth_date", "1975-05-05")], names={A: "K. Ádám"}),
+            attrs=[(A, "birth_date", "1975-05-05"), (A, "registry_number", "NY-111111")],
+            names={A: "K. Ádám"}),
     # A third holder of X, a cellmate of B and C, a subtype for B, the cell's prison.
     payload("h2", "c1", HR_ONLY, [Z, B, X, CELL, INST],
             [("USES", Z, X, None, None), ("MET", Z, B, "2026-02-15", "2026-02-15"),
@@ -150,7 +152,8 @@ def requests():
     """(path, body) for every graph read, with the parameters that touch hidden data."""
     ids = sorted(LABELS)
     out = []
-    for text in ("Kiss", "K. Ádám", "Titkos", "Nagy Béla", "+36 30 111", "Csilla", "Délibáb"):
+    for text in ("Kiss", "K. Ádám", "Titkos", "Nagy Béla", "+36 30 111", "Csilla", "Délibáb",
+                 "NY-111111", "ny-222222", "NY-222222"):
         out += [("/query/find", {"text": text}), ("/query/find", {"text": text, "types": ["person"]})]
     for text in ("Kiss Ádám és Titkos Zoltán", "K. Ádám telefonja +36 30 111 1111",
                  "Ki hívta a +36 30 222 2222 számot?", "Nagy Béla és Tóth Dénes"):
@@ -277,6 +280,15 @@ class LeakageTest(unittest.TestCase):
         if self.with_worker:
             expected |= {"/review/list", "/review/history"}
         self.assertEqual(set(), expected - self.skip_paths - differs)
+
+    def test_a_registry_number_finds_its_person_only_where_it_is_visible(self):
+        def found(access, text):
+            out = json.loads(answer(self.full, "/query/find", {"text": text}, access, ["c1"]))
+            return [e["id"] for e in out["entities"]]
+        self.assertEqual([B], found(LARS, "ny-222222"))
+        self.assertEqual([B], found(LARS, "NY - 222222"))
+        self.assertEqual([], found(LARS, "NY-111111"))  # stated only in a hidden document
+        self.assertIn(A, found(HANNA, "NY-111111"))
 
     def test_empty_scope_and_unknown_drive_see_nothing(self):
         for corpora in ([], ["c9"]):
