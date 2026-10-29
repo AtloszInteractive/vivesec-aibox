@@ -628,6 +628,7 @@ class Run:
         # The user's message: a kind of link it names ("kapcsolattartói") overrides a
         # generic relation the planner chose for it.
         self.message = message or ""
+        self._stated = None
         # Patterns, sequences and counts treat same-named records as one person
         # (graph_service/namesakes.py); the answer names who was joined so.
         self.name_join = name_join
@@ -656,6 +657,8 @@ class Run:
         self._round = 1
         # A kind word passed as a name ("cell"): its query is skipped quietly.
         self._kind_as_name = False
+        # A call skipped on purpose (a pattern touching no one the message named).
+        self._quiet = False
         self._unmerged = None
         self._unmerged_noted = False
         # Shown under the answer when a cross-document query came back empty
@@ -737,23 +740,31 @@ class Run:
     def _stated_relations(self, ends=None):
         """The specific relations the message names by a label or synonym word
         (inflected: "kapcsolattartói") that can link the two `ends`."""
+        relations, _ = self._label_maps()
+        return [rid for rid in self._stated_terms()
+                if _links(relations[rid], ends)]
+
+    def _stated_terms(self):
+        """{relation id: the label or synonym the message names it by}, once per run."""
+        if self._stated is not None:
+            return self._stated
         words = re.findall(r"\w+", fold(self.message))
         text = " ".join(words)
         relations, _ = self._label_maps()
-        found = []
+        self._stated = {}
         for rid, r in relations.items():
-            if rid in GENERIC_RELATIONS or not _links(r, ends):
+            if rid in GENERIC_RELATIONS:
                 continue
-            terms = [fold(t) for t in [*(r.get("label") or {}).values(), *(r.get("synonyms") or [])]
+            terms = [t for t in [*(r.get("label") or {}).values(), *(r.get("synonyms") or [])]
                      if isinstance(t, str)]
-            for term in terms:
-                term = " ".join(re.findall(r"\w+", term))
+            for original in terms:
+                term = " ".join(re.findall(r"\w+", fold(original)))
                 if len(term) < MIN_STATED and " " not in term:
                     continue
                 if (" " in term and term in text) or any(w.startswith(term) for w in words):
-                    found.append(rid)
+                    self._stated[rid] = original
                     break
-        return found
+        return self._stated
 
     def _types_of(self, spec):
         """The entity types a side filter can match (None: any)."""
@@ -916,6 +927,11 @@ class Run:
             return 0
         self._count_date(edge)
         name = self._relation_name(edge["type"])
+        # The user's own word for the link ("kapcsolattartó" beside "Rokona"):
+        # the answer must see that this is the link asked about.
+        stated = self._stated_terms().get(edge["type"])
+        if stated and fold(stated) not in fold(name):
+            name = "%s / %s" % (name, stated)
         raw = edge.get("raw_label") or ""
         if raw and raw != edge["type"] and not re.fullmatch(r"[A-Z0-9_]+", raw):
             name = "%s (%s)" % (name, raw)
@@ -1151,6 +1167,12 @@ class Run:
             previous = self._types_of(target)
         if start is None:
             return 0
+        if self._asked and not (start or {}).get("ids") \
+                and not any((s["target"] or {}).get("ids") for s in steps):
+            # The message names someone: a chain over the whole graph that
+            # touches no one named is noise that crowds out the facts asked for.
+            self._quiet = True
+            return 0
         res = self.query("match", start=start or None, steps=steps, limit=40,
                          date_from=args.get("from"), date_to=args.get("to"))
         facts = 0
@@ -1274,10 +1296,15 @@ class Run:
             self._call_facts = 0
             self._call_labels = set()
             self._kind_as_name = False
+            self._quiet = False
             facts = getattr(self, call["tool"])(call["args"])
             self.calls.append({"tool": call["tool"], "args": call["args"], "facts": facts,
                                "round": round_no, "entities": sorted(self._call_labels)[:20]})
+            if self._quiet:
+                self.calls[-1]["skipped"] = True
             cross = call["tool"] in ("find_pattern", "sequence")
+            if self._quiet:
+                continue
             if not facts and len(self.notes) == noted and not self._kind_as_name:
                 text = _t("nothing", self.code) % call["tool"]
                 reason = self._empty_reason() if cross and not self._unmerged_noted else None
@@ -1370,7 +1397,8 @@ class Run:
         return "\n".join(lines)
 
     def info(self):
-        out = {"calls": [{k: c[k] for k in ("tool", "args", "facts", "round")}
+        out = {"calls": [dict({k: c[k] for k in ("tool", "args", "facts", "round")},
+                              **({"skipped": True} if c.get("skipped") else {}))
                          for c in self.calls],
                "facts": len(self.contexts),
                "entities": sorted({n["label"] for n in self.nodes.values()

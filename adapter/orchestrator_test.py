@@ -262,6 +262,34 @@ class StatedRelationTest(unittest.TestCase):
         self.assertEqual([["RELATIVE_OF"], ["RELATIVE_OF"]],
                          [s["relations"] for s in body["steps"]])
 
+    def test_a_fact_carries_the_users_word_for_its_link(self):
+        r, _ = self.run_for("Kik Nagy Éva kapcsolattartói?")
+        r.nodes.update({"p4": NE, "p1": KJ1})
+        r.documents.update(DOC)
+        r.edge_fact(edge("x", "p1", "p4", typ="RELATIVE_OF", quote="unokatestvére"))
+        self.assertTrue(r.contexts[0]["text"].startswith(
+            "Kovács János -- Rokona / kapcsolattartó -- Nagy Éva."), r.contexts[0]["text"])
+        r, _ = self.run_for("Ki Nagy Éva rokona?")  # the label itself: nothing added
+        r.nodes.update({"p4": NE, "p1": KJ1})
+        r.documents.update(DOC)
+        r.edge_fact(edge("x", "p1", "p4", typ="RELATIVE_OF"))
+        self.assertTrue(r.contexts[0]["text"].startswith("Kovács János -- Rokona -- Nagy Éva."))
+
+    def test_a_pattern_touching_no_one_named_is_skipped_quietly(self):
+        r, graph = self.run_for("Kik Nagy Éva kapcsolattartói?")
+        r.run([{"tool": "relations", "args": {"entity": "Nagy Éva"}},
+               {"tool": "find_pattern", "args": {
+                   "start": {"kind": "person"},
+                   "steps": [{"relation": "RELATIVE_OF", "kind": "inmate"}]}}])
+        self.assertFalse(any(p == "/query/match" for p, _ in graph.calls))
+        self.assertTrue(r.info()["calls"][1]["skipped"])
+        self.assertFalse(any("Gráfkeresés (find_pattern)" in n for n in r.notes))
+        # Without a named entity the same pattern runs.
+        r, graph = self.run_for("Kik a fogvatartottak kapcsolattartói?")
+        r.run([{"tool": "find_pattern", "args": {
+            "start": {"kind": "person"}, "steps": [{"relation": "RELATIVE_OF"}]}}])
+        self.assertTrue(any(p == "/query/match" for p, _ in graph.calls))
+
     def test_vocabulary_lists_generic_relations_last_and_marked(self):
         text = orchestrator.vocabulary(self.PROFILE, "Hungarian")
         self.assertLess(text.index("RELATIVE_OF"), text.index("RELATED_TO"))
