@@ -181,7 +181,8 @@ INVESTIGATE_TOOL = (
     "goes from the start (a person's contacts, or the holders of a number = 1; the other "
     "inmates those contacts belong to, or the people sharing an event with the person = 2; "
     "their contacts = 3; the further inmates of those = 4); default 2. One call per "
-    "starting point covers every level of its chain: no other call is needed for it.\n"
+    "starting point covers every level of its chain: no other call is needed for it, and "
+    "more stays false.\n"
 )
 
 _TEXT = {
@@ -295,41 +296,52 @@ _TEXT = {
         "en": "Investigation table (graph, over the documents you may see) from %s: %d people "
               "on %d levels, following %s. Level = links from the starting point; each "
               "\u201cInvestigation\u201d row gives one person's role, identifiers and the path "
-              "that links them (who is whose contact). Answer questions about the chain from "
-              "these rows: %s",
+              "that links them to the starting point (who is whose contact, who shared which "
+              "event). Answer from these rows: pick the people the question asks for by their "
+              "level, role and path, and list each with name, registry number and path; the "
+              "other rows only explain the chain. %s",
         "hu": "Vizsg\u00e1lati t\u00e1bl\u00e1zat (gr\u00e1f, az \u00d6n sz\u00e1m\u00e1ra "
               "l\u00e1that\u00f3 dokumentumok alapj\u00e1n), kiindul\u00f3pont: %s; %d "
               "szem\u00e9ly, %d szint, a k\u00f6vetett kapcsolatok: %s. A szint a "
               "kiindul\u00f3pontt\u00f3l m\u00e9rt l\u00e9p\u00e9ssz\u00e1m; minden "
               "\u201eVizsg\u00e1lat\u201d sor egy szem\u00e9ly szerep\u00e9t, azonos\u00edt\u00f3 "
-              "adatait \u00e9s a kapcsol\u00f3d\u00e1s \u00fatj\u00e1t adja meg (ki kinek a "
-              "kapcsolattart\u00f3ja). A l\u00e1ncra vonatkoz\u00f3 k\u00e9rd\u00e9st ezekb\u0151l a "
-              "sorokb\u00f3l v\u00e1laszolja meg: %s",
+              "adatait \u00e9s a kiindul\u00f3ponthoz vezet\u0151 kapcsol\u00f3d\u00e1s\u00e1nak "
+              "\u00fatj\u00e1t adja meg (ki kinek a kapcsolattart\u00f3ja, ki melyik "
+              "esem\u00e9nyben \u00e9rintett vele egy\u00fctt). Ezekb\u0151l a sorokb\u00f3l "
+              "v\u00e1laszoljon: a k\u00e9rd\u00e9s \u00e1ltal keresett szem\u00e9lyeket a "
+              "szint\u00fck, szerep\u00fck \u00e9s az \u00fatjuk alapj\u00e1n v\u00e1lassza ki, "
+              "\u00e9s mindegyiket n\u00e9vvel, nyilv\u00e1ntart\u00e1si sz\u00e1mmal \u00e9s az "
+              "\u00fattal sorolja fel; a t\u00f6bbi sor csak a l\u00e1ncot magyar\u00e1zza. %s",
         "da": "Unders\u00f8gelsestabel (graf, i de dokumenter, du har adgang til) fra %s: %d "
               "personer p\u00e5 %d niveauer, f\u00f8lger %s. Niveau = forbindelser fra "
               "udgangspunktet; hver \u201dUnders\u00f8gelse\u201d-r\u00e6kke giver en persons rolle, "
-              "identifikatorer og den vej, der forbinder dem (hvem der er hvis kontakt). Besvar "
-              "sp\u00f8rgsm\u00e5l om k\u00e6den ud fra disse r\u00e6kker: %s",
+              "identifikatorer og den vej, der forbinder dem med udgangspunktet (hvem der er "
+              "hvis kontakt, hvem der delte hvilken h\u00e6ndelse). Svar ud fra disse "
+              "r\u00e6kker: v\u00e6lg de personer, sp\u00f8rgsm\u00e5let sp\u00f8rger om, efter "
+              "niveau, rolle og vej, og angiv hver med navn, registreringsnummer og vej; de "
+              "\u00f8vrige r\u00e6kker forklarer kun k\u00e6den. %s",
         "de": "Untersuchungstabelle (Graph, in den Dokumenten, die Sie sehen d\u00fcrfen) ab %s: "
               "%d Personen auf %d Ebenen, entlang %s. Ebene = Verbindungen vom Ausgangspunkt; "
-              "jede \u201eUntersuchung\u201c-Zeile nennt die Rolle, Kennungen und den "
-              "Verbindungsweg einer Person (wer wessen Kontakt ist). Beantworten Sie Fragen zur "
-              "Kette anhand dieser Zeilen: %s",
+              "jede \u201eUntersuchung\u201c-Zeile nennt die Rolle, Kennungen und den Weg einer "
+              "Person zum Ausgangspunkt (wer wessen Kontakt ist, wer welches Ereignis teilte). "
+              "Antworten Sie anhand dieser Zeilen: W\u00e4hlen Sie die erfragten Personen nach "
+              "Ebene, Rolle und Weg aus und nennen Sie jede mit Name, Registernummer und Weg; "
+              "die \u00fcbrigen Zeilen erkl\u00e4ren nur die Kette. %s",
     },
     "investigate_complete": {
-        "en": "for these levels the table is complete.",
-        "hu": "ezekre a szintekre a t\u00e1bl\u00e1zat teljes.",
-        "da": "for disse niveauer er tabellen fuldst\u00e6ndig.",
-        "de": "f\u00fcr diese Ebenen ist die Tabelle vollst\u00e4ndig.",
+        "en": "For these levels the table is complete.",
+        "hu": "Ezekre a szintekre a t\u00e1bl\u00e1zat teljes.",
+        "da": "For disse niveauer er tabellen fuldst\u00e6ndig.",
+        "de": "F\u00fcr diese Ebenen ist die Tabelle vollst\u00e4ndig.",
     },
     "investigate_cut": {
-        "en": "the table was cut (at most %d new people from one person, %d rows in all), so "
+        "en": "The table was cut (at most %d new people from one person, %d rows in all), so "
               "more people may exist.",
-        "hu": "a t\u00e1bl\u00e1zat csonkolva van (szem\u00e9lyenk\u00e9nt legfeljebb %d \u00faj "
+        "hu": "A t\u00e1bl\u00e1zat csonkolva van (szem\u00e9lyenk\u00e9nt legfeljebb %d \u00faj "
               "szem\u00e9ly, \u00f6sszesen %d sor), tov\u00e1bbi szem\u00e9lyek is lehetnek.",
-        "da": "tabellen er afkortet (h\u00f8jst %d nye personer fra \u00e9n person, %d r\u00e6kker "
+        "da": "Tabellen er afkortet (h\u00f8jst %d nye personer fra \u00e9n person, %d r\u00e6kker "
               "i alt), s\u00e5 der kan v\u00e6re flere personer.",
-        "de": "die Tabelle ist gek\u00fcrzt (h\u00f6chstens %d neue Personen je Person, insgesamt "
+        "de": "Die Tabelle ist gek\u00fcrzt (h\u00f6chstens %d neue Personen je Person, insgesamt "
               "%d Zeilen), es kann weitere Personen geben.",
     },
     "investigate_shared": {
@@ -701,6 +713,11 @@ def orchestrate(run, first, replan, max_rounds=MAX_ROUNDS):
         run.run(current["calls"], round_no)
         if not current.get("more"):
             run.stop = "complete"
+            break
+        if run.investigations:
+            # The table already holds every level of the chain: further rounds
+            # only re-query parts of it and crowd the answer with partial chains.
+            run.stop = "investigated"
             break
         if round_no == max_rounds:
             run.stop = "max_rounds"

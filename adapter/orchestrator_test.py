@@ -878,6 +878,16 @@ class InvestigateTest(unittest.TestCase):
         body = next(b for p, b in graph.calls if p == "/query/investigate")
         self.assertTrue(body["join_namesakes"])
 
+    def test_an_investigation_ends_the_planning_rounds(self):
+        r = orchestrator.Run(InvestigationGraph(), {"corpus_ids": ["c"]}, lambda p: True,
+                             "Hungarian", investigate=self.CONFIG)
+        first = {"action": "tools", "more": True, "search": "", "calls": [
+            {"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 3}}]}
+        replanned = []
+        _, info = orchestrator.orchestrate(r, first, lambda results: replanned.append(1))
+        self.assertEqual(([], "investigated"), (replanned, info["stop"]))
+        self.assertEqual(1, len(info["investigations"]))
+
     def test_without_a_configuration_the_call_is_skipped_quietly(self):
         r, out, graph = self.run_investigation(config=None)
         self.assertEqual([], out)

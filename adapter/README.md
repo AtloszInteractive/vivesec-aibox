@@ -561,7 +561,11 @@ adapter also shows the reason under the answer, since the model may drop it).
 lets patterns, sequences and counts treat the visible person records of one
 name as one person for that query (`graph_service/namesakes.py`; the graph is
 not changed). Records are never joined when their kinds differ (an inmate and a
-visitor), when visible birth dates, mothers' names or ID numbers differ, or
+visitor) unless a key confirms that they are one person (the same registry or ID
+number, or the same birth date and mother's name: extraction now and then types
+an inmate as a visitor in one document; such a person counts as the kind most of
+their documents give). Records are also never joined when visible birth dates,
+mothers' names or ID numbers differ, or
 when an administrator decided the pair "separate". The answer then lists the
 people joined by name alone, under the answer as well, and an empty result
 mentions how many names were left apart because their records conflict. This
@@ -620,7 +624,9 @@ its own visibility rule too: a row whose link rests only on a document hidden
 by the adapter's policy is dropped, together with everyone reached only through
 it, and so are hidden identifiers and attributes.
 
-`ADAPTER_GRAPH_NAME_JOIN=same_name` applies here as for patterns. The response's
+`ADAPTER_GRAPH_NAME_JOIN=same_name` applies here as for patterns. A round that
+produced an investigation ends the planning: the table already holds every
+level, and further rounds only re-query parts of it. The response's
 `graph.investigations` carries the table as data (level, name, role,
 registry/ID number, phone, address, e-mail, other identifiers, path, source),
 which is the base for a later spreadsheet export and subgraph view.

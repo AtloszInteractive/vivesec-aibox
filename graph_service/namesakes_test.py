@@ -90,6 +90,26 @@ class NamesakesTest(unittest.TestCase):
         self.assertNotIn("P1", view.rep)
         self.assertIn("Bogdán Balázs", view.ambiguous)
 
+    def test_a_confirmed_record_typed_otherwise_joins_an_unconfirmed_one_does_not(self):
+        s = self.s
+        # The intake sheet's inmate, a phone list typing him a visitor with the same
+        # birth date and mother, and an incident report naming him only.
+        put(s, "d-D1", [person("D1", "Deák István", "inmate", birth_date="1996-12-04",
+                               mother_name="Kocsis Renáta", registry_number="NY-1")], [])
+        put(s, "d-D2", [person("D2", "Deák István", "visitor", birth_date="1996-12-04",
+                               mother_name="Kocsis Renáta")], [])
+        put(s, "d-D3", [person("D3", "Deák István")], [])
+        put(s, "d-D4", [person("D4", "Deák István", "inmate")], [])
+        view = self.view()
+        self.assertEqual("D1", view.rep.get("D2"))
+        self.assertEqual("D1", view.rep.get("D3"))
+        self.assertEqual("inmate", view.node("D3")["subtype"])
+        # The birth date alone confirms nothing: Kovács Péter stays two people.
+        self.assertIn("Kovács Péter", view.ambiguous)
+        # An unconfirmed visitor of the name keeps the group apart.
+        put(s, "d-D5", [person("D5", "Deák István", "visitor")], [])
+        self.assertNotIn("D3", self.view().rep)
+
     def test_counts_merge_and_ids_are_canonical(self):
         view = self.view()
         rows = analytics.aggregate(view, None, view.canon_spec({"ids": ["P3"]}), None, "relation")
