@@ -83,14 +83,19 @@ def check_graph(out, scope):
     ids = set(nodes)
     held = sum(1 for e in edges if {nodes.get(e["a"], {}).get("type"),
                                     nodes.get(e["b"], {}).get("type")} & {"identifier", "place"})
+    # What the view shows: the labels, each row's path, and the attributes the
+    # entity sheet lists (registry and ID numbers, birth data).
     text = "\n".join([n.get("label") or "" for n in nodes.values()] +
-                     [r.get("path") or "" for r in rows])
+                     [r.get("path") or "" for r in rows] +
+                     ["%s: %s" % (a.get("name"), a.get("value")) for n in nodes.values()
+                      for a in n.get("attributes") or []])
     return {"ok": not problems, "problems": problems[:10], "nodes": len(nodes),
             "edges": len(edges), "rows": len(rows), "documents": len(documents),
             "levels": dict(sorted(Counter(r.get("level") for r in rows).items())),
             "types": dict(Counter(n.get("type") for n in nodes.values())),
             "relations": dict(Counter(e.get("type") for e in edges)),
-            "held_edges": held, "truncated": out.get("truncated"), "ids": ids, "text": text}
+            "held_edges": held, "truncated": out.get("truncated"), "ids": ids,
+            "labels": {n.get("label") for n in nodes.values()}, "text": text}
 
 
 def main() -> int:
@@ -144,8 +149,11 @@ def main() -> int:
             narrow = check_graph(subgraph(args, user, drives, start, levels,
                                           narrow=[args.narrow.rstrip("/")]), [args.narrow])
             if full.get("ids") is not None and narrow.get("ids") is not None:
-                # Narrowing only removes; namesake joining may pick another record id.
+                # Narrowing only removes. Joined namesakes may stand for another
+                # record id in a narrower scope, so the labels are compared too.
                 narrow["within_full"] = narrow["ids"] <= full["ids"]
+                narrow["labels_within_full"] = narrow["labels"] <= full["labels"]
+                narrow["labels_extra"] = sorted(narrow["labels"] - full["labels"])[:5]
             scores = [bv_eval.score(r, full.get("text") or "", data["names"], data["phones"])
                       for r in related]
             hits, must = sum(s["hits"] for s in scores), sum(s["must"] for s in scores)
@@ -154,8 +162,9 @@ def main() -> int:
                    "calls": [c.get("tool") for c in graph.get("calls") or []],
                    "investigation": how, "start": start, "levels": levels,
                    "answer_rows": len(invs[0].get("rows") or []) if invs else None,
-                   "graph": {k: v for k, v in full.items() if k not in ("text", "ids")},
-                   "narrow": {k: v for k, v in narrow.items() if k not in ("text", "ids")},
+                   "graph": {k: v for k, v in full.items() if k not in ("text", "ids", "labels")},
+                   "narrow": {k: v for k, v in narrow.items()
+                              if k not in ("text", "ids", "labels")},
                    "gold": {s["id"]: "%d/%d" % (s["hits"], s["must"]) for s in scores},
                    "missed": {s["id"]: s["missed"] for s in scores if s["missed"]},
                    "answer": answer_text(res)[:600]}
@@ -163,10 +172,11 @@ def main() -> int:
             good = full.get("ok") and (narrow.get("ok") or narrow.get("status") == 404)
             ok = ok and bool(good)
             print("%-15s %-6s start=%s L%d nodes=%s edges=%s rows=%s (answer %s; narrowed "
-                  "%s/%s) %s %.1fs; gold %d/%d %s"
+                  "%s/%s, names within %s) %s %.1fs; gold %d/%d %s"
                   % (q["id"], how, start, levels, full.get("nodes"), full.get("edges"),
                      full.get("rows"), row["answer_rows"],
                      narrow.get("nodes", narrow.get("status")), narrow.get("edges"),
+                     narrow.get("labels_within_full"),
                      "ok" if full.get("ok") else full.get("problems") or full.get("error"),
                      graph_seconds, hits, must, row["gold"]), flush=True)
     return 0 if ok else 1
