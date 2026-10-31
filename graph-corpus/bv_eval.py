@@ -445,8 +445,9 @@ def agent_person(f: Facts):
     out.append(_capability("P-1.5-excel", "person", "1.5",
                            "Exportáld Excel-táblázatba a %s kapcsán feltárt személyeket és "
                            "azonosító adataikat." % sp.name,
-                           ["no XLSX export of an answer's people and identifiers; the "
-                            "dossier is DOCX/PDF for one entity"]))
+                           ["covered by the investigation export (/ui/graph/investigation/"
+                            "export), checked on a box with bv_export_check.py; birth data "
+                            "and the column layout await the customer"]))
     return out
 
 
@@ -575,7 +576,8 @@ def agent_identifier(f: Facts):
     out.append(_capability("I-2.5-excel", "identifier", "2.5",
                            "Exportáld Excel-táblázatba a %s telefonszám kapcsán feltárt "
                            "személyeket és azonosítóikat." % phone,
-                           ["no XLSX export of an answer"]))
+                           ["covered by the investigation export, checked with "
+                            "bv_export_check.py"]))
     return out
 
 
