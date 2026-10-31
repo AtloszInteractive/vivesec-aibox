@@ -887,6 +887,7 @@ class InvestigateTest(unittest.TestCase):
         _, info = orchestrator.orchestrate(r, first, lambda results: replanned.append(1))
         self.assertEqual(([], "investigated"), (replanned, info["stop"]))
         self.assertEqual(1, len(info["investigations"]))
+        self.assertEqual(6, info["facts"])  # the table rows are the facts
 
     def test_without_a_configuration_the_call_is_skipped_quietly(self):
         r, out, graph = self.run_investigation(config=None)

@@ -1692,7 +1692,7 @@ class Run:
         out = {"calls": [dict({k: c[k] for k in ("tool", "args", "facts", "round")},
                               **({"skipped": True} if c.get("skipped") else {}))
                          for c in self.calls],
-               "facts": len(self.contexts),
+               "facts": len(self.contexts) + len(self.table),
                "entities": sorted({n["label"] for n in self.nodes.values()
                                    if any(n["id"] in ids for ids in self._names.values())})}
         if self.caveat:
