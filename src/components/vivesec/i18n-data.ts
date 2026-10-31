@@ -774,6 +774,37 @@ const M: Record<string, Tri> = {
     "Regnearket kunne ikke laves.",
     "Die Tabelle konnte nicht erstellt werden.",
   ],
+  // ---- E26b: investigation subgraph (BV 1.3 / 2.3) ----
+  "Open as graph": ["Megnyitás ábrán", "Åbn som graf", "Als Grafik öffnen"],
+  "The people of the investigation and their links as a graph, rebuilt from the documents you may see now":
+    [
+      "A vizsgálat személyei és kapcsolataik ábrán, az Ön számára most látható dokumentumokból újra összeállítva",
+      "Undersøgelsens personer og deres forbindelser som graf, genopbygget ud fra de dokumenter, du har adgang til nu",
+      "Die Personen der Untersuchung und ihre Verbindungen als Grafik, neu erstellt aus den Dokumenten, die Sie jetzt sehen dürfen",
+    ],
+  "The graph could not be opened.": [
+    "Az ábra nem nyitható meg.",
+    "Grafen kunne ikke åbnes.",
+    "Die Grafik konnte nicht geöffnet werden.",
+  ],
+  Investigation: ["Vizsgálat", "Undersøgelse", "Untersuchung"],
+  "Starting point": ["Kiindulópont", "Udgangspunkt", "Ausgangspunkt"],
+  "Level 1": ["1. szint", "Niveau 1", "Ebene 1"],
+  "Level 2": ["2. szint", "Niveau 2", "Ebene 2"],
+  "Level 3": ["3. szint", "Niveau 3", "Ebene 3"],
+  "Level 4": ["4. szint", "Niveau 4", "Ebene 4"],
+  "Path of the link": ["Kapcsolódás útja", "Forbindelsesvej", "Verbindungsweg"],
+  "Also through": ["További szál", "Også gennem", "Auch über"],
+  "Back to the investigation": [
+    "Vissza a vizsgálathoz",
+    "Tilbage til undersøgelsen",
+    "Zurück zur Untersuchung",
+  ],
+  "The investigation was cut; more people may exist.": [
+    "A vizsgálat csonkolva van; további személyek is lehetnek.",
+    "Undersøgelsen er afkortet; der kan være flere personer.",
+    "Die Untersuchung wurde gekürzt; es kann weitere Personen geben.",
+  ],
   "The drive is not writable from here — use the download instead.": ["Innen nem írható a meghajtó — használja a letöltést.", "Drevet kan ikke skrives herfra — brug download i stedet.", "Das Laufwerk ist von hier nicht beschreibbar — bitte stattdessen herunterladen."],
   "Click a node to focus it, a line to see its evidence.": ["Kattintson egy pontra a kiemeléséhez, egy vonalra a bizonyítékaihoz.", "Klik på et punkt for at fokusere på det, på en linje for at se dokumentationen.", "Klicken Sie auf einen Knoten, um ihn hervorzuheben, auf eine Linie für die Belege."],
   "Back": ["Vissza", "Tilbage", "Zurück"],

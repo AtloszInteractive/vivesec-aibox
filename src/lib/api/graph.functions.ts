@@ -238,6 +238,22 @@ export const graphApi = {
       },
       drive,
     ),
+  /** The subgraph of one investigation table (BV 1.3 / 2.3), rebuilt on the box
+   *  within the caller's current access, in the neighbourhood shape. */
+  investigationGraph: (
+    drive: string,
+    req: { start: string; levels: number; drives?: string[]; auditId?: string },
+  ) =>
+    adapterGraph<GraphInvestigationView>(
+      "investigation/graph",
+      {
+        start: req.start,
+        levels: req.levels,
+        drives: req.drives?.length ? req.drives : undefined,
+        audit_id: req.auditId,
+      },
+      drive,
+    ),
   reprocessStatus: (drive: string) =>
     adapterGraph<GraphReprocessStatus>("reprocess/status", {}, drive),
   reprocessStart: (drive: string, pathPrefix: string) =>
@@ -306,4 +322,25 @@ export type GraphInvestigationExport = {
   path?: string;
   reason?: string;
   download?: string;
+};
+
+/** One row of an investigation subgraph: its level (0: starting point) and path. */
+export type GraphInvestigationRow = {
+  id: string;
+  level: number;
+  name: string;
+  role: string;
+  path: string;
+  also: string[];
+};
+
+/** An investigation as a subgraph, in the neighbourhood shape plus its rows. */
+export type GraphInvestigationView = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  documents: GraphDocuments;
+  truncated: boolean;
+  rows: GraphInvestigationRow[];
+  start: string;
+  levels: number;
 };

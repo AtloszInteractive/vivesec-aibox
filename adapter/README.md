@@ -686,6 +686,31 @@ reader when it is installed on the dev machine) and
 (real rag + graph services: visibility per user, purpose binding, query log,
 drive delivery and the stored-copy download, refusals).
 
+#### Investigation subgraph (`/ui/graph/investigation/graph`, BV 1.3 / 2.3)
+
+`POST /api/v1/ui/graph/investigation/graph` `{start, levels, drives?,
+audit_id?}` returns the same investigation as a subgraph in the
+`/query/neighborhood` shape, `{nodes, edges, documents, truncated}`, so the
+Relationships view draws it unchanged, plus `rows` (`id, level, name, role,
+path, also` per row), `start` and `levels`. It is rebuilt exactly like the
+spreadsheet (same `Run.investigate`, the caller's scope and access now; the
+client sends no rows). The subgraph holds the rows' entities, the links that
+reached them (`via[].edge`; through a shared entity the entity itself and both
+halves, `edge2`), and the identifiers and places a row holds (phone, address,
+e-mail). Only links with visible evidence are kept and each edge carries only
+its visible evidence; node documents and attributes are cut to the visible
+documents too. A row the adapter hides drops out with everything reached only
+through it (people, shared entities, held identifiers). The subgraph is not
+part of the answer (`Run.investigation_graphs` stays server-side). Purpose
+binding and errors as for the spreadsheet; the query-log kind is
+`graph:investigation` (start, levels, audit id and the row/node/edge counts as
+the question hash; every document of the subgraph in `sources`).
+
+Tests: `orchestrator_test.InvestigateTest.test_the_subgraph_*` (nodes and
+edges, hidden evidence and everything reached only through it absent) and
+`graph_integration_test.test_investigation_subgraph_within_the_callers_access`
+(visibility per user, purpose binding, query log, refusals).
+
 #### Full reading (`read_all`)
 
 When a message needs every case or mention in the documents themselves ("list

@@ -762,7 +762,13 @@ class InvestigationGraph:
     I4 = person("I4", "Illés Dénes", "inmate")
     M = person("M", "Major Ede", "inmate")
     E = thing("E", "verekedés (2025-03-01)", "event", "incident")
+    # An incident linked visibly from Sas Tibor whose other half (to Mohácsi
+    # Gréta) rests on the hidden document: both must vanish.
+    E2 = thing("E2", "szökés (2025-04-02)", "event", "incident")
+    MG = person("MG", "Mohácsi Gréta")
     P = thing("P", "+36 30 111 1111", "identifier", "phone")
+    # Held by Kiss Bori only, on a visible document: gone with her.
+    P2 = thing("P2", "+36 20 222 2222", "identifier", "phone")
     A = thing("A", "Fő utca 5.", "place", "address")
     MAIL = thing("X", "kende@example.hu", "identifier", "email")
 
@@ -788,24 +794,33 @@ class InvestigationGraph:
         if path == "/review/list":
             return {"review": [], "total": 0}
         if path == "/query/investigate":
-            def via(frm, eid, typ="RELATIVE_OF", doc="d1", through=None):
-                link = {"from": frm, "edge": edge(eid, frm, "?", typ, doc=doc)}
+            def via(frm, eid, to, typ="RELATIVE_OF", doc="d1", through=None, doc2=None):
+                link = {"from": frm, "edge": edge(eid, frm, through["id"] if through else to,
+                                                  typ, doc=doc)}
                 if through:
-                    link.update(through=through, edge2=edge(eid + "b", "?", through["id"],
-                                                            typ, doc=doc))
+                    link.update(through=through, edge2=edge(eid + "b", through["id"], to,
+                                                            typ, doc=doc2 or doc))
                 return link
+            r1 = via("S", "r1", "K1")
+            # One link stated in a visible and in a hidden document.
+            r1["edge"]["evidence"].append({"doc_id": "d2", "page": 9, "quote": "titok"})
             rows = [
                 {"level": 0, "node": self.S, "via": [], "held": []},
-                {"level": 1, "node": self.K1, "via": [via("S", "r1")], "held": [
+                {"level": 1, "node": self.K1, "via": [r1], "held": [
                     {"node": self.P, "edge": edge("u1", "K1", "P", "USES")},
                     {"node": self.A, "edge": edge("h1", "K1", "A", "RESIDES_AT")},
                     {"node": self.MAIL, "edge": edge("m1", "K1", "X", "USES", doc="d2")}]},
-                {"level": 1, "node": self.K2, "via": [via("S", "r2", doc="d2")], "held": []},
-                {"level": 1, "node": self.M, "via": [via("S", "x1", "INVOLVED_IN",
+                {"level": 1, "node": self.K2, "via": [via("S", "r2", "K2", doc="d2")],
+                 "held": [{"node": self.P2, "edge": edge("u2", "K2", "P2", "USES")}]},
+                {"level": 1, "node": self.M, "via": [via("S", "x1", "M", "INVOLVED_IN",
                                                          through=self.E)], "held": []},
-                {"level": 2, "node": self.I3, "via": [via("K2", "r5"), via("K1", "r4")],
+                {"level": 1, "node": self.MG, "via": [via("S", "x2", "MG", "INVOLVED_IN",
+                                                          through=self.E2, doc2="d2")],
                  "held": []},
-                {"level": 2, "node": self.I4, "via": [via("K2", "r7")], "held": []}]
+                {"level": 2, "node": self.I3, "via": [via("K2", "r5", "I3"),
+                                                      via("K1", "r4", "I3")],
+                 "held": []},
+                {"level": 2, "node": self.I4, "via": [via("K2", "r7", "I4")], "held": []}]
             return {"rows": rows, "truncated": self.truncated, "levels": 2,
                     "documents": DOC}
         raise AssertionError(path)
@@ -878,6 +893,63 @@ class InvestigateTest(unittest.TestCase):
         body = next(b for p, b in graph.calls if p == "/query/investigate")
         self.assertTrue(body["join_namesakes"])
 
+    def test_the_subgraph_has_the_rows_their_links_and_what_they_hold(self):
+        r, _, _ = self.run_investigation()
+        [sub] = r.investigation_graphs
+        nodes = {n["id"]: n for n in sub["nodes"]}
+        edges = {e["id"]: e for e in sub["edges"]}
+        # The rows' people, the incident between Sas Tibor and Major Ede, and
+        # Kende Anna's visible phone and address.
+        self.assertEqual({"S", "K1", "M", "I3", "E", "P", "A"}, set(nodes))
+        # Direct links, both halves through the incident, and the held identifiers.
+        self.assertEqual({"r1", "r4", "x1", "x1b", "u1", "h1"}, set(edges))
+        self.assertEqual(("S", "E", "E", "M"), (edges["x1"]["a"], edges["x1"]["b"],
+                                                edges["x1b"]["a"], edges["x1b"]["b"]))
+        self.assertTrue(all(e["a"] in nodes and e["b"] in nodes for e in sub["edges"]))
+        self.assertEqual({"d1"}, set(sub["documents"]))
+        self.assertFalse(sub["truncated"])
+        # Each row's level and path: the start is marked, the levels can be drawn.
+        self.assertEqual([("S", 0), ("K1", 1), ("M", 1), ("I3", 2)],
+                         [(row["id"], row["level"]) for row in sub["rows"]])
+        self.assertEqual("Sas Tibor \u2014[Rokona / kapcsolattartó]\u2014 Kende Anna",
+                         sub["rows"][1]["path"])
+        self.assertNotIn("investigation_graphs", json.dumps(r.info()))
+        self.assertNotIn("edges", json.dumps(r.info()["investigations"]))
+
+    def test_the_subgraph_drops_hidden_evidence_and_all_reached_only_through_it(self):
+        r, _, _ = self.run_investigation()
+        [sub] = r.investigation_graphs
+        nodes = {n["id"]: n for n in sub["nodes"]}
+        ids = set(nodes) | {e["id"] for e in sub["edges"]}
+        # Kiss Bori (hidden link), Illés Dénes and her phone (only through her),
+        # the second incident and Mohácsi Gréta (its second half is hidden), Kende
+        # Anna's e-mail (hidden), and Kiss Bori's link to Izsó Csaba.
+        for hidden in ("K2", "I4", "P2", "u2", "E2", "MG", "x2", "x2b", "X", "m1", "r2",
+                       "r5", "r7"):
+            self.assertNotIn(hidden, ids)
+        blob = json.dumps(sub, ensure_ascii=False)
+        for hidden in ("Kiss Bori", "Illés Dénes", "+36 20 222 2222", "szökés", "Mohácsi",
+                       "kende@example.hu", "NY-999", "titok", "/hr/", '"d2"'):
+            self.assertNotIn(hidden, blob)
+        # A link stated in a visible and a hidden document keeps the visible one.
+        r1 = next(e for e in sub["edges"] if e["id"] == "r1")
+        self.assertEqual(["d1"], [ev["doc_id"] for ev in r1["evidence"]])
+        self.assertEqual(["NY-100"], [a["value"] for a in nodes["S"]["attributes"]])
+
+    def test_an_all_visible_subgraph_keeps_every_link(self):
+        r = orchestrator.Run(InvestigationGraph(truncated=True), {"corpus_ids": ["c"]},
+                             lambda p: True, "Hungarian", investigate=self.CONFIG)
+        r.run([{"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 2}}])
+        [sub] = r.investigation_graphs
+        self.assertTrue(sub["truncated"])
+        self.assertEqual({"r1", "r2", "x1", "x1b", "x2", "x2b", "r4", "r5", "r7", "u1", "h1",
+                          "m1", "u2"}, {e["id"] for e in sub["edges"]})
+        self.assertEqual({"d1", "d2"}, set(sub["documents"]))
+        i3 = next(row for row in sub["rows"] if row["id"] == "I3")
+        # The "Y": reached from both, the second one named beside the path.
+        self.assertEqual((2, ["Kende Anna"]), (i3["level"], i3["also"]))
+        self.assertIn("Kiss Bori", i3["path"])
+
     def test_an_investigation_ends_the_planning_rounds(self):
         r = orchestrator.Run(InvestigationGraph(), {"corpus_ids": ["c"]}, lambda p: True,
                              "Hungarian", investigate=self.CONFIG)
@@ -887,7 +959,7 @@ class InvestigateTest(unittest.TestCase):
         _, info = orchestrator.orchestrate(r, first, lambda results: replanned.append(1))
         self.assertEqual(([], "investigated"), (replanned, info["stop"]))
         self.assertEqual(1, len(info["investigations"]))
-        self.assertEqual(6, info["facts"])  # the table rows are the facts
+        self.assertEqual(7, info["facts"])  # the table rows are the facts
 
     def test_without_a_configuration_the_call_is_skipped_quietly(self):
         r, out, graph = self.run_investigation(config=None)

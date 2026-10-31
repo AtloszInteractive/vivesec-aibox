@@ -504,6 +504,76 @@ class GraphIntegrationTest(unittest.TestCase):
                                                       "format": "xlsx"}, user="lars")
             self.assertEqual(400, status)
 
+    def investigation_graph(self, user, body):
+        payload = dict({"start": "Kovács János", "levels": 2}, **body)
+        return self.call("/api/v1/ui/graph/investigation/graph", payload, user=user)
+
+    def test_investigation_subgraph_within_the_callers_access(self):
+        import purpose
+        import querylog
+
+        service = self.service
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+        with patch.object(service, "INVESTIGATE_RELATIONS", ["MET"]), \
+                patch.object(service, "INVESTIGATE_VIA", []):
+            status, out = self.investigation_graph("lars", {"drives": [DRIVE]})
+            self.assertEqual(200, status, out)
+            # The /query/neighborhood shape the Relationships view draws.
+            self.assertEqual({"Kovács János", "Nagy Éva"}, {n["label"] for n in out["nodes"]})
+            ids = {n["id"] for n in out["nodes"]}
+            [edge] = out["edges"]
+            self.assertEqual(("MET", True), (edge["type"], {edge["a"], edge["b"]} <= ids))
+            self.assertEqual({PUBLIC}, {d["source_path"] for d in out["documents"].values()})
+            self.assertEqual(set(out["documents"]), {ev["doc_id"] for ev in edge["evidence"]})
+            self.assertEqual([("Kovács János", 0), ("Nagy Éva", 1)],
+                             [(r["name"], r["level"]) for r in out["rows"]])
+            self.assertEqual(("Kovács János", 2, False),
+                             (out["start"], out["levels"], out["truncated"]))
+            blob = json.dumps(out, ensure_ascii=False)
+            self.assertNotIn("Titkos", blob)
+            self.assertNotIn(HIDDEN, blob)
+            # Another caller who may see the hidden folder gets that link too.
+            status, out = self.investigation_graph("hanna", {})
+            self.assertEqual(200, status, out)
+            self.assertIn("Titkos Tamás", {n["label"] for n in out["nodes"]})
+            self.assertEqual(2, len(out["edges"]))
+            self.assertIn(HIDDEN, {d["source_path"] for d in out["documents"].values()})
+
+            # Purpose binding and the query log, as for the export.
+            with patch.object(service, "PURPOSE",
+                              purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                    patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name)):
+                status, out = self.investigation_graph("lars", {})
+                self.assertEqual((428, "purpose_required"), (status, out["error"]))
+                status, out = self.investigation_graph("lars", {"case_ref": "BV-2026/8",
+                                                                "audit_id": "aud-2"})
+                self.assertEqual(200, status, out)
+            name, = os.listdir(logdir.name)
+            path = os.path.join(logdir.name, name)
+            with open(path, encoding="utf-8") as handle:
+                [record] = [json.loads(line) for line in handle]
+            self.assertEqual(("graph:investigation", "lars", "BV-2026/8", [PUBLIC]),
+                             (record["kind"], record["user"], record["case_ref"],
+                              record["result"]["sources"]))
+            self.assertEqual(querylog.question_hash(json.dumps(
+                {"audit_id": "aud-2", "edges": 1, "levels": 2, "nodes": 2, "rows": 2,
+                 "start": "Kovács János"}, ensure_ascii=False, sort_keys=True)),
+                record["question_sha256"])
+            self.assertNotIn("question", record)
+
+            # Refusals: a drive outside the grant, a hidden-only start, bad input.
+            status, _ = self.investigation_graph("lars", {"drives": ["/storage/drives/hr/"]})
+            self.assertEqual(403, status)
+            status, _ = self.investigation_graph("lars", {"start": "Titkos Tamás"})
+            self.assertEqual(404, status)
+            for bad in ({"levels": 9}, {"start": ""}, {"start": ["x"]}):
+                status, _ = self.investigation_graph("lars", bad)
+                self.assertEqual(400, status, bad)
+            with patch.object(service, "INVESTIGATE_RELATIONS", ["NO_SUCH"]):
+                status, _ = self.investigation_graph("lars", {})
+                self.assertEqual(409, status)
+
     def test_analyst_counts_then_replans_with_the_results(self):
         import llm
 

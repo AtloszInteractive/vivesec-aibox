@@ -440,8 +440,10 @@ def agent_person(f: Facts):
     out.append(_capability("P-1.3-vizualis", "person", "1.3",
                            "Jelenítsd meg a feltárt összefüggéseket egy kapcsolati ábrán, a "
                            "talált adatokkal együtt (%s)." % sp.name,
-                           ["the Relationships view shows one entity's neighbourhood, not the "
-                            "subgraph an answer was built from"]))
+                           ["covered by the investigation subgraph (/ui/graph/investigation/"
+                            "graph, \"Open as graph\"), checked on a box with "
+                            "bv_graph_check.py; an exportable diagram (e.g. for i2) awaits the "
+                            "customer"]))
     out.append(_capability("P-1.5-excel", "person", "1.5",
                            "Exportáld Excel-táblázatba a %s kapcsán feltárt személyeket és "
                            "azonosító adataikat." % sp.name,
@@ -572,7 +574,8 @@ def agent_identifier(f: Facts):
     out.append(_capability("I-2.3-vizualis", "identifier", "2.3",
                            "Jelenítsd meg a %s telefonszámtól induló összefüggéseket egy "
                            "kapcsolati ábrán." % phone,
-                           ["no view of an answer's subgraph"]))
+                           ["covered by the investigation subgraph, checked with "
+                            "bv_graph_check.py"]))
     out.append(_capability("I-2.5-excel", "identifier", "2.5",
                            "Exportáld Excel-táblázatba a %s telefonszám kapcsán feltárt "
                            "személyeket és azonosítóikat." % phone,

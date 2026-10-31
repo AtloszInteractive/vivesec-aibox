@@ -1888,6 +1888,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
                 "/api/v1/ui/graph/investigation/export": self._graph_investigation_export,
+                "/api/v1/ui/graph/investigation/graph": self._graph_investigation_graph,
                 "/api/v1/ui/graph/reprocess/status": self._graph_reprocess_status,
                 "/api/v1/ui/graph/reprocess/start": self._graph_reprocess_start,
                 "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
@@ -3146,20 +3147,11 @@ class Handler(BaseHTTPRequestHandler):
                          "size": len(content), "text": text,
                          "content_b64": base64.b64encode(content).decode("ascii")})
 
-    def _graph_investigation_export(self):
-        """One investigation table as XLSX (BV 1.5 / 2.5). The table is built
-        again here, with the caller's scope and access now -- never taken from
-        the answer or the client, which names only the start, the levels and the
-        drives (narrowing only). `deliver`: "download" (base64 JSON, as the
-        dossier) or "drive" (session store + ws-fs, as /ui/save)."""
-        ctx = self._graph_request(bound=True)
-        if ctx is None:
-            return
-        user, payload, req_scope, access, scope_body = ctx
-        deliver = str(payload.get("deliver") or "download")
-        if deliver not in ("download", "drive"):
-            self._send(400, {"ok": False, "error": "deliver must be download or drive"})
-            return
+    def _investigation_run(self, ctx):
+        """The investigation a request names ({start, levels, drives}), run again
+        with the caller's scope and access now, as the answer ran it: {run, inv,
+        start, levels, lang, audit_id, prof, config}, or None after the refusal."""
+        _, payload, req_scope, access, scope_body = ctx
         start, levels = investigation_export.parse_request(payload)
         lang = investigation_export.lang_code(payload.get("lang"))
         audit_id = re.sub(r"[^\w\-]", "", str(payload.get("audit_id") or ""))[:64]
@@ -3167,13 +3159,13 @@ class Handler(BaseHTTPRequestHandler):
             domain = orchestrator.profile(GRAPH)
         except graph.GraphError as e:
             self._send(e.status, e.body)
-            return
+            return None
         cfg = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS, INVESTIGATE_VIA,
                                               INVESTIGATE_BRANCH, INVESTIGATE_MAX_ROWS)
         if cfg is None:
             self._send(409, {"ok": False, "error": "the investigation is not available with "
                                                    "the active profile"})
-            return
+            return None
         check = _visible(access)
         run = orchestrator.Run(
             GRAPH, scope_body, lambda path: req_scope.contains_path(path) and check(path),
@@ -3183,13 +3175,61 @@ class Handler(BaseHTTPRequestHandler):
             inv = investigation_export.investigate(run, start, levels)
         except orchestrator.Clarify as e:
             self._send(409, {"ok": False, "error": "ambiguous", "question": e.question})
-            return
+            return None
         except graph.GraphError as e:
             self._send(e.status, e.body)
-            return
+            return None
         if inv is None:
             self._send(404, {"ok": False, "error": "nothing of this investigation is visible"})
+            return None
+        return {"run": run, "inv": inv, "start": start, "levels": levels, "lang": lang,
+                "audit_id": audit_id, "prof": domain, "config": cfg}
+
+    def _graph_investigation_graph(self):
+        """The subgraph of one investigation table (BV 1.3 / 2.3) in the
+        /query/neighborhood shape, rebuilt like the export: the rows' people,
+        the links that reached them (through a shared entity: the entity and
+        both halves) and the identifiers and places they hold -- each with the
+        evidence the caller may see now; a row the adapter hides drops out
+        with all reached only through it. Each row's level and path come too."""
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
             return
+        user = ctx[0]
+        built = self._investigation_run(ctx)
+        if built is None:
+            return
+        start, levels, inv = built["start"], built["levels"], built["inv"]
+        sub = built["run"].investigation_graphs[0]
+        sources = [d.get("source_path") for d in sub["documents"].values()]
+        if not self._log_graph(ctx, "graph:investigation", json.dumps(
+                {"start": start, "levels": levels, "audit_id": built["audit_id"] or None,
+                 "rows": len(inv["rows"]), "nodes": len(sub["nodes"]),
+                 "edges": len(sub["edges"])}, ensure_ascii=False, sort_keys=True), sources):
+            return
+        sys.stderr.write("[adapter] graph: investigation subgraph (%d nodes, %d edges) by %s\n"
+                         % (len(sub["nodes"]), len(sub["edges"]), user))
+        self._send(200, dict(sub, ok=True, start=start, levels=levels))
+
+    def _graph_investigation_export(self):
+        """One investigation table as XLSX (BV 1.5 / 2.5). The table is built
+        again here, with the caller's scope and access now -- never taken from
+        the answer or the client, which names only the start, the levels and the
+        drives (narrowing only). `deliver`: "download" (base64 JSON, as the
+        dossier) or "drive" (session store + ws-fs, as /ui/save)."""
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
+            return
+        user, payload, req_scope, _, _ = ctx
+        deliver = str(payload.get("deliver") or "download")
+        if deliver not in ("download", "drive"):
+            self._send(400, {"ok": False, "error": "deliver must be download or drive"})
+            return
+        built = self._investigation_run(ctx)
+        if built is None:
+            return
+        inv, start, levels, lang = built["inv"], built["start"], built["levels"], built["lang"]
+        audit_id, domain, cfg = built["audit_id"], built["prof"], built["config"]
         sources = list(dict.fromkeys(r["source"] for r in inv["rows"] if r.get("source")))
         if not self._log_graph(ctx, "export:investigation", json.dumps(
                 {"start": start, "levels": levels, "audit_id": audit_id or None,

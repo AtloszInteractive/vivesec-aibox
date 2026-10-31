@@ -773,6 +773,9 @@ class Run:
         # cap (a cut table would read as complete), and to the response for export.
         self.table = []
         self.investigations = []
+        # Per investigation: its visible subgraph (investigation_graph()), kept
+        # out of the answer; the subgraph view rebuilds it on request.
+        self.investigation_graphs = []
         # The user's message: a kind of link it names ("kapcsolattartói") overrides a
         # generic relation the planner chose for it.
         self.message = message or ""
@@ -1512,6 +1515,7 @@ class Run:
                          via_relations=cfg["via"], levels=levels, branch=cfg["branch"],
                          limit=cfg["max_rows"])
         kept, rows = {}, []
+        sub_nodes, sub_edges = {}, {}
         for raw in res.get("rows") or []:
             node = raw.get("node") or {}
             if not node.get("id"):
@@ -1545,6 +1549,14 @@ class Run:
                 row["joined"] = len(node["joined"])
             kept[node["id"]] = row
             rows.append(row)
+            self._sub_add(sub_nodes, sub_edges, node, None)
+            for link in links:
+                self._sub_add(sub_nodes, sub_edges, None, link["edge"])
+                if link.get("edge2") is not None:
+                    self._sub_add(sub_nodes, sub_edges, link.get("through"), link["edge2"])
+            for item in raw.get("held") or []:
+                if item.get("node") and self._evidence(item.get("edge") or {}):
+                    self._sub_add(sub_nodes, sub_edges, item["node"], item["edge"])
             self.table.append({"text": self._row_text(row), "source_path": doc.get("source_path"),
                                "corpus_id": doc.get("corpus_id"), "page_number": row["page"],
                                "chunk_id": None, "score": 1.0, "origin": "graph"})
@@ -1563,7 +1575,44 @@ class Run:
             ", ".join(follows), tail))
         self.investigations.append({"start": args["start"], "levels": levels,
                                     "truncated": truncated, "rows": rows})
+        self.investigation_graphs.append(self._sub_graph(sub_nodes, sub_edges, rows, truncated))
         return len(rows)
+
+    def _doc_shown(self, doc_id):
+        doc = self.documents.get(doc_id)
+        return doc is not None and self.visible(doc.get("source_path") or "")
+
+    def _sub_add(self, nodes, edges, node, edge):
+        """One node and/or edge of an investigation's subgraph. Only links the
+        caller can verify are passed here; their hidden evidence is dropped."""
+        if node and node.get("id") and node["id"] not in nodes:
+            docs = [d for d in node.get("documents") or [] if self._doc_shown(d)]
+            shown = dict(node, documents=docs, attributes=[
+                a for a in node.get("attributes") or [] if self._doc_shown(a.get("doc_id"))])
+            if len(docs) < len(node.get("documents") or []):
+                # The count of mentions would include the hidden documents.
+                shown["mentions"] = len(docs)
+            nodes[node["id"]] = shown
+        if edge and edge.get("id") and edge["id"] not in edges:
+            evidence = self._evidence(edge)
+            if evidence:
+                edges[edge["id"]] = dict(edge, evidence=evidence)
+
+    def _sub_graph(self, nodes, edges, rows, truncated):
+        """The subgraph of one investigation in the /query/neighborhood shape
+        (nodes, edges, documents, truncated), with each row's level and path."""
+        kept = [e for e in edges.values() if e.get("a") in nodes and e.get("b") in nodes]
+        doc_ids = {ev["doc_id"] for e in kept for ev in e["evidence"]}
+        for node in nodes.values():
+            doc_ids.update(node.get("documents") or [])
+            doc_ids.update(a.get("doc_id") for a in node.get("attributes") or [])
+        return {"nodes": list(nodes.values()), "edges": kept,
+                "documents": {d: self.documents[d] for d in sorted(doc_ids, key=str)
+                              if self._doc_shown(d)},
+                "truncated": truncated,
+                "rows": [{"id": r["id"], "level": r["level"], "name": r["name"],
+                          "role": r["role"], "path": r["path"], "also": r["also"]}
+                         for r in rows]}
 
     def fresh(self, calls):
         """The calls not run yet in this run."""

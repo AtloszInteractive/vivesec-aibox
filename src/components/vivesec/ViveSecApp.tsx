@@ -62,7 +62,7 @@ import {
   type AdapterJobProgress,
   type AdapterInvestigation,
 } from "@/lib/api/rag.functions";
-import { graphApi } from "@/lib/api/graph.functions";
+import { graphApi, type GraphInvestigationView } from "@/lib/api/graph.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
 import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib/ui-update";
 import {
@@ -447,6 +447,25 @@ function useDrive() {
   return useContext(DriveContext);
 }
 
+/* Answer cards open the Relationships view on an investigation subgraph. */
+const GraphOpenContext = createContext<(view: GraphInvestigationView) => void>(() => {});
+
+function AppContexts({
+  drive,
+  openGraph,
+  children,
+}: {
+  drive: string;
+  openGraph: (view: GraphInvestigationView) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <DriveContext.Provider value={{ drive }}>
+      <GraphOpenContext.Provider value={openGraph}>{children}</GraphOpenContext.Provider>
+    </DriveContext.Provider>
+  );
+}
+
 /* ---------- Slash command -> AIBox quick action ----------
    The adapter (adapter/service.py parse_action) routes the spec quick actions
    F1-F7 from an explicit payload action or a typed "#action" prefix. The demo
@@ -773,6 +792,15 @@ function ViveSecAppInner() {
   const [showSlash, setShowSlash] = useState(false);
   const [driveOpen, setDriveOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
+  // An investigation subgraph the Relationships view opens on (BV 1.3 / 2.3);
+  // the key remounts the view for each one.
+  const [graphInitial, setGraphInitial] = useState<GraphInvestigationView | null>(null);
+  const [graphKey, setGraphKey] = useState(0);
+  const openInvestigationGraph = useCallback((view: GraphInvestigationView) => {
+    setGraphInitial(view);
+    setGraphKey((k) => k + 1);
+    setGraphOpen(true);
+  }, []);
   const [previewFile, setPreviewFile] = useState<DriveFile | null>(null);
   const [previewCitation, setPreviewCitation] = useState<Citation | null>(null);
   const [viewerMode, setViewerMode] = useState<"side" | "split">("side");
@@ -936,6 +964,8 @@ function ViveSecAppInner() {
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [drivePicker, setDrivePicker] = useState(false);
   const [drive, setDrive] = useState<string>("");
+  // An investigation opened on another drive does not carry over.
+  useEffect(() => setGraphInitial(null), [drive]);
 
   /* ---------- Search scope (which drives the answer may draw from) --------
      The entitlement is resolved on the box and never reaches the browser, so
@@ -2375,7 +2405,7 @@ function ViveSecAppInner() {
 
   /* ---------- Render ---------- */
   return (
-    <DriveContext.Provider value={{ drive }}>
+    <AppContexts drive={drive} openGraph={openInvestigationGraph}>
       {/* One viewport, no page scroll: only the message list scrolls, so the
         composer and the quick actions stay put. dvh so the mobile URL bar
         cannot push the composer off-screen. */}
@@ -3399,9 +3429,15 @@ function ViveSecAppInner() {
             )}
             {graphOpen && (
               <GraphPanel
+                key={graphKey}
                 drive={drive}
-                onClose={() => setGraphOpen(false)}
+                initial={graphInitial}
+                onClose={() => {
+                  setGraphOpen(false);
+                  setGraphInitial(null);
+                }}
                 onOpenSource={(s: GraphSource) => {
+                  // The investigation stays: reopening the view returns to it.
                   setGraphOpen(false);
                   openCitation({
                     fileId: s.path,
@@ -3462,7 +3498,7 @@ function ViveSecAppInner() {
           }
         />
       )}
-    </DriveContext.Provider>
+    </AppContexts>
   );
 }
 
@@ -5599,10 +5635,36 @@ const EXPORT_FAILURE: Record<number, string> = {
 function InvestigationExport({ meta }: { meta: LiveMeta }) {
   const { tm, lang } = useLang();
   const { drive } = useDrive();
+  const openGraph = useContext(GraphOpenContext);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const list = meta.investigations ?? [];
   if (!list.length) return null;
+
+  const rebuilt = (rows: number) =>
+    `${tm("The table was rebuilt from the documents you may see now, so it differs from the answer.")} ${tm("Rows")}: ${rows}`;
+
+  /** BV 1.3 / 2.3: the same investigation as a subgraph in the Relationships
+   *  view, rebuilt on the box like the spreadsheet. */
+  async function showGraph(inv: AdapterInvestigation) {
+    setBusy(`${inv.start}|graph`);
+    setNote(null);
+    try {
+      const res = await graphApi.investigationGraph(drive, {
+        start: inv.start,
+        levels: inv.levels,
+        drives: inv.drives,
+        auditId: meta.auditId,
+      });
+      openGraph(res);
+      if (res.rows.length !== inv.rows) setNote(rebuilt(res.rows.length));
+    } catch (err) {
+      const status = err instanceof AdapterGraphError ? err.status : 0;
+      toast.error(tm(EXPORT_FAILURE[status] ?? "The graph could not be opened."));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function exportTable(inv: AdapterInvestigation, deliver: "download" | "drive") {
     setBusy(`${inv.start}|${deliver}`);
@@ -5638,9 +5700,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
       }
       if (deliver === "drive") notifyGeneratedFilesChanged();
       if (res.rows !== inv.rows) {
-        setNote(
-          `${tm("The table was rebuilt from the documents you may see now, so it differs from the answer.")} ${tm("Rows")}: ${res.rows}`,
-        );
+        setNote(rebuilt(res.rows));
       }
     } catch (err) {
       const status = err instanceof AdapterGraphError ? err.status : 0;
@@ -5670,6 +5730,21 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
               <FileSpreadsheet className="h-3 w-3" style={{ color: LIME }} />
             )}
             {list.length > 1 ? `${tm("Export to Excel")} · ${inv.start}` : tm("Export to Excel")}
+          </button>
+          <button
+            disabled={!!busy}
+            onClick={() => void showGraph(inv)}
+            className={button}
+            title={tm(
+              "The people of the investigation and their links as a graph, rebuilt from the documents you may see now",
+            )}
+          >
+            {busy === `${inv.start}|graph` ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Network className="h-3 w-3" style={{ color: LIME }} />
+            )}
+            {tm("Open as graph")}
           </button>
           <button
             disabled={!!busy}
