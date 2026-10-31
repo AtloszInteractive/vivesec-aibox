@@ -596,6 +596,33 @@ GRAPH_NAME_JOIN = (os.environ.get("ADAPTER_GRAPH_NAME_JOIN", "off") or "off").st
     == "same_name"
 
 
+def _relation_list(name, default):
+    raw = os.environ.get(name)
+    raw = default if raw is None else raw
+    if raw.strip().lower() == "off":
+        return []
+    return [r.strip() for r in raw.split(",") if r.strip()]
+
+
+def _bounded_int(name, default, low, high):
+    try:
+        value = int(os.environ.get(name, "") or default)
+    except ValueError:
+        sys.stderr.write("[adapter] invalid %s -> %d\n" % (name, default))
+        return default
+    return max(low, min(value, high))
+
+
+# The analyst investigation tool (graph /query/investigate): the person-to-person
+# relations it follows and those that link people through a shared entity (an
+# incident). Ids the active profile lacks are dropped; none left (or "off" for
+# both) leaves the tool out of the plan.
+INVESTIGATE_RELATIONS = _relation_list("ADAPTER_INVESTIGATE_RELATIONS", "RELATIVE_OF")
+INVESTIGATE_VIA = _relation_list("ADAPTER_INVESTIGATE_VIA", "INVOLVED_IN")
+INVESTIGATE_BRANCH = _bounded_int("ADAPTER_INVESTIGATE_BRANCH", 10, 1, 50)
+INVESTIGATE_MAX_ROWS = _bounded_int("ADAPTER_INVESTIGATE_MAX_ROWS", 80, 1, 500)
+
+
 # Purpose-bound queries (concept 5.2) and their log (5.3): see purpose.py and
 # querylog.py. Off by default; required on a box that serves case work.
 PURPOSE = purpose.settings()
@@ -1193,7 +1220,12 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
     if domain is not None:
         vocab = orchestrator.vocabulary(domain, lang)
-        planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ)
+        investigate = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS,
+                                                      INVESTIGATE_VIA, INVESTIGATE_BRANCH,
+                                                      INVESTIGATE_MAX_ROWS)
+        investigate_line = orchestrator.investigate_tool(domain, investigate, lang)
+        planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ,
+                                    investigate=investigate_line)
     deep_call = None
     doc_call = None
     if planned is not None and planned["action"] == "tools":
@@ -1210,7 +1242,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         run = orchestrator.Run(
             GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
             lambda path: req_scope.contains_path(path) and check(path), lang,
-            ORCHESTRATOR_MAX_FACTS, domain, name_join=GRAPH_NAME_JOIN, message=query)
+            ORCHESTRATOR_MAX_FACTS, domain, name_join=GRAPH_NAME_JOIN, message=query,
+            investigate=investigate)
         if planned["action"] == "clarify":
             question = planned["question"]
             try:
@@ -1229,7 +1262,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                 orchestrated = orchestrator.orchestrate(
                     run, planned,
                     lambda results: orchestrator.plan(query, history, lang, vocab, results,
-                                                      deep=False))
+                                                      deep=False,
+                                                      investigate=investigate_line))
             except orchestrator.Clarify as e:
                 return _clarify_result(user, drive, query, e.question, req_scope,
                                        session_scope, profile, conversation_id, agent, lang)

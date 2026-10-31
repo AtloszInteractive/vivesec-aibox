@@ -108,9 +108,23 @@ class ToolCeilingTest(unittest.TestCase):
         data = bv_eval.build_eval()
         state, corpora = bv_toolcheck.load_graph()
         cls.rows = {r["id"]: r for r in bv_toolcheck.check(data, state, corpora, 40, True)}
+        cls.investigated = {r["id"]: r for r in bv_toolcheck.check(
+            data, state, corpora, 40, True, "investigate")}
+        cls.plans = {q["id"]: q.get("investigate_plan") for q in data["questions"]}
 
     def test_graph_side_questions_reach_every_gold_item(self):
-        for qid, row in self.rows.items():
+        for rows in (self.rows, self.investigated):
+            self.check_rows(rows)
+
+    def test_one_investigation_call_answers_each_chain_question(self):
+        for qid in bv_eval.INVESTIGATE:
+            self.assertEqual(["investigate"], [c["tool"] for c in self.plans[qid]], qid)
+            calls = self.investigated[qid]["capped"]["calls"]
+            self.assertEqual([("investigate", True)], [(c["tool"], c["facts"] > 0)
+                                                       for c in calls], qid)
+
+    def check_rows(self, rows):
+        for qid, row in rows.items():
             if row.get("capability"):
                 continue
             capped = row["capped"]

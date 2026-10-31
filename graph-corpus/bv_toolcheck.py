@@ -9,9 +9,13 @@ cannot be in a grounded answer whatever the planner or the model does, so the
 figure separates tool and data gaps from planning and wording.
 
     python graph-corpus/bv_toolcheck.py [--max-facts 40] [--no-name-join] [--json report.json]
+                                        [--plans reference|investigate]
 
 No model, no network. Document-side calls (read_all, analyze_document) are
-reported as not checked: they read the documents, not the graph.
+reported as not checked: they read the documents, not the graph. `--plans
+investigate` runs the investigation tool's plan where a question has one
+(bv_eval.INVESTIGATE); "extra" then counts the people of the table the
+question did not ask for -- what the answer model has to leave out.
 """
 from __future__ import annotations
 
@@ -42,6 +46,8 @@ from render import Renderer  # noqa: E402
 
 ACCESS = {"principals": ["user:bv-eval"], "clearance": 0, "membership_known": True,
           "default_classification": 0}
+# The adapter's defaults (ADAPTER_INVESTIGATE_RELATIONS / _VIA / _BRANCH / _MAX_ROWS).
+INVESTIGATE = (["RELATIVE_OF"], ["INVOLVED_IN"], 10, 80)
 
 
 class Client:
@@ -72,11 +78,13 @@ def load_graph(persons: int = 120, seed: int = 26, tenant: str = "default"):
     return state, sorted({m["corpus_id"] for m in meta.values()})
 
 
-def run_plan(client, scope, prof, question, max_facts, name_join):
+def run_plan(client, scope, prof, question, max_facts, name_join, plans="reference"):
     """The facts and notes the reference plan gives the answer model."""
     run = orchestrator.Run(client, scope, lambda path: True, "Hungarian", max_facts, prof,
-                           name_join=name_join)
-    plan = question.get("reference_plan") or []
+                           name_join=name_join, message=question["question"],
+                           investigate=orchestrator.investigate_config(prof, *INVESTIGATE))
+    plan = (question.get("investigate_plan") if plans == "investigate" else None) \
+        or question.get("reference_plan") or []
     skipped = [c["tool"] for c in plan if c["tool"] not in orchestrator.GRAPH_TOOLS]
     clarify = None
     for round_no in sorted({c.get("round", 1) for c in plan}):
@@ -90,12 +98,13 @@ def run_plan(client, scope, prof, question, max_facts, name_join):
     texts = [c["text"] for c in run.output()]
     if run.caveat:
         texts.append(run.caveat)
-    return {"text": "\n".join(texts), "facts": len(run.contexts), "clarify": clarify,
+    return {"text": "\n".join(texts), "facts": len(run.contexts) + len(run.table),
+            "clarify": clarify,
             "calls": [{"tool": c["tool"], "facts": c["facts"]} for c in run.calls],
             "not_checked": skipped}
 
 
-def check(data, state, corpora, max_facts=40, name_join=True):
+def check(data, state, corpora, max_facts=40, name_join=True, plans="reference"):
     client = Client(state)
     prof = client.post("/profile/get", {})["profile"]
     scope = {"corpus_ids": corpora, "access": ACCESS}
@@ -106,7 +115,7 @@ def check(data, state, corpora, max_facts=40, name_join=True):
             continue
         row = {"id": q["id"], "bv_step": q["bv_step"]}
         for label, cap in (("capped", max_facts), ("uncapped", 10000)):
-            got = run_plan(client, scope, prof, q, cap, name_join)
+            got = run_plan(client, scope, prof, q, cap, name_join, plans)
             s = bv_eval.score(q, got["text"], data["names"], data["phones"])
             row[label] = {"hits": s["hits"], "must": s["must"], "recall": s["recall"],
                           "missed": s["missed"], "extra": len(s["extra"]),
@@ -133,13 +142,16 @@ def main() -> int:
     ap.add_argument("--max-facts", type=int, default=40)
     ap.add_argument("--no-name-join", action="store_true",
                     help="ADAPTER_GRAPH_NAME_JOIN=off (the dev box runs same_name)")
+    ap.add_argument("--plans", choices=("reference", "investigate"), default="reference",
+                    help="investigate: the investigation tool where a question has its plan")
     ap.add_argument("--json", help="write the full report here")
     args = ap.parse_args()
     data = bv_eval.build_eval(args.persons, args.seed)
     state, corpora = load_graph(args.persons, args.seed)
-    rows = check(data, state, corpora, args.max_facts, not args.no_name_join)
-    print("%-32s %-6s %-9s %-9s %-6s %s" % ("question", "step", "cap %d" % args.max_facts,
-                                             "uncapped", "facts", "missed (uncapped)"))
+    rows = check(data, state, corpora, args.max_facts, not args.no_name_join, args.plans)
+    print("%-32s %-6s %-9s %-9s %-7s %-5s %s" % ("question", "step", "cap %d" % args.max_facts,
+                                                 "uncapped", "facts", "extra",
+                                                 "missed (uncapped)"))
     for r in rows:
         if r.get("capability"):
             print("%-32s %-6s %s" % (r["id"], r["bv_step"], "capability (not scored)"))
@@ -155,9 +167,10 @@ def main() -> int:
             extra = " clarify"
         if u["not_checked"]:
             extra += " not checked: %s" % ", ".join(u["not_checked"])
-        print("%-32s %-6s %-9s %-9s %-6s %s%s" % (r["id"], r["bv_step"], fig(c), fig(u),
-                                                 "%d/%d" % (c["facts"], u["facts"]),
-                                                 _missed_kinds(u["missed"]), extra))
+        print("%-32s %-6s %-9s %-9s %-7s %-5s %s%s" % (r["id"], r["bv_step"], fig(c), fig(u),
+                                                       "%d/%d" % (c["facts"], u["facts"]),
+                                                       c["extra"], _missed_kinds(u["missed"]),
+                                                       extra))
     if args.json:
         with io.open(args.json, "w", encoding="utf-8", newline="\n") as fh:
             json.dump(rows, fh, ensure_ascii=False, indent=1)

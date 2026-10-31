@@ -593,6 +593,48 @@ unusable plan falls back to the plain path (condense + graph facts).
 Tests: `orchestrator_test`, `graph_integration_test`; graph side:
 `graph_service/analytics_test.py`, `graph_service/namesakes_test.py`.
 
+#### Investigation table (`investigate`)
+
+`investigate {start, levels}` runs a deterministic, level-by-level investigation
+from one starting point: a person (by name or registry number) or an identifier
+(phone number, address, e-mail, account number). The graph's
+`/query/investigate` walks the caller's visible graph. Level 1 is the people
+linked to the start. From a person, the next level is reached through the
+person-to-person relations of `ADAPTER_INVESTIGATE_RELATIONS` (default
+`RELATIVE_OF`, the bv profile's stand-in for an approved contact), or through an
+entity shared over `ADAPTER_INVESTIGATE_VIA` (default `INVOLVED_IN`: two people
+in the same incident). Each person appears once, at the first level that
+reaches them, with up to 5 links from the previous level (a "Y" branch). The
+planner chooses 1–4 levels (default 2). `ADAPTER_INVESTIGATE_BRANCH` caps the new
+people taken from one person (default 10, 1–50), and `ADAPTER_INVESTIGATE_MAX_ROWS`
+caps the whole table (default 80, 1–500). Both pick people in name order, so
+the same graph always gives the same table.
+
+Every row becomes one cited fact (`Vizsgálat, 2. szint: … -- szerep; nyilvántartási
+szám; telefon; lakcím; e-mail -- kapcsolódás útja: A —[Rokona / kapcsolattartó]— B
+…`) with the document that states its last link as the source. A graph note tells
+the answer model what the table covers and whether it was cut. The rows sit
+outside the `ADAPTER_ORCHESTRATOR_MAX_FACTS` cap, because a table cut by the
+facts cap would read as complete. The model only summarises. The adapter applies
+its own visibility rule too: a row whose link rests only on a document hidden
+by the adapter's policy is dropped, together with everyone reached only through
+it, and so are hidden identifiers and attributes.
+
+`ADAPTER_GRAPH_NAME_JOIN=same_name` applies here as for patterns. The response's
+`graph.investigations` carries the table as data (level, name, role,
+registry/ID number, phone, address, e-mail, other identifiers, path, source),
+which is the base for a later spreadsheet export and subgraph view.
+
+Relation ids the active profile lacks, and the generic `RELATED_TO` /
+`CO_MENTIONED`, are dropped. When neither variable leaves a relation (or both
+are `off`), the tool is not offered to the planner. The table shows the phone,
+address and e-mail of everyone reached, as BV's investigation asks; birth data
+stays limited to the people the message names. Tests:
+`orchestrator_test.InvestigateTest`, `graph_service/investigate_test.py`, and
+`graph_service/leakage_test.py` (differential: an investigation never reaches
+through a hidden link). `bv_toolcheck.py --plans investigate` measures the
+eval set with one investigation call per chain question.
+
 #### Full reading (`read_all`)
 
 When a message needs every case or mention in the documents themselves ("list

@@ -189,6 +189,17 @@ def requests():
                                  "then": {"relations": ["PLACED_IN", "CALLED"]},
                                  "within_days": 60, "join_namesakes": join}),
         ]
+        # Level by level from people and identifiers, over direct and via links.
+        for seeds in ([A], [B], [C, D], [X], [ADDR], [A, A2, A3], [Z]):
+            out += [("/query/investigate", {"seeds": seeds, "join_namesakes": join,
+                                            "relations": ["MET", "RELATIVE_OF"],
+                                            "via_relations": ["PLACED_IN", "USES"],
+                                            "levels": 4}),
+                    ("/query/investigate", {"seeds": seeds, "join_namesakes": join,
+                                            "relations": ["MET"], "levels": 2, "branch": 1}),
+                    ("/query/investigate", {"seeds": seeds, "join_namesakes": join,
+                                            "via_relations": ["WORKS_FOR"], "levels": 3,
+                                            "limit": 3})]
     out = [(p, dict(b, include_weak=w)) if p.startswith("/query/") else (p, b)
            for p, b in out for w in (False, True)]
     out += [("/documents/profile", {}), ("/documents/profile", {"with_paths": True}),
@@ -275,11 +286,27 @@ class LeakageTest(unittest.TestCase):
                    != answer(self.oracle, path, body, HANNA, ["c1"])}
         expected = {"/query/" + q for q in (
             "find", "mentioned", "entity", "copresence", "timeline", "neighborhood", "path",
-            "common", "shared", "communities", "ranking", "match", "aggregate", "sequence")}
+            "common", "shared", "communities", "ranking", "match", "aggregate", "sequence",
+            "investigate")}
         expected.add("/documents/profile")
         if self.with_worker:
             expected |= {"/review/list", "/review/history"}
         self.assertEqual(set(), expected - self.skip_paths - differs)
+
+    def test_an_investigation_never_reaches_through_a_hidden_link(self):
+        def levels(access, seeds, **extra):
+            body = dict({"seeds": seeds, "relations": ["MET"], "via_relations": ["USES"],
+                         "levels": 4}, **extra)
+            out = json.loads(answer(self.full, "/query/investigate", body, access, ["c1"]))
+            return {r["node"]["id"]: r["level"] for r in out["rows"]}
+        # Z holds X and met B only in a hidden document; A met C only in one.
+        self.assertNotIn(Z, levels(LARS, [X]))
+        self.assertNotIn(Z, levels(LARS, [B]))
+        self.assertEqual(1, levels(HANNA, [X])[Z])
+        self.assertEqual({A: 0, B: 1}, levels(LARS, [A]))
+        self.assertEqual(1, levels(HANNA, [A])[C])
+        # The holder of a phone stated only on another drive is not there either.
+        self.assertEqual({Y: 0, D: 1, C: 2}, levels(LARS, [Y]))
 
     def test_a_registry_number_finds_its_person_only_where_it_is_visible(self):
         def found(access, text):

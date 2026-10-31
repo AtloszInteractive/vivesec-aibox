@@ -26,7 +26,7 @@ from dossier import TEXT as DOSSIER_TEXT
 
 TOOLS = ("relations", "connection", "common", "timeline", "copresence",
          "shared_identifiers", "most_connected", "find_pattern", "count", "sequence",
-         "read_all", "analyze_document")
+         "investigate", "read_all", "analyze_document")
 # The document side of a plan: the caller runs these, not the graph.
 DOCUMENT_TOOLS = ("read_all", "analyze_document")
 GRAPH_TOOLS = tuple(t for t in TOOLS if t not in DOCUMENT_TOOLS)
@@ -44,6 +44,11 @@ PROFILE_TTL = 60.0
 SUMMARY_LINES = 6
 MAX_JOINED_LISTED = 10
 MAX_TALLY_LINES = 10
+# The investigation (graph /query/investigate): levels the planner may ask for,
+# and the links of one person named beside the first one ("also through").
+MAX_INVESTIGATE_LEVELS = 4
+DEFAULT_INVESTIGATE_LEVELS = 2
+MAX_ALSO = 3
 # Identity data of the people a result names: every identifying number, and the
 # personal data only of those the message itself named (data minimisation).
 ID_ATTRS = ("registry_number", "id_number")
@@ -104,6 +109,7 @@ PLANNER = (
     "(first and then are relation ids; kind is the entity both relations belong to), "
     "e.g. an incident within 30 days after a visit = first: the visit relation, then: "
     "the involvement relation, within_days: 30, kind: the visited side's kind\n"
+    "{investigate}"
     "{deep}"
     "Relations: pick the one whose label or [also] words fit the user's word (a contact, "
     "a visit, a call); a generic relation is never the answer to a named kind of link. "
@@ -162,6 +168,20 @@ DEEP_TOOL = (
     "all of it (takes minutes for a long file). Use it instead of read_all when the "
     "message asks for the analysis, summary or review of one specific file it names by "
     "its file name; file: that file name exactly as written in the message.\n"
+)
+
+INVESTIGATE_TOOL = (
+    "- investigate {start, levels?}: the investigation of one starting point -- a person "
+    "(name or registry number) or an identifier (phone number, address, e-mail, account "
+    "number) -- level by level through %s, as a table of every person reached: level, "
+    "role, registry number, phone, address, e-mail and the path that links them. Use it, "
+    "instead of relations or find_pattern chains, whenever the message asks about the "
+    "contacts of a person or identifier, the further people (inmates) reached through "
+    "them, or several levels of such a chain. levels: how many links deep the message "
+    "goes from the start (a person's contacts, or the holders of a number = 1; the other "
+    "inmates those contacts belong to, or the people sharing an event with the person = 2; "
+    "their contacts = 3; the further inmates of those = 4); default 2. One call per "
+    "starting point covers every level of its chain: no other call is needed for it.\n"
 )
 
 _TEXT = {
@@ -271,6 +291,70 @@ _TEXT = {
              "da": "%d dage senere", "de": "%d Tage sp\u00e4ter"},
     "together": {"en": "both at", "hu": "egyszerre itt:", "da": "begge ved",
                  "de": "beide bei"},
+    "investigate": {
+        "en": "Investigation table (graph, over the documents you may see) from %s: %d people "
+              "on %d levels, following %s. Level = links from the starting point; each "
+              "\u201cInvestigation\u201d row gives one person's role, identifiers and the path "
+              "that links them (who is whose contact). Answer questions about the chain from "
+              "these rows: %s",
+        "hu": "Vizsg\u00e1lati t\u00e1bl\u00e1zat (gr\u00e1f, az \u00d6n sz\u00e1m\u00e1ra "
+              "l\u00e1that\u00f3 dokumentumok alapj\u00e1n), kiindul\u00f3pont: %s; %d "
+              "szem\u00e9ly, %d szint, a k\u00f6vetett kapcsolatok: %s. A szint a "
+              "kiindul\u00f3pontt\u00f3l m\u00e9rt l\u00e9p\u00e9ssz\u00e1m; minden "
+              "\u201eVizsg\u00e1lat\u201d sor egy szem\u00e9ly szerep\u00e9t, azonos\u00edt\u00f3 "
+              "adatait \u00e9s a kapcsol\u00f3d\u00e1s \u00fatj\u00e1t adja meg (ki kinek a "
+              "kapcsolattart\u00f3ja). A l\u00e1ncra vonatkoz\u00f3 k\u00e9rd\u00e9st ezekb\u0151l a "
+              "sorokb\u00f3l v\u00e1laszolja meg: %s",
+        "da": "Unders\u00f8gelsestabel (graf, i de dokumenter, du har adgang til) fra %s: %d "
+              "personer p\u00e5 %d niveauer, f\u00f8lger %s. Niveau = forbindelser fra "
+              "udgangspunktet; hver \u201dUnders\u00f8gelse\u201d-r\u00e6kke giver en persons rolle, "
+              "identifikatorer og den vej, der forbinder dem (hvem der er hvis kontakt). Besvar "
+              "sp\u00f8rgsm\u00e5l om k\u00e6den ud fra disse r\u00e6kker: %s",
+        "de": "Untersuchungstabelle (Graph, in den Dokumenten, die Sie sehen d\u00fcrfen) ab %s: "
+              "%d Personen auf %d Ebenen, entlang %s. Ebene = Verbindungen vom Ausgangspunkt; "
+              "jede \u201eUntersuchung\u201c-Zeile nennt die Rolle, Kennungen und den "
+              "Verbindungsweg einer Person (wer wessen Kontakt ist). Beantworten Sie Fragen zur "
+              "Kette anhand dieser Zeilen: %s",
+    },
+    "investigate_complete": {
+        "en": "for these levels the table is complete.",
+        "hu": "ezekre a szintekre a t\u00e1bl\u00e1zat teljes.",
+        "da": "for disse niveauer er tabellen fuldst\u00e6ndig.",
+        "de": "f\u00fcr diese Ebenen ist die Tabelle vollst\u00e4ndig.",
+    },
+    "investigate_cut": {
+        "en": "the table was cut (at most %d new people from one person, %d rows in all), so "
+              "more people may exist.",
+        "hu": "a t\u00e1bl\u00e1zat csonkolva van (szem\u00e9lyenk\u00e9nt legfeljebb %d \u00faj "
+              "szem\u00e9ly, \u00f6sszesen %d sor), tov\u00e1bbi szem\u00e9lyek is lehetnek.",
+        "da": "tabellen er afkortet (h\u00f8jst %d nye personer fra \u00e9n person, %d r\u00e6kker "
+              "i alt), s\u00e5 der kan v\u00e6re flere personer.",
+        "de": "die Tabelle ist gek\u00fcrzt (h\u00f6chstens %d neue Personen je Person, insgesamt "
+              "%d Zeilen), es kann weitere Personen geben.",
+    },
+    "investigate_shared": {
+        "en": "%s (people linked to the same entity)",
+        "hu": "%s (ugyanahhoz a szerepl\u0151h\u00f6z kapcsol\u00f3d\u00f3 szem\u00e9lyek)",
+        "da": "%s (personer forbundet med samme enhed)",
+        "de": "%s (Personen, die mit demselben Eintrag verbunden sind)",
+    },
+    "investigate_row": {
+        "en": "Investigation, level %d: %s -- %s -- path: %s%s.",
+        "hu": "Vizsg\u00e1lat, %d. szint: %s -- %s -- kapcsol\u00f3d\u00e1s \u00fatja: %s%s.",
+        "da": "Unders\u00f8gelse, niveau %d: %s -- %s -- forbindelsesvej: %s%s.",
+        "de": "Untersuchung, Ebene %d: %s -- %s -- Verbindungsweg: %s%s.",
+    },
+    "investigate_start": {"en": "starting point", "hu": "kiindul\u00f3pont",
+                          "da": "udgangspunkt", "de": "Ausgangspunkt"},
+    "investigate_also": {"en": " (also through: %s)", "hu": " (tov\u00e1bbi sz\u00e1l: %s)",
+                         "da": " (ogs\u00e5 gennem: %s)", "de": " (auch \u00fcber: %s)"},
+    "columns": {
+        "en": {"role": "role", "phone": "phone", "address": "address", "email": "e-mail"},
+        "hu": {"role": "szerep", "phone": "telefon", "address": "lakc\u00edm",
+               "email": "e-mail"},
+        "da": {"role": "rolle", "phone": "telefon", "address": "adresse", "email": "e-mail"},
+        "de": {"role": "Rolle", "phone": "Telefon", "address": "Adresse", "email": "E-Mail"},
+    },
     "types": {
         "en": {"person": "Person", "organization": "Organisation", "place": "Place",
                "identifier": "Identifier", "event": "Event", "object": "Object"},
@@ -438,6 +522,32 @@ def vocabulary(prof, lang=None):
             % ("; ".join(kinds), "; ".join(relations)))
 
 
+def investigate_config(prof, relations, via, branch=10, max_rows=80):
+    """The links an investigation follows, limited to the profile's relations;
+    None (no investigate tool) when none of them is there: an unknown id must
+    not turn into "follow everything"."""
+    known = {r.get("id") for r in (prof or {}).get("relation_types") or []}
+    relations = [r for r in relations or [] if r in known and r not in GENERIC_RELATIONS]
+    via = [r for r in via or [] if r in known and r not in GENERIC_RELATIONS]
+    if not relations and not via:
+        return None
+    return {"relations": relations, "via": via, "branch": max(1, min(int(branch), 50)),
+            "max_rows": max(1, min(int(max_rows), 500))}
+
+
+def investigate_tool(prof, config, lang=None):
+    """The planner's line for the investigation, naming the links it follows."""
+    if not config:
+        return ""
+    code = LANG_CODES.get(lang or "", "en")
+    labels = {r["id"]: _label_of(r.get("label"), code, r["id"])
+              for r in (prof or {}).get("relation_types") or []}
+    parts = ["%s (%s)" % (rid, labels.get(rid, rid)) for rid in config["relations"]]
+    parts += ["people sharing a %s (%s) link to the same entity" % (rid, labels.get(rid, rid))
+              for rid in config["via"]]
+    return INVESTIGATE_TOOL % " and ".join(parts)
+
+
 # -- planning ------------------------------------------------------------------
 def _transcript(history, turns=6, chars=600):
     lines = []
@@ -472,6 +582,19 @@ def _clean_args(tool, args):
             return None
         return {"terms": terms[:MAX_READ_TERMS],
                 "mode": "all" if args.get("mode") == "all" else "any"}
+    if tool == "investigate":
+        start = args.get("start")
+        if isinstance(start, dict):
+            start = start.get("name")
+        start = _text(start) or _text(args.get("entity")) or _text(args.get("name"))
+        if not start:
+            return None
+        levels = args.get("levels")
+        if isinstance(levels, str) and levels.strip().isdigit():
+            levels = int(levels.strip())
+        if isinstance(levels, bool) or not isinstance(levels, int):
+            levels = DEFAULT_INVESTIGATE_LEVELS
+        return {"start": start, "levels": max(1, min(levels, MAX_INVESTIGATE_LEVELS))}
     out = {}
     for key in ("entity", "a", "b", "kind", "name", "relation", "other_kind", "first", "then"):
         value = _text(args.get(key))
@@ -543,13 +666,15 @@ def parse_plan(text):
             "more": data.get("more") is True}
 
 
-def plan(question, history, lang=None, vocab="", results="", deep=False):
+def plan(question, history, lang=None, vocab="", results="", deep=False, investigate=""):
     """One planning call; None when the model is off, fails or answers nonsense
     (the caller then keeps the plain document + graph-facts path). `deep` offers
-    the full-reading tool (first round only)."""
+    the full-reading tool (first round only); `investigate` is the planner's line
+    for the investigation tool (investigate_tool), "" when it is not offered."""
     if llm.GENERATE == "off":
         return None
     system = PLANNER.replace("{vocabulary}", vocab).replace(
+        "{investigate}", investigate or "").replace(
         "{deep}", DEEP_TOOL if deep else "") + (
         " Write any question to the user in %s." % lang if lang else "")
     convo = _transcript(history)
@@ -619,12 +744,18 @@ class Run:
     """Executes plans against the graph within one caller's scope."""
 
     def __init__(self, client, scope_body, visible, lang=None, max_facts=40, prof=None,
-                 name_join=False, message=""):
+                 name_join=False, message="", investigate=None):
         self.client = client
         self.scope = scope_body
         self.visible = visible
         self.code = LANG_CODES.get(lang or "", "en")
         self.max_facts = max_facts
+        # investigate_config(): the links an investigation follows; None: no tool.
+        self.investigate_cfg = investigate
+        # The investigation tables: their rows go to the answer outside the facts
+        # cap (a cut table would read as complete), and to the response for export.
+        self.table = []
+        self.investigations = []
         # The user's message: a kind of link it names ("kapcsolattartói") overrides a
         # generic relation the planner chose for it.
         self.message = message or ""
@@ -668,7 +799,7 @@ class Run:
         self.stop = None
 
     def query(self, name, **params):
-        if self.name_join and name in ("match", "aggregate", "sequence"):
+        if self.name_join and name in ("match", "aggregate", "sequence", "investigate"):
             params["join_namesakes"] = True
         res = self.client.post("/query/" + name, dict(self.scope, **params))
         self.documents.update(res.get("documents") or {})
@@ -921,17 +1052,22 @@ class Run:
         relations, _ = self._label_maps()
         return self._label(relations, rtype)
 
+    def _relation_word(self, rtype):
+        """The relation's label, with the user's own word for it when the message
+        names it so ("Rokona / kapcsolattartó"): the answer must see that this is
+        the link asked about."""
+        name = self._relation_name(rtype)
+        stated = self._stated_terms().get(rtype)
+        if stated and fold(stated) not in fold(name):
+            name = "%s / %s" % (name, stated)
+        return name
+
     def edge_fact(self, edge):
         evidence = self._evidence(edge)
         if not evidence:
             return 0
         self._count_date(edge)
-        name = self._relation_name(edge["type"])
-        # The user's own word for the link ("kapcsolattartó" beside "Rokona"):
-        # the answer must see that this is the link asked about.
-        stated = self._stated_terms().get(edge["type"])
-        if stated and fold(stated) not in fold(name):
-            name = "%s / %s" % (name, stated)
+        name = self._relation_word(edge["type"])
         raw = edge.get("raw_label") or ""
         if raw and raw != edge["type"] and not re.fullmatch(r"[A-Z0-9_]+", raw):
             name = "%s (%s)" % (name, raw)
@@ -1273,6 +1409,145 @@ class Run:
             args.get("within_days", 30)) + "\n" + "\n".join(lines))
         return len(lines)
 
+    # -- the investigation -----------------------------------------------------
+    def _link_evidence(self, link):
+        """The visible evidence of one investigation link; through a shared
+        entity both halves must be visible. [] when it rests on a hidden one."""
+        first = self._evidence(link["edge"])
+        if not first or link.get("edge2") is None:
+            return first
+        return self._evidence(link["edge2"])
+
+    def _node_source(self, node):
+        """A visible document stating a starting point (its attributes first)."""
+        candidates = [(a.get("doc_id"), a.get("page")) for a in node.get("attributes") or []]
+        candidates += [(d, None) for d in node.get("documents") or []]
+        for doc_id, page in candidates:
+            doc = self.documents.get(doc_id)
+            if doc is not None and self.visible(doc.get("source_path") or ""):
+                return {"doc_id": doc_id, "page": page if isinstance(page, int) else None}
+        return None
+
+    def _link_label(self, link):
+        name = self._relation_word(link["edge"]["type"])
+        through = link.get("through")
+        if through:
+            name = "%s: %s" % (name, through.get("label") or through.get("id"))
+        return name
+
+    def _row_values(self, node, held):
+        """The identifying data of one row: ID attributes and the identifiers and
+        places the person holds, from visible documents only."""
+        values = {"registry_number": [], "id_number": [], "phone": [], "address": [],
+                  "email": [], "other": {}}
+        for attr in node.get("attributes") or []:
+            doc = self.documents.get(attr.get("doc_id"))
+            if attr.get("name") in ID_ATTRS and doc is not None \
+                    and self.visible(doc.get("source_path") or ""):
+                values[attr["name"]].append(str(attr.get("value")))
+        for item in held:
+            other = item.get("node") or {}
+            if not other or not self._evidence(item.get("edge") or {}):
+                continue
+            label = other.get("label") or other.get("id")
+            subtype = other.get("subtype") or ""
+            if other.get("type") == "place":
+                values["address"].append(label)
+            elif subtype in ("phone", "email"):
+                values[subtype].append(label)
+            else:
+                values["other"].setdefault(self._kind_label(subtype or other.get("type")),
+                                           []).append(label)
+        for key, vals in values.items():
+            if key == "other":
+                values[key] = {k: list(dict.fromkeys(v)) for k, v in vals.items()}
+            else:
+                values[key] = list(dict.fromkeys(vals))
+        return values
+
+    def _row_text(self, row):
+        cols = _t("columns", self.code)
+        attr_labels = {k: v.get(self.code) or v["en"] for k, v in DOSSIER_TEXT["attr"].items()}
+        parts = ["%s: %s" % (cols["role"], row["role"])]
+        parts += ["%s: %s" % (attr_labels[k], " / ".join(row[k])) for k in ID_ATTRS if row[k]]
+        parts += ["%s: %s" % (cols[k], ", ".join(row[k])) for k in ("phone", "address", "email")
+                  if row[k]]
+        parts += ["%s: %s" % (k, ", ".join(v)) for k, v in sorted(row["other"].items())]
+        also = _t("investigate_also", self.code) % ", ".join(row["also"]) if row["also"] else ""
+        path = row["path"] if row["level"] else _t("investigate_start", self.code)
+        return _t("investigate_row", self.code) % (row["level"], row["name"], "; ".join(parts),
+                                                   path, also)
+
+    def investigate(self, args):
+        """The level-by-level investigation table of one starting point: one row
+        per person, each its own fact, and a note on what the table covers. The
+        rows the adapter's own policy hides (the graph's ACL copy may lag) are
+        dropped with everyone reached only through them."""
+        cfg = self.investigate_cfg
+        if not cfg:
+            self._quiet = True
+            return 0
+        ids = self.resolve(args["start"])
+        if not ids:
+            return 0
+        levels = args.get("levels", DEFAULT_INVESTIGATE_LEVELS)
+        res = self.query("investigate", seeds=ids[:20], relations=cfg["relations"],
+                         via_relations=cfg["via"], levels=levels, branch=cfg["branch"],
+                         limit=cfg["max_rows"])
+        kept, rows = {}, []
+        for raw in res.get("rows") or []:
+            node = raw.get("node") or {}
+            if not node.get("id"):
+                continue
+            if raw.get("level", 0) == 0:
+                links, source = [], self._node_source(node)
+            else:
+                links = [link for link in raw.get("via") or []
+                         if link.get("from") in kept and self._link_evidence(link)]
+                source = self._link_evidence(links[0])[0] if links else None
+            if source is None:
+                continue
+            self.nodes.setdefault(node["id"], node)
+            self._mark_joined([node])
+            label = node.get("label") or node["id"]
+            path, also = label, []
+            if links:
+                parent = kept[links[0]["from"]]
+                path = "%s \u2014[%s]\u2014 %s" % (parent["path"], self._link_label(links[0]),
+                                                  label)
+                also = list(dict.fromkeys(kept[link["from"]]["name"] for link in links[1:]
+                                          if link["from"] != links[0]["from"]))[:MAX_ALSO]
+            doc = self.documents[source["doc_id"]]
+            row = dict({"level": raw.get("level", 0), "id": node["id"], "name": label,
+                        "type": node.get("type"),
+                        "role": self._kind_label(node.get("subtype") or node.get("type"))},
+                       **self._row_values(node, raw.get("held") or []))
+            row.update(path=path, also=also, source=doc.get("source_path"),
+                       page=source.get("page"))
+            if len(node.get("joined") or []) > 1:
+                row["joined"] = len(node["joined"])
+            kept[node["id"]] = row
+            rows.append(row)
+            self.table.append({"text": self._row_text(row), "source_path": doc.get("source_path"),
+                               "corpus_id": doc.get("corpus_id"), "page_number": row["page"],
+                               "chunk_id": None, "score": 1.0, "origin": "graph"})
+            self._call_labels.add(label)
+        if not rows:
+            return 0
+        follows = [self._relation_word(r) for r in cfg["relations"]]
+        follows += [_t("investigate_shared", self.code) % self._relation_word(r)
+                    for r in cfg["via"]]
+        truncated = bool(res.get("truncated"))
+        tail = (_t("investigate_cut", self.code) % (cfg["branch"], cfg["max_rows"])
+                if truncated else _t("investigate_complete", self.code))
+        self.notes.append(_t("investigate", self.code) % (
+            ", ".join(r["name"] for r in rows if r["level"] == 0),
+            sum(1 for r in rows if r["type"] == "person"), max(r["level"] for r in rows),
+            ", ".join(follows), tail))
+        self.investigations.append({"start": args["start"], "levels": levels,
+                                    "truncated": truncated, "rows": rows})
+        return len(rows)
+
     def fresh(self, calls):
         """The calls not run yet in this run."""
         done = {(c["tool"], json.dumps(c["args"], sort_keys=True)) for c in self.calls}
@@ -1384,7 +1659,7 @@ class Run:
         notes = [{"text": n, "source_path": None, "title": "graph search", "corpus_id": None,
                   "page_number": None, "chunk_id": None, "score": 1.0, "origin": "graph-note"}
                  for n in self.notes + [x for x in (tally, joined, qualified) if x]]
-        return notes + self.contexts + self._identity()
+        return notes + self.table + self.contexts + self._identity()
 
     def summary(self):
         """What the calls so far found, for the next planning round. Rankings and
@@ -1407,4 +1682,7 @@ class Run:
             out["caveat"] = self.caveat
         if self.stop:
             out["stop"] = self.stop
+        if self.investigations:
+            # The table as data: the base of the spreadsheet export and subgraph view.
+            out["investigations"] = self.investigations
         return out

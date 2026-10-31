@@ -336,6 +336,130 @@ def degree_ranking(view, types=(PERSON,), limit: int = 20) -> list[dict]:
     return [{"node": n, "degree": -d} for d, _, n in ranked[:max(1, min(limit, MAX_RESULTS))]]
 
 
+MAX_LEVELS = 4
+MAX_BRANCH = 50
+MAX_SEEDS = 20
+# The links recorded for one person reached from several people of the previous level.
+MAX_VIA = 5
+
+
+def _label_key(view, eid: str):
+    node = view.node(eid)
+    return (fold(node["label"]) if node else "", eid)
+
+
+def investigate(view, seeds, relations=(), via_relations=(), levels: int = 2,
+                branch: int = 10, limit: int = 200, holding=()) -> dict:
+    """A level-by-level investigation from the seeds over the visible graph.
+
+    From a person, `relations` lead to other people directly (either direction);
+    `via_relations` lead to an entity that is not a person (an incident) and
+    from it to the other people linked to it the same way: one level, the
+    entity named in the link. A seed that is not a person (a phone number, an
+    address) reaches the people linked to it by any relation at level 1.
+
+    Each person appears once, at the first level that reaches them, with the
+    links from the previous level (at most MAX_VIA, a "Y" branch). `branch`
+    caps the new people taken from one person, `limit` the rows; both pick in
+    name order, so the same graph always gives the same table. `holding`: the
+    relations whose identifiers and places are a person's contact data.
+    """
+    levels = max(0, min(levels, MAX_LEVELS))
+    branch = max(1, min(branch, MAX_BRANCH))
+    limit = max(1, min(limit, MAX_RESULTS))
+    relations, via_relations, holding = set(relations), set(via_relations), set(holding)
+    rows: dict[str, dict] = {}
+    order: list[str] = []
+    truncated = False
+    for sid in seeds[:MAX_SEEDS]:
+        node = view.node(sid)
+        # A joined view answers for the record that stands for the name.
+        if node is not None and node["id"] not in rows and len(order) < limit:
+            rows[node["id"]] = {"level": 0, "node": node, "via": [], "more": 0}
+            order.append(node["id"])
+    frontier = sorted(order, key=lambda e: _label_key(view, e))
+    for level in range(1, levels + 1):
+        if not frontier:
+            break
+        if hasattr(view, "prefetch_edges"):
+            view.prefetch_edges(frontier)
+        new: dict[str, dict] = {}
+        for cur in frontier:
+            found = _investigate_step(view, cur, rows[cur]["node"], relations, via_relations)
+            fresh = sorted((o for o in found if o not in rows and o not in new),
+                           key=lambda e: _label_key(view, e))
+            taken = set(fresh[:branch])
+            rows[cur]["more"] = len(fresh) - len(taken)
+            truncated = truncated or bool(rows[cur]["more"])
+            for other in sorted(found, key=lambda e: _label_key(view, e)):
+                if other in new:
+                    if len(new[other]["via"]) < MAX_VIA:
+                        new[other]["via"].extend(found[other][:MAX_VIA - len(new[other]["via"])])
+                elif other in taken:
+                    new[other] = {"level": level, "node": view.node(other),
+                                  "via": found[other][:MAX_VIA], "more": 0}
+        for eid in sorted(new, key=lambda e: _label_key(view, e)):
+            if len(order) >= limit:
+                truncated = True
+                break
+            rows[eid] = new[eid]
+            order.append(eid)
+        frontier = [e for e in order if rows[e]["level"] == level]
+    out = []
+    for eid in order:
+        row = rows[eid]
+        held = []
+        if row["node"]["type"] == PERSON and holding:
+            for e in view.edges_of(eid):
+                o = _other(e, eid)
+                node = view.node(o)
+                if e["type"] in holding and node and node["type"] != PERSON:
+                    held.append({"node": node, "edge": e})
+            held.sort(key=lambda h: (h["node"].get("subtype") or h["node"]["type"],
+                                     fold(h["node"]["label"]), h["edge"]["id"]))
+        out.append(dict(row, held=held))
+    return {"rows": out, "truncated": truncated,
+            "levels": max([r["level"] for r in out] or [0])}
+
+
+def _investigate_step(view, cur: str, node: dict, relations, via_relations) -> dict:
+    """{person id: [links]} one level on from `cur`; a link is
+    {"from", "edge", "through"?, "edge2"?}."""
+    found: dict[str, list] = {}
+
+    def add(other, link):
+        if other != cur:
+            found.setdefault(other, []).append(link)
+    edges = view.edges_of(cur)
+    if node["type"] != PERSON:
+        for e in edges:
+            o = _other(e, cur)
+            if (view.node(o) or {}).get("type") == PERSON:
+                add(o, {"from": cur, "edge": e})
+        return found
+    through = []
+    for e in edges:
+        o = _other(e, cur)
+        other = view.node(o)
+        if other is None:
+            continue
+        if e["type"] in relations and other["type"] == PERSON:
+            add(o, {"from": cur, "edge": e})
+        elif e["type"] in via_relations and other["type"] != PERSON:
+            through.append((o, e))
+    if through and hasattr(view, "prefetch_edges"):
+        view.prefetch_edges([o for o, _ in through])
+    for mid, e in through:
+        for e2 in view.edges_of(mid):
+            o2 = _other(e2, mid)
+            if e2["type"] in via_relations and o2 != cur \
+                    and (view.node(o2) or {}).get("type") == PERSON:
+                add(o2, {"from": cur, "edge": e, "through": view.node(mid), "edge2": e2})
+    for links in found.values():
+        links.sort(key=lambda link: (link["edge"]["id"], (link.get("edge2") or {}).get("id", "")))
+    return found
+
+
 def bfs_distance(view, a: str, b: str, max_hops: int = MAX_HOPS) -> int | None:
     """Plain BFS, used by the tests to cross-check shortest_path."""
     if view.node(a) is None or view.node(b) is None:

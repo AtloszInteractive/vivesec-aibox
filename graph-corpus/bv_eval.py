@@ -455,6 +455,34 @@ def _capability(qid, agent, step, text, needs):
                      notes="capability check, not scored from the answer text")
 
 
+# The same questions answered with the investigation tool (one call per question):
+# the seed field it starts from and how many levels the question goes. The rest
+# keep their reference plan (reports and summaries read documents; the negative
+# controls look up an identifier that is not there).
+INVESTIGATE = {
+    "P-1.1-adatok": ("name", 1),
+    "P-1.1-nyilvszam": ("registry_number", 1),
+    "P-1.2.2-kozos-kapcsolattarto": ("name", 2),
+    "P-1.2.2-masodik-szint": ("name", 3),
+    "P-1.2.1-esemenytarsak": ("name", 2),
+    "P-1.2.3-tovabbi-fogvatartottak": ("name", 3),
+    "I-2.1-telefon": ("value", 1),
+    "I-2.2-telefon-kapcsolattarto": ("value", 2),
+    "I-2.1-lakcim": ("value", 1),
+    "I-2.2-lakcim-kapcsolattarto": ("value", 2),
+}
+
+
+def investigate_plan(question: dict) -> list:
+    """The investigation plan of a question, else its reference plan."""
+    spec = INVESTIGATE.get(question["id"])
+    if not spec or not question.get("seed"):
+        return question["reference_plan"]
+    field, levels = spec
+    return [{"tool": "investigate", "args": {"start": question["seed"][field],
+                                             "levels": levels}}]
+
+
 # -- agent 2: from an identifier -------------------------------------------------------
 
 def agent_identifier(f: Facts):
@@ -556,6 +584,9 @@ def build_eval(persons: int = 120, seed: int = 26) -> dict:
     docs = Renderer(w, seed).render_all()
     f = Facts(w, docs)
     questions = agent_person(f) + agent_identifier(f)
+    for q in questions:
+        if q["reference_plan"]:
+            q["investigate_plan"] = investigate_plan(q)
     return {"seed": seed, "persons": persons,
             "names": sorted({p.name for p in w.persons.values()}),
             "phones": sorted({ph for p in w.persons.values() for ph in p.phones}),
