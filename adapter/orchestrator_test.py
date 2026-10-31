@@ -158,8 +158,9 @@ class PlanTest(unittest.TestCase):
                                        "Hungarian")
         self.assertIn("person (inmate = Fogvatartott)", text)
         self.assertIn("identifier (phone = Telefonszám)", text)
-        self.assertIn("VISITED = meglátogatta (person -> person)", text)
+        self.assertIn("VISITED = meglátogatta (person -> person) [also: látogatás]", text)
         self.assertIn("INVOLVED_IN = involved in", text)
+        self.assertNotIn("INVOLVED_IN = involved in [", text)
         with patch.object(llm, "GENERATE", "on"), \
                 patch.object(llm, "_chat", return_value=('{"action": "done"}', 0, 0)) as chat:
             orchestrator.plan("Ki?", [], "Hungarian", text, "- relations: 2 results")
@@ -217,6 +218,86 @@ class PlanTest(unittest.TestCase):
             self.assertEqual("json", chat.call_args[1]["response_format"])
 
 
+class StatedRelationTest(unittest.TestCase):
+    """A generic relation the planner chose gives way to the kind of link the
+    message names; the vocabulary lists the generic ones last, marked."""
+
+    PROFILE = {"relation_types": [
+        {"id": "RELATED_TO", "label": {"hu": "Kapcsolatban áll"},
+         "from": orchestrator.ENTITY_TYPES, "to": orchestrator.ENTITY_TYPES},
+        {"id": "RELATIVE_OF", "label": {"hu": "Rokona"}, "from": ["person"], "to": ["person"],
+         "synonyms": ["testvére", "kapcsolattartó"]},
+        {"id": "INVOLVED_IN", "label": {"hu": "Érintett"}, "from": ["person"], "to": ["event"]},
+        {"id": "PART_OF", "label": {"hu": "Része"}, "from": ["place"], "to": ["place"]}],
+        "entity_subtypes": [{"id": "inmate", "type": "person", "label": {"hu": "Fogvatartott"}}]}
+
+    def run_for(self, message):
+        graph = FakeGraph()
+        return orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "Hungarian",
+                                prof=self.PROFILE, message=message), graph
+
+    def test_the_named_kind_replaces_a_generic_relation(self):
+        r, _ = self.run_for("Kik Csonka Tibor engedélyezett kapcsolattartói?")
+        self.assertEqual(["RELATIVE_OF"], r.relation_ids("RELATED_TO"))
+        self.assertEqual(["INVOLVED_IN"], r.relation_ids("INVOLVED_IN"))  # specific: kept
+        r, _ = self.run_for("Mi köti össze Csonka Tibort és Kardos Gyulát?")
+        self.assertEqual(["RELATED_TO"], r.relation_ids("RELATED_TO"))
+
+    def test_the_ends_of_a_step_pick_between_several_named_kinds(self):
+        r, _ = self.run_for("A vele közös eseményben érintett fogvatartottak kapcsolattartói")
+        self.assertEqual(["RELATED_TO"], r.relation_ids("RELATED_TO"))  # two fit: kept
+        self.assertEqual(["INVOLVED_IN"], r.relation_ids("RELATED_TO", (["event"], ["person"])))
+        self.assertEqual(["RELATIVE_OF"], r.relation_ids("RELATED_TO", (["person"], ["person"])))
+        # An unknown previous side: both still fit, so nothing is guessed.
+        self.assertEqual(["RELATED_TO"], r.relation_ids("RELATED_TO", (None, ["person"])))
+
+    def test_a_pattern_step_is_sent_with_the_named_relation(self):
+        r, graph = self.run_for("Csonka Tibor kapcsolattartói mely fogvatartottaknak "
+                                "kapcsolattartói még?")
+        r.run([{"tool": "find_pattern", "args": {
+            "start": {"kind": "inmate"},
+            "steps": [{"relation": "RELATED_TO", "kind": "person"},
+                      {"relation": "RELATED_TO", "kind": "Fogvatartott"}]}}])
+        body = next(b for p, b in graph.calls if p == "/query/match")
+        self.assertEqual([["RELATIVE_OF"], ["RELATIVE_OF"]],
+                         [s["relations"] for s in body["steps"]])
+
+    def test_a_fact_carries_the_users_word_for_its_link(self):
+        r, _ = self.run_for("Kik Nagy Éva kapcsolattartói?")
+        r.nodes.update({"p4": NE, "p1": KJ1})
+        r.documents.update(DOC)
+        r.edge_fact(edge("x", "p1", "p4", typ="RELATIVE_OF", quote="unokatestvére"))
+        self.assertTrue(r.contexts[0]["text"].startswith(
+            "Kovács János -- Rokona / kapcsolattartó -- Nagy Éva."), r.contexts[0]["text"])
+        r, _ = self.run_for("Ki Nagy Éva rokona?")  # the label itself: nothing added
+        r.nodes.update({"p4": NE, "p1": KJ1})
+        r.documents.update(DOC)
+        r.edge_fact(edge("x", "p1", "p4", typ="RELATIVE_OF"))
+        self.assertTrue(r.contexts[0]["text"].startswith("Kovács János -- Rokona -- Nagy Éva."))
+
+    def test_a_pattern_touching_no_one_named_is_skipped_quietly(self):
+        r, graph = self.run_for("Kik Nagy Éva kapcsolattartói?")
+        r.run([{"tool": "relations", "args": {"entity": "Nagy Éva"}},
+               {"tool": "find_pattern", "args": {
+                   "start": {"kind": "person"},
+                   "steps": [{"relation": "RELATIVE_OF", "kind": "inmate"}]}}])
+        self.assertFalse(any(p == "/query/match" for p, _ in graph.calls))
+        self.assertTrue(r.info()["calls"][1]["skipped"])
+        self.assertFalse(any("Gráfkeresés (find_pattern)" in n for n in r.notes))
+        # Without a named entity the same pattern runs.
+        r, graph = self.run_for("Kik a fogvatartottak kapcsolattartói?")
+        r.run([{"tool": "find_pattern", "args": {
+            "start": {"kind": "person"}, "steps": [{"relation": "RELATIVE_OF"}]}}])
+        self.assertTrue(any(p == "/query/match" for p, _ in graph.calls))
+
+    def test_vocabulary_lists_generic_relations_last_and_marked(self):
+        text = orchestrator.vocabulary(self.PROFILE, "Hungarian")
+        self.assertLess(text.index("RELATIVE_OF"), text.index("RELATED_TO"))
+        self.assertIn("RELATED_TO = Kapcsolatban áll (person/", text)
+        self.assertIn("-- generic:", text)
+        self.assertIn("[also: testvére, kapcsolattartó]", text)
+
+
 class RunTest(unittest.TestCase):
     def test_namesakes_are_kept_together_and_hidden_evidence_dropped(self):
         r, contexts, _ = run([{"tool": "relations", "args": {"entity": "Kovács János"}}])
@@ -254,6 +335,78 @@ class RunTest(unittest.TestCase):
         texts = [c["text"] for c in contexts]
         self.assertTrue(any("2025-03-13" in t for t in texts), texts)
         self.assertTrue(any("nothing named" in t for t in texts), texts)
+
+    def test_an_identifier_that_is_not_there_is_not_taken_for_a_name(self):
+        # Its first letters fit "Kovács ...": no question back about those people.
+        _, contexts, _ = run([{"tool": "relations",
+                               "args": {"entity": "kovacs.janos@example.hu"}}])
+        texts = [c["text"] for c in contexts]
+        self.assertEqual(1, len(texts), texts)
+        self.assertIn("kovacs.janos@example.hu", texts[0])
+        self.assertNotIn("Kovács", texts[0])
+
+    def test_identity_data_goes_with_the_people_found(self):
+        attrs = {"p4": [("mother_name", "Anya Anna", "d1"), ("id_number", "123456AB", "d1"),
+                        ("birth_date", "1990-01-01", "d2")],
+                 "p1": [("registry_number", "NY-100001", "d1"),
+                        ("mother_name", "Titok Teréz", "d1")]}
+
+        class Graph(FakeGraph):
+            def post(self, path, body):
+                out = json.loads(json.dumps(super().post(path, body)))
+                for n in out.get("nodes") or out.get("entities") or []:
+                    n["attributes"] = [{"name": k, "value": v, "doc_id": d, "page": 2}
+                                       for k, v, d in attrs.get(n["id"], [])]
+                return out
+
+        r = orchestrator.Run(Graph(), {"corpus_ids": ["c"], "access": None},
+                             lambda p: "/hr/" not in p, "Hungarian")
+        contexts = r.run([{"tool": "relations", "args": {"entity": "Nagy Éva"}}])
+        identity = [c for c in contexts if c["origin"] == "graph" and c["text"].count(" -- ") == 1]
+        # The person asked about: every identifying number and personal data the
+        # caller may see; the birth date stands in a hidden document only.
+        self.assertEqual("Nagy Éva -- Azonosító szám: 123456AB; Anyja neve: Anya Anna.",
+                         identity[0]["text"])
+        self.assertEqual(("/storage/drives/ops/a.txt", 2),
+                         (identity[0]["source_path"], identity[0]["page_number"]))
+        # A person the facts reach: the numbers only, not the mother's name.
+        self.assertEqual("Kovács János -- Nyilvántartási szám: NY-100001.", identity[1]["text"])
+        self.assertTrue(all("1990" not in c["text"] and "Titok" not in c["text"]
+                            for c in contexts))
+        self.assertEqual(2, len(identity))
+        self.assertNotIn("NY-100001", "\n".join(c["text"] for c in contexts
+                                                if c not in identity))
+        # A later round looking into a person found: still not asked about by the user.
+        contexts = r.run([{"tool": "relations", "args": {"entity": "Kovács János"}}], 2)
+        self.assertTrue(all("Titok" not in c["text"] for c in contexts))
+        self.assertIn("Kovács János -- Nyilvántartási szám: NY-100001.",
+                      [c["text"] for c in contexts])
+
+    def test_an_identity_fact_cites_the_page_of_its_own_values(self):
+        attrs = [("id_number", "123456AB", "d1", 1), ("birth_date", "1990-01-01", "d1", 1),
+                 ("id_number", "123456AB", "d3", 1), ("mother_name", "Anya Anna", "d3", 3)]
+        docs = dict(DOC, d3={"corpus_id": "c", "source_path": "/storage/drives/ops/b.txt",
+                             "title": "b", "kind": "txt"})
+
+        class Graph(FakeGraph):
+            def post(self, path, body):
+                out = json.loads(json.dumps(super().post(path, body)))
+                for n in out.get("nodes") or out.get("entities") or []:
+                    if n["id"] == "p4":
+                        n["attributes"] = [{"name": k, "value": v, "doc_id": d, "page": p}
+                                           for k, v, d, p in attrs]
+                if "documents" in out:
+                    out["documents"] = docs
+                return out
+
+        r = orchestrator.Run(Graph(), {"corpus_ids": ["c"], "access": None},
+                             lambda p: True, "Hungarian")
+        contexts = r.run([{"tool": "relations", "args": {"entity": "Nagy Éva"}}])
+        identity = {c["text"]: c for c in contexts if c["text"].startswith("Nagy Éva -- ")
+                    and c["text"].count(" -- ") == 1}
+        mother = identity["Nagy Éva -- Anyja neve: Anya Anna."]
+        self.assertEqual(("/storage/drives/ops/b.txt", 3),
+                         (mother["source_path"], mother["page_number"]))
 
     def test_connection_and_missing_path(self):
         _, contexts, _ = run([{"tool": "connection", "args": {"a": "Nagy Éva",
@@ -584,6 +737,267 @@ class RunTest(unittest.TestCase):
         self.assertEqual(1, len(info["calls"]))
         self.assertEqual("repeat", info["stop"])
         self.assertIn("1. Nagy Éva -- 2 links", seen[0])
+
+
+def person(nid, label, subtype="", attrs=()):
+    return {"id": nid, "label": label, "type": "person", "subtype": subtype,
+            "aliases": [label], "documents": ["d1"], "mentions": 1,
+            "attributes": [{"name": n, "value": v, "doc_id": d, "page": 2} for n, v, d in attrs]}
+
+
+def thing(nid, label, typ, subtype):
+    return {"id": nid, "label": label, "type": typ, "subtype": subtype, "aliases": [label],
+            "documents": ["d1"], "mentions": 1, "attributes": []}
+
+
+class InvestigationGraph:
+    """Sas Tibor's investigation as the graph answers it. d2 is in a folder the
+    adapter's policy hides (the graph's ACL copy lags): Kiss Bori, reached only
+    through it, must vanish together with Illés Dénes reached only through her."""
+    S = person("S", "Sas Tibor", "inmate", [("registry_number", "NY-100", "d1"),
+                                            ("registry_number", "NY-999", "d2")])
+    K1 = person("K1", "Kende Anna")
+    K2 = person("K2", "Kiss Bori")
+    I3 = person("I3", "Izsó Csaba", "inmate", [("registry_number", "NY-300", "d1")])
+    I4 = person("I4", "Illés Dénes", "inmate")
+    M = person("M", "Major Ede", "inmate")
+    E = thing("E", "verekedés (2025-03-01)", "event", "incident")
+    # An incident linked visibly from Sas Tibor whose other half (to Mohácsi
+    # Gréta) rests on the hidden document: both must vanish.
+    E2 = thing("E2", "szökés (2025-04-02)", "event", "incident")
+    MG = person("MG", "Mohácsi Gréta")
+    P = thing("P", "+36 30 111 1111", "identifier", "phone")
+    # Held by Kiss Bori only, on a visible document: gone with her.
+    P2 = thing("P2", "+36 20 222 2222", "identifier", "phone")
+    A = thing("A", "Fő utca 5.", "place", "address")
+    MAIL = thing("X", "kende@example.hu", "identifier", "email")
+
+    def __init__(self, truncated=False):
+        self.calls = []
+        self.truncated = truncated
+
+    def post(self, path, body):
+        self.calls.append((path, body))
+        if path == "/profile/get":
+            return {"profile": {
+                "relation_types": [
+                    {"id": "RELATIVE_OF", "label": {"en": "Relative of", "hu": "Rokona"},
+                     "synonyms": ["kapcsolattartó"]},
+                    {"id": "INVOLVED_IN", "label": {"en": "Involved in", "hu": "Érintett"}},
+                    {"id": "USES", "label": {"en": "Uses", "hu": "Használja"}},
+                    {"id": "RELATED_TO", "label": {"en": "Related to"}}],
+                "entity_subtypes": [{"id": "inmate", "type": "person",
+                                     "label": {"en": "Inmate", "hu": "Fogvatartott"}}]}}
+        if path == "/query/find":
+            return {"entities": [self.S] if "sas" in orchestrator.fold(body["text"]) else [],
+                    "documents": {}}
+        if path == "/review/list":
+            return {"review": [], "total": 0}
+        if path == "/query/investigate":
+            def via(frm, eid, to, typ="RELATIVE_OF", doc="d1", through=None, doc2=None):
+                link = {"from": frm, "edge": edge(eid, frm, through["id"] if through else to,
+                                                  typ, doc=doc)}
+                if through:
+                    link.update(through=through, edge2=edge(eid + "b", through["id"], to,
+                                                            typ, doc=doc2 or doc))
+                return link
+            r1 = via("S", "r1", "K1")
+            # One link stated in a visible and in a hidden document.
+            r1["edge"]["evidence"].append({"doc_id": "d2", "page": 9, "quote": "titok"})
+            rows = [
+                {"level": 0, "node": self.S, "via": [], "held": []},
+                {"level": 1, "node": self.K1, "via": [r1], "held": [
+                    {"node": self.P, "edge": edge("u1", "K1", "P", "USES")},
+                    {"node": self.A, "edge": edge("h1", "K1", "A", "RESIDES_AT")},
+                    {"node": self.MAIL, "edge": edge("m1", "K1", "X", "USES", doc="d2")}]},
+                {"level": 1, "node": self.K2, "via": [via("S", "r2", "K2", doc="d2")],
+                 "held": [{"node": self.P2, "edge": edge("u2", "K2", "P2", "USES")}]},
+                {"level": 1, "node": self.M, "via": [via("S", "x1", "M", "INVOLVED_IN",
+                                                         through=self.E)], "held": []},
+                {"level": 1, "node": self.MG, "via": [via("S", "x2", "MG", "INVOLVED_IN",
+                                                          through=self.E2, doc2="d2")],
+                 "held": []},
+                {"level": 2, "node": self.I3, "via": [via("K2", "r5", "I3"),
+                                                      via("K1", "r4", "I3")],
+                 "held": []},
+                {"level": 2, "node": self.I4, "via": [via("K2", "r7", "I4")], "held": []}]
+            return {"rows": rows, "truncated": self.truncated, "levels": 2,
+                    "documents": DOC}
+        raise AssertionError(path)
+
+
+class InvestigateTest(unittest.TestCase):
+    CONFIG = {"relations": ["RELATIVE_OF"], "via": ["INVOLVED_IN"], "branch": 10,
+              "max_rows": 80}
+
+    def run_investigation(self, graph=None, message="Sas Tibor kapcsolattartói", **kw):
+        graph = graph or InvestigationGraph()
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"], "access": None},
+                             lambda p: "/hr/" not in p, "Hungarian",
+                             message=message, investigate=kw.pop("config", self.CONFIG), **kw)
+        out = r.run([{"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 2}}])
+        return r, out, graph
+
+    def test_one_row_per_person_reached_with_role_identifiers_and_path(self):
+        r, out, graph = self.run_investigation()
+        texts = [c["text"] for c in out]
+        rows = [c for c in out if c["text"].startswith("Vizsgálat,")]
+        self.assertEqual(["Sas Tibor", "Kende Anna", "Major Ede", "Izsó Csaba"],
+                         [c["text"].split(": ", 1)[1].split(" -- ")[0] for c in rows])
+        self.assertEqual(
+            "Vizsgálat, 1. szint: Kende Anna -- szerep: Személy; telefon: +36 30 111 1111; "
+            "lakcím: Fő utca 5. -- kapcsolódás útja: Sas Tibor \u2014[Rokona / "
+            "kapcsolattartó]\u2014 Kende Anna.", rows[1]["text"])
+        self.assertIn("szerep: Fogvatartott; Nyilvántartási szám: NY-100 -- kapcsolódás "
+                      "útja: kiindulópont.", rows[0]["text"])
+        self.assertIn("Sas Tibor \u2014[Érintett: verekedés (2025-03-01)]\u2014 Major Ede",
+                      rows[2]["text"])
+        self.assertIn("Nyilvántartási szám: NY-300", rows[3]["text"])
+        # Each row is a citable fact of the document that states its link.
+        self.assertEqual(("/storage/drives/ops/a.txt", "graph"),
+                         (rows[1]["source_path"], rows[1]["origin"]))
+        # The header says what the table covers, ahead of the rows.
+        header = next(c for c in out if c["origin"] == "graph-note")
+        self.assertLess(out.index(header), out.index(rows[0]))
+        self.assertIn("kiindulópont: Sas Tibor; 4 személy, 2 szint", header["text"])
+        self.assertIn("Rokona / kapcsolattartó, Érintett (ugyanahhoz", header["text"])
+        self.assertIn("a táblázat teljes", header["text"])
+        body = graph.calls[-1][1] if graph.calls[-1][0] == "/query/investigate" else \
+            next(b for p, b in graph.calls if p == "/query/investigate")
+        self.assertEqual((["S"], ["RELATIVE_OF"], ["INVOLVED_IN"], 2, 10, 80),
+                         (body["seeds"], body["relations"], body["via_relations"],
+                          body["levels"], body["branch"], body["limit"]))
+        self.assertNotIn("join_namesakes", body)
+        info = r.info()["investigations"][0]
+        self.assertEqual(["+36 30 111 1111"], info["rows"][1]["phone"])
+        self.assertEqual([0, 1, 1, 2], [row["level"] for row in info["rows"]])
+        self.assertTrue(any("NY-100" in t for t in texts))
+
+    def test_what_the_adapter_hides_is_dropped_with_all_reached_through_it(self):
+        _, out, _ = self.run_investigation()
+        text = "\n".join(c["text"] for c in out)
+        for hidden in ("Kiss Bori", "Illés Dénes", "kende@example.hu", "NY-999"):
+            self.assertNotIn(hidden, text)
+        # Izsó Csaba stays: Kende Anna links him too.
+        self.assertIn("Sas Tibor \u2014[Rokona / kapcsolattartó]\u2014 Kende Anna \u2014[Rokona "
+                      "/ kapcsolattartó]\u2014 Izsó Csaba", text)
+        self.assertTrue(all(c["source_path"] is None or "/hr/" not in c["source_path"]
+                            for c in out))
+
+    def test_a_cut_table_says_so_and_namesakes_are_joined_on_request(self):
+        r, out, graph = self.run_investigation(InvestigationGraph(truncated=True),
+                                               name_join=True)
+        header = next(c for c in out if c["origin"] == "graph-note")
+        self.assertIn("csonkolva", header["text"])
+        self.assertIn("legfeljebb 10 új személy, összesen 80 sor", header["text"])
+        body = next(b for p, b in graph.calls if p == "/query/investigate")
+        self.assertTrue(body["join_namesakes"])
+
+    def test_the_subgraph_has_the_rows_their_links_and_what_they_hold(self):
+        r, _, _ = self.run_investigation()
+        [sub] = r.investigation_graphs
+        nodes = {n["id"]: n for n in sub["nodes"]}
+        edges = {e["id"]: e for e in sub["edges"]}
+        # The rows' people, the incident between Sas Tibor and Major Ede, and
+        # Kende Anna's visible phone and address.
+        self.assertEqual({"S", "K1", "M", "I3", "E", "P", "A"}, set(nodes))
+        # Direct links, both halves through the incident, and the held identifiers.
+        self.assertEqual({"r1", "r4", "x1", "x1b", "u1", "h1"}, set(edges))
+        self.assertEqual(("S", "E", "E", "M"), (edges["x1"]["a"], edges["x1"]["b"],
+                                                edges["x1b"]["a"], edges["x1b"]["b"]))
+        self.assertTrue(all(e["a"] in nodes and e["b"] in nodes for e in sub["edges"]))
+        self.assertEqual({"d1"}, set(sub["documents"]))
+        self.assertFalse(sub["truncated"])
+        # Each row's level and path: the start is marked, the levels can be drawn.
+        self.assertEqual([("S", 0), ("K1", 1), ("M", 1), ("I3", 2)],
+                         [(row["id"], row["level"]) for row in sub["rows"]])
+        self.assertEqual("Sas Tibor \u2014[Rokona / kapcsolattartó]\u2014 Kende Anna",
+                         sub["rows"][1]["path"])
+        self.assertNotIn("investigation_graphs", json.dumps(r.info()))
+        self.assertNotIn("edges", json.dumps(r.info()["investigations"]))
+
+    def test_the_subgraph_drops_hidden_evidence_and_all_reached_only_through_it(self):
+        r, _, _ = self.run_investigation()
+        [sub] = r.investigation_graphs
+        nodes = {n["id"]: n for n in sub["nodes"]}
+        ids = set(nodes) | {e["id"] for e in sub["edges"]}
+        # Kiss Bori (hidden link), Illés Dénes and her phone (only through her),
+        # the second incident and Mohácsi Gréta (its second half is hidden), Kende
+        # Anna's e-mail (hidden), and Kiss Bori's link to Izsó Csaba.
+        for hidden in ("K2", "I4", "P2", "u2", "E2", "MG", "x2", "x2b", "X", "m1", "r2",
+                       "r5", "r7"):
+            self.assertNotIn(hidden, ids)
+        blob = json.dumps(sub, ensure_ascii=False)
+        for hidden in ("Kiss Bori", "Illés Dénes", "+36 20 222 2222", "szökés", "Mohácsi",
+                       "kende@example.hu", "NY-999", "titok", "/hr/", '"d2"'):
+            self.assertNotIn(hidden, blob)
+        # A link stated in a visible and a hidden document keeps the visible one.
+        r1 = next(e for e in sub["edges"] if e["id"] == "r1")
+        self.assertEqual(["d1"], [ev["doc_id"] for ev in r1["evidence"]])
+        self.assertEqual(["NY-100"], [a["value"] for a in nodes["S"]["attributes"]])
+
+    def test_an_all_visible_subgraph_keeps_every_link(self):
+        r = orchestrator.Run(InvestigationGraph(truncated=True), {"corpus_ids": ["c"]},
+                             lambda p: True, "Hungarian", investigate=self.CONFIG)
+        r.run([{"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 2}}])
+        [sub] = r.investigation_graphs
+        self.assertTrue(sub["truncated"])
+        self.assertEqual({"r1", "r2", "x1", "x1b", "x2", "x2b", "r4", "r5", "r7", "u1", "h1",
+                          "m1", "u2"}, {e["id"] for e in sub["edges"]})
+        self.assertEqual({"d1", "d2"}, set(sub["documents"]))
+        i3 = next(row for row in sub["rows"] if row["id"] == "I3")
+        # The "Y": reached from both, the second one named beside the path.
+        self.assertEqual((2, ["Kende Anna"]), (i3["level"], i3["also"]))
+        self.assertIn("Kiss Bori", i3["path"])
+
+    def test_an_investigation_ends_the_planning_rounds(self):
+        r = orchestrator.Run(InvestigationGraph(), {"corpus_ids": ["c"]}, lambda p: True,
+                             "Hungarian", investigate=self.CONFIG)
+        first = {"action": "tools", "more": True, "search": "", "calls": [
+            {"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 3}}]}
+        replanned = []
+        _, info = orchestrator.orchestrate(r, first, lambda results: replanned.append(1))
+        self.assertEqual(([], "investigated"), (replanned, info["stop"]))
+        self.assertEqual(1, len(info["investigations"]))
+        self.assertEqual(7, info["facts"])  # the table rows are the facts
+
+    def test_without_a_configuration_the_call_is_skipped_quietly(self):
+        r, out, graph = self.run_investigation(config=None)
+        self.assertEqual([], out)
+        self.assertNotIn("/query/investigate", [p for p, _ in graph.calls])
+        self.assertTrue(r.info()["calls"][0]["skipped"])
+
+    def test_configuration_keeps_known_specific_relations_only(self):
+        prof = InvestigationGraph().post("/profile/get", {})["profile"]
+        cfg = orchestrator.investigate_config(prof, ["RELATIVE_OF", "CONTACT_OF", "RELATED_TO"],
+                                              ["INVOLVED_IN"], 99, 9999)
+        self.assertEqual({"relations": ["RELATIVE_OF"], "via": ["INVOLVED_IN"], "branch": 50,
+                          "max_rows": 500}, cfg)
+        self.assertIsNone(orchestrator.investigate_config(prof, ["CONTACT_OF"], ["RELATED_TO"]))
+        line = orchestrator.investigate_tool(prof, cfg, "Hungarian")
+        self.assertIn("RELATIVE_OF (Rokona) and people sharing a INVOLVED_IN (Érintett)", line)
+        self.assertEqual("", orchestrator.investigate_tool(prof, None))
+
+    def test_the_planner_gets_the_tool_only_when_offered_and_args_are_cleaned(self):
+        p = orchestrator.parse_plan(json.dumps({"action": "tools", "calls": [
+            {"tool": "investigate", "args": {"start": "NY-100", "levels": "3"}},
+            {"tool": "investigate", "args": {"start": {"name": "Sas Tibor"}, "levels": 9}},
+            {"tool": "investigate", "args": {"entity": "+36 30 111 1111"}},
+            {"tool": "investigate", "args": {"levels": 2}}]}))
+        self.assertEqual([{"start": "NY-100", "levels": 3}, {"start": "Sas Tibor", "levels": 4},
+                          {"start": "+36 30 111 1111", "levels": 2}],
+                         [c["args"] for c in p["calls"]])
+        seen = []
+
+        def fake_chat(system, user, **kw):
+            seen.append(system)
+            return '{"action": "chat"}', None, None
+        with patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", fake_chat):
+            orchestrator.plan("Ki?", [], "Hungarian", "V", investigate="- investigate {start}\n")
+            orchestrator.plan("Ki?", [], "Hungarian", "V")
+        self.assertIn("- investigate {start}", seen[0])
+        self.assertNotIn("investigate", seen[1])
+        self.assertNotIn("{investigate}", seen[1])
 
 
 if __name__ == "__main__":

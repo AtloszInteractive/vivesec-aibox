@@ -741,6 +741,70 @@ const M: Record<string, Tri> = {
   "No connection found within 6 steps.": ["6 lépésen belül nincs kapcsolat.", "Ingen forbindelse inden for 6 trin.", "Keine Verbindung innerhalb von 6 Schritten."],
   "Showing the first 150 entities.": ["Az első 150 entitás látható.", "Viser de første 150 enheder.", "Die ersten 150 Entitäten werden angezeigt."],
   "Dossier": ["Dosszié", "Dossier", "Dossier"],
+  // ---- E26b: investigation table export (BV 1.5 / 2.5) ----
+  "Export to Excel": ["Exportálás Excelbe", "Eksportér til Excel", "Nach Excel exportieren"],
+  "The investigation table as a spreadsheet, rebuilt from the documents you may see now": [
+    "A vizsgálati tábla táblázatként, az Ön számára most látható dokumentumokból újra összeállítva",
+    "Undersøgelsestabellen som regneark, genopbygget ud fra de dokumenter, du har adgang til nu",
+    "Die Untersuchungstabelle als Tabellenblatt, neu erstellt aus den Dokumenten, die Sie jetzt sehen dürfen",
+  ],
+  "The table was rebuilt from the documents you may see now, so it differs from the answer.": [
+    "A tábla az Ön számára most látható dokumentumokból készült újra, ezért eltér a választól.",
+    "Tabellen er genopbygget ud fra de dokumenter, du har adgang til nu, og afviger derfor fra svaret.",
+    "Die Tabelle wurde aus den Dokumenten neu erstellt, die Sie jetzt sehen dürfen, und weicht daher von der Antwort ab.",
+  ],
+  Rows: ["Sorok", "Rækker", "Zeilen"],
+  "The drives of this answer are no longer available to you.": [
+    "A válasz meghajtói már nem érhetők el az Ön számára.",
+    "Drevene i dette svar er ikke længere tilgængelige for dig.",
+    "Die Laufwerke dieser Antwort stehen Ihnen nicht mehr zur Verfügung.",
+  ],
+  "Nothing of this investigation is visible to you now.": [
+    "Ebből a vizsgálatból most semmi sem látható az Ön számára.",
+    "Intet af denne undersøgelse er synligt for dig nu.",
+    "Von dieser Untersuchung ist für Sie jetzt nichts sichtbar.",
+  ],
+  "The starting point fits several entries; ask again with a more exact name.": [
+    "A kiindulópont több szereplőre is illik; kérdezzen újra pontosabb névvel.",
+    "Udgangspunktet passer på flere poster; spørg igen med et mere præcist navn.",
+    "Der Ausgangspunkt passt auf mehrere Einträge; fragen Sie erneut mit einem genaueren Namen.",
+  ],
+  "The spreadsheet could not be made.": [
+    "A táblázat nem készült el.",
+    "Regnearket kunne ikke laves.",
+    "Die Tabelle konnte nicht erstellt werden.",
+  ],
+  // ---- E26b: investigation subgraph (BV 1.3 / 2.3) ----
+  "Open as graph": ["Megnyitás ábrán", "Åbn som graf", "Als Grafik öffnen"],
+  "The people of the investigation and their links as a graph, rebuilt from the documents you may see now":
+    [
+      "A vizsgálat személyei és kapcsolataik ábrán, az Ön számára most látható dokumentumokból újra összeállítva",
+      "Undersøgelsens personer og deres forbindelser som graf, genopbygget ud fra de dokumenter, du har adgang til nu",
+      "Die Personen der Untersuchung und ihre Verbindungen als Grafik, neu erstellt aus den Dokumenten, die Sie jetzt sehen dürfen",
+    ],
+  "The graph could not be opened.": [
+    "Az ábra nem nyitható meg.",
+    "Grafen kunne ikke åbnes.",
+    "Die Grafik konnte nicht geöffnet werden.",
+  ],
+  Investigation: ["Vizsgálat", "Undersøgelse", "Untersuchung"],
+  "Starting point": ["Kiindulópont", "Udgangspunkt", "Ausgangspunkt"],
+  "Level 1": ["1. szint", "Niveau 1", "Ebene 1"],
+  "Level 2": ["2. szint", "Niveau 2", "Ebene 2"],
+  "Level 3": ["3. szint", "Niveau 3", "Ebene 3"],
+  "Level 4": ["4. szint", "Niveau 4", "Ebene 4"],
+  "Path of the link": ["Kapcsolódás útja", "Forbindelsesvej", "Verbindungsweg"],
+  "Also through": ["További szál", "Også gennem", "Auch über"],
+  "Back to the investigation": [
+    "Vissza a vizsgálathoz",
+    "Tilbage til undersøgelsen",
+    "Zurück zur Untersuchung",
+  ],
+  "The investigation was cut; more people may exist.": [
+    "A vizsgálat csonkolva van; további személyek is lehetnek.",
+    "Undersøgelsen er afkortet; der kan være flere personer.",
+    "Die Untersuchung wurde gekürzt; es kann weitere Personen geben.",
+  ],
   "The drive is not writable from here — use the download instead.": ["Innen nem írható a meghajtó — használja a letöltést.", "Drevet kan ikke skrives herfra — brug download i stedet.", "Das Laufwerk ist von hier nicht beschreibbar — bitte stattdessen herunterladen."],
   "Click a node to focus it, a line to see its evidence.": ["Kattintson egy pontra a kiemeléséhez, egy vonalra a bizonyítékaihoz.", "Klik på et punkt for at fokusere på det, på en linje for at se dokumentationen.", "Klicken Sie auf einen Knoten, um ihn hervorzuheben, auf eine Linie für die Belege."],
   "Back": ["Vissza", "Tilbage", "Zurück"],

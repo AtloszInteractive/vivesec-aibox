@@ -19,9 +19,12 @@ import zipfile
 from xml.sax.saxutils import escape
 
 FORMATS = ("md", "txt", "pdf", "docx", "pptx")
+# Formats rendered elsewhere (investigation_export.py) and only stored here as
+# pre-rendered bytes; text cannot be rendered to them.
+STORED_FORMATS = ("xlsx",)
 
 _EXT = {"md": ".md", "txt": ".txt", "pdf": ".pdf", "docx": ".docx",
-    "pptx": ".pptx"}
+    "pptx": ".pptx", "xlsx": ".xlsx"}
 
 _CONTENT_TYPE = {
     "md": "text/markdown; charset=utf-8",
@@ -31,6 +34,8 @@ _CONTENT_TYPE = {
              ".wordprocessingml.document"),
     "pptx": ("application/vnd.openxmlformats-officedocument"
              ".presentationml.presentation"),
+    "xlsx": ("application/vnd.openxmlformats-officedocument"
+             ".spreadsheetml.sheet"),
 }
 
 
@@ -42,6 +47,12 @@ def normalize_format(value):
     if name == "text":
         name = "txt"
     return name if name in FORMATS else None
+
+
+def stored_format(value):
+    """A format a generated file may be stored in (rendered here or elsewhere)."""
+    name = (value or "").strip().lower().lstrip(".")
+    return name if name in STORED_FORMATS else normalize_format(name)
 
 
 def content_type(fmt):

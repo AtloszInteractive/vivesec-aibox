@@ -10,7 +10,10 @@ changed, and the administrator's review stays the authority.
 
 A name group is joined only when nothing speaks against it: the records may
 not carry different subtypes (an inmate and a visitor of one name are two
-people), different birth dates, mothers' names or ID numbers, and no pair of
+people) unless an identifying key confirms they are one (the same registry or
+ID number, or the same birth date and mother's name: extraction now and then
+types an inmate as a visitor in one document), different birth dates,
+mothers' names or ID numbers, and no pair of
 them may have been decided "separate". Only attributes from documents the
 caller may see are compared, so a hidden document can neither join nor split
 records. Joined nodes carry "joined": [record ids], so the caller can say which
@@ -18,10 +21,14 @@ links rest on the name alone.
 """
 from __future__ import annotations
 
+from collections import Counter
+
 from extraction import fold
 from resolution import _person_keys
 
 CONFLICT_ATTRS = ("birth_date", "mother_name", "id_number", "registry_number")
+# Any one of these, equal and present on both records, confirms the same person.
+CONFIRMING_KEYS = (("registry_number",), ("id_number",), ("birth_date", "mother_name"))
 
 
 class JoinedView:
@@ -55,8 +62,44 @@ class JoinedView:
                 self.rep[nid] = nodes[0]["id"]
 
     @staticmethod
-    def _conflict(nodes, separate) -> bool:
-        if len({n["subtype"] for n in nodes if n.get("subtype")}) > 1:
+    def _values(node) -> dict:
+        out: dict[str, set] = {}
+        for a in node.get("attributes") or []:
+            if a["name"] in CONFLICT_ATTRS and a.get("value"):
+                out.setdefault(a["name"], set()).add(fold(a["value"]))
+        return out
+
+    @classmethod
+    def _subtype_conflict(cls, nodes) -> bool:
+        """Two subtypes are two people, unless a key confirms the records are one:
+        the subtypes of records confirmed together count as one person's."""
+        parent = {n["id"]: n["id"] for n in nodes}
+
+        def root(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+        values = {n["id"]: cls._values(n) for n in nodes}
+        for i, a in enumerate(nodes):
+            for b in nodes[i + 1:]:
+                va, vb = values[a["id"]], values[b["id"]]
+                if any(all(va.get(k) and va.get(k) == vb.get(k) for k in key)
+                       for key in CONFIRMING_KEYS):
+                    parent[root(a["id"])] = root(b["id"])
+        units: dict[str, Counter] = {}
+        for n in nodes:
+            if n.get("subtype"):
+                units.setdefault(root(n["id"]), Counter())[n["subtype"]] += \
+                    len(n.get("documents") or []) or 1
+        # A confirmed person counts as the subtype most of their documents give, so
+        # another record typed otherwise and not confirmed still stays apart.
+        sets = [{k for k, c in u.items() if c == max(u.values())} for u in units.values()]
+        return any(not (x & y) for i, x in enumerate(sets) for y in sets[i + 1:])
+
+    @classmethod
+    def _conflict(cls, nodes, separate) -> bool:
+        if cls._subtype_conflict(nodes):
             return True
         for name in CONFLICT_ATTRS:
             values = {fold(a["value"]) for n in nodes for a in n.get("attributes") or []
@@ -80,8 +123,14 @@ class JoinedView:
             if node is not None and ids:
                 parts = [self.view.node(i) for i in ids]
                 parts = [p for p in parts if p]
-                node = dict(node, joined=ids,
-                            subtype=next((p["subtype"] for p in parts if p.get("subtype")), ""),
+                # The subtype most documents give (a record typed otherwise was
+                # confirmed to be the same person by a key).
+                kinds = Counter()
+                for p in parts:
+                    if p.get("subtype"):
+                        kinds[p["subtype"]] += len(p.get("documents") or []) or 1
+                subtype = min(kinds, key=lambda k: (-kinds[k], k)) if kinds else ""
+                node = dict(node, joined=ids, subtype=subtype,
                             mentions=sum(p.get("mentions", 0) for p in parts),
                             documents=sorted({d for p in parts for d in p.get("documents") or []}),
                             aliases=sorted({a for p in parts for a in p.get("aliases") or []}),

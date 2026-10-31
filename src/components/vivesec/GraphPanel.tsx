@@ -37,6 +37,7 @@ import {
   type GraphTimelineItem,
   type GraphReprocessRun,
   type GraphReprocessStatus,
+  type GraphInvestigationView,
   type IndexSkipped,
 } from "@/lib/api/graph.functions";
 
@@ -93,10 +94,13 @@ export type GraphSource = { path: string; page: number; quote: string; label: st
 
 export function GraphPanel({
   drive,
+  initial,
   onClose,
   onOpenSource,
 }: {
   drive: string;
+  /** An investigation subgraph the Explore tab shows instead of the search. */
+  initial?: GraphInvestigationView | null;
   onClose: () => void;
   onOpenSource: (source: GraphSource) => void;
 }) {
@@ -182,6 +186,7 @@ export function GraphPanel({
           {tab === "explore" && (
             <ExploreTab
               drive={drive}
+              initial={initial ?? null}
               relLabel={relLabel}
               subtypeLabel={subtypeLabel}
               onOpenSource={onOpenSource}
@@ -240,26 +245,41 @@ function useFailure() {
 
 function ExploreTab({
   drive,
+  initial,
   relLabel,
   subtypeLabel,
   onOpenSource,
 }: {
   drive: string;
+  initial: GraphInvestigationView | null;
   relLabel: (type: string) => string;
   subtypeLabel: (sub: string) => string;
   onOpenSource: (source: GraphSource) => void;
 }) {
   const { tm } = useLang();
   const { run, notice } = useFailure();
+  const startId = initial?.rows.find((r) => r.level === 0)?.id ?? null;
   const [text, setText] = useState("");
   const [results, setResults] = useState<GraphNode[] | null>(null);
-  const [focus, setFocus] = useState<string | null>(null);
+  const [focus, setFocus] = useState<string | null>(startId);
   const [hops, setHops] = useState(1);
-  const [graph, setGraph] = useState<Graph | null>(null);
+  const [graph, setGraph] = useState<Graph | null>(initial);
+  // The investigation is on screen: a click focuses a node instead of
+  // replacing the subgraph with its neighbourhood.
+  const [investigating, setInvestigating] = useState(!!initial);
   const [pathMode, setPathMode] = useState(false);
   const [pathNote, setPathNote] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  function showInvestigation(id: string | null = startId) {
+    if (!initial) return;
+    setGraph(initial);
+    setFocus(id);
+    setSelectedEdge(null);
+    setPathNote(null);
+    setInvestigating(true);
+  }
 
   async function search(target: "focus" | "path") {
     if (!text.trim()) return;
@@ -282,6 +302,7 @@ function ExploreTab({
         setGraph(res);
         setSelectedEdge(null);
         setPathNote(null);
+        setInvestigating(false);
       }
     },
     [drive, run],
@@ -302,6 +323,7 @@ function ExploreTab({
     setGraph({ nodes: res.path.nodes, edges: res.path.edges, documents: res.documents });
     setSelectedEdge(res.path.edges[0] ? pairKey(res.path.edges[0]) : null);
     setPathNote(null);
+    setInvestigating(false);
   }
 
   function pick(node: GraphNode) {
@@ -356,6 +378,23 @@ function ExploreTab({
         </div>
         {notice}
         {pathNote && <Notice text={pathNote} />}
+        {initial &&
+          (investigating ? (
+            <InvestigationLevels
+              view={initial}
+              focus={focus}
+              onPick={(id) => showInvestigation(id)}
+            />
+          ) : (
+            <div className="border-b border-white/5 px-4 py-1.5">
+              <button
+                onClick={() => showInvestigation()}
+                className="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white"
+              >
+                <ArrowLeft className="h-3 w-3" /> {tm("Back to the investigation")}
+              </button>
+            </div>
+          ))}
         <div className="relative min-h-0 flex-1">
           {results && (
             <ResultList
@@ -371,7 +410,12 @@ function ExploreTab({
               focus={focus}
               selectedEdge={selectedEdge}
               relLabel={relLabel}
-              onNode={(id) => void showNeighbourhood(id, hops)}
+              onNode={(id) => {
+                if (investigating) {
+                  setFocus(id);
+                  setSelectedEdge(null);
+                } else void showNeighbourhood(id, hops);
+              }}
               onEdge={setSelectedEdge}
             />
           ) : (
@@ -379,7 +423,9 @@ function ExploreTab({
           )}
           {graph?.truncated && (
             <div className="absolute bottom-2 left-3 text-[11px] text-white/45">
-              {tm("Showing the first 150 entities.")}
+              {investigating
+                ? tm("The investigation was cut; more people may exist.")
+                : tm("Showing the first 150 entities.")}
             </div>
           )}
         </div>
@@ -410,6 +456,65 @@ function ExploreTab({
           <Notice text={tm("Click a node to focus it, a line to see its evidence.")} />
         )}
       </aside>
+    </div>
+  );
+}
+
+const LEVEL_LABEL = ["Starting point", "Level 1", "Level 2", "Level 3", "Level 4"];
+
+/** The rows of an investigation by level: the starting point first, each name
+ *  focuses its node; the focused row's path of the link below. */
+function InvestigationLevels({
+  view,
+  focus,
+  onPick,
+}: {
+  view: GraphInvestigationView;
+  focus: string | null;
+  onPick: (id: string) => void;
+}) {
+  const { tm } = useLang();
+  const levels = [...new Set(view.rows.map((r) => r.level))].sort((a, b) => a - b);
+  const row = view.rows.find((r) => r.id === focus);
+  return (
+    <div className="max-h-[30%] overflow-y-auto border-b border-white/5 px-4 py-2 text-[11px]">
+      <div className="mb-1 text-white/50">
+        {tm("Investigation")}: <span className="text-white/85">{view.start}</span>
+      </div>
+      {levels.map((level) => (
+        <div key={level} className="flex flex-wrap items-center gap-1 py-0.5">
+          <span className="w-24 shrink-0 text-white/45">
+            {tm(LEVEL_LABEL[level] ?? LEVEL_LABEL[LEVEL_LABEL.length - 1])}
+          </span>
+          {view.rows
+            .filter((r) => r.level === level)
+            .map((r) => (
+              <button
+                key={r.id}
+                onClick={() => onPick(r.id)}
+                className={`rounded-full border px-2 py-0.5 transition ${
+                  r.id === focus
+                    ? "border-transparent text-black"
+                    : "border-white/10 text-white/75 hover:bg-white/10"
+                }`}
+                style={r.id === focus ? { backgroundColor: LIME } : undefined}
+              >
+                {r.name}
+              </button>
+            ))}
+        </div>
+      ))}
+      {row && row.level > 0 && (
+        <div className="mt-1 text-white/60">
+          {tm("Path of the link")}: <span className="text-white/85">{row.path}</span>
+          {row.also.length > 0 && (
+            <span>
+              {" · "}
+              {tm("Also through")}: {row.also.join(", ")}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

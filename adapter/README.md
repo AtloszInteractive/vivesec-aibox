@@ -561,18 +561,155 @@ adapter also shows the reason under the answer, since the model may drop it).
 lets patterns, sequences and counts treat the visible person records of one
 name as one person for that query (`graph_service/namesakes.py`; the graph is
 not changed). Records are never joined when their kinds differ (an inmate and a
-visitor), when visible birth dates, mothers' names or ID numbers differ, or
+visitor) unless a key confirms that they are one person (the same registry or ID
+number, or the same birth date and mother's name: extraction now and then types
+an inmate as a visitor in one document; such a person counts as the kind most of
+their documents give). Records are also never joined when visible birth dates,
+mothers' names or ID numbers differ, or
 when an administrator decided the pair "separate". The answer then lists the
 people joined by name alone, under the answer as well, and an empty result
 mentions how many names were left apart because their records conflict. This
 is an identity rule for the customer to confirm; a strong key in the source
 documents (e.g. an inmate registry number) is the better fix where available.
 Each fact becomes a cited context with its quote (at most
-`ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. A question back
+`ADAPTER_ORCHESTRATOR_MAX_FACTS`); hidden evidence is dropped. The people the
+facts name also get their identity data as cited facts (one line per person and
+source document, at most 15): the registry and ID numbers of everyone, and the
+birth date, birthplace and mother's name only of the people the message itself
+named (the first planning round's names, not those later rounds continue from:
+data minimisation); only attributes stated in documents the caller may
+read. A registry or ID number is a name the planner may pass: the graph's `find`
+matches the exact value of a visible `registry_number` / `id_number` attribute.
+An identifier that is not in the graph (an e-mail address, a number) is reported
+as not found, never prefix-matched to people's names. The planner sees the
+profile's relation synonyms ("kapcsolattartó" for a relative), with the graph's
+generic `RELATED_TO` / `CO_MENTIONED` listed last and marked generic; when a plan
+still uses a generic relation, the run replaces it with the one specific
+relation the message names by label or synonym (inflected forms too) that can
+join the step's two sides (several candidates: kept). The planner is told to
+start chains from identifiers and to query each level of a chain separately
+(a pattern returns only complete chains). The BV query requirements are
+measured with `graph-corpus/bv_eval.py` (gold answers), `bv_toolcheck.py` (tool
+ceiling on a perfect-extraction graph, no model) and `bv_eval_run.py` (live
+adapter). A question back
 is stored as the assistant's turn and answered with `clarify: true`. A failed or
 unusable plan falls back to the plain path (condense + graph facts).
 Tests: `orchestrator_test`, `graph_integration_test`; graph side:
 `graph_service/analytics_test.py`, `graph_service/namesakes_test.py`.
+
+#### Investigation table (`investigate`)
+
+`investigate {start, levels}` runs a deterministic, level-by-level investigation
+from one starting point: a person (by name or registry number) or an identifier
+(phone number, address, e-mail, account number). The graph's
+`/query/investigate` walks the caller's visible graph. Level 1 is the people
+linked to the start. From a person, the next level is reached through the
+person-to-person relations of `ADAPTER_INVESTIGATE_RELATIONS` (default
+`RELATIVE_OF`, the bv profile's stand-in for an approved contact), or through an
+entity shared over `ADAPTER_INVESTIGATE_VIA` (default `INVOLVED_IN`: two people
+in the same incident). Each person appears once, at the first level that
+reaches them, with up to 5 links from the previous level (a "Y" branch). The
+planner chooses 1–4 levels (default 2). `ADAPTER_INVESTIGATE_BRANCH` caps the new
+people taken from one person (default 10, 1–50), and `ADAPTER_INVESTIGATE_MAX_ROWS`
+caps the whole table (default 80, 1–500). Both pick people in name order, so
+the same graph always gives the same table.
+
+Every row becomes one cited fact (`Vizsgálat, 2. szint: … -- szerep; nyilvántartási
+szám; telefon; lakcím; e-mail -- kapcsolódás útja: A —[Rokona / kapcsolattartó]— B
+…`) with the document that states its last link as the source. A graph note tells
+the answer model what the table covers and whether it was cut. The rows sit
+outside the `ADAPTER_ORCHESTRATOR_MAX_FACTS` cap, because a table cut by the
+facts cap would read as complete. The model only summarises. The adapter applies
+its own visibility rule too: a row whose link rests only on a document hidden
+by the adapter's policy is dropped, together with everyone reached only through
+it, and so are hidden identifiers and attributes.
+
+`ADAPTER_GRAPH_NAME_JOIN=same_name` applies here as for patterns. A round that
+produced an investigation ends the planning: the table already holds every
+level, and further rounds only re-query parts of it. The response's
+`graph.investigations` carries the table as data (level, name, role,
+registry/ID number, phone, address, e-mail, other identifiers, path, source),
+which is the base for the spreadsheet export below and a later subgraph view.
+Each entry also carries `drives`, the drive roots of the answer's scope.
+
+Relation ids the active profile lacks, and the generic `RELATED_TO` /
+`CO_MENTIONED`, are dropped. When neither variable leaves a relation (or both
+are `off`), the tool is not offered to the planner. The table shows the phone,
+address and e-mail of everyone reached, as BV's investigation asks; birth data
+stays limited to the people the message names. Tests:
+`orchestrator_test.InvestigateTest`, `graph_service/investigate_test.py`, and
+`graph_service/leakage_test.py` (differential: an investigation never reaches
+through a hidden link). `bv_toolcheck.py --plans investigate` measures the
+eval set with one investigation call per chain question.
+
+#### Investigation spreadsheet (`/ui/graph/investigation/export`, BV 1.5 / 2.5)
+
+`POST /api/v1/ui/graph/investigation/export` `{start, levels, drives?, lang,
+audit_id?, deliver: download|drive}` returns one investigation table as XLSX.
+The table is **recomputed** at download time: the adapter runs the same
+`orchestrator.Run.investigate` as the answer, with the caller's scope and
+access at that moment. The client sends only the starting point, the levels
+and the drives (which may only narrow the scope); it never sends rows. So the
+file never holds anything the caller may no longer see, the model's wording
+plays no part, and nothing has to be kept per answer (the answer trace is
+in-memory and capped). The same graph gives the same table; a graph changed
+since the answer gives the current one, and the UI says so when the row count
+differs. The call is purpose-bound like every graph read (428 without a case
+reference or legal basis when `ADAPTER_PURPOSE=required`) and leaves a
+query-log entry `export:investigation` (start, levels, answer audit id and row
+count as the question hash; the row sources as `sources`).
+
+`deliver=download` answers `{name, format, content_type, size, content_b64,
+rows, truncated, levels}` (base64, as the dossier). `deliver=drive` stores the
+file in the generated-file store and sends it over ws-fs like `/ui/save`; the
+reply is the `/ui/save` reply plus `rows`, `truncated`, `levels`.
+Errors: 400 invalid input, 403 a drive outside the grant, 404 nothing visible,
+409 the profile has no investigation relation or the start is ambiguous
+(`question`).
+
+The workbook is written by `xlsx.py` (stdlib zip + XML, no dependency): a
+bold, frozen header row with an auto filter, text in inline-string cells (a
+value starting with `=` stays text, never a formula), and an info sheet (start,
+levels, row count, completeness, links followed, name joining, scope, case
+reference / legal basis, answer audit id, time, requester). Columns and layout
+are customer decisions (BV question 9), so they are settings:
+
+| Variable | Default | Meaning / fail-safe |
+| --- | --- | --- |
+| `ADAPTER_INVESTIGATION_XLSX_COLUMNS` | all, in this order: `level,name,role,registry_number,id_number,phone,address,email,other,path,also,source,page,joined` | Comma list of column ids. Unknown ids are dropped (logged); none left gives the default. `name` and `source` are always added: a row must stay checkable against its document. |
+| `ADAPTER_INVESTIGATION_XLSX_SHEETS` | `single` | `single`: one table sheet; `per_level`: one sheet per level (starting point, level 1, …). An unknown value falls back to `single`. Both add the info sheet. |
+
+Tests: `investigation_export_test.py` (package structure, cells, sheet names,
+columns, hidden rows absent, settings; opened with openpyxl as an independent
+reader when it is installed on the dev machine) and
+`graph_integration_test.test_investigation_table_exports_as_xlsx_within_the_callers_access`
+(real rag + graph services: visibility per user, purpose binding, query log,
+drive delivery and the stored-copy download, refusals).
+
+#### Investigation subgraph (`/ui/graph/investigation/graph`, BV 1.3 / 2.3)
+
+`POST /api/v1/ui/graph/investigation/graph` `{start, levels, drives?,
+audit_id?}` returns the same investigation as a subgraph in the
+`/query/neighborhood` shape, `{nodes, edges, documents, truncated}`, so the
+Relationships view draws it unchanged, plus `rows` (`id, level, name, role,
+path, also` per row), `start` and `levels`. It is rebuilt exactly like the
+spreadsheet (same `Run.investigate`, the caller's scope and access now; the
+client sends no rows). The subgraph holds the rows' entities, the links that
+reached them (`via[].edge`; through a shared entity the entity itself and both
+halves, `edge2`), and the identifiers and places a row holds (phone, address,
+e-mail). Only links with visible evidence are kept and each edge carries only
+its visible evidence; node documents and attributes are cut to the visible
+documents too. A row the adapter hides drops out with everything reached only
+through it (people, shared entities, held identifiers). The subgraph is not
+part of the answer (`Run.investigation_graphs` stays server-side). Purpose
+binding and errors as for the spreadsheet; the query-log kind is
+`graph:investigation` (start, levels, audit id and the row/node/edge counts as
+the question hash; every document of the subgraph in `sources`).
+
+Tests: `orchestrator_test.InvestigateTest.test_the_subgraph_*` (nodes and
+edges, hidden evidence and everything reached only through it absent) and
+`graph_integration_test.test_investigation_subgraph_within_the_callers_access`
+(visibility per user, purpose binding, query log, refusals).
 
 #### Full reading (`read_all`)
 

@@ -15,6 +15,8 @@ request and sends it with every query (corpus_ids + access).
   queries  POST /query/find  /query/mentioned  /query/entity  /query/path  /query/common
            POST /query/copresence  /query/shared  /query/timeline
            POST /query/neighborhood  /query/communities  /query/ranking
+           POST /query/match  /query/aggregate  /query/sequence
+           POST /query/investigate (level by level from a person or identifier)
 
 Env: GRAPH_HOST (127.0.0.1), GRAPH_PORT (8095), GRAPH_API_KEY (unset = open,
 loopback only), GRAPH_PROFILE (template id or file, default "generic"),
@@ -215,15 +217,39 @@ def _clause(body, name, other_key):
             other_key: _spec(value, other_key)}
 
 
-def _analytic(state: State, view, name: str, body: dict) -> dict:
+def _joined(state: State, view, body: dict):
+    """The view, joined by name when the caller asks for it (and the join, or None)."""
     join = body.get("join_namesakes", False)
     if not isinstance(join, bool):
         raise HttpError(400, "join_namesakes must be true or false")
-    joined = None
-    if join:
-        worker = state.worker
-        joined = view = namesakes.JoinedView(view, worker.decided if worker else frozenset())
+    if not join:
+        return view, None
+    worker = state.worker
+    joined = namesakes.JoinedView(view, worker.decided if worker else frozenset())
+    return joined, joined
+
+
+def _analytic(state: State, view, name: str, body: dict) -> dict:
+    view, joined = _joined(state, view, body)
     out = _analytic_query(view, name, body, joined.canon_spec if joined else (lambda s: s))
+    if joined is not None:
+        out["namesakes"] = {"ambiguous": len(joined.ambiguous)}
+    return out
+
+
+def _investigate(state: State, view, body: dict) -> dict:
+    seeds = body.get("seeds")
+    if not isinstance(seeds, list) or not 1 <= len(seeds) <= queries.MAX_SEEDS \
+            or not all(isinstance(s, str) and s for s in seeds):
+        raise HttpError(400, "seeds must be a list of 1..%d entity ids" % queries.MAX_SEEDS)
+    relations = _relations(body.get("relations")) or []
+    via = _relations(body.get("via_relations"), "via_relations") or []
+    levels = _int(body, "levels", 2, 1, queries.MAX_LEVELS)
+    branch = _int(body, "branch", 10, 1, queries.MAX_BRANCH)
+    limit = _int(body, "limit", 200, 1, queries.MAX_RESULTS)
+    view, joined = _joined(state, view, body)
+    out = queries.investigate(view, seeds, relations, via, levels, branch, limit,
+                              state.holding_types())
     if joined is not None:
         out["namesakes"] = {"ambiguous": len(joined.ambiguous)}
     return out
@@ -258,6 +284,8 @@ def _analytic_query(view, name: str, body: dict, canon) -> dict:
 def _run_query(state: State, view, name: str, body: dict) -> dict:
     if name in ("match", "aggregate", "sequence"):
         return _analytic(state, view, name, body)
+    if name == "investigate":
+        return _investigate(state, view, body)
     if name == "find":
         text = body.get("text")
         if not isinstance(text, str) or not text.strip():

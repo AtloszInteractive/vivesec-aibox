@@ -22,6 +22,33 @@ RELATION_MAP = {
     "CALLED": "CALLED", "AT_PLACE": "LOCATED_AT", "MET": "MET", "INVOLVED_IN": "INVOLVED_IN",
 }
 SYMMETRIC = {"RELATIVE_OF", "MET"}
+# Person attributes each document kind states (render.py), for inmates and for others.
+STATED = {
+    "befogadasi_adatlap": {"inmate": ("registry_number", "birth_place", "birth_date",
+                                      "mother_name", "id_number")},
+    "hatarozat": {"inmate": ("registry_number", "birth_place", "birth_date", "mother_name")},
+    "elhelyezesi_kimutatas": {"inmate": ("registry_number", "birth_date")},
+    "latogatasi_naplo": {"inmate": ("registry_number",), "other": ("id_number",)},
+    "hivasnaplo": {"inmate": ("registry_number", "birth_date")},
+    "letszamjelentes": {"inmate": ("registry_number",)},
+    "elofizetoi_kivonat": {"inmate": ("birth_date", "mother_name"),
+                           "other": ("birth_date", "mother_name")},
+    "lakcim_kivonat": {"other": ("birth_date", "mother_name", "id_number")},
+    "gepjarmu_kivonat": {"other": ("birth_date",)},
+}
+ATTRIBUTE_OF = {"registry_number": "registry_number", "birth_place": "birthplace",
+                "birth_date": "dob", "mother_name": "mother", "id_number": "id_number"}
+
+
+def stated_attributes(person: dict, kind: str) -> list[dict]:
+    """The attributes of an answer-key person a document of `kind` states."""
+    side = "inmate" if person["role"] == "inmate" else "other"
+    out = []
+    for name in (STATED.get(kind) or {}).get(side, ()):
+        value = person.get(ATTRIBUTE_OF[name])
+        if value:
+            out.append({"name": name, "value": value, "page": 1})
+    return out
 
 
 def entity_index(key: dict) -> dict[str, dict]:
@@ -58,9 +85,12 @@ def entity_index(key: dict) -> dict[str, dict]:
     return out
 
 
-def payloads(key: dict, docs: dict[str, dict]) -> list[dict]:
-    """docs: answer-key document key -> {doc_id, corpus_id, source_path, kind}."""
+def payloads(key: dict, docs: dict[str, dict], attributes: bool = False) -> list[dict]:
+    """docs: answer-key document key -> {doc_id, corpus_id, source_path, kind}.
+    attributes: also the person attributes each document states (registry
+    number, birth data, mother's name, ID number), as extraction stores them."""
     ents = entity_index(key)
+    persons = {p["id"]: p for p in key["persons"]}
     surfaces: dict[str, list[tuple[str, str]]] = {}
     for p in key["persons"]:
         for text, keys in p["surfaces"].items():
@@ -94,11 +124,18 @@ def payloads(key: dict, docs: dict[str, dict]) -> list[dict]:
             relations.append({"id": "%s:%s" % (r["id"], k), "type": type_, "a": ea, "b": eb,
                               "start": r["start"], "end": r["end"], "raw_label": r["type"],
                               "evidence": [{"quote": "", "method": "manual"}]})
+        entities = []
+        for e in used.values():
+            entity = {"id": e["id"], "type": e["type"], "subtype": e["subtype"],
+                      "label": e["label"]}
+            if attributes and e["id"] in persons:
+                found = stated_attributes(persons[e["id"]], meta["kind"])
+                if found:
+                    entity["attributes"] = found
+            entities.append(entity)
         out.append({"document": {"doc_id": meta["doc_id"], "corpus_id": meta["corpus_id"],
                                  "source_path": meta["source_path"], "kind": meta["kind"]},
-                    "entities": [{"id": e["id"], "type": e["type"], "subtype": e["subtype"],
-                                  "label": e["label"]} for e in used.values()],
-                    "mentions": mentions, "relations": relations})
+                    "entities": entities, "mentions": mentions, "relations": relations})
     return out
 
 
@@ -108,6 +145,8 @@ def main() -> int:
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "out"))
     ap.add_argument("--service", default="http://127.0.0.1:8095")
     ap.add_argument("--api-key", default=os.environ.get("GRAPH_API_KEY", ""))
+    ap.add_argument("--attributes", action="store_true",
+                    help="also load the person attributes the documents state")
     args = ap.parse_args()
     with io.open(os.path.join(args.out, "answer_key.json"), encoding="utf-8") as f:
         key = json.load(f)
@@ -118,7 +157,7 @@ def main() -> int:
             docs[m["key"]] = {"doc_id": m["doc_id"], "corpus_id": m["corpus_id"],
                               "source_path": m["source_path"], "kind": m["kind"]}
     sent = 0
-    for body in payloads(key, docs):
+    for body in payloads(key, docs, attributes=args.attributes):
         req = urllib.request.Request(args.service + "/graph/document/put",
                                      data=json.dumps(body).encode("utf-8"), method="POST",
                                      headers={"Content-Type": "application/json",
