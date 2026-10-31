@@ -47,6 +47,7 @@ import {
   type AdapterConversation,
   type AdapterConversationSummary,
   type AdapterConversationTurn,
+  type AdapterInvestigation,
   type AdapterJobStatus,
   type AdapterJobSummary,
   type AdapterJobProgress,
@@ -57,7 +58,12 @@ import {
 } from "../rag/adapter-client";
 import type { BoxVersion } from "../build-info";
 
-export type { ChatProfile, ChatPolicy, AdapterJobProgress } from "../rag/adapter-client";
+export type {
+  ChatProfile,
+  ChatPolicy,
+  AdapterJobProgress,
+  AdapterInvestigation,
+} from "../rag/adapter-client";
 
 const ACTIONS = [
   "search",
@@ -121,6 +127,8 @@ export type RagAskResult = {
   refused?: boolean;
   /** The analyst planner asked back instead of answering. */
   clarify?: boolean;
+  /** Investigation tables the answer was built on (XLSX export). */
+  investigations?: AdapterInvestigation[];
   error?: string;
   backgroundJobId?: string;
 };
@@ -293,6 +301,7 @@ function ragResultFromAdapter(result: AdapterAnswer): RagAskResult {
       : undefined,
     refused,
     clarify: result.clarify,
+    investigations: result.investigations,
   };
 }
 

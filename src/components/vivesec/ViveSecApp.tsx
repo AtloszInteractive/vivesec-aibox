@@ -60,10 +60,13 @@ import {
   type ChatProfile,
   type ChatPolicy,
   type AdapterJobProgress,
+  type AdapterInvestigation,
 } from "@/lib/api/rag.functions";
+import { graphApi } from "@/lib/api/graph.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
 import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib/ui-update";
 import {
+  AdapterGraphError,
   setRequestPurpose,
   type AdapterPurposeConfig,
   type RequestPurpose,
@@ -218,6 +221,8 @@ type LiveMeta = {
   question?: string;
   /** The drive the answer was scoped to (feedback routing on the demo build). */
   feedbackDrive?: string;
+  /** Analyst investigation tables behind the answer (XLSX export). */
+  investigations?: AdapterInvestigation[];
 };
 
 type Message =
@@ -1346,6 +1351,7 @@ function ViveSecAppInner() {
       auditId: res.auditId ?? res.confidence?.auditId,
       question: question ?? label,
       feedbackDrive: drive || undefined,
+      investigations: res.investigations,
     };
     const plain: Message = {
       ...base,
@@ -5574,8 +5580,113 @@ function SearchCard({
         </span>
         <SaveToDriveButton text={msg.answer} defaultName={saveName("ai-answer")} />
       </div>
+      <InvestigationExport meta={msg} />
       <LiveFooter meta={msg} />
     </CardShell>
+  );
+}
+
+const EXPORT_FAILURE: Record<number, string> = {
+  403: "The drives of this answer are no longer available to you.",
+  404: "Nothing of this investigation is visible to you now.",
+  409: "The starting point fits several entries; ask again with a more exact name.",
+  428: "Give the case reference or the legal basis first (chat header).",
+};
+
+/** BV 1.5 / 2.5: the investigation table behind an analyst answer as a
+ *  spreadsheet. The box rebuilds the table with the caller's access at this
+ *  moment; the UI sends only the starting point, the levels and the drives. */
+function InvestigationExport({ meta }: { meta: LiveMeta }) {
+  const { tm, lang } = useLang();
+  const { drive } = useDrive();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const list = meta.investigations ?? [];
+  if (!list.length) return null;
+
+  async function exportTable(inv: AdapterInvestigation, deliver: "download" | "drive") {
+    setBusy(`${inv.start}|${deliver}`);
+    setNote(null);
+    try {
+      const res = await graphApi.investigationExport(drive, {
+        start: inv.start,
+        levels: inv.levels,
+        drives: inv.drives,
+        auditId: meta.auditId,
+        lang: lang.toLowerCase(),
+        deliver,
+      });
+      if (res.content_b64) {
+        const bytes = Uint8Array.from(atob(res.content_b64), (ch) => ch.charCodeAt(0));
+        const url = URL.createObjectURL(
+          new Blob([bytes], { type: res.content_type || "application/octet-stream" }),
+        );
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = res.name;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (res.transferred) {
+        toast.success(`${tm("Saved to drive")}: ${res.path}`);
+      } else if (res.stored) {
+        toast.info(
+          res.reason === "permission"
+            ? tm("No write permission on the drive — downloading the AIBox copy instead.")
+            : tm("ViVeSecBox not connected — downloading the AIBox copy instead."),
+        );
+        await downloadStoredFile(res.name, drive);
+      }
+      if (deliver === "drive") notifyGeneratedFilesChanged();
+      if (res.rows !== inv.rows) {
+        setNote(
+          `${tm("The table was rebuilt from the documents you may see now, so it differs from the answer.")} ${tm("Rows")}: ${res.rows}`,
+        );
+      }
+    } catch (err) {
+      const status = err instanceof AdapterGraphError ? err.status : 0;
+      toast.error(tm(EXPORT_FAILURE[status] ?? "The spreadsheet could not be made."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const button =
+    "inline-flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1 text-[10.5px] font-semibold text-white/75 transition hover:border-white/30 hover:text-white disabled:opacity-50";
+  return (
+    <div className="mt-2 space-y-1.5">
+      {list.map((inv) => (
+        <div key={inv.start} className="flex flex-wrap items-center gap-1.5">
+          <button
+            disabled={!!busy}
+            onClick={() => void exportTable(inv, "download")}
+            className={button}
+            title={tm(
+              "The investigation table as a spreadsheet, rebuilt from the documents you may see now",
+            )}
+          >
+            {busy === `${inv.start}|download` ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="h-3 w-3" style={{ color: LIME }} />
+            )}
+            {list.length > 1 ? `${tm("Export to Excel")} · ${inv.start}` : tm("Export to Excel")}
+          </button>
+          <button
+            disabled={!!busy}
+            onClick={() => void exportTable(inv, "drive")}
+            className={button}
+          >
+            {busy === `${inv.start}|drive` ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Save className="h-3 w-3" style={{ color: LIME }} />
+            )}
+            {tm("Save to drive")}
+          </button>
+        </div>
+      ))}
+      {note && <div className="text-[11px] text-white/60">{note}</div>}
+    </div>
   );
 }
 

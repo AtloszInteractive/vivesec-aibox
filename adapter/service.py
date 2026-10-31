@@ -110,6 +110,7 @@ import graph  # noqa: E402
 import graph_context  # noqa: E402
 import gpu_gate  # noqa: E402
 import identity  # noqa: E402
+import investigation_export  # noqa: E402
 import jobstore  # noqa: E402
 import lifecycle  # noqa: E402
 import llm  # noqa: E402
@@ -621,6 +622,9 @@ INVESTIGATE_RELATIONS = _relation_list("ADAPTER_INVESTIGATE_RELATIONS", "RELATIV
 INVESTIGATE_VIA = _relation_list("ADAPTER_INVESTIGATE_VIA", "INVOLVED_IN")
 INVESTIGATE_BRANCH = _bounded_int("ADAPTER_INVESTIGATE_BRANCH", 10, 1, 50)
 INVESTIGATE_MAX_ROWS = _bounded_int("ADAPTER_INVESTIGATE_MAX_ROWS", 80, 1, 500)
+# Its spreadsheet export: column order and sheet layout (investigation_export.py).
+INVESTIGATION_XLSX = investigation_export.settings()
+_LANG_NAMES = {code: name for name, code in orchestrator.LANG_CODES.items()}
 
 
 # Purpose-bound queries (concept 5.2) and their log (5.3): see purpose.py and
@@ -1333,6 +1337,9 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     if orchestrated is not None:
         contexts = orchestrated[0] + contexts
         graph_info = orchestrated[1]
+        for inv in graph_info.get("investigations") or []:
+            # The scope of the table: its export narrows to the same drives.
+            inv["drives"] = list(req_scope.drive_roots)
     elif action is None and not chat_only and GRAPH_CHAT and GRAPH.enabled:
         check = _visible(access)
         try:
@@ -1880,6 +1887,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
+                "/api/v1/ui/graph/investigation/export": self._graph_investigation_export,
                 "/api/v1/ui/graph/reprocess/status": self._graph_reprocess_status,
                 "/api/v1/ui/graph/reprocess/start": self._graph_reprocess_start,
                 "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
@@ -2563,7 +2571,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "Missing 'name'"})
             return
         requested = payload.get("format")
-        if requested and docgen.normalize_format(requested) is None:
+        if requested and docgen.stored_format(requested) is None:
             self._send(400, {"ok": False, "error": "unsupported format: %s"
                                                    % requested})
             return
@@ -2574,14 +2582,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 self._send(400, {"ok": False, "error": "invalid content_b64"})
                 return
-            fmt = docgen.normalize_format(requested) or ""
+            fmt = docgen.stored_format(requested) or ""
         elif payload.get("text") is not None:
+            if requested and docgen.normalize_format(requested) is None:
+                self._send(400, {"ok": False, "error": "format %s needs content_b64"
+                                                       % requested})
+                return
             content, fmt = docgen.render(str(payload["text"]), requested,
                                          title=str(payload.get("title") or ""))
             name = docgen.with_extension(name, fmt)
         else:
             self._send(400, {"ok": False, "error": "Missing 'content_b64' or 'text'"})
             return
+        self._send(200, self._deliver(user, drive, name, content, fmt))
+
+    def _deliver(self, user, drive, name, content, fmt):
+        """Store a generated file in the session store, then transfer it to the
+        drive; the reply of /ui/save (the stored copy's download link when the
+        transfer did not happen)."""
         stored = FILES.save(user, drive, name, content)
         download = "%s?%s" % (FILES_DOWNLOAD_PATH,
                               urllib.parse.urlencode({"name": stored}))
@@ -2591,21 +2609,18 @@ class Handler(BaseHTTPRequestHandler):
                                   retry_delay=PUTFILE_RETRY_DELAY,
                                   timeout=PUTFILE_TIMEOUT) or {}
         except wsfs.ChannelError:
-            self._send(200, {"ok": True, "transferred": False, "stored": True,
-                             "name": stored, "format": fmt, "size": len(content),
-                             "reason": "no-channel", "download": download})
-            return
+            return {"ok": True, "transferred": False, "stored": True,
+                    "name": stored, "format": fmt, "size": len(content),
+                    "reason": "no-channel", "download": download}
         if reply.get("path"):
             # Delivered to the drive: the session copy is no longer needed.
             FILES.delete(user, drive, stored)
-            self._send(200, {"ok": True, "transferred": True, "name": stored,
-                             "format": fmt, "size": len(content),
-                             "path": reply["path"]})
-            return
+            return {"ok": True, "transferred": True, "name": stored,
+                    "format": fmt, "size": len(content), "path": reply["path"]}
         reason = reply.get("error") or "unknown"
-        self._send(200, {"ok": True, "transferred": False, "stored": True,
-                         "name": stored, "format": fmt, "size": len(content),
-                         "reason": reason, "download": download})
+        return {"ok": True, "transferred": False, "stored": True,
+                "name": stored, "format": fmt, "size": len(content),
+                "reason": reason, "download": download}
 
     def _feedback(self):
         """Rate one generated answer (up/down + optional reason/comment).
@@ -3131,6 +3146,76 @@ class Handler(BaseHTTPRequestHandler):
                          "size": len(content), "text": text,
                          "content_b64": base64.b64encode(content).decode("ascii")})
 
+    def _graph_investigation_export(self):
+        """One investigation table as XLSX (BV 1.5 / 2.5). The table is built
+        again here, with the caller's scope and access now -- never taken from
+        the answer or the client, which names only the start, the levels and the
+        drives (narrowing only). `deliver`: "download" (base64 JSON, as the
+        dossier) or "drive" (session store + ws-fs, as /ui/save)."""
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
+            return
+        user, payload, req_scope, access, scope_body = ctx
+        deliver = str(payload.get("deliver") or "download")
+        if deliver not in ("download", "drive"):
+            self._send(400, {"ok": False, "error": "deliver must be download or drive"})
+            return
+        start, levels = investigation_export.parse_request(payload)
+        lang = investigation_export.lang_code(payload.get("lang"))
+        audit_id = re.sub(r"[^\w\-]", "", str(payload.get("audit_id") or ""))[:64]
+        try:
+            domain = orchestrator.profile(GRAPH)
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return
+        cfg = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS, INVESTIGATE_VIA,
+                                              INVESTIGATE_BRANCH, INVESTIGATE_MAX_ROWS)
+        if cfg is None:
+            self._send(409, {"ok": False, "error": "the investigation is not available with "
+                                                   "the active profile"})
+            return
+        check = _visible(access)
+        run = orchestrator.Run(
+            GRAPH, scope_body, lambda path: req_scope.contains_path(path) and check(path),
+            _LANG_NAMES.get(lang, "English"), ORCHESTRATOR_MAX_FACTS, domain,
+            name_join=GRAPH_NAME_JOIN, investigate=cfg)
+        try:
+            inv = investigation_export.investigate(run, start, levels)
+        except orchestrator.Clarify as e:
+            self._send(409, {"ok": False, "error": "ambiguous", "question": e.question})
+            return
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return
+        if inv is None:
+            self._send(404, {"ok": False, "error": "nothing of this investigation is visible"})
+            return
+        sources = list(dict.fromkeys(r["source"] for r in inv["rows"] if r.get("source")))
+        if not self._log_graph(ctx, "export:investigation", json.dumps(
+                {"start": start, "levels": levels, "audit_id": audit_id or None,
+                 "rows": len(inv["rows"])}, ensure_ascii=False, sort_keys=True), sources):
+            return
+        content, name, _ = investigation_export.build(inv, lang, INVESTIGATION_XLSX, {
+            "user": user, "drives": [r.rstrip("/").rsplit("/", 1)[-1]
+                                     for r in req_scope.drive_roots],
+            "case_ref": self._bound.get("case_ref"),
+            "legal_basis": self._bound.get("legal_basis"), "audit_id": audit_id,
+            "prof": domain, "config": cfg, "name_join": GRAPH_NAME_JOIN})
+        name = docgen.with_extension(name, "xlsx")
+        summary = {"rows": len(inv["rows"]), "truncated": bool(inv.get("truncated")),
+                   "levels": levels}
+        sys.stderr.write("[adapter] graph: investigation export (%d rows, %s) by %s\n"
+                         % (len(inv["rows"]), deliver, user))
+        if deliver == "drive":
+            self._send(200, dict(self._deliver(user, self._bound_drive, name, content,
+                                               "xlsx"), **summary))
+            return
+        self._send(200, dict({"ok": True, "name": name, "format": "xlsx",
+                              "content_type": docgen.content_type("xlsx"),
+                              "size": len(content),
+                              "content_b64": base64.b64encode(content).decode("ascii")},
+                             **summary))
+
     def _files_download(self, query):
         vvs = self._read_vvs()
         if vvs is None:
@@ -3143,7 +3228,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         safe = filestore.safe_name(name)
         ext = safe.rsplit(".", 1)[-1].lower() if "." in safe else ""
-        ctype = (docgen.content_type(ext) if docgen.normalize_format(ext)
+        ctype = (docgen.content_type(ext) if docgen.stored_format(ext)
                  else "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", ctype)

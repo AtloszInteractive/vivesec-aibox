@@ -629,7 +629,8 @@ produced an investigation ends the planning: the table already holds every
 level, and further rounds only re-query parts of it. The response's
 `graph.investigations` carries the table as data (level, name, role,
 registry/ID number, phone, address, e-mail, other identifiers, path, source),
-which is the base for a later spreadsheet export and subgraph view.
+which is the base for the spreadsheet export below and a later subgraph view.
+Each entry also carries `drives`, the drive roots of the answer's scope.
 
 Relation ids the active profile lacks, and the generic `RELATED_TO` /
 `CO_MENTIONED`, are dropped. When neither variable leaves a relation (or both
@@ -640,6 +641,50 @@ stays limited to the people the message names. Tests:
 `graph_service/leakage_test.py` (differential: an investigation never reaches
 through a hidden link). `bv_toolcheck.py --plans investigate` measures the
 eval set with one investigation call per chain question.
+
+#### Investigation spreadsheet (`/ui/graph/investigation/export`, BV 1.5 / 2.5)
+
+`POST /api/v1/ui/graph/investigation/export` `{start, levels, drives?, lang,
+audit_id?, deliver: download|drive}` returns one investigation table as XLSX.
+The table is **recomputed** at download time: the adapter runs the same
+`orchestrator.Run.investigate` as the answer, with the caller's scope and
+access at that moment. The client sends only the starting point, the levels
+and the drives (which may only narrow the scope); it never sends rows. So the
+file never holds anything the caller may no longer see, the model's wording
+plays no part, and nothing has to be kept per answer (the answer trace is
+in-memory and capped). The same graph gives the same table; a graph changed
+since the answer gives the current one, and the UI says so when the row count
+differs. The call is purpose-bound like every graph read (428 without a case
+reference or legal basis when `ADAPTER_PURPOSE=required`) and leaves a
+query-log entry `export:investigation` (start, levels, answer audit id and row
+count as the question hash; the row sources as `sources`).
+
+`deliver=download` answers `{name, format, content_type, size, content_b64,
+rows, truncated, levels}` (base64, as the dossier). `deliver=drive` stores the
+file in the generated-file store and sends it over ws-fs like `/ui/save`; the
+reply is the `/ui/save` reply plus `rows`, `truncated`, `levels`.
+Errors: 400 invalid input, 403 a drive outside the grant, 404 nothing visible,
+409 the profile has no investigation relation or the start is ambiguous
+(`question`).
+
+The workbook is written by `xlsx.py` (stdlib zip + XML, no dependency): a
+bold, frozen header row with an auto filter, text in inline-string cells (a
+value starting with `=` stays text, never a formula), and an info sheet (start,
+levels, row count, completeness, links followed, name joining, scope, case
+reference / legal basis, answer audit id, time, requester). Columns and layout
+are customer decisions (BV question 9), so they are settings:
+
+| Variable | Default | Meaning / fail-safe |
+| --- | --- | --- |
+| `ADAPTER_INVESTIGATION_XLSX_COLUMNS` | all, in this order: `level,name,role,registry_number,id_number,phone,address,email,other,path,also,source,page,joined` | Comma list of column ids. Unknown ids are dropped (logged); none left gives the default. `name` and `source` are always added: a row must stay checkable against its document. |
+| `ADAPTER_INVESTIGATION_XLSX_SHEETS` | `single` | `single`: one table sheet; `per_level`: one sheet per level (starting point, level 1, …). An unknown value falls back to `single`. Both add the info sheet. |
+
+Tests: `investigation_export_test.py` (package structure, cells, sheet names,
+columns, hidden rows absent, settings; opened with openpyxl as an independent
+reader when it is installed on the dev machine) and
+`graph_integration_test.test_investigation_table_exports_as_xlsx_within_the_callers_access`
+(real rag + graph services: visibility per user, purpose binding, query log,
+drive delivery and the stored-copy download, refusals).
 
 #### Full reading (`read_all`)
 

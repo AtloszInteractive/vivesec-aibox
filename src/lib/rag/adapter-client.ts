@@ -68,7 +68,40 @@ export type AdapterAnswer = {
   error?: string;
   /** The analyst planner asks back (a "- option" list may follow the question). */
   clarify?: boolean;
+  /** Analyst investigation tables of the answer (graph.investigations), without
+   *  their rows: the export rebuilds the table on the box. */
+  investigations?: AdapterInvestigation[];
 };
+
+export type AdapterInvestigation = {
+  start: string;
+  levels: number;
+  rows: number;
+  truncated: boolean;
+  /** The scope of the table; the export narrows to the same drives. */
+  drives?: string[];
+};
+
+function investigationsOf(graph: unknown): AdapterInvestigation[] | undefined {
+  const list = (graph as { investigations?: unknown } | null)?.investigations;
+  if (!Array.isArray(list)) return undefined;
+  const out = list.flatMap((raw) => {
+    const inv = raw as Record<string, unknown>;
+    if (typeof inv.start !== "string" || !inv.start) return [];
+    return [
+      {
+        start: inv.start,
+        levels: typeof inv.levels === "number" ? inv.levels : 2,
+        rows: Array.isArray(inv.rows) ? inv.rows.length : 0,
+        truncated: inv.truncated === true,
+        drives: Array.isArray(inv.drives)
+          ? inv.drives.filter((d): d is string => typeof d === "string")
+          : undefined,
+      },
+    ];
+  });
+  return out.length ? out : undefined;
+}
 
 /** On-box speech capabilities (adapter/voice.py). Both default to off. */
 export type AdapterVoice = { stt: boolean; tts: boolean };
@@ -590,6 +623,7 @@ function answerFromJson(j: Record<string, unknown>): AdapterAnswer {
     hits: Array.isArray(j.hits) ? (j.hits as AdapterHit[]) : [],
     error: j.error as string | undefined,
     clarify: j.clarify === true,
+    investigations: investigationsOf(j.graph),
   };
 }
 
@@ -947,6 +981,7 @@ export async function adapterGraph<T>(
     | "profile/get"
     | "profile/set"
     | "dossier"
+    | "investigation/export"
     | "reprocess/status"
     | "reprocess/start"
     | "reprocess/cancel",

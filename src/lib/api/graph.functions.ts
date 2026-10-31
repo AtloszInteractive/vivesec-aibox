@@ -213,6 +213,31 @@ export const graphApi = {
     adapterGraph<{ profile: GraphProfile }>("profile/set", { profile }, drive),
   dossier: (drive: string, id: string, format: "docx" | "pdf", lang: string) =>
     adapterGraph<GraphDossier>("dossier", { id, format, lang }, drive),
+  /** One investigation table as XLSX, rebuilt on the box within the caller's
+   *  current access: "download" returns the file, "drive" saves it like /ui/save. */
+  investigationExport: (
+    drive: string,
+    req: {
+      start: string;
+      levels: number;
+      drives?: string[];
+      auditId?: string;
+      lang: string;
+      deliver: "download" | "drive";
+    },
+  ) =>
+    adapterGraph<GraphInvestigationExport>(
+      "investigation/export",
+      {
+        start: req.start,
+        levels: req.levels,
+        drives: req.drives?.length ? req.drives : undefined,
+        audit_id: req.auditId,
+        lang: req.lang,
+        deliver: req.deliver,
+      },
+      drive,
+    ),
   reprocessStatus: (drive: string) =>
     adapterGraph<GraphReprocessStatus>("reprocess/status", {}, drive),
   reprocessStart: (drive: string, pathPrefix: string) =>
@@ -263,4 +288,22 @@ export type GraphDossier = {
   size: number;
   text: string;
   content_b64: string;
+};
+
+/** An investigation spreadsheet: the file itself (download) or where it went
+ *  (drive, the /ui/save reply), with the size of the rebuilt table. */
+export type GraphInvestigationExport = {
+  name: string;
+  format: string;
+  size: number;
+  rows: number;
+  truncated: boolean;
+  levels: number;
+  content_type?: string;
+  content_b64?: string;
+  transferred?: boolean;
+  stored?: boolean;
+  path?: string;
+  reason?: string;
+  download?: string;
 };

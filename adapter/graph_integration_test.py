@@ -392,6 +392,118 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertIn("ASSISTANT: Melyik időszakra gondol?", plans[-1])
             self.assertEqual("timeline", out["graph"]["calls"][0]["tool"])
 
+    def export_investigation(self, user, body):
+        payload = dict({"start": "Kovács János", "levels": 2, "lang": "hu"}, **body)
+        return self.call("/api/v1/ui/graph/investigation/export", payload, user=user)
+
+    def test_investigation_table_exports_as_xlsx_within_the_callers_access(self):
+        import io
+        import zipfile
+
+        import llm
+        import purpose
+        import querylog
+
+        service = self.service
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+
+        def echo(query, contexts, **_kw):
+            return "\n".join(c.get("text") or "" for c in contexts) or "NO-CONTEXT", "echo"
+
+        def planner(system, user, **kw):
+            return ('{"action": "tools", "calls": [{"tool": "investigate", "args": '
+                    '{"start": "Kovács János", "levels": 2}}], "search": "Kovács János"}'), 0, 0
+
+        def sheet(out):
+            book = zipfile.ZipFile(io.BytesIO(base64.b64decode(out["content_b64"])))
+            return {n: book.read(n).decode("utf-8") for n in book.namelist()}
+
+        # The fake extraction knows only MET: the investigation follows it here.
+        with patch.object(service, "APP_MODE", service.APP_ANALYST), \
+                patch.object(service, "INVESTIGATE_RELATIONS", ["MET"]), \
+                patch.object(service, "INVESTIGATE_VIA", []), \
+                patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", planner), \
+                patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False):
+            status, out = self.call("/api/v1/ui/query", {"query": "Kovács János vizsgálata"},
+                                    user="lars")
+            self.assertEqual(200, status, out)
+            [inv] = out["graph"]["investigations"]
+            self.assertEqual((["Kovács János", "Nagy Éva"], [DRIVE]),
+                             ([r["name"] for r in inv["rows"]], inv["drives"]))
+
+            status, out = self.export_investigation("lars", {"drives": inv["drives"],
+                                                             "audit_id": "aud-1"})
+            self.assertEqual(200, status, out)
+            self.assertEqual(("xlsx", 2, False), (out["format"], out["rows"], out["truncated"]))
+            self.assertTrue(out["name"].startswith("vizsgalat_Kovács_János_"), out["name"])
+            self.assertTrue(out["name"].endswith(".xlsx"))
+            files = sheet(out)
+            table = files["xl/worksheets/sheet1.xml"]
+            for text in ("Kapcsolódás útja", "Nagy Éva", PUBLIC, "aud-1"):
+                self.assertIn(text, table + files["xl/worksheets/sheet2.xml"])
+            blob = "".join(files.values())
+            self.assertNotIn("Titkos", blob)
+            self.assertNotIn(HIDDEN, blob)
+            status, out = self.export_investigation("hanna", {"lang": "en"})
+            self.assertEqual(200, status, out)
+            self.assertIn("Titkos Tamás", "".join(sheet(out).values()))
+            self.assertIn(HIDDEN, "".join(sheet(out).values()))
+
+            # Purpose binding: no purpose, no export; with one, a query-log entry.
+            with patch.object(service, "PURPOSE",
+                              purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                    patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name)):
+                status, out = self.export_investigation("lars", {})
+                self.assertEqual((428, "purpose_required"), (status, out["error"]))
+                status, out = self.export_investigation("lars", {"case_ref": "BV-2026/7"})
+                self.assertEqual(200, status, out)
+                self.assertIn("BV-2026/7", sheet(out)["xl/worksheets/sheet2.xml"])
+                # Saved through the generated-file path: no ws-fs channel here, so
+                # the stored copy is offered for download.
+                status, saved = self.export_investigation(
+                    "lars", {"case_ref": "BV-2026/7", "deliver": "drive"})
+                self.assertEqual((200, False, True, 2), (status, saved["transferred"],
+                                                         saved["stored"], saved["rows"]), saved)
+            request = urllib.request.Request(
+                "http://127.0.0.1:%d%s" % (self.server.server_port, saved["download"]),
+                headers={"VVS-Drive": b64(DRIVE + "/"), "VVS-User": "lars"})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                self.assertIn("spreadsheetml", response.headers["Content-Type"])
+                self.assertIn(b"Nagy \xc3\x89va", zipfile.ZipFile(io.BytesIO(
+                    response.read())).read("xl/worksheets/sheet1.xml"))
+            name, = os.listdir(logdir.name)
+            path = os.path.join(logdir.name, name)
+            with open(path, encoding="utf-8") as handle:
+                records = [json.loads(line) for line in handle]
+            self.assertEqual(["export:investigation"] * 2, [r["kind"] for r in records])
+            self.assertEqual(("lars", "BV-2026/7", [PUBLIC]),
+                             (records[0]["user"], records[0]["case_ref"],
+                              records[0]["result"]["sources"]))
+            # The starting point is personal data: kept as a hash unless the
+            # box keeps question texts (ADAPTER_QUERY_LOG_TEXT=on).
+            self.assertEqual(querylog.question_hash(json.dumps(
+                {"audit_id": None, "levels": 2, "rows": 2, "start": "Kovács János"},
+                ensure_ascii=False, sort_keys=True)), records[0]["question_sha256"])
+            self.assertNotIn("question", records[0])
+            self.assertEqual((True, 2, None), querylog.verify(path))
+
+            # Refusals: a drive outside the grant, a hidden-only start, bad input.
+            status, _ = self.export_investigation("lars", {"drives": ["/storage/drives/hr/"]})
+            self.assertEqual(403, status)
+            status, _ = self.export_investigation("lars", {"start": "Titkos Tamás"})
+            self.assertEqual(404, status)
+            for bad in ({"levels": 9}, {"start": ""}, {"deliver": "mail"}):
+                status, _ = self.export_investigation("lars", bad)
+                self.assertEqual(400, status, bad)
+            with patch.object(service, "INVESTIGATE_RELATIONS", ["NO_SUCH"]):
+                status, _ = self.export_investigation("lars", {})
+                self.assertEqual(409, status)
+            # A spreadsheet is never "rendered" from client text.
+            status, _ = self.call("/api/v1/ui/save", {"name": "x", "text": "a",
+                                                      "format": "xlsx"}, user="lars")
+            self.assertEqual(400, status)
+
     def test_analyst_counts_then_replans_with_the_results(self):
         import llm
 
