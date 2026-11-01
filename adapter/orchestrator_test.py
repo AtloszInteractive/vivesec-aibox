@@ -998,6 +998,138 @@ class InvestigateTest(unittest.TestCase):
         self.assertIn("- investigate {start}", seen[0])
         self.assertNotIn("investigate", seen[1])
         self.assertNotIn("{investigate}", seen[1])
+        # With the investigation offered, the contact chain is no longer taught
+        # as a find_pattern example; without it, it still is.
+        self.assertNotIn("share a named person's contacts", seen[0])
+        self.assertIn("is ONE investigate call", seen[0])
+        self.assertIn("share a named person's contacts", seen[1])
+        self.assertNotIn("{person_chain}", seen[0] + seen[1])
+        self.assertNotIn("{chain_rule}", seen[0] + seen[1])
+
+
+class PreferInvestigationTest(unittest.TestCase):
+    """BV P-1.2.2: the planner may still plan a person's contact chain as
+    find_pattern calls, one per level; they run as one investigation."""
+    CONFIG = InvestigateTest.CONFIG
+
+    def run_plan(self, calls, config=CONFIG):
+        graph = InvestigationGraph()
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"], "access": None},
+                             lambda p: "/hr/" not in p, "Hungarian",
+                             message="Sas Tibor kapcsolattartói", investigate=config)
+        r.run(calls)
+        return r, graph
+
+    @staticmethod
+    def pattern(start, *relations, **extra):
+        return {"tool": "find_pattern", "args": dict(
+            {"start": start, "steps": [{"relation": rel, "kind": "person"}
+                                       for rel in relations]}, **extra)}
+
+    def test_contact_chains_per_level_become_one_investigation(self):
+        r, graph = self.run_plan([
+            self.pattern({"name": "Sas Tibor"}, "RELATIVE_OF"),
+            self.pattern({"name": "Sas Tibor"}, "RELATIVE_OF", "kapcsolattartó"),
+            self.pattern({"kind": "inmate", "name": "Sas Tibor"}, "RELATIVE_OF",
+                         "INVOLVED_IN", "INVOLVED_IN")])
+        info = r.info()
+        self.assertEqual([("investigate", {"start": "Sas Tibor", "levels": 2},
+                           "find_pattern")],
+                         [(c["tool"], c["args"], c.get("rewritten")) for c in info["calls"]])
+        self.assertEqual(1, [p for p, _ in graph.calls].count("/query/investigate"))
+        self.assertNotIn("/query/match", [p for p, _ in graph.calls])
+        self.assertEqual(1, len(info["investigations"]))
+
+    def test_a_planned_investigation_absorbs_the_chains_of_its_start(self):
+        r, _ = self.run_plan([
+            {"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 1}},
+            self.pattern({"name": "sas tibor"}, "RELATIVE_OF", "RELATIVE_OF", "RELATIVE_OF")])
+        self.assertEqual([("investigate", {"start": "Sas Tibor", "levels": 3})],
+                         [(c["tool"], c["args"]) for c in r.info()["calls"]])
+
+    def test_other_chains_stay_as_planned(self):
+        keep = [
+            # an identifier held through a holding link (BV 2.x: not rewritten)
+            self.pattern({"name": "+36 30 111 1111"}, "USES", "RELATIVE_OF"),
+            # a kind, not a named start
+            self.pattern({"kind": "inmate"}, "RELATIVE_OF"),
+            self.pattern({"name": "Fogvatartott"}, "RELATIVE_OF"),
+            # a named end, a period, a chain ending on the incident, a generic link
+            {"tool": "find_pattern", "args": {"start": {"name": "Sas Tibor"}, "steps": [
+                {"relation": "RELATIVE_OF", "name": "Kende Anna"}]}},
+            self.pattern({"name": "Sas Tibor"}, "RELATIVE_OF", **{"from": "2025"}),
+            self.pattern({"name": "Sas Tibor"}, "INVOLVED_IN"),
+            self.pattern({"name": "Sas Tibor"}, "RELATED_TO"),
+            self.pattern({"name": "Sas Tibor"}, "VISITED")]
+        r = orchestrator.Run(InvestigationGraph(), {"corpus_ids": ["c"]}, lambda p: True,
+                             "Hungarian", investigate=self.CONFIG)
+        self.assertEqual(keep, r.prefer_investigation(keep))
+        # Without the investigation tool nothing changes.
+        r = orchestrator.Run(InvestigationGraph(), {"corpus_ids": ["c"]}, lambda p: True)
+        chain = [self.pattern({"name": "Sas Tibor"}, "RELATIVE_OF")]
+        self.assertEqual(chain, r.prefer_investigation(chain))
+
+    def test_levels_are_capped(self):
+        r = orchestrator.Run(InvestigationGraph(), {"corpus_ids": ["c"]}, lambda p: True,
+                             "Hungarian", investigate=self.CONFIG)
+        [call] = r.prefer_investigation([self.pattern({"name": "Sas Tibor"}, *["RELATIVE_OF"] * 3,
+                                                      "INVOLVED_IN", "INVOLVED_IN",
+                                                      "RELATIVE_OF")])
+        self.assertEqual({"start": "Sas Tibor", "levels": 4}, call["args"])
+
+
+class DocumentRefsTest(unittest.TestCase):
+    """A report's file number (graph document metadata) goes with the facts it backs."""
+
+    class Graph(InvestigationGraph):
+        def post(self, path, body):
+            res = super().post(path, body)
+            if path == "/profile/get":
+                res["profile"]["identifier_patterns"] = [
+                    {"id": "case_number", "subtype": "case_number",
+                     "label": {"en": "Case or file number", "hu": "Ügy- vagy iktatószám"}}]
+            elif "documents" in res and res["documents"]:
+                docs = json.loads(json.dumps(res["documents"]))
+                if body.get("doc_refs") == ["case_number"]:
+                    docs["d1"]["refs"] = {"case_number": ["J-2025/0001", "J-2024/0099"],
+                                          "phone": ["+36 1"]}
+                res = dict(res, documents=docs)
+            return res
+
+    def test_rows_carry_the_file_number_when_asked(self):
+        graph = self.Graph()
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: "/hr/" not in p,
+                             "Hungarian", investigate=InvestigateTest.CONFIG,
+                             doc_refs=["case_number"])
+        out = r.run([{"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 1}}])
+        rows = [c["text"] for c in out if c["text"].startswith("Vizsgálat,")]
+        self.assertTrue(rows)
+        self.assertTrue(all(t.endswith(" [Ügy- vagy iktatószám: J-2025/0001, J-2024/0099]")
+                            for t in rows), rows)
+        body = next(b for p, b in graph.calls if p == "/query/investigate")
+        self.assertEqual(["case_number"], body["doc_refs"])
+
+    def test_without_the_setting_nothing_is_asked_or_shown(self):
+        graph = self.Graph()
+        r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "Hungarian",
+                             investigate=InvestigateTest.CONFIG)
+        out = r.run([{"tool": "investigate", "args": {"start": "Sas Tibor", "levels": 1}}])
+        self.assertNotIn("iktatószám", json.dumps(out, ensure_ascii=False))
+        body = next(b for p, b in graph.calls if p == "/query/investigate")
+        self.assertNotIn("doc_refs", body)
+
+    def test_a_fact_names_the_file_number_before_its_quote(self):
+        r = orchestrator.Run(FakeGraph(), {"corpus_ids": ["c"]}, lambda p: True, "English",
+                             doc_refs=["case_number"])
+        r._profile = {"identifier_patterns": [], "entity_subtypes": [
+            {"id": "case_number", "type": "identifier", "label": {"en": "Case number"}}],
+            "relation_types": [{"id": "VISITED", "label": {"en": "visited"}}]}
+        r.documents = {"d1": dict(DOC["d1"], refs={"case_number": ["J-2025/0001"]})}
+        r.nodes = {n["id"]: n for n in NODES}
+        r.edge_fact(EDGES[0])
+        self.assertEqual('Nagy Éva -- visited -- Kovács János (2025-03-13). '
+                         '[Case number: J-2025/0001] "Nagy Éva meglátogatta"',
+                         r.contexts[0]["text"])
 
 
 if __name__ == "__main__":

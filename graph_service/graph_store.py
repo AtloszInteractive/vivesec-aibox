@@ -325,6 +325,39 @@ class GraphView:
     def _iter_relations(self):
         raise NotImplementedError
 
+    def _load_doc_mentions(self, doc_ids: list[str], subtypes: set[str]
+                           ) -> dict[str, list[tuple[str, Mention]]]:
+        """{doc_id: [(subtype, mention)]}: the mentions in these documents of the
+        entities of these subtypes."""
+        raise NotImplementedError
+
+    def document_refs(self, doc_ids, subtypes, limit: int = 3) -> dict[str, dict[str, list[str]]]:
+        """What each visible document itself states of the given identifier
+        subtypes (its file or case number), as written, in reading order:
+        {doc_id: {subtype: [text, ...]}}. Derived from the document's own
+        mentions only, so it reveals nothing beyond the document."""
+        subtypes = {s for s in subtypes or () if s}
+        if not subtypes:
+            return {}
+        self._check_docs(doc_ids)
+        ids = sorted(d for d in doc_ids if self._doc_ok.get(d))
+        if not ids:
+            return {}
+        out = {}
+        for doc_id, hits in self._load_doc_mentions(ids, subtypes).items():
+            if not self._doc_ok.get(doc_id):
+                continue
+            refs: dict[str, list[str]] = {}
+            for subtype, m in sorted(hits, key=lambda h: (h[1].page or 0, h[1].start or 0)):
+                text = " ".join((m.text or "").split())
+                values = refs.setdefault(subtype, [])
+                if text and text not in values and len(values) < limit:
+                    values.append(text)
+            refs = {k: v for k, v in refs.items() if v}
+            if refs:
+                out[doc_id] = refs
+        return out
+
     # shared logic ----------------------------------------------------------
     def _check_docs(self, doc_ids) -> None:
         missing = sorted({d for d in doc_ids if d not in self._doc_ok})
@@ -485,6 +518,16 @@ class MemoryView(GraphView):
 
     def _iter_relations(self):
         return [self.s.relations[r] for r in sorted(self.s.relations)]
+
+    def _load_doc_mentions(self, doc_ids, subtypes):
+        out = {}
+        for doc_id in doc_ids:
+            for mid in self.s._doc_mentions.get(doc_id, ()):
+                m = self.s.mentions.get(mid)
+                e = self.s.entities.get(m.entity_id) if m is not None else None
+                if e is not None and e.subtype in subtypes and e.status != "rejected":
+                    out.setdefault(doc_id, []).append((e.subtype, m))
+        return out
 
 
 def evidence_from_dict(raw: dict) -> Evidence:

@@ -34,9 +34,12 @@ class HeavyScheduler:
                                             name="adapter-heavy-worker")
             self._thread.start()
 
-    def submit(self, job_id, user, drive, args):
+    def submit(self, job_id, user, drive, args, worker=None):
+        """Queue one job; `worker` runs it instead of the scheduler's own (a job
+        of another kind sharing the same single heavy slot)."""
         item = {"job_id": job_id, "user": user or "", "drive": drive or "",
-                "args": tuple(args), "cancel_event": threading.Event()}
+                "args": tuple(args), "cancel_event": threading.Event(),
+                "worker": worker or self.worker}
         with self._condition:
             queued = sum(1 for current in self._queue
                          if current["user"] == item["user"])
@@ -135,7 +138,7 @@ class HeavyScheduler:
                     item["granted"].set()
                     item["released"].wait()
                 else:
-                    self.worker(*item["args"], cancel_event=item["cancel_event"])
+                    item["worker"](*item["args"], cancel_event=item["cancel_event"])
             finally:
                 with self._condition:
                     self._running = None

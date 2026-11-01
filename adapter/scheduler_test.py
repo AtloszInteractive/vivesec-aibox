@@ -111,6 +111,24 @@ class HeavySchedulerTest(unittest.TestCase):
         queue.stop()
         self.assertEqual(completed, ["j1", "j2", "j3"])
 
+    def test_a_job_with_its_own_worker_shares_the_queue(self):
+        done = []
+        finished = threading.Event()
+
+        def worker(job_id, **_kwargs):
+            done.append(("default", job_id))
+
+        def other(job_id, extra, cancel_event=None):
+            done.append(("other", job_id, extra, cancel_event is not None))
+            finished.set()
+
+        queue = scheduler.HeavyScheduler(worker)
+        queue.submit("j1", "u", "/d", ("j1",))
+        queue.submit("j2", "u", "/d", ("j2", "x"), worker=other)
+        self.assertTrue(finished.wait(2))
+        queue.stop()
+        self.assertEqual([("default", "j1"), ("other", "j2", "x", True)], done)
+
     def test_cancel_and_per_user_limit(self):
         release = threading.Event()
         started = threading.Event()

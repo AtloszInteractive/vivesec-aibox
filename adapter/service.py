@@ -116,6 +116,7 @@ import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
 import orchestrator  # noqa: E402
+import person_summary  # noqa: E402
 import purpose  # noqa: E402
 import querylog  # noqa: E402
 import reprocess  # noqa: E402
@@ -622,6 +623,10 @@ INVESTIGATE_RELATIONS = _relation_list("ADAPTER_INVESTIGATE_RELATIONS", "RELATIV
 INVESTIGATE_VIA = _relation_list("ADAPTER_INVESTIGATE_VIA", "INVOLVED_IN")
 INVESTIGATE_BRANCH = _bounded_int("ADAPTER_INVESTIGATE_BRANCH", 10, 1, 50)
 INVESTIGATE_MAX_ROWS = _bounded_int("ADAPTER_INVESTIGATE_MAX_ROWS", 80, 1, 500)
+# The identifier subtypes a source document states as its own number (a report's
+# file number): shown beside the graph facts and investigation rows it backs.
+# "off" shows none; an unknown subtype simply matches nothing.
+DOCUMENT_REFS = _relation_list("ADAPTER_DOCUMENT_REFS", "case_number")
 # Its spreadsheet export: column order and sheet layout (investigation_export.py).
 INVESTIGATION_XLSX = investigation_export.settings()
 _LANG_NAMES = {code: name for name, code in orchestrator.LANG_CODES.items()}
@@ -1247,7 +1252,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
             GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
             lambda path: req_scope.contains_path(path) and check(path), lang,
             ORCHESTRATOR_MAX_FACTS, domain, name_join=GRAPH_NAME_JOIN, message=query,
-            investigate=investigate)
+            investigate=investigate, doc_refs=DOCUMENT_REFS)
         if planned["action"] == "clarify":
             question = planned["question"]
             try:
@@ -1561,6 +1566,122 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
 
 HEAVY_SCHEDULER = scheduler.HeavyScheduler(
     _job_worker, max_queued_per_user=JOB_QUEUE_MAX)
+
+
+def _rebuild_investigation(req_scope, access, start, levels, lang):
+    """One investigation table run again with this scope and access now, as
+    the answer ran it: {run, inv, prof, config}. RagError(status, body) when
+    it cannot be: graph down, no investigation in the profile (409), an
+    ambiguous start (409), nothing visible (404)."""
+    try:
+        domain = orchestrator.profile(GRAPH)
+    except graph.GraphError as e:
+        raise RagError(e.status, e.body)
+    cfg = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS, INVESTIGATE_VIA,
+                                          INVESTIGATE_BRANCH, INVESTIGATE_MAX_ROWS)
+    if cfg is None:
+        raise RagError(409, {"ok": False, "error": "the investigation is not available with "
+                                                   "the active profile"})
+    check = _visible(access)
+    run = orchestrator.Run(
+        GRAPH, {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
+        lambda path: req_scope.contains_path(path) and check(path),
+        _LANG_NAMES.get(lang, "English"), ORCHESTRATOR_MAX_FACTS, domain,
+        name_join=GRAPH_NAME_JOIN, investigate=cfg, doc_refs=DOCUMENT_REFS)
+    try:
+        inv = investigation_export.investigate(run, start, levels)
+    except orchestrator.Clarify as e:
+        raise RagError(409, {"ok": False, "error": "ambiguous", "question": e.question})
+    except graph.GraphError as e:
+        raise RagError(e.status, e.body)
+    if inv is None:
+        raise RagError(404, {"ok": False, "error": "nothing of this investigation is visible"})
+    return {"run": run, "inv": inv, "prof": domain, "config": cfg}
+
+
+# BV 1.4 / 2.4: what the documents say about each person of an investigation.
+PERSON_SUMMARY = person_summary.settings()
+_SUMMARY_FOOTER = {"en": "Sources", "hu": "Források", "da": "Kilder", "de": "Quellen"}
+
+
+def _summary_result(user, drive, request, req_scope, inv, out):
+    """The summaries as an answer: markdown with [#n], the cited findings as
+    citations, and the investigation, so its export and graph come with it."""
+    lang = investigation_export.lang_code(request.get("lang"))
+    query = request.get("query") or ""
+    _, citations = llm.build_context(out["contexts"])
+    aid = confidence.audit_id(user, drive, query, out["text"])
+    files = list(dict.fromkeys(c.get("path") for c in citations if c.get("path")))
+    display = "%s\n\n---\n**Adatkontroll & Audit Info**\n* %s: %d\n* Audit ID: %s" % (
+        out["text"], _SUMMARY_FOOTER.get(lang, "Sources"), len(files), aid)
+    result = {"ok": True, "drive": corpus.norm(drive), "user": user,
+              "corpus_id": req_scope.corpus_id, "answer": display,
+              "backend": "%s (person summaries)" % llm.GEN_MODEL, "action": None,
+              "profile": "grounded", "audit_id": aid, "confidence": None,
+              "citations": citations, "hits": [],
+              "graph": {"calls": [], "investigations": [
+                  dict(inv, drives=list(req_scope.drive_roots))]},
+              "person_summaries": {"persons": out["persons"], "info": out["info"],
+                                   "investigation_audit_id": request.get("audit_id") or None}}
+    TRACES.put(aid, {
+        "ts": time.time(), "user": user, "drive": corpus.norm(drive),
+        "corpus_id": req_scope.corpus_id, "scope": req_scope.as_dict(),
+        "action": "person_summaries", "agent": llm.DEFAULT_AGENT, "lang": lang,
+        "profile": "grounded", "question": query, "retrieval_query": None,
+        "answer": out["text"], "backend": result["backend"], "confidence": None,
+        "citations": citations, "hits": []})
+    return result
+
+
+def _summary_worker(job_id, user, drive, cancel_event=None):
+    """The person summaries job: the investigation is rebuilt now, with the
+    scope and access of the submitting request, inside the heavy slot."""
+    if _user_locked(user):
+        JOBS.finish(user, drive, job_id, 499, {"ok": False, "error": "user access locked"})
+        return
+    if JOBS.start(user, drive, job_id) is None:
+        return
+    request = (JOBS.get(user, drive, job_id) or {}).get("request") or {}
+    req_scope = scope.rebuild(drive, request.get("scope_drives"))
+    access = acl.Access.from_dict(request.get("access")) or ACL.access_for(user, None, None)
+    lang = investigation_export.lang_code(request.get("lang"))
+    stage = lambda phase, done, total: JOBS.stage(user, drive, job_id, phase, done, total)
+    out, inv = None, None
+    try:
+        stage("investigate", 0, 0)
+        built = _rebuild_investigation(req_scope, access, request.get("start"),
+                                       request.get("levels"), lang)
+        inv = built["inv"]
+        out = person_summary.summarize(
+            built["run"], inv, rag_post_json,
+            {"corpus_ids": list(req_scope.corpus_ids), "tenant_id": TENANT_ID,
+             "access": access.as_rag()},
+            lang=_LANG_NAMES.get(lang, "English"), user=user, ids=request.get("ids"),
+            config=PERSON_SUMMARY, checkpoints=ANALYSIS_CHECKPOINTS,
+            cancel_event=cancel_event, progress=stage)
+        code, payload = 200, _summary_result(user, drive, request, req_scope, inv, out)
+    except llm.GenerationCancelled as e:
+        code, payload = 499, {"ok": False, "error": str(e)}
+    except RagError as e:
+        code, payload = e.status, e.body
+    except Exception as e:  # noqa: BLE001
+        code, payload = 500, {"ok": False, "error": str(e)}
+    summary = dict(_answer_summary(payload if isinstance(payload, dict) else {}), status=code)
+    # Every document read, not only the cited ones: the reading is what is logged.
+    summary["sources"] = querylog.sources_of((out or {}).get("sources") or [])
+    question = json.dumps({"start": request.get("start"), "levels": request.get("levels"),
+                           "audit_id": request.get("audit_id") or None,
+                           "ids": len(request.get("ids") or []) or None,
+                           "rows": len((inv or {}).get("rows") or []),
+                           "people": len((out or {}).get("persons") or [])},
+                          ensure_ascii=False, sort_keys=True)
+    if not _log_query(user, drive, req_scope, "summary:investigation",
+                      request.get("purpose") or {}, question, summary) and code == 200:
+        code, payload = 503, {"ok": False, "error": "query log unavailable"}
+    if code == 200:
+        sys.stderr.write("[adapter] person summaries (%d people, %d passages) by %s\n" % (
+            len(out["persons"]), out["info"]["passages"], user))
+    JOBS.finish(user, drive, job_id, code, payload)
 
 
 def _maintenance_loop():
@@ -1889,6 +2010,8 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
                 "/api/v1/ui/graph/investigation/export": self._graph_investigation_export,
                 "/api/v1/ui/graph/investigation/graph": self._graph_investigation_graph,
+                "/api/v1/ui/graph/investigation/summaries":
+                    self._graph_investigation_summaries,
                 "/api/v1/ui/graph/reprocess/status": self._graph_reprocess_status,
                 "/api/v1/ui/graph/reprocess/start": self._graph_reprocess_start,
                 "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
@@ -3151,39 +3274,16 @@ class Handler(BaseHTTPRequestHandler):
         """The investigation a request names ({start, levels, drives}), run again
         with the caller's scope and access now, as the answer ran it: {run, inv,
         start, levels, lang, audit_id, prof, config}, or None after the refusal."""
-        _, payload, req_scope, access, scope_body = ctx
+        _, payload, req_scope, access, _ = ctx
         start, levels = investigation_export.parse_request(payload)
         lang = investigation_export.lang_code(payload.get("lang"))
         audit_id = re.sub(r"[^\w\-]", "", str(payload.get("audit_id") or ""))[:64]
         try:
-            domain = orchestrator.profile(GRAPH)
-        except graph.GraphError as e:
+            built = _rebuild_investigation(req_scope, access, start, levels, lang)
+        except RagError as e:
             self._send(e.status, e.body)
             return None
-        cfg = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS, INVESTIGATE_VIA,
-                                              INVESTIGATE_BRANCH, INVESTIGATE_MAX_ROWS)
-        if cfg is None:
-            self._send(409, {"ok": False, "error": "the investigation is not available with "
-                                                   "the active profile"})
-            return None
-        check = _visible(access)
-        run = orchestrator.Run(
-            GRAPH, scope_body, lambda path: req_scope.contains_path(path) and check(path),
-            _LANG_NAMES.get(lang, "English"), ORCHESTRATOR_MAX_FACTS, domain,
-            name_join=GRAPH_NAME_JOIN, investigate=cfg)
-        try:
-            inv = investigation_export.investigate(run, start, levels)
-        except orchestrator.Clarify as e:
-            self._send(409, {"ok": False, "error": "ambiguous", "question": e.question})
-            return None
-        except graph.GraphError as e:
-            self._send(e.status, e.body)
-            return None
-        if inv is None:
-            self._send(404, {"ok": False, "error": "nothing of this investigation is visible"})
-            return None
-        return {"run": run, "inv": inv, "start": start, "levels": levels, "lang": lang,
-                "audit_id": audit_id, "prof": domain, "config": cfg}
+        return dict(built, start=start, levels=levels, lang=lang, audit_id=audit_id)
 
     def _graph_investigation_graph(self):
         """The subgraph of one investigation table (BV 1.3 / 2.3) in the
@@ -3210,6 +3310,55 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[adapter] graph: investigation subgraph (%d nodes, %d edges) by %s\n"
                          % (len(sub["nodes"]), len(sub["edges"]), user))
         self._send(200, dict(sub, ok=True, start=start, levels=levels))
+
+    def _graph_investigation_summaries(self):
+        """Per-person summaries of one investigation (BV 1.4 / 2.4) as a
+        background job in the heavy slot. Checked now (purpose, scope, the
+        table is visible); the job rebuilds the table when it runs, with this
+        request's scope and access, and reads only what is visible then. The
+        client names the start, the levels, the drives and optionally `ids` --
+        people of the table to narrow to -- never rows or documents."""
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
+            return
+        user, payload, req_scope, access, _ = ctx
+        if not JOBS.enabled():
+            self._send(503, {"ok": False, "error": "background jobs are not available"})
+            return
+        try:
+            ids = person_summary.parse_ids(payload.get("ids"))
+        except ValueError as e:
+            self._send(400, {"ok": False, "error": str(e)})
+            return
+        built = self._investigation_run(ctx)
+        if built is None:
+            return
+        persons = person_summary.people(built["inv"], ids)
+        if not persons:
+            self._send(404, {"ok": False, "error": "none of these people is in the investigation"})
+            return
+        drive = self._bound_drive
+        job_id = uuid.uuid4().hex
+        request = {"kind": "person_summaries",
+                   "query": person_summary.title(_LANG_NAMES.get(built["lang"]), built["start"]),
+                   "action": None, "start": built["start"], "levels": built["levels"],
+                   "ids": ids, "lang": built["lang"], "audit_id": built["audit_id"],
+                   "scope_drives": list(req_scope.drive_roots), "origin": "background",
+                   "profile": "grounded", "access": access.to_dict(), "purpose": self._bound}
+        JOBS.create(job_id, user, drive, request)
+        try:
+            position = HEAVY_SCHEDULER.submit(job_id, user, drive, (job_id, user, drive),
+                                              worker=_summary_worker)
+        except scheduler.QueueFull as e:
+            JOBS.cancel_queued(user, drive, job_id)
+            self._send(429, {"ok": False, "error": str(e)})
+            return
+        sys.stderr.write("[adapter] graph: person summaries queued (%d people) by %s\n"
+                         % (min(len(persons), PERSON_SUMMARY["max_persons"]), user))
+        self._send(202, {"ok": True, "job_id": job_id, "status": "pending",
+                         "job_status": "queued", "queue_position": position,
+                         "people": len(persons),
+                         "summarised": min(len(persons), PERSON_SUMMARY["max_persons"])})
 
     def _graph_investigation_export(self):
         """One investigation table as XLSX (BV 1.5 / 2.5). The table is built

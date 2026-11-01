@@ -444,3 +444,17 @@ class Neo4jView(GraphView):
         rows = self._run("MATCH (a:Entity)-[r:REL]->(b:Entity) "
                          "RETURN r {.*} AS r, a.id AS a, b.id AS b ORDER BY r.id")
         return [_relation(row["r"], row["a"], row["b"]) for row in rows]
+
+    def _load_doc_mentions(self, doc_ids, subtypes):
+        rows = self._run("MATCH (m:Mention)-[:OF]->(e:Entity) "
+                         "WHERE m.doc_id IN $ids AND e.subtype IN $subtypes "
+                         "AND coalesce(e.status, 'active') <> 'rejected' "
+                         "RETURN m {.*} AS m, e.id AS eid, e.subtype AS subtype",
+                         ids=list(doc_ids), subtypes=sorted(subtypes))
+        out: dict[str, list] = {}
+        for row in rows:
+            m = row["m"]
+            out.setdefault(m["doc_id"], []).append((row["subtype"], Mention(
+                m["id"], m["doc_id"], row["eid"], m["text"], m.get("page"), m.get("start"),
+                m.get("end"), m.get("method") or "ner")))
+        return out

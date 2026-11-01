@@ -70,7 +70,7 @@ class EvalSetTest(unittest.TestCase):
         steps = {(q["agent"], q["bv_step"]) for q in self.data["questions"]}
         for step in ("1.1", "1.2.1", "1.2.2", "1.2.3", "1.3", "1.4", "1.5"):
             self.assertIn(("person", step), steps)
-        for step in ("2.1", "2.2", "2.3", "2.5"):
+        for step in ("2.1", "2.2", "2.3", "2.4", "2.5"):
             self.assertIn(("identifier", step), steps)
 
     def test_gold_items_exist_in_the_world(self):
@@ -96,6 +96,34 @@ class EvalSetTest(unittest.TestCase):
         self.assertIn(q["seed"]["registry_number"], q["question"])
         self.assertNotIn(q["seed"]["name"], q["question"])
         self.assertEqual(q["seed"]["name"], q["must"][0]["value"])
+
+    def test_per_person_summaries_have_gold_for_their_people(self):
+        p14 = self.by_id["P-1.4-szemelyenkent"]
+        self.assertEqual(("person", "1.4", 1, []), (p14["agent"], p14["bv_step"],
+                                                     p14["levels"], p14["reference_plan"]))
+        # The start is the inmate of P-1.4: its gold is the same as that question's.
+        start = self.by_id["P-1.4-osszefoglalo"]
+        self.assertEqual(start["seed"]["name"], p14["start"])
+        self.assertEqual(start["must"], p14["summaries"][p14["start"]])
+        self.assertIn(p14["start"], p14["question"])
+        i24 = self.by_id["I-2.4-szemelyenkent"]
+        self.assertEqual(self.by_id["I-2.1-telefon"]["seed"]["value"], i24["start"])
+        names = set(self.data["names"])
+        for q in (p14, i24):
+            self.assertTrue(set(q["summaries"]) <= names, q["id"])
+            self.assertTrue(all(q["summaries"].values()), q["id"])
+
+
+class SummarySectionsTest(unittest.TestCase):
+    def test_each_person_gets_their_own_section(self):
+        import bv_summary_check
+        text = ("## Összefoglaló személyenként \u2014 kiindulópont: X (1 szint)\n\n"
+                "### Balogh György \u2014 Fogvatartott, NY-1 (kiindulópont)\nVerekedés [#1].\n\n"
+                "*Elolvasva: 1 részlet 1 iratból.*\n\n### Kiss Bori (1. szint)\nNincs.\n\n> x")
+        found = bv_summary_check.sections(text)
+        self.assertEqual(["Balogh György", "Kiss Bori"], list(found))
+        self.assertIn("Verekedés [#1].", found["Balogh György"])
+        self.assertNotIn("Verekedés", found["Kiss Bori"])
 
 
 class ToolCeilingTest(unittest.TestCase):

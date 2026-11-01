@@ -254,6 +254,24 @@ export const graphApi = {
       },
       drive,
     ),
+  /** BV 1.4 / 2.4: what the documents say about each person of an investigation
+   *  table, as a background task. The box rebuilds the table when the task runs;
+   *  the result comes back as a finished background task (an answer card). */
+  investigationSummaries: (
+    drive: string,
+    req: { start: string; levels: number; drives?: string[]; auditId?: string; lang: string },
+  ) =>
+    adapterGraph<GraphInvestigationSummaries>(
+      "investigation/summaries",
+      {
+        start: req.start,
+        levels: req.levels,
+        drives: req.drives?.length ? req.drives : undefined,
+        audit_id: req.auditId,
+        lang: req.lang,
+      },
+      drive,
+    ),
   reprocessStatus: (drive: string) =>
     adapterGraph<GraphReprocessStatus>("reprocess/status", {}, drive),
   reprocessStart: (drive: string, pathPrefix: string) =>
@@ -308,6 +326,15 @@ export type GraphDossier = {
 
 /** An investigation spreadsheet: the file itself (download) or where it went
  *  (drive, the /ui/save reply), with the size of the rebuilt table. */
+/** A queued person summaries task (BV 1.4 / 2.4): `summarised` of `people`. */
+export type GraphInvestigationSummaries = {
+  job_id: string;
+  job_status: string;
+  queue_position: number | null;
+  people: number;
+  summarised: number;
+};
+
 export type GraphInvestigationExport = {
   name: string;
   format: string;

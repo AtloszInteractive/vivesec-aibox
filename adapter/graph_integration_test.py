@@ -574,6 +574,120 @@ class GraphIntegrationTest(unittest.TestCase):
                 status, _ = self.investigation_graph("lars", {})
                 self.assertEqual(409, status)
 
+    def summaries(self, user, body):
+        payload = dict({"start": "Kovács János", "levels": 1, "lang": "hu"}, **body)
+        return self.call("/api/v1/ui/graph/investigation/summaries", payload, user=user)
+
+    def finished(self, user, job_id):
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            status, out = self.call("/api/v1/ui/poll", {"job_id": job_id, "timeout": 5},
+                                    user=user)
+            if out.get("status") != "pending":
+                return status, out
+        self.fail("the summary job did not finish")
+
+    def test_person_summaries_run_as_a_job_within_the_callers_access(self):
+        import deep
+        import llm
+        import purpose
+        import querylog
+
+        service = self.service
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+        written = []
+
+        def model(system, user, **kw):
+            if system == deep.MAP_SYSTEM:
+                excerpts = user.split("EXCERPTS:\n", 1)[1].split("\n\n")
+                return json.dumps({"findings": [
+                    {"excerpt": i, "quote": part.split("\n", 1)[1].split(" a ")[0],
+                     "note": "találkozó"} for i, part in enumerate(excerpts, 1)]}), 0, 0
+            written.append(user)
+            return "Az irat szerint találkozott [1].", 0, 0
+
+        with patch.object(service, "INVESTIGATE_RELATIONS", ["MET"]), \
+                patch.object(service, "INVESTIGATE_VIA", []), \
+                patch.object(llm, "GENERATE", "on"), patch.object(llm, "_chat", model):
+            status, out = self.summaries("lars", {"drives": [DRIVE], "audit_id": "aud-3"})
+            self.assertEqual(202, status, out)
+            self.assertEqual((2, 2), (out["people"], out["summarised"]))
+            status, done = self.finished("lars", out["job_id"])
+            self.assertEqual((200, "done"), (status, done["status"]), done)
+            self.assertIn("### Kovács János", done["answer"])
+            self.assertIn("### Nagy Éva", done["answer"])
+            self.assertIn("Az irat szerint találkozott [#1].", done["answer"])
+            self.assertIn("Adatkontroll & Audit Info", done["answer"])
+            self.assertEqual({PUBLIC}, {c["path"] for c in done["citations"]})
+            self.assertEqual(["Kovács János", "Nagy Éva"],
+                             [r["name"] for r in done["graph"]["investigations"][0]["rows"]])
+            self.assertEqual([DRIVE], [d.rstrip("/") for d in
+                                       done["graph"]["investigations"][0]["drives"]])
+            blob = json.dumps(done, ensure_ascii=False)
+            self.assertNotIn("Titkos", blob)
+            self.assertNotIn(HIDDEN, blob)
+            self.assertNotIn("Titkos", "".join(written))
+            # It is a background task of the caller, named after the start.
+            request = urllib.request.Request(
+                "http://127.0.0.1:%d/api/v1/ui/jobs" % self.server.server_port,
+                headers={"VVS-Drive": b64(DRIVE + "/"), "VVS-User": "lars"})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                jobs = json.loads(response.read().decode("utf-8"))
+            self.assertIn(("Összefoglaló személyenként: Kovács János", "done"),
+                          [(j["query"], j["status"]) for j in jobs["jobs"]])
+            # A caller who may see the hidden folder reads it too.
+            status, out = self.summaries("hanna", {})
+            self.assertEqual(202, status, out)
+            status, done = self.finished("hanna", out["job_id"])
+            self.assertEqual(200, status, done)
+            self.assertEqual({PUBLIC, HIDDEN}, {c["path"] for c in done["citations"]},
+                             done["person_summaries"])
+            self.assertIn("### Titkos Tamás", done["answer"])
+            # The client may narrow to people of the table, never widen.
+            first = done["graph"]["investigations"][0]["rows"][0]
+            status, out = self.summaries("hanna", {"ids": [first["id"], "no-such-row"]})
+            self.assertEqual((202, 1), (status, out["people"]), out)
+            status, done = self.finished("hanna", out["job_id"])
+            self.assertEqual(1, done["answer"].count("### "))
+
+            # Purpose binding and the query log of what was read.
+            with patch.object(service, "PURPOSE",
+                              purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                    patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name)):
+                status, out = self.summaries("lars", {})
+                self.assertEqual((428, "purpose_required"), (status, out["error"]))
+                status, out = self.summaries("lars", {"case_ref": "BV-2026/9",
+                                                      "audit_id": "aud-4"})
+                self.assertEqual(202, status, out)
+                status, done = self.finished("lars", out["job_id"])
+                self.assertEqual(200, status, done)
+            name, = os.listdir(logdir.name)
+            with open(os.path.join(logdir.name, name), encoding="utf-8") as handle:
+                [record] = [json.loads(line) for line in handle]
+            self.assertEqual(("summary:investigation", "lars", "BV-2026/9", [PUBLIC], 200),
+                             (record["kind"], record["user"], record["case_ref"],
+                              record["result"]["sources"], record["result"]["status"]))
+            self.assertEqual(querylog.question_hash(json.dumps(
+                {"audit_id": "aud-4", "ids": None, "levels": 1, "people": 2, "rows": 2,
+                 "start": "Kovács János"}, ensure_ascii=False, sort_keys=True)),
+                record["question_sha256"])
+
+            # Refusals: a drive outside the grant, a hidden-only start, people not
+            # in the table, bad input, no investigation in the profile.
+            status, _ = self.summaries("lars", {"drives": ["/storage/drives/hr/"]})
+            self.assertEqual(403, status)
+            status, _ = self.summaries("lars", {"start": "Titkos Tamás"})
+            self.assertEqual(404, status)
+            status, _ = self.summaries("lars", {"ids": ["no-such-row"]})
+            self.assertEqual(404, status)
+            for bad in ({"levels": 9}, {"start": ""}, {"ids": "x"}, {"ids": [3]}):
+                status, _ = self.summaries("lars", bad)
+                self.assertEqual(400, status, bad)
+            with patch.object(service, "INVESTIGATE_RELATIONS", ["NO_SUCH"]):
+                status, _ = self.summaries("lars", {})
+                self.assertEqual(409, status)
+
     def test_analyst_counts_then_replans_with_the_results(self):
         import llm
 
