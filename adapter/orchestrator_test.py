@@ -961,6 +961,20 @@ class InvestigateTest(unittest.TestCase):
         self.assertEqual(1, len(info["investigations"]))
         self.assertEqual(7, info["facts"])  # the table rows are the facts
 
+    def test_a_joined_row_replaces_the_record_the_name_lookup_found(self):
+        class Joined(InvestigationGraph):
+            def post(self, path, body):
+                res = super().post(path, body)
+                if path == "/query/investigate":
+                    rows = [dict(r) for r in res["rows"]]
+                    rows[0]["node"] = dict(self.S, joined=["S", "S2"], documents=["d1", "d3"])
+                    res = dict(res, rows=rows)
+                return res
+        r, _, _ = self.run_investigation(Joined(), name_join=True)
+        # The name lookup stored Sas Tibor's own record first; the row is the joined one.
+        self.assertEqual(["d1", "d3"], r.nodes["S"]["documents"])
+        self.assertEqual(["d1"], r.nodes["K1"]["documents"])
+
     def test_without_a_configuration_the_call_is_skipped_quietly(self):
         r, out, graph = self.run_investigation(config=None)
         self.assertEqual([], out)

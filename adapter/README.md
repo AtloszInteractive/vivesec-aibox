@@ -764,7 +764,7 @@ the finished task into a 503 error, and the result is withheld.
 | Variable | Default | Meaning / fail-safe |
 | --- | --- | --- |
 | `ADAPTER_PERSON_SUMMARY_MAX_PERSONS` | `12` | People per task, in table order (1–50); the rest are named in a note and can be chosen with `ids`. Invalid → default. |
-| `ADAPTER_PERSON_SUMMARY_MAX_DOCS` | `8` | Documents read per person (1–20, the RAG's path-filter limit). |
+| `ADAPTER_PERSON_SUMMARY_MAX_DOCS` | `12` | Documents read per person (1–20, the RAG's path-filter limit). |
 | `ADAPTER_PERSON_SUMMARY_MAX_PASSAGES` | `60` | Passages read per person (1–400); a cut is noted and marks the task partial. |
 
 Tests: `person_summary_test.py` (visible documents only, verbatim quotes,

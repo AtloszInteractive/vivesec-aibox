@@ -1564,7 +1564,10 @@ class Run:
                 source = self._link_evidence(links[0])[0] if links else None
             if source is None:
                 continue
-            self.nodes.setdefault(node["id"], node)
+            if node.get("joined") or node["id"] not in self.nodes:
+                # The joined node (same_name) holds every record's documents;
+                # the one the name lookup stored first holds only its own.
+                self.nodes[node["id"]] = node
             self._mark_joined([node])
             label = node.get("label") or node["id"]
             path, also = label, []

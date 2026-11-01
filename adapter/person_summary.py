@@ -22,7 +22,7 @@ again against `visible`. Each person's reading is checkpointed (resumed after a
 cancel or restart, analysis_checkpoint.py).
 
   ADAPTER_PERSON_SUMMARY_MAX_PERSONS   people per run, in table order (default 12)
-  ADAPTER_PERSON_SUMMARY_MAX_DOCS      documents read per person (default 8, max 20)
+  ADAPTER_PERSON_SUMMARY_MAX_DOCS      documents read per person (default 12, max 20)
   ADAPTER_PERSON_SUMMARY_MAX_PASSAGES  passages read per person (default 60)
 """
 import hashlib
@@ -41,21 +41,27 @@ MAX_IDS = 200
 LANG_CODES = {"Hungarian": "hu", "English": "en", "Danish": "da", "German": "de"}
 
 MAP_QUESTION = (
-    "Everything these excerpts state about %s (%s): the incidents or events this person "
-    "is involved in and their kind, prohibited items found on them (e.g. a mobile phone) "
-    "and the numbers on them, visits, contacts, placements, file numbers. Only facts "
-    "about this person; nothing about anyone else.")
+    "What these excerpts state about %s (%s): the incidents or events involving this "
+    "person, their kind and date and the report's file number; prohibited items found on "
+    "them (e.g. a mobile phone) and the numbers on them; what reports or notes say this "
+    "person did; visits and calls only as who and when. Only facts about this person, "
+    "nothing about anyone else. Skip the person's own identifying data (birth data, "
+    "mother's name, ID, registry or document numbers, address, own phone number, vehicle) "
+    "and routine records (admission, placement, headcount lists).")
 
 WRITE_SYSTEM = (
     "You write a short factual characterisation of ONE person for an investigator, from "
     "numbered notes taken from the investigator's documents. Write 2-4 sentences in "
-    "%s. Say what kind of information the documents hold about this person: the "
-    "incidents and their kind, prohibited items found (such as a mobile phone) and the "
-    "numbers on them, visits, contacts, with the dates the notes give. After each "
-    "statement put the number(s) of the notes it rests on in square brackets, e.g. [2] "
-    "or [1][3]. Use only the notes; keep names, dates and numbers exactly as written. "
-    "Never guess, assess, score or predict the person's guilt, risk or behaviour. If the "
-    "notes say nothing about this person, write only: NONE"
+    "%s. Say what kind of information the documents hold about this person: first the "
+    "incidents and reports (their kind, date and file number) and prohibited items found "
+    "(such as a mobile phone, with the number on it); then, in one sentence at most, "
+    "visits or calls as a count and the people involved, never listed one by one. Do not "
+    "repeat the person's identifying data (birth data, mother's name, ID or registry "
+    "numbers, address, their own phone number, vehicle): the investigation table holds it. "
+    "After each statement put the number(s) of the notes it rests on in square brackets, "
+    "e.g. [2] or [1][3]. Use only the notes; keep names, dates and numbers exactly as "
+    "written. Never guess, assess, score or predict the person's guilt, risk or behaviour. "
+    "If the notes say nothing about this person, write only: NONE"
 )
 
 _TEXT = {
@@ -136,7 +142,7 @@ def _bounded(env, name, default, low, high):
 def settings(env=None):
     env = env if env is not None else os.environ
     return {"max_persons": _bounded(env, "ADAPTER_PERSON_SUMMARY_MAX_PERSONS", 12, 1, 50),
-            "max_docs": _bounded(env, "ADAPTER_PERSON_SUMMARY_MAX_DOCS", 8, 1, 20),
+            "max_docs": _bounded(env, "ADAPTER_PERSON_SUMMARY_MAX_DOCS", 12, 1, 20),
             "max_passages": _bounded(env, "ADAPTER_PERSON_SUMMARY_MAX_PASSAGES", 60, 1, 400)}
 
 

@@ -170,7 +170,7 @@ class PersonSummaryTest(unittest.TestCase):
         self.assertEqual([], self.model.calls)
 
     def test_settings_are_bounded(self):
-        self.assertEqual({"max_persons": 12, "max_docs": 8, "max_passages": 60},
+        self.assertEqual({"max_persons": 12, "max_docs": 12, "max_passages": 60},
                          person_summary.settings({}))
         self.assertEqual({"max_persons": 50, "max_docs": 20, "max_passages": 1},
                          person_summary.settings({
