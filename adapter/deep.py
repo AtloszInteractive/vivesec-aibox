@@ -45,8 +45,9 @@ MAP_SYSTEM = (
     "You read numbered excerpts of the user's documents and note everything in them "
     "that helps answer the QUESTION. Use only the excerpts.\n"
     'Reply with JSON only: {"findings": [{"excerpt": <number>, "quote": "<the exact '
-    'words of that excerpt that show it, copied character for character, at most 300 '
-    'characters>", "note": "<what it shows for the question, in a few words>"}]}\n'
+    'words of that excerpt that show it, one continuous span copied character for '
+    'character, never shortened with ..., at most 300 characters>", "note": "<what it '
+    'shows for the question, in a few words>"}]}\n'
     "Give one finding per relevant fact and list every one of them, even when they look "
     "alike: the question may need all cases. Keep names, dates and numbers as written. "
     "An excerpt that does not help gets no finding; if none helps, reply "
@@ -84,8 +85,9 @@ SECTION_SYSTEM = (
     "note what the TASK needs from this part: its key facts, parties, obligations, dates, "
     "amounts, risks and conclusions. Use only the excerpts.\n"
     'Reply with JSON only: {"findings": [{"excerpt": <number>, "quote": "<the exact '
-    'words of that excerpt that show it, copied character for character, at most 300 '
-    'characters>", "note": "<the point, one short sentence>"}]}\n'
+    'words of that excerpt that show it, one continuous span copied character for '
+    'character, never shortened with ..., at most 300 characters>", "note": "<the point, '
+    'one short sentence>"}]}\n'
     "At most 8 findings, the most important first; keep names, dates and numbers as "
     'written. A part with nothing of note gets {"findings": []}.'
 )
@@ -262,6 +264,31 @@ def _squash(text):
     return " ".join(re.sub(r"[\"\u201c\u201d\u201e\u00bb\u00ab']", "", folded).split())
 
 
+# A quote the model shortened: verbatim parts joined by an ellipsis.
+_ELLIPSIS = re.compile(r"\s*(?:\.{3,}|\u2026|\[\.\.\.\])\s*")
+MIN_QUOTE_PART = 8
+
+
+def quoted_in(quote, text):
+    """Does the quote occur in the text: verbatim, or as parts the model joined
+    with an ellipsis, each part verbatim, at least MIN_QUOTE_PART characters,
+    in the order of the text."""
+    hay = _squash(text)
+    whole = _squash(quote)
+    if whole and whole in hay:
+        return True
+    parts = [p for p in (_squash(x) for x in _ELLIPSIS.split(quote or "")) if p]
+    if len(parts) < 2 or any(len(p) < MIN_QUOTE_PART for p in parts):
+        return False
+    pos = 0
+    for part in parts:
+        found = hay.find(part, pos)
+        if found < 0:
+            return False
+        pos = found + len(part)
+    return True
+
+
 def collect(post, scope_body, terms, mode="any", path_prefixes=None, cap=None):
     """Every matching passage up to `cap` (default MAX_CHUNKS): (chunks, total, documents)."""
     cap = MAX_CHUNKS if cap is None else cap
@@ -349,7 +376,7 @@ def verified_findings(items, group):
         if not isinstance(quote, str) or not quote.strip() or not isinstance(note, str):
             continue
         quote = " ".join(quote.split())[:MAX_QUOTE]
-        if _squash(quote) not in _squash(group[n - 1].get("text")):
+        if not quoted_in(quote, group[n - 1].get("text")):
             continue  # not in the passage: a paraphrase or an invention
         out.append({"chunk": group[n - 1], "quote": quote, "note": " ".join(note.split())[:400]})
     return out
