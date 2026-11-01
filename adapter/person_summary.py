@@ -47,15 +47,15 @@ MAP_QUESTION = (
     "person did; visits and calls only as who and when. Only facts about this person, "
     "nothing about anyone else. Skip the person's own identifying data (birth data, "
     "mother's name, ID, registry or document numbers, address, own phone number, vehicle) "
-    "and routine records (admission, placement, headcount lists).")
+    "and routine records (admission, placement, headcount lists). Write the notes in %s.")
 
 WRITE_SYSTEM = (
     "You write a short factual characterisation of ONE person for an investigator, from "
     "numbered notes taken from the investigator's documents. Write 2-4 sentences in "
     "%s. Say what kind of information the documents hold about this person: first the "
     "incidents and reports (their kind, date and file number) and prohibited items found "
-    "(such as a mobile phone, with the number on it); then, in one sentence at most, "
-    "visits or calls as a count and the people involved, never listed one by one. Do not "
+    "(such as a mobile phone, with the number on it); then, in one sentence at most, who "
+    "visited or called them and in which period, without counting or listing dates. Do not "
     "repeat the person's identifying data (birth data, mother's name, ID or registry "
     "numbers, address, their own phone number, vehicle): the investigation table holds it. "
     "After each statement put the number(s) of the notes it rests on in square brackets, "
@@ -296,11 +296,11 @@ def summarize(run, inv, post, scope_body, *, lang="English", user="", ids=None, 
         sources += [p for p in dict.fromkeys(c.get("source_path") for c in chunks)
                     if p not in sources]
         checkpoint = checkpoints.open(
-            user, chunks, MAP_QUESTION % (row["name"], _describe(row)), lang,
+            user, chunks, MAP_QUESTION % (row["name"], _describe(row), lang or "English"), lang,
             llm.GEN_MODEL, {"batch": deep.BATCH_CHARS, "prompt": question_hash}) \
             if checkpoints is not None and chunks else None
         findings, from_checkpoint = [], True
-        question = MAP_QUESTION % (row["name"], _describe(row))
+        question = MAP_QUESTION % (row["name"], _describe(row), lang or "English")
         for g, group in enumerate(deep.batches(chunks)):
             done, part = checkpoint.get(g) if checkpoint is not None else (False, None)
             if not done:
