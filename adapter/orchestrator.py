@@ -1534,6 +1534,14 @@ class Run:
         return _t("investigate_row", self.code) % (row["level"], row["name"], "; ".join(parts),
                                                    path, also)
 
+    def _asks_holders_contacts(self, ids):
+        """The start is an identifier or place (no person) and the message names
+        one of the investigation's contact relations ("kapcsolattartói")."""
+        cfg = self.investigate_cfg or {}
+        if any((self.nodes.get(i) or {}).get("type") in ("person", None) for i in ids):
+            return False
+        return any(rid in cfg.get("relations", ()) for rid in self._stated_terms())
+
     def investigate(self, args):
         """The level-by-level investigation table of one starting point: one row
         per person, each its own fact, and a note on what the table covers. The
@@ -1547,6 +1555,10 @@ class Run:
         if not ids:
             return 0
         levels = args.get("levels", DEFAULT_INVESTIGATE_LEVELS)
+        if levels < 2 and self._asks_holders_contacts(ids):
+            # From a number or address, level 1 is its holders; a message about
+            # their contacts (BV 2.2) needs the next level too.
+            levels = args["levels"] = 2
         res = self.query("investigate", seeds=ids[:20], relations=cfg["relations"],
                          via_relations=cfg["via"], levels=levels, branch=cfg["branch"],
                          limit=cfg["max_rows"])

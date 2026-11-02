@@ -975,6 +975,27 @@ class InvestigateTest(unittest.TestCase):
         self.assertEqual(["d1", "d3"], r.nodes["S"]["documents"])
         self.assertEqual(["d1"], r.nodes["K1"]["documents"])
 
+    def test_from_a_number_a_question_about_contacts_goes_two_levels(self):
+        class Phone(InvestigationGraph):
+            def post(self, path, body):
+                if path == "/query/find" and "36" in body["text"]:
+                    return {"entities": [self.P], "documents": {}}
+                return super().post(path, body)
+
+        def levels(message, start):
+            graph = Phone()
+            r = orchestrator.Run(graph, {"corpus_ids": ["c"]}, lambda p: True, "Hungarian",
+                                 message=message, investigate=self.CONFIG)
+            r.run([{"tool": "investigate", "args": {"start": start, "levels": 1}}])
+            body = next(b for p, b in graph.calls if p == "/query/investigate")
+            return body["levels"], r.info()["calls"][0]["args"]["levels"]
+        number = "+36 30 111 1111"
+        self.assertEqual((2, 2), levels("A %s használói mely fogvatartottaknak "
+                                        "kapcsolattartói?" % number, number))
+        self.assertEqual((1, 1), levels("Kik használják a %s számot?" % number, number))
+        # A person's contacts are level 1.
+        self.assertEqual((1, 1), levels("Sas Tibor kapcsolattartói", "Sas Tibor"))
+
     def test_without_a_configuration_the_call_is_skipped_quietly(self):
         r, out, graph = self.run_investigation(config=None)
         self.assertEqual([], out)
