@@ -78,14 +78,17 @@ _TEXT = {
                       "person.",
                 "de": "Keines der Dokumente, die Sie sehen dürfen, ist mit dieser Person "
                       "verknüpft."},
-    "nothing": {"en": "The documents you may see (%d) hold nothing further about this "
-                      "person beyond the table.",
-                "hu": "Az Ön számára látható iratok (%d) a táblázaton túl nem tartalmaznak "
-                      "további információt erről a személyről.",
-                "da": "De dokumenter, du har adgang til (%d), indeholder intet yderligere om "
-                      "denne person ud over tabellen.",
-                "de": "Die Dokumente, die Sie sehen dürfen (%d), enthalten über die Tabelle "
-                      "hinaus nichts weiter zu dieser Person."},
+    "nothing": {"en": "In the documents you may see (%d) I found no incident, report or other "
+                      "information about this person beyond identifying and register data.",
+                "hu": "Az Ön számára látható iratokban (%d) nem találtam róla eseményt, "
+                      "jelentést vagy más, az azonosító és nyilvántartási adatokon túli "
+                      "információt.",
+                "da": "I de dokumenter, du har adgang til (%d), fandt jeg ingen hændelse, "
+                      "rapport eller anden oplysning om personen ud over identifikations- og "
+                      "registerdata.",
+                "de": "In den Dokumenten, die Sie sehen dürfen (%d), fand ich keinen Vorfall, "
+                      "keinen Bericht und keine anderen Angaben zu dieser Person über "
+                      "Identifikations- und Registerdaten hinaus."},
     "findings": {"en": "What the documents note about this person:",
                  "hu": "Amit az iratok erről a személyről rögzítenek:",
                  "da": "Hvad dokumenterne noterer om denne person:",

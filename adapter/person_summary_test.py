@@ -100,7 +100,7 @@ class PersonSummaryTest(unittest.TestCase):
         self.assertTrue(persons["Kende Anna"]["summary"].endswith("[#2]."))
         self.assertNotIn("[9]", out["text"])
         # Nothing found: said so, nothing cited.
-        self.assertIn("nem tartalmaznak további információt", persons["Major Ede"]["summary"])
+        self.assertIn("nem találtam róla eseményt", persons["Major Ede"]["summary"])
         self.assertEqual(0, persons["Major Ede"]["cited"])
         self.assertIn("### Sas Tibor \u2014 Fogvatartott, NY-100 (kiindulópont)", out["text"])
         self.assertIn("### Kende Anna \u2014 Személy (1. szint)", out["text"])
