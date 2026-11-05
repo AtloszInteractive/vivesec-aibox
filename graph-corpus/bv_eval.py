@@ -437,6 +437,14 @@ def agent_person(f: Facts):
          {"tool": "timeline", "args": {"entity": p3.name}}],
         documents=[_source(f, k) for inc in incs for k in f.incident_docs(inc)]))
 
+    mates3 = {m for inc in incs for m in inc.persons if m != s3}
+    out.append(_summary_capability(
+        f, "P-1.4-szemelyenkent", "person", "1.4",
+        "Készíts rövid összefoglalót személyenként %s fogvatartottról és a vele kapcsolatban "
+        "álló személyekről (kapcsolattartói, a vele közös eseményben érintettek) a jelentések "
+        "és feljegyzések alapján." % p3.name,
+        p3.name, [s3] + f.contact_ids(s3) + sorted(mates3)))
+
     out.append(_capability("P-1.3-vizualis", "person", "1.3",
                            "Jelenítsd meg a feltárt összefüggéseket egy kapcsolati ábrán, a "
                            "talált adatokkal együtt (%s)." % sp.name,
@@ -456,6 +464,30 @@ def agent_person(f: Facts):
 def _capability(qid, agent, step, text, needs):
     return _question(qid, agent, step, text, None, [], "gap", needs, [],
                      notes="capability check, not scored from the answer text")
+
+
+def summary_gold(f: Facts, pid) -> list:
+    """What a per-person summary (BV 1.4 / 2.4) should say about one person: the
+    kinds of the incidents the documents involve them in, and the number on a
+    phone found on them."""
+    incs = f.incidents.get(pid, [])
+    items = [incident_item(inc.kind) for inc in incs]
+    items += [_item("phone", inc.phone, "lefoglalt telefonban") for inc in incs
+              if inc.phone and inc.persons[0] == pid]
+    return _dedupe(items)
+
+
+def _summary_capability(f: Facts, qid, agent, step, text, start, people):
+    """A per-person summary check: the start, one level, and the gold of every
+    person of that level who has any (bv_summary_check.py scores each person's
+    own section of the summaries)."""
+    q = _capability(qid, agent, step, text,
+                    ["covered by the per-person summaries (/ui/graph/investigation/summaries, "
+                     "\"Summary per person\"), checked on a box with bv_summary_check.py"])
+    gold = {f.person(p).name: summary_gold(f, p) for p in sorted(set(people))
+            if p not in f.namesake}
+    q.update(start=start, levels=1, summaries={k: v for k, v in sorted(gold.items()) if v})
+    return q
 
 
 # The same questions answered with the investigation tool (one call per question):
@@ -576,6 +608,11 @@ def agent_identifier(f: Facts):
                            "kapcsolati ábrán." % phone,
                            ["covered by the investigation subgraph, checked with "
                             "bv_graph_check.py"]))
+    out.append(_summary_capability(
+        f, "I-2.4-szemelyenkent", "identifier", "2.4",
+        "Készíts rövid összefoglalót személyenként a %s telefonszámot használó vagy hívó "
+        "személyekről a jelentések és feljegyzések alapján." % phone,
+        phone, users + callers))
     out.append(_capability("I-2.5-excel", "identifier", "2.5",
                            "Exportáld Excel-táblázatba a %s telefonszám kapcsán feltárt "
                            "személyeket és azonosítóikat." % phone,

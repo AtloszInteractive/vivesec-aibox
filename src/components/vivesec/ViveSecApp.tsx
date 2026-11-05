@@ -4402,6 +4402,10 @@ function stageLabel(
       return `${tm("Condensing the findings")} ${(stage.done ?? 0) + 1}/${stage.total ?? 0}`;
     case "write":
       return tm("Writing the answer…");
+    case "investigate":
+      return tm("Rebuilding the investigation…");
+    case "person":
+      return `${tm("Reading about person")} ${Math.min((stage.done ?? 0) + 1, stage.total ?? 0)}/${stage.total ?? 0}`;
     default:
       return null;
   }
@@ -5666,6 +5670,40 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
     }
   }
 
+  /** BV 1.4 / 2.4: what the documents say about each person of the table, as a
+   *  background task. The box rebuilds the table when the task runs; the result
+   *  arrives in the background tasks as an answer with citations. */
+  async function summarize(inv: AdapterInvestigation) {
+    setBusy(`${inv.start}|summaries`);
+    setNote(null);
+    try {
+      const res = await graphApi.investigationSummaries(drive, {
+        start: inv.start,
+        levels: inv.levels,
+        drives: inv.drives,
+        auditId: meta.auditId,
+        lang: lang.toLowerCase(),
+      });
+      toast.success(tm("Summaries started as a background task."));
+      if (res.summarised < res.people) {
+        setNote(
+          `${tm("Summaries are made for the first people of the table only.")} ${res.summarised} / ${res.people}`,
+        );
+      }
+    } catch (err) {
+      const status = err instanceof AdapterGraphError ? err.status : 0;
+      toast.error(
+        tm(
+          status === 429
+            ? "Too many background tasks are waiting; try again later."
+            : (EXPORT_FAILURE[status] ?? "The summaries could not be started."),
+        ),
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function exportTable(inv: AdapterInvestigation, deliver: "download" | "drive") {
     setBusy(`${inv.start}|${deliver}`);
     setNote(null);
@@ -5745,6 +5783,21 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
               <Network className="h-3 w-3" style={{ color: LIME }} />
             )}
             {tm("Open as graph")}
+          </button>
+          <button
+            disabled={!!busy}
+            onClick={() => void summarize(inv)}
+            className={button}
+            title={tm(
+              "A short, cited summary of what the documents say about each person, made in the background from the documents you may see",
+            )}
+          >
+            {busy === `${inv.start}|summaries` ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Users className="h-3 w-3" style={{ color: LIME }} />
+            )}
+            {tm("Summary per person")}
           </button>
           <button
             disabled={!!busy}

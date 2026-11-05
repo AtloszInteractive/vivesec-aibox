@@ -168,6 +168,12 @@ def run_query(state: State, name: str, body: dict) -> dict:
             documents[doc_id] = {"corpus_id": doc.corpus_id, "source_path": doc.source_path,
                                  "title": doc.title, "kind": doc.kind}
     out["documents"] = documents
+    wanted = body.get("doc_refs")
+    if isinstance(wanted, list) and documents:
+        # The file or case numbers each document states (document metadata).
+        subtypes = [s for s in wanted if isinstance(s, str) and s][:5]
+        for doc_id, refs in view.document_refs(list(documents), subtypes).items():
+            documents[doc_id]["refs"] = refs
     return out
 
 

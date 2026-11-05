@@ -711,6 +711,100 @@ edges, hidden evidence and everything reached only through it absent) and
 `graph_integration_test.test_investigation_subgraph_within_the_callers_access`
 (visibility per user, purpose binding, query log, refusals).
 
+#### Summary per person (`/ui/graph/investigation/summaries`, BV 1.4 / 2.4)
+
+`POST /api/v1/ui/graph/investigation/summaries` `{start, levels, drives?, lang,
+audit_id?, ids?}` starts a **background task** that writes a short, cited
+characterisation of each person of one investigation table: what the caller's
+documents say about them (incidents and their kind, prohibited items such as a
+phone and the number on it, visits), never an assessment, score or prediction.
+The request is checked at once (purpose, scope, the table is visible: the same
+errors as the spreadsheet; 400 for malformed `ids`, 404 when `ids` names nobody
+of the table, 429 when the caller's queue is full, 503 without a job store) and
+answered `202 {job_id, job_status, queue_position, people, summarised}`. The
+task runs in the heavy scheduler slot (`scheduler.submit(..., worker=)`), so it
+queues with analyses and full readings. It **rebuilds the table when it runs**,
+with the scope and access of the submitting request; the client names only the
+start, the levels, the drives (narrowing only) and optionally `ids`, people of
+the table to narrow to.
+
+Per person (`person_summary.py`), in table order, up to
+`ADAPTER_PERSON_SUMMARY_MAX_PERSONS`:
+
+1. **Documents:** the visible documents the graph links to that person node
+   (the identity the investigation resolved, so a namesake's files stay out),
+   in path order, up to `ADAPTER_PERSON_SUMMARY_MAX_DOCS`.
+2. **Passages:** `/rag/match_chunks` restricted to those documents, with the
+   names the graph saw for the person (inflected forms included) and their
+   registry numbers; up to `ADAPTER_PERSON_SUMMARY_MAX_PASSAGES`, each checked
+   again against the scope and the adapter's ACL.
+3. **Reading:** the full-reading map step (`deep.read_group`): every finding
+   carries a quote that must occur verbatim in its passage.
+4. **Writing:** one short model call per person writes 2–4 sentences citing
+   the findings by number. References to no finding are dropped. If nothing
+   valid is cited, or the summary states a figure the findings do not hold
+   (`confidence.score` suppress), the findings themselves are shown instead.
+
+Each person's reading is checkpointed in the E10a analysis store, so a
+cancelled or interrupted task started again does not read finished people
+again. The same scope applies: user, passages, prompt, model, language.
+
+The finished task is an answer (`answer` with `[#n]`, `citations`, the audit
+footer) that the UI shows like any background result. It also carries:
+
+- `graph.investigations`, so the spreadsheet and graph buttons come with it;
+- `person_summaries` `{persons: [...], info}`: per person, documents and passages
+  read, findings, cited, notes, `partial`.
+
+The query-log kind is `summary:investigation`. The question hash is built from
+the start, levels, audit id, ids count, rows and people. Every document read is
+listed in `sources`. With `ADAPTER_PURPOSE=required`, an unwritable log turns
+the finished task into a 503 error, and the result is withheld.
+
+| Variable | Default | Meaning / fail-safe |
+| --- | --- | --- |
+| `ADAPTER_PERSON_SUMMARY_MAX_PERSONS` | `12` | People per task, in table order (1–50); the rest are named in a note and can be chosen with `ids`. Invalid → default. |
+| `ADAPTER_PERSON_SUMMARY_MAX_DOCS` | `12` | Documents read per person (1–20, the RAG's path-filter limit). |
+| `ADAPTER_PERSON_SUMMARY_MAX_PASSAGES` | `60` | Passages read per person (1–400); a cut is noted and marks the task partial. |
+
+Tests: `person_summary_test.py` (visible documents only, verbatim quotes,
+invalid references, ungrounded figures, narrowing, cuts, resume, cancel,
+settings), `scheduler_test` (a job with its own worker), and
+`graph_integration_test.test_person_summaries_run_as_a_job_within_the_callers_access`
+(real rag + graph: visibility per user, narrowing, purpose binding, query log,
+refusals). On a box: `graph-corpus/bv_summary_check.py`.
+
+#### Document numbers beside the facts (`ADAPTER_DOCUMENT_REFS`)
+
+A report's file number (iktatószám) is document metadata. The graph's queries
+take `doc_refs: [subtypes]` and return, per document, `refs`: the identifiers of
+those subtypes that the document itself states, in reading order, at most three.
+They come from the document's own pattern mentions (`graph_store.GraphView.
+document_refs`), only for documents the caller may see. The adapter puts them
+beside each graph fact, investigation row and person-summary finding:
+`[Ügy- vagy iktatószám: J-2025/6545]`. The label is the profile pattern's.
+
+| Variable | Default | Meaning / fail-safe |
+| --- | --- | --- |
+| `ADAPTER_DOCUMENT_REFS` | `case_number` | Comma list of identifier subtypes. `off` asks for none. An unknown subtype matches nothing. An older graph ignores the field. |
+
+#### Planner: contact chains as one investigation
+
+When the investigation is offered, the planner prompt no longer teaches a
+person's contact chain as a `find_pattern` example. It states that such a chain
+is one `investigate` call. As a deterministic net, `Run.prefer_investigation`
+rewrites `find_pattern` calls into one `investigate {start, levels}` call per
+start, keeping the deepest level asked, when the call:
+
+- starts from a named person or registry number (not a kind, and not an
+  identifier held through a holding link);
+- follows only the investigation's relations (a contact link is one level; a
+  shared entity, person → incident → person, is one level);
+- filters by no name and no period.
+
+The call shows `"rewritten": "find_pattern"` in `graph.calls`. Identifier
+starts (BV 2.x) stay as planned.
+
 #### Full reading (`read_all`)
 
 When a message needs every case or mention in the documents themselves ("list

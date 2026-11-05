@@ -787,6 +787,43 @@ const M: Record<string, Tri> = {
     "Grafen kunne ikke åbnes.",
     "Die Grafik konnte nicht geöffnet werden.",
   ],
+  "Summary per person": [
+    "Összefoglaló személyenként",
+    "Opsummering pr. person",
+    "Zusammenfassung je Person",
+  ],
+  "A short, cited summary of what the documents say about each person, made in the background from the documents you may see":
+    [
+      "Rövid, hivatkozott összefoglaló arról, amit az iratok az egyes személyekről tartalmaznak; háttérfeladatként, az Ön számára látható dokumentumokból",
+      "En kort opsummering med kildehenvisninger af, hvad dokumenterne siger om hver person, lavet i baggrunden ud fra de dokumenter, du har adgang til",
+      "Eine kurze Zusammenfassung mit Quellenangaben dazu, was die Dokumente über jede Person enthalten, im Hintergrund aus den Dokumenten erstellt, die Sie sehen dürfen",
+    ],
+  "Summaries started as a background task.": [
+    "Az összefoglaló háttérfeladatként elindult.",
+    "Opsummeringerne er startet som baggrundsopgave.",
+    "Die Zusammenfassungen wurden als Hintergrundaufgabe gestartet.",
+  ],
+  "Summaries are made for the first people of the table only.": [
+    "Összefoglaló csak a táblázat első személyeiről készül.",
+    "Der laves kun opsummeringer for tabellens første personer.",
+    "Zusammenfassungen werden nur für die ersten Personen der Tabelle erstellt.",
+  ],
+  "Too many background tasks are waiting; try again later.": [
+    "Túl sok háttérfeladat várakozik; próbálja újra később.",
+    "For mange baggrundsopgaver venter; prøv igen senere.",
+    "Zu viele Hintergrundaufgaben warten; versuchen Sie es später erneut.",
+  ],
+  "The summaries could not be started.": [
+    "Az összefoglaló nem indítható el.",
+    "Opsummeringerne kunne ikke startes.",
+    "Die Zusammenfassungen konnten nicht gestartet werden.",
+  ],
+  "Rebuilding the investigation…": [
+    "A vizsgálat újraépítése…",
+    "Genopbygger undersøgelsen…",
+    "Die Untersuchung wird neu erstellt…",
+  ],
+  "Reading about person": ["Személy olvasása", "Læser om person", "Lese zu Person"],
   Investigation: ["Vizsgálat", "Undersøgelse", "Untersuchung"],
   "Starting point": ["Kiindulópont", "Udgangspunkt", "Ausgangspunkt"],
   "Level 1": ["1. szint", "Niveau 1", "Ebene 1"],

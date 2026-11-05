@@ -3105,6 +3105,58 @@
       "internal": false
     },
     {
+      "name": "ADAPTER_DOCUMENT_REFS",
+      "component": "adapter",
+      "category": "chat",
+      "type": "string",
+      "default": "case_number",
+      "allowed": "comma-separated identifier subtypes of the domain profile | off",
+      "fail_safe": "off asks for none; an unknown subtype matches nothing; an older graph ignores the request. Only numbers the visible document itself states are shown.",
+      "impact": "The file or case numbers a source document states (its iktatószám) are shown beside the graph facts, investigation rows and person-summary findings it backs.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_PERSON_SUMMARY_MAX_PERSONS",
+      "component": "adapter",
+      "category": "limits",
+      "type": "int",
+      "default": "12",
+      "allowed": "1..50",
+      "fail_safe": "Non-integer values fall back to 12 with a warning; values outside 1..50 are clamped. The people left out are named in a note and can be chosen with ids.",
+      "impact": "Summary per person (BV 1.4 / 2.4): the most people of an investigation table summarised by one background task, in table order.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_PERSON_SUMMARY_MAX_DOCS",
+      "component": "adapter",
+      "category": "limits",
+      "type": "int",
+      "default": "12",
+      "allowed": "1..20",
+      "fail_safe": "Non-integer values fall back to 12 with a warning; values outside 1..20 are clamped. A cut is noted under the person and marks the task partial.",
+      "impact": "Summary per person: the most of a person's visible documents read, in path order.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_PERSON_SUMMARY_MAX_PASSAGES",
+      "component": "adapter",
+      "category": "limits",
+      "type": "int",
+      "default": "60",
+      "allowed": "1..400",
+      "fail_safe": "Non-integer values fall back to 60 with a warning; values outside 1..400 are clamped. A cut is noted under the person and marks the task partial.",
+      "impact": "Summary per person: the most passages naming a person that are read (each group of passages is one model call).",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "RAG_OCR",
       "component": "rag",
       "category": "files",

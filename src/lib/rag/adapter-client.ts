@@ -983,6 +983,7 @@ export async function adapterGraph<T>(
     | "dossier"
     | "investigation/export"
     | "investigation/graph"
+    | "investigation/summaries"
     | "reprocess/status"
     | "reprocess/start"
     | "reprocess/cancel",

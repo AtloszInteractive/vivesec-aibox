@@ -91,10 +91,7 @@ PLANNER = (
     "- find_pattern {start: {kind?, name?}, steps: [{relation?, kind?, name?}], from?, "
     "to?}: chains of up to 3 links, e.g. who visited the inmates placed in a given cell "
     "= start {kind: the visitors' kind}, steps [{relation: the visit relation, kind: "
-    "the inmates' kind}, {relation: the placement relation, name: the cell}]; the other "
-    "inmates who share a named person's contacts = start {name: the person}, steps "
-    "[{relation: the contact relation, kind: person}, {relation: the contact relation, "
-    "kind: the inmates' kind}]\n"
+    "the inmates' kind}, {relation: the placement relation, name: the cell}]{person_chain}\n"
     "- count {relation?, kind?, name?, other_kind?, group_by, from?, to?}: counts links "
     "and ranks the groups. kind/name pick the side being counted, other_kind the linked "
     "side. group_by entity ranks the kind/name side (the most visited inmate = relation: "
@@ -119,10 +116,11 @@ PLANNER = (
     "or ID number, street address) are names like any other: relations {entity: it} "
     "shows who holds it, and find_pattern may start from it (who uses a number and whose "
     "contacts they are = start {name: the number}, steps [{relation: the use relation}, "
-    "{relation: the contact relation, kind: the inmates' kind}]). find_pattern returns "
-    "only complete chains: when the message asks for each level of a chain (a person's "
-    "contacts, the other people those contacts are linked to, then their contacts), add "
-    "one find_pattern per level (1, 2 and 3 steps), not only the longest. For a chain of "
+    "{relation: the contact relation, kind: the inmates' kind}]). {chain_rule}find_pattern "
+    "returns only complete chains: when the message asks for each level of a chain (a "
+    "person's contacts, the other people those contacts are linked to, then their "
+    "contacts), add one find_pattern per level (1, 2 and 3 steps), not only the longest. "
+    "For a chain of "
     "more than 3 links, find the first links with more: true and continue from the names "
     "found. The registry and ID numbers, birth data and mother's name of the people "
     "found come with the results: no call is needed for them.\n"
@@ -153,6 +151,19 @@ PLANNER = (
     "question, plan with that answer and never ask the same thing again. "
     "When no tool fits, plan calls: [] with a search."
 )
+
+# The find_pattern example for a person's contact chain; with the investigation
+# offered, that chain is investigate's (the planner took the example over the
+# tool and lost levels: BV P-1.2.2).
+PERSON_CHAIN_EXAMPLE = (
+    "; the other inmates who share a named person's contacts = start {name: the person}, "
+    "steps [{relation: the contact relation, kind: person}, {relation: the contact "
+    "relation, kind: the inmates' kind}]")
+INVESTIGATE_CHAIN_RULE = (
+    "A chain that starts from a named person or registry number along contacts or shared "
+    "incidents (their contacts, the other inmates those contacts belong to, the people "
+    "sharing an incident with them, and so on) is ONE investigate call with the levels "
+    "it needs, never find_pattern, relations or common. Other chains: ")
 
 DEEP_TOOL = (
     "- read_all {terms, mode?}: reads EVERY passage of the documents that contains the "
@@ -687,6 +698,8 @@ def plan(question, history, lang=None, vocab="", results="", deep=False, investi
         return None
     system = PLANNER.replace("{vocabulary}", vocab).replace(
         "{investigate}", investigate or "").replace(
+        "{person_chain}", "" if investigate else PERSON_CHAIN_EXAMPLE).replace(
+        "{chain_rule}", INVESTIGATE_CHAIN_RULE if investigate else "").replace(
         "{deep}", DEEP_TOOL if deep else "") + (
         " Write any question to the user in %s." % lang if lang else "")
     convo = _transcript(history)
@@ -761,12 +774,15 @@ class Run:
     """Executes plans against the graph within one caller's scope."""
 
     def __init__(self, client, scope_body, visible, lang=None, max_facts=40, prof=None,
-                 name_join=False, message="", investigate=None):
+                 name_join=False, message="", investigate=None, doc_refs=()):
         self.client = client
         self.scope = scope_body
         self.visible = visible
         self.code = LANG_CODES.get(lang or "", "en")
         self.max_facts = max_facts
+        # The identifier subtypes a source document states as its own file or
+        # case number ("case_number"): shown beside the facts it backs.
+        self.doc_refs = [s for s in doc_refs or () if s]
         # investigate_config(): the links an investigation follows; None: no tool.
         self.investigate_cfg = investigate
         # The investigation tables: their rows go to the answer outside the facts
@@ -821,6 +837,8 @@ class Run:
     def query(self, name, **params):
         if self.name_join and name in ("match", "aggregate", "sequence", "investigate"):
             params["join_namesakes"] = True
+        if self.doc_refs:
+            params["doc_refs"] = list(self.doc_refs)
         res = self.client.post("/query/" + name, dict(self.scope, **params))
         self.documents.update(res.get("documents") or {})
         if params.get("join_namesakes"):
@@ -1047,6 +1065,24 @@ class Run:
                 if ev.get("doc_id") in self.documents
                 and self.visible(self.documents[ev["doc_id"]].get("source_path") or "")]
 
+    def _ref_label(self, subtype):
+        """The profile's word for a document number: its pattern's label
+        ("Ügy- vagy iktatószám"), else the subtype's."""
+        self._label_maps()
+        for pattern in (self._profile or {}).get("identifier_patterns") or []:
+            if pattern.get("subtype") == subtype:
+                return _label_of(pattern.get("label"), self.code, subtype)
+        return self._kind_label(subtype)
+
+    def doc_ref_note(self, doc):
+        """' [Ügy- vagy iktatószám: J-2025/6545]': the numbers a source document
+        states (the graph's document metadata); "" when none."""
+        refs = (doc or {}).get("refs") or {}
+        parts = ["%s: %s" % (self._ref_label(sub), ", ".join(str(v) for v in vals))
+                 for sub, vals in sorted(refs.items())
+                 if sub in self.doc_refs and isinstance(vals, list) and vals]
+        return " [%s]" % "; ".join(parts) if parts else ""
+
     def _add(self, text, ev):
         if len(self.contexts) >= self.max_facts or self._call_facts >= self._call_budget:
             return False
@@ -1057,7 +1093,7 @@ class Run:
         self._seen.add(key)
         quote = " ".join((ev.get("quote") or "").split())
         self.contexts.append({
-            "text": "%s%s" % (text, ' "%s"' % quote if quote else ""),
+            "text": "%s%s%s" % (text, self.doc_ref_note(doc), ' "%s"' % quote if quote else ""),
             "source_path": doc.get("source_path"), "corpus_id": doc.get("corpus_id"),
             "page_number": ev.get("page"), "chunk_id": None, "score": 1.0,
             "origin": "graph"})
@@ -1498,6 +1534,14 @@ class Run:
         return _t("investigate_row", self.code) % (row["level"], row["name"], "; ".join(parts),
                                                    path, also)
 
+    def _asks_holders_contacts(self, ids):
+        """The start is an identifier or place (no person) and the message names
+        one of the investigation's contact relations ("kapcsolattartói")."""
+        cfg = self.investigate_cfg or {}
+        if any((self.nodes.get(i) or {}).get("type") in ("person", None) for i in ids):
+            return False
+        return any(rid in cfg.get("relations", ()) for rid in self._stated_terms())
+
     def investigate(self, args):
         """The level-by-level investigation table of one starting point: one row
         per person, each its own fact, and a note on what the table covers. The
@@ -1511,6 +1555,10 @@ class Run:
         if not ids:
             return 0
         levels = args.get("levels", DEFAULT_INVESTIGATE_LEVELS)
+        if levels < 2 and self._asks_holders_contacts(ids):
+            # From a number or address, level 1 is its holders; a message about
+            # their contacts (BV 2.2) needs the next level too.
+            levels = args["levels"] = 2
         res = self.query("investigate", seeds=ids[:20], relations=cfg["relations"],
                          via_relations=cfg["via"], levels=levels, branch=cfg["branch"],
                          limit=cfg["max_rows"])
@@ -1528,7 +1576,10 @@ class Run:
                 source = self._link_evidence(links[0])[0] if links else None
             if source is None:
                 continue
-            self.nodes.setdefault(node["id"], node)
+            if node.get("joined") or node["id"] not in self.nodes:
+                # The joined node (same_name) holds every record's documents;
+                # the one the name lookup stored first holds only its own.
+                self.nodes[node["id"]] = node
             self._mark_joined([node])
             label = node.get("label") or node["id"]
             path, also = label, []
@@ -1557,7 +1608,8 @@ class Run:
             for item in raw.get("held") or []:
                 if item.get("node") and self._evidence(item.get("edge") or {}):
                     self._sub_add(sub_nodes, sub_edges, item["node"], item["edge"])
-            self.table.append({"text": self._row_text(row), "source_path": doc.get("source_path"),
+            self.table.append({"text": self._row_text(row) + self.doc_ref_note(doc),
+                               "source_path": doc.get("source_path"),
                                "corpus_id": doc.get("corpus_id"), "page_number": row["page"],
                                "chunk_id": None, "score": 1.0, "origin": "graph"})
             self._call_labels.add(label)
@@ -1625,11 +1677,90 @@ class Run:
                 out.append(call)
         return out
 
+    def _relation_id(self, word):
+        """The relation id a planner's word names (id, label or synonym), quietly;
+        None when unknown or generic."""
+        relations, _ = self._label_maps()
+        wanted = fold(word or "")
+        for rid, r in relations.items():
+            words = {fold(rid), *(fold(v) for v in (r.get("label") or {}).values()
+                                  if isinstance(v, str)),
+                     *(fold(s) for s in r.get("synonyms") or [] if isinstance(s, str))}
+            if wanted in words:
+                return None if rid in GENERIC_RELATIONS else rid
+        return None
+
+    def _chain_levels(self, args):
+        """How many investigation levels a find_pattern chain is, or None when it
+        is not one: it must start from a named person (not a kind, not an
+        identifier held through a holding link), follow only the investigation's
+        links -- a contact link is a level, a shared entity (person -> incident ->
+        person) is one -- and filter by no name or period."""
+        cfg = self.investigate_cfg
+        start = args.get("start") or {}
+        name = start.get("name")
+        if not cfg or not name or self.kind_of_word(name) or args.get("from") \
+                or args.get("to"):
+            return None
+        levels, pending_via = 0, False
+        for step in args.get("steps") or []:
+            if step.get("name"):
+                return None
+            rid = self._relation_id(step.get("relation"))
+            if pending_via:
+                if rid not in cfg["via"]:
+                    return None
+                levels, pending_via = levels + 1, False
+            elif rid in cfg["relations"]:
+                levels += 1
+            elif rid in cfg["via"]:
+                pending_via = True
+            else:
+                return None
+        if pending_via or not levels:
+            return None
+        return min(levels, MAX_INVESTIGATE_LEVELS)
+
+    def prefer_investigation(self, calls):
+        """A person's contact or shared-incident chain planned as find_pattern
+        calls (one per level, BV P-1.2.2) becomes one investigate call from the
+        same start with the deepest level asked: the same people, every level
+        kept, and the table the export, the subgraph and the summaries build on.
+        Any other call stays as planned."""
+        if not self.investigate_cfg:
+            return calls
+        out, by_start = [], {}
+        for call in calls:
+            if call["tool"] == "investigate":
+                key = fold(call["args"]["start"])
+                if key in by_start:
+                    by_start[key]["args"]["levels"] = max(by_start[key]["args"]["levels"],
+                                                          call["args"]["levels"])
+                    continue
+                call = dict(call, args=dict(call["args"]))
+                by_start[key] = call
+            elif call["tool"] == "find_pattern":
+                levels = self._chain_levels(call["args"])
+                if levels is not None:
+                    name = call["args"]["start"]["name"]
+                    key = fold(name)
+                    if key in by_start:
+                        by_start[key]["args"]["levels"] = max(by_start[key]["args"]["levels"],
+                                                              levels)
+                        by_start[key].setdefault("rewritten", "find_pattern")
+                        continue
+                    call = {"tool": "investigate", "args": {"start": name, "levels": levels},
+                            "rewritten": "find_pattern"}
+                    by_start[key] = call
+            out.append(call)
+        return out
+
     def run(self, calls, round_no=1):
         """Runs one round of calls; raises Clarify on an ambiguous name."""
         self._round = round_no
         # read_all is the document side of a plan; the caller runs it.
-        calls = self.fresh([c for c in calls if c["tool"] in GRAPH_TOOLS])
+        calls = self.fresh(self.prefer_investigation(
+            [c for c in calls if c["tool"] in GRAPH_TOOLS]))
         # One broad call (a crowded cell) must not crowd out the others' facts.
         self._call_budget = max(6, self.max_facts // max(1, len(calls)))
         for call in calls:
@@ -1641,6 +1772,8 @@ class Run:
             facts = getattr(self, call["tool"])(call["args"])
             self.calls.append({"tool": call["tool"], "args": call["args"], "facts": facts,
                                "round": round_no, "entities": sorted(self._call_labels)[:20]})
+            if call.get("rewritten"):
+                self.calls[-1]["rewritten"] = call["rewritten"]
             if self._quiet:
                 self.calls[-1]["skipped"] = True
             cross = call["tool"] in ("find_pattern", "sequence")
@@ -1739,7 +1872,8 @@ class Run:
 
     def info(self):
         out = {"calls": [dict({k: c[k] for k in ("tool", "args", "facts", "round")},
-                              **({"skipped": True} if c.get("skipped") else {}))
+                              **({"skipped": True} if c.get("skipped") else {}),
+                              **({"rewritten": c["rewritten"]} if c.get("rewritten") else {}))
                          for c in self.calls],
                "facts": len(self.contexts) + len(self.table),
                "entities": sorted({n["label"] for n in self.nodes.values()

@@ -80,6 +80,28 @@ class DeepTest(unittest.TestCase):
         self.assertEqual([("read", i, info["groups"]) for i in range(info["groups"])],
                          steps[1:-1])
 
+    def test_a_quote_shortened_with_an_ellipsis_counts_when_every_part_is_there(self):
+        text = ("Jelentés rendkívüli eseményről\nIktatószám: J-2025/6545\nHelyszín: 105. számú "
+                "zárka\n2025. 04. 11.\nAz ellenőrzés során Deák Norbert és Kiss Ede között "
+                "hangos szóváltás történt.")
+        quoted = deep.quoted_in
+        self.assertTrue(quoted("Iktatószám: J-2025/6545 Helyszín", text))
+        self.assertTrue(quoted("Iktatószám: J-2025/6545 ... Deák Norbert és Kiss Ede között "
+                               "hangos szóváltás történt.", text))
+        self.assertTrue(quoted("Iktatószám: J-2025/6545\u2026Deák Norbert és Kiss Ede", text))
+        # Parts out of order, a part not in the passage, a part too short to tell.
+        self.assertFalse(quoted("Deák Norbert és Kiss Ede ... Iktatószám: J-2025/6545", text))
+        self.assertFalse(quoted("Iktatószám: J-2025/6545 ... Deák Norbert verekedett", text))
+        self.assertFalse(quoted("Iktatószám: J-2025/6545 ... Deák ... történt.", text))
+        self.assertFalse(quoted("...", text))
+        group = [{"chunk_id": "c1", "text": text}]
+        found = deep.verified_findings([
+            {"excerpt": 1, "quote": "Iktatószám: J-2025/6545 ... hangos szóváltás történt.",
+             "note": "J-2025/6545"},
+            {"excerpt": 1, "quote": "Iktatószám: J-2025/0001 ... hangos szóváltás történt.",
+             "note": "kitalált"}], group)
+        self.assertEqual(["J-2025/6545"], [f["note"] for f in found])
+
     def test_a_cap_makes_the_result_partial_and_says_so(self):
         with patch.object(deep, "MAX_CHUNKS", 3), patch.object(deep, "PAGE", 2):
             contexts, info, rag, _, _ = self.run_deep()
