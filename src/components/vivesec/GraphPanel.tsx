@@ -40,16 +40,16 @@ import {
   type GraphInvestigationView,
   type IndexSkipped,
 } from "@/lib/api/graph.functions";
+import { ACCENT, ACCENT_TEXT } from "./brand";
 
-const LIME = "#C6F24E";
-const PANEL = "#23272B";
-const BG = "#1E2225";
+const PANEL = "#10243A";
+const BG = "#0C1E31";
 
 const TYPE_COLOR: Record<GraphEntityType, string> = {
-  person: "#C6F24E",
+  person: "#B48CF5",
   organization: "#60A5FA",
   place: "#F59E0B",
-  identifier: "#C084FC",
+  identifier: "#CBD5E1",
   event: "#FB7185",
   object: "#2DD4BF",
 };
@@ -154,7 +154,7 @@ export function GraphPanel({
       style={{ backgroundColor: BG }}
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-white/5 px-4 py-2">
-        <Network className="h-4 w-4" style={{ color: LIME }} />
+        <Network className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
         <div className="text-sm font-semibold">{tm("Relationships")}</div>
         <div className="ml-4 flex gap-1">
           {tabs.map(({ id, label, icon: Icon }) => (
@@ -162,9 +162,9 @@ export function GraphPanel({
               key={id}
               onClick={() => setTab(id)}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${
-                tab === id ? "text-black" : "text-white/70 hover:bg-white/10"
+                tab === id ? "text-white" : "text-white/70 hover:bg-white/10"
               }`}
-              style={tab === id ? { backgroundColor: LIME } : undefined}
+              style={tab === id ? { backgroundColor: ACCENT } : undefined}
             >
               <Icon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{label}</span>
@@ -362,7 +362,7 @@ function ExploreTab({
               setHops(depth);
               if (focus) void showNeighbourhood(focus, depth);
             }}
-            className="rounded-full border border-white/10 bg-[#23272B] px-2 py-1.5 text-xs"
+            className="rounded-full border border-white/10 bg-[#10243A] px-2 py-1.5 text-xs"
           >
             <option value={1}>{tm("Direct relations")}</option>
             <option value={2}>{tm("Two steps")}</option>
@@ -494,10 +494,10 @@ function InvestigationLevels({
                 onClick={() => onPick(r.id)}
                 className={`rounded-full border px-2 py-0.5 transition ${
                   r.id === focus
-                    ? "border-transparent text-black"
+                    ? "border-transparent text-white"
                     : "border-white/10 text-white/75 hover:bg-white/10"
                 }`}
-                style={r.id === focus ? { backgroundColor: LIME } : undefined}
+                style={r.id === focus ? { backgroundColor: ACCENT } : undefined}
               >
                 {r.name}
               </button>
@@ -671,7 +671,7 @@ function GraphCanvas({
                 y1={a.y}
                 x2={b.x}
                 y2={b.y}
-                stroke={active ? LIME : "rgba(255,255,255,0.28)"}
+                stroke={active ? ACCENT_TEXT : "rgba(255,255,255,0.28)"}
                 strokeWidth={(active ? 2.4 : 1.2) + Math.min(edges.length - 1, 4) * 0.5}
                 strokeDasharray={edges.every((x) => x.weak) ? "4 4" : undefined}
               />
@@ -681,7 +681,7 @@ function GraphCanvas({
                   y={ly - 3}
                   textAnchor="middle"
                   fontSize={9}
-                  fill={active ? LIME : "rgba(255,255,255,0.55)"}
+                  fill={active ? ACCENT_TEXT : "rgba(255,255,255,0.55)"}
                 >
                   {label}
                   {edges.length === 1 && e.start ? ` · ${e.start}` : ""}
@@ -747,7 +747,7 @@ function EvidenceList({
                   })
                 }
                 className="mt-1.5 inline-flex items-center gap-1 text-[11px] hover:underline"
-                style={{ color: LIME }}
+                style={{ color: ACCENT_TEXT }}
               >
                 <ExternalLink className="h-3 w-3" />
                 {doc.title || doc.source_path.split("/").pop()}
@@ -791,7 +791,7 @@ function EdgeSheet({
         const title = `${name(edge.a)} — ${relLabel(edge.type)} — ${name(edge.b)}`;
         return (
           <div key={edge.id} className="mt-4">
-            <div className="text-xs font-medium" style={{ color: LIME }}>
+            <div className="text-xs font-medium" style={{ color: ACCENT_TEXT }}>
               {relLabel(edge.type)}
               <span className="ml-2 text-[11px] font-normal text-white/50">
                 {edge.start ?? ""}
@@ -899,7 +899,7 @@ function EntitySheet({
         ) : (
           <div className="space-y-2">
             {timeline.items.map((item, i) => (
-              <div key={i} className="border-l-2 pl-2" style={{ borderColor: `${LIME}88` }}>
+              <div key={i} className="border-l-2 pl-2" style={{ borderColor: `${ACCENT}88` }}>
                 <div className="text-[11px] text-white/50">
                   {item.date}
                   {item.end && item.end !== item.date ? ` – ${item.end}` : ""}
@@ -1047,9 +1047,9 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
             key={v}
             onClick={() => setView(v)}
             className={`rounded-full px-3 py-1 transition ${
-              view === v ? "text-black" : "text-white/70 hover:bg-white/10"
+              view === v ? "text-white" : "text-white/70 hover:bg-white/10"
             }`}
-            style={view === v ? { backgroundColor: LIME } : undefined}
+            style={view === v ? { backgroundColor: ACCENT } : undefined}
           >
             {tm(v === "open" ? "Open pairs" : "Decisions")}
           </button>
@@ -1227,8 +1227,8 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
               </span>
               <button
                 onClick={() => void decideSelected(confirm)}
-                className="rounded-full px-3 py-1 text-black"
-                style={{ backgroundColor: LIME }}
+                className="rounded-full px-3 py-1 text-white"
+                style={{ backgroundColor: ACCENT }}
               >
                 {tm("Confirm")}
               </button>
@@ -1244,8 +1244,8 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
               <button
                 onClick={() => setConfirm("merge")}
                 disabled={!selected.size || busy}
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-black disabled:opacity-50"
-                style={{ backgroundColor: LIME }}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-white disabled:opacity-50"
+                style={{ backgroundColor: ACCENT }}
               >
                 {busy ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1266,7 +1266,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
         </div>
       )}
       {result && (
-        <div className="mb-2 text-xs" style={{ color: LIME }}>
+        <div className="mb-2 text-xs" style={{ color: ACCENT_TEXT }}>
           {result}
         </div>
       )}
@@ -1304,7 +1304,10 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                 </span>
               </div>
               {state ? (
-                <div className="mt-2 flex items-center gap-3 text-xs" style={{ color: LIME }}>
+                <div
+                  className="mt-2 flex items-center gap-3 text-xs"
+                  style={{ color: ACCENT_TEXT }}
+                >
                   {tm(state === "merge" ? "Merged." : "Kept apart.")}
                   {canEdit && (
                     <button
@@ -1320,8 +1323,8 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                   <div className="mt-2 flex gap-2">
                     <button
                       onClick={() => void decide(item, "merge")}
-                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs text-black"
-                      style={{ backgroundColor: LIME }}
+                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs text-white"
+                      style={{ backgroundColor: ACCENT }}
                     >
                       <GitMerge className="h-3.5 w-3.5" /> {tm("Merge")}
                     </button>
@@ -1429,7 +1432,7 @@ function DecidedReview({ drive }: { drive: string }) {
                     .join(" · ")}
                 </span>
                 {undone.has(key) ? (
-                  <span className="ml-auto" style={{ color: LIME }}>
+                  <span className="ml-auto" style={{ color: ACCENT_TEXT }}>
                     {tm("Undone — the pair is open for review again.")}
                   </span>
                 ) : (
@@ -1654,8 +1657,8 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
             <button
               onClick={() => void act(() => graphApi.reprocessStart(drive, folder.trim()))}
               disabled={busy || !(data.stale_total || data.absent_total) || !data.source_ready}
-              className="rounded-lg px-3 py-1 text-xs font-medium text-black disabled:opacity-50"
-              style={{ backgroundColor: LIME }}
+              className="rounded-lg px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+              style={{ backgroundColor: ACCENT }}
             >
               {tm("Reprocess")}
             </button>
@@ -1734,8 +1737,8 @@ function UnreadableDocuments({ drive }: { drive: string }) {
             <button
               key={key}
               onClick={() => setReason(reason === key ? null : key)}
-              className={`rounded-full border px-2 py-0.5 text-[11px] transition ${reason === key ? "border-transparent text-black" : "border-white/15 text-white/70 hover:bg-white/10"}`}
-              style={reason === key ? { backgroundColor: LIME } : undefined}
+              className={`rounded-full border px-2 py-0.5 text-[11px] transition ${reason === key ? "border-transparent text-white" : "border-white/15 text-white/70 hover:bg-white/10"}`}
+              style={reason === key ? { backgroundColor: ACCENT } : undefined}
             >
               {tm(SKIP_REASON[key] ?? key)}: {n}
             </button>
@@ -1885,8 +1888,8 @@ function ProfileTab({
               <div className="mt-2 flex gap-2">
                 <button
                   onClick={() => void save()}
-                  className="rounded-full px-3 py-1 text-xs text-black"
-                  style={{ backgroundColor: LIME }}
+                  className="rounded-full px-3 py-1 text-xs text-white"
+                  style={{ backgroundColor: ACCENT }}
                 >
                   {tm("Save as new version")}
                 </button>

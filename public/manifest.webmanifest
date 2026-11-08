@@ -1,5 +1,5 @@
 {
-  "name": "ViVeSec AI Platform",
+  "name": "ViVeSec AI Box",
   "short_name": "ViVeSec",
   "description": "Premium offline-first enterprise AI workspace with encrypted chat, agents, and secure document drive.",
   "id": "./",
@@ -7,8 +7,8 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0a0a0a",
-  "theme_color": "#0a0a0a",
+  "background_color": "#071625",
+  "theme_color": "#071625",
   "icons": [
     {
       "src": "icons/icon-192.png",
