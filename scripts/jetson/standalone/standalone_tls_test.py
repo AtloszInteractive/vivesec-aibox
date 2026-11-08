@@ -135,6 +135,25 @@ openssl verify -CAfile "$3/ca/ca.crt" -purpose sslserver r.crt
         result = self.rogue_certificate("IP:192.168.10.50")
         self.assertNotEqual(result.returncode, 0)
 
+    def test_by_default_an_address_may_move_within_its_24(self):
+        self.init(AIBOX_TLS_CA_PERMIT_IPS="")
+        ca = self.openssl("x509", "-in", self.tls + "/ca/ca.crt", "-noout", "-ext",
+                          "nameConstraints")
+        self.assertIn("IP:192.168.10.0/255.255.255.0", ca)
+        self.bash([PKI, "renew"], AIBOX_TLS_CA_PERMIT_IPS="", AIBOX_TLS_IPS="192.168.10.77")
+        self.bash([PKI, "check"], AIBOX_TLS_CA_PERMIT_IPS="", AIBOX_TLS_IPS="192.168.10.77")
+        result = self.bash([PKI, "renew"], check=False, AIBOX_TLS_CA_PERMIT_IPS="",
+                           AIBOX_TLS_IPS="192.168.11.1")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_none_pins_the_ca_to_the_configured_addresses(self):
+        self.init(AIBOX_TLS_CA_PERMIT_IPS="none")
+        ca = self.openssl("x509", "-in", self.tls + "/ca/ca.crt", "-noout", "-ext",
+                          "nameConstraints")
+        self.assertIn("IP:192.168.10.50/255.255.255.255", ca)
+        self.assertNotIn("255.255.255.0", ca)
+        self.assertNotEqual(self.rogue_certificate("IP:192.168.10.51").returncode, 0)
+
     def test_init_refuses_to_replace_an_existing_ca(self):
         self.init()
         ca = self.read("ca/ca.crt")
@@ -255,12 +274,11 @@ class FrontRenderTest(ScriptTestCase):
         self.assertIn("proxy_pass http://[::1]:3000;",
                       self.render(AIBOX_HTTPS_UPSTREAM="[::1]:3000").stdout)
 
-    def test_refuses_to_guess_where_to_listen(self):
-        result = self.render(check=False, AIBOX_TLS_IPS="")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("nothing to listen on", result.stderr)
-        self.assertIn("listen 0.0.0.0:443 ssl;",
-                      self.render(AIBOX_TLS_IPS="", AIBOX_HTTPS_LISTEN="0.0.0.0").stdout)
+    def test_listens_on_every_interface_by_default(self):
+        conf = self.render(AIBOX_TLS_IPS="").stdout
+        self.assertIn("listen 0.0.0.0:443 ssl;", conf)
+        self.assertIn("listen 0.0.0.0:80 default_server;", conf)
+        self.assertIn("listen 0.0.0.0:443 ssl;", self.render().stdout)
 
 
 def docker_ready():

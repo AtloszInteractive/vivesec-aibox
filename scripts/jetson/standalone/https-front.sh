@@ -15,9 +15,9 @@
 #   bash https-front.sh verify         # checks from the box's point of view
 #
 # Parameters (environment), besides the AIBOX_TLS_* names of tls-pki.sh:
-#   AIBOX_HTTPS_LISTEN     IPv4 addresses nginx binds   (default: AIBOX_TLS_IPS)
-#                          Specific addresses keep :443 of other interfaces free
-#                          (e.g. tailscale serve on the dev box); 0.0.0.0 = all.
+#   AIBOX_HTTPS_LISTEN     IPv4 addresses nginx binds   (default 0.0.0.0 = every
+#                          interface, so an address change needs no new
+#                          configuration; unknown names are dropped anyway)
 #   AIBOX_HTTPS_UPSTREAM   the web UI, loopback only    (default 127.0.0.1:8080)
 #   AIBOX_HTTPS_IMAGE      nginx image                  (default nginx:1.28-alpine)
 #   AIBOX_HTTPS_CONF_DIR   rendered configuration       (default /data/https)
@@ -47,9 +47,8 @@ read_front_config() {
   while IFS= read -r item; do
     valid_ipv4 "$item" || die "invalid IPv4 address in AIBOX_HTTPS_LISTEN: $item"
     listen_ips+=("$item")
-  done < <(split_list "${AIBOX_HTTPS_LISTEN:-${AIBOX_TLS_IPS:-}}")
-  ((${#listen_ips[@]})) ||
-    die "nothing to listen on: set AIBOX_TLS_IPS (or AIBOX_HTTPS_LISTEN, 0.0.0.0 for every interface)"
+  done < <(split_list "${AIBOX_HTTPS_LISTEN:-0.0.0.0}")
+  ((${#listen_ips[@]})) || die "AIBOX_HTTPS_LISTEN is empty"
   # The UI behind the front speaks plain HTTP, so it must never be reachable
   # from the network; only a loopback upstream is accepted.
   [[ $upstream =~ ^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|localhost|\[::1\]):[0-9]{1,5}$ ]] ||
@@ -299,16 +298,22 @@ cmd_deploy() {
 
 cmd_verify() {
   local problems=0 ip name code fp served probe
+  local -a probes=()
   read_front_config
   run_check() {  # description, then the command; prints PASS/FAIL
     local what=$1
     shift
     if "$@"; then echo "PASS $what"; else echo "FAIL $what"; problems=1; fi
   }
-  fp=$(openssl x509 -in "$tls_dir/ca/ca.crt" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)
+  # On every interface: probe the addresses the clients use.
   for ip in "${listen_ips[@]}"; do
-    probe=$ip
-    [[ $probe == 0.0.0.0 ]] && probe=127.0.0.1
+    if [[ $ip != 0.0.0.0 ]]; then probes+=("$ip")
+    elif ((${#ip_names[@]})); then probes+=("${ip_names[@]}")
+    else probes+=(127.0.0.1)
+    fi
+  done
+  fp=$(openssl x509 -in "$tls_dir/ca/ca.crt" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)
+  for probe in "${probes[@]}"; do
     for name in "${dns_names[@]}" "${ip_names[@]}"; do
       code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 --cacert "$tls_dir/ca/ca.crt" \
         --resolve "$name:443:$probe" "https://$name/" 2>/dev/null || true)

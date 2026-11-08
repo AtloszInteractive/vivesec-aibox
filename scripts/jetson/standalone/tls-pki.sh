@@ -17,8 +17,11 @@
 #   AIBOX_TLS_DIR            output directory                      (default /data/tls)
 #   AIBOX_TLS_DNS            host names, comma/space separated     (default: hostname)
 #   AIBOX_TLS_IPS            IPv4 addresses, comma/space separated (default: none)
-#   AIBOX_TLS_CA_PERMIT_IPS  extra IPv4 subnets (CIDR) the CA may certify, e.g.
-#                            the LAN, so an address change needs no new CA
+#   AIBOX_TLS_CA_PERMIT_IPS  IPv4 subnets (CIDR) the CA may certify besides the
+#                            configured addresses, so an address change needs
+#                            no new CA on the clients. Fixed when the CA is
+#                            created. Default: the /24 of each AIBOX_TLS_IPS
+#                            address; "none": the configured addresses only.
 #   AIBOX_TLS_RENEW_DAYS     `check` fails when the server certificate expires
 #                            within this many days                 (default 30)
 #
@@ -65,13 +68,25 @@ cidr_to_constraint() {
 }
 
 read_names() {
-  local item constraint
+  local item constraint ip
   read_box_names
   ca_permit=()
-  while IFS= read -r item; do
-    constraint=$(cidr_to_constraint "$item") || die "invalid subnet in AIBOX_TLS_CA_PERMIT_IPS: $item"
-    ca_permit+=("$constraint")
-  done < <(split_list "${AIBOX_TLS_CA_PERMIT_IPS:-}")
+  case ${AIBOX_TLS_CA_PERMIT_IPS:-} in
+    none) ;;
+    "")
+      # The box's address may change (DHCP, re-cabling): by default the CA may
+      # certify its /24, so a new address needs only `renew`, not a new CA on
+      # every client.
+      for ip in "${ip_names[@]}"; do
+        constraint=$(cidr_to_constraint "${ip%.*}.0/24")
+        [[ " ${ca_permit[*]} " == *" $constraint "* ]] || ca_permit+=("$constraint")
+      done ;;
+    *)
+      while IFS= read -r item; do
+        constraint=$(cidr_to_constraint "$item") || die "invalid subnet in AIBOX_TLS_CA_PERMIT_IPS: $item"
+        ca_permit+=("$constraint")
+      done < <(split_list "$AIBOX_TLS_CA_PERMIT_IPS") ;;
+  esac
 }
 
 subject_alt_names() {
@@ -289,5 +304,5 @@ case ${1:-} in
   renew) cmd_renew ;;
   show) cmd_show ;;
   check) cmd_check ;;
-  *) sed -n '2,31p' "$0"; exit 2 ;;
+  *) sed -n '2,34p' "$0"; exit 2 ;;
 esac

@@ -19,8 +19,9 @@ Browser ──HTTPS :443──▶ nginx (vivesec-https) ──HTTP, loopback─�
 ## Security properties
 
 - **The CA can only certify the box.** It carries critical name constraints
-  for the configured host names and addresses (plus optional subnets in
-  `AIBOX_TLS_CA_PERMIT_IPS`). Firefox, Chrome (since version 126), Edge and
+  for the configured host names and for the /24 subnet of each configured
+  address (`AIBOX_TLS_CA_PERMIT_IPS` overrides it; `none` pins the CA to the
+  addresses themselves). Firefox, Chrome (since version 126), Edge and
   OpenSSL enforce them on a locally installed root, so even a stolen CA key
   cannot impersonate another site to the clients. Without any configured
   address the CA may certify none (`0.0.0.0/32`).
@@ -31,7 +32,7 @@ Browser ──HTTPS :443──▶ nginx (vivesec-https) ──HTTP, loopback─�
   header is dropped without an answer (`444`), which also stops DNS
   rebinding. The TLS default server presents the box certificate, because a
   browser opening `https://<address>/` sends no server name. nginx listens on
-  the configured addresses only.
+  every interface by default, so a changed address does not stop it.
 - TLS 1.2 and 1.3 with ECDHE + AEAD ciphers only, no session tickets, HSTS,
   `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `nosniff`, `no-referrer`,
   and a permissions policy that allows only the microphone (voice input).
@@ -73,8 +74,13 @@ then on the box `docker load -i nginx-image.tar`.
 | Situation | Action |
 | --- | --- |
 | Server certificate expires within `AIBOX_TLS_RENEW_DAYS` (`tls-pki.sh check` fails) | `tls-pki.sh renew`, then `https-front.sh deploy` |
-| New host name or address inside the CA's constraints | update `AIBOX_TLS_*`, `renew`, `deploy` |
-| Name or address outside the CA's constraints | `tls-pki.sh init --new-ca`, `deploy`, install the new CA on every client |
+| The box gets a new address in the same /24 (or another permitted subnet) | update `AIBOX_TLS_IPS`, `renew`, `deploy`; the clients keep their CA |
+| New host name, or an address outside the CA's constraints | `tls-pki.sh init --new-ca`, `deploy`, install the new CA on every client |
+
+The box address can change, so clients should open the box **by name**
+(internal DNS, or a `hosts` entry on the 2–3 client machines): after an
+address change only the DNS/hosts entry and the certificate change, and the
+URL stays the same.
 
 `renew` verifies the new certificate against the CA before replacing anything,
 and keeps the previous pair as `server.*.prev`. `init --new-ca` keeps the old
@@ -90,9 +96,9 @@ Every parameter is in [`CONFIGURATION.md`](../../../CONFIGURATION.md)
 | `AIBOX_TLS_DIR` | `/data/tls` | CA, server certificate and the public CA copy |
 | `AIBOX_TLS_DNS` | host name | Host names in the certificate and the CA constraints |
 | `AIBOX_TLS_IPS` | *(none)* | IPv4 addresses in the certificate and the CA constraints |
-| `AIBOX_TLS_CA_PERMIT_IPS` | *(none)* | Extra subnets (CIDR) the CA may certify later |
+| `AIBOX_TLS_CA_PERMIT_IPS` | /24 of each address | Subnets (CIDR) the CA may certify; `none` = the addresses only |
 | `AIBOX_TLS_RENEW_DAYS` | `30` | `check` fails this many days before expiry |
-| `AIBOX_HTTPS_LISTEN` | `AIBOX_TLS_IPS` | Addresses nginx binds; `0.0.0.0` for all |
+| `AIBOX_HTTPS_LISTEN` | `0.0.0.0` | Addresses nginx binds |
 | `AIBOX_HTTPS_UPSTREAM` | `127.0.0.1:8080` | The web UI; loopback only |
 | `AIBOX_HTTPS_IMAGE` | `nginx:1.28-alpine` | nginx image |
 | `AIBOX_HTTPS_CONF_DIR` | `/data/https` | Rendered `nginx.conf` (+ `.prev`) |
