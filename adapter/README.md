@@ -60,6 +60,7 @@ $env:ADAPTER_PORT="8088"; $env:RAG_URL="http://127.0.0.1:8090"; python adapter/s
 | `ADAPTER_META_PATH`          | *(in-memory)*           | mirror JSON path (persist)       |
 | `ADAPTER_WATCHDOG_SECONDS`   | `90`                    | status watchdog window           |
 | `ADAPTER_MAX_CONTEXT_TOKENS` | `4000`                  | query context budget             |
+| `ADAPTER_INTEGRATION`        | `vivesecbox`            | `vivesecbox` or `standalone` (E27) |
 
 This table lists the most common settings only. Every parameter, with its
 default, allowed range, fail-safe behaviour and impact, is in the configuration
@@ -86,6 +87,39 @@ repository `VERSION` file (`YY.MM.N`) and the git commit; see
   stamp reports `unknown` and never stops the service.
 - `ADAPTER_UI_VERSION` / `GET /api/v1/ui-version` is unrelated: it tells the
   ViVeSecBox which embedded UI bundle path (`latest` or a version) to load.
+
+## Integration mode (E27)
+
+`ADAPTER_INTEGRATION` (`integration.py`) says who owns users, login, files and
+drive permissions:
+
+| Value | Behaviour |
+| --- | --- |
+| `vivesecbox` (default) | Today's behaviour: the ViVeSecBox pairs with the box, syncs the index, serves files over ws-fs and finds the box by SSDP. |
+| `standalone` | The box runs without a ViVeSecBox (offline deployment). Users log in through the box's own login gate, which sends the adapter a short-lived signed token. |
+| anything else | The adapter **does not start** (exit code 2). |
+
+An unknown value never falls back to either mode: `vivesecbox` trusts the
+identity it is told in the headers. Standalone mode is checked before anything
+else is set up, and the adapter refuses to start unless:
+
+- `ADAPTER_IDENTITY_MODE=require`: every user request carries a verified token;
+- `ADAPTER_DIRECTORY=token`: groups and roles come from that token;
+- `ADAPTER_SCOPE_ALL_DRIVES` is off: the token's `drives` claim decides the scope.
+
+In standalone mode the ViVeSecBox surfaces are off:
+
+| Surface | Standalone |
+| --- | --- |
+| Pairing: `/api/v1/init/prepare`, `/api/v1/init/commit` | `404 not available in standalone mode` |
+| Index sync: everything under `/api/v1/index/` | `404 not available in standalone mode` |
+| File channel: `GET /api/v1/ws/fs` | `404 not available in standalone mode` |
+| SSDP discovery | not started, whatever `ADAPTER_DISCOVERY` says |
+| Mutual-TLS listener towards the ViVeSecBox | not started; `ADAPTER_TLS` is ignored |
+
+Everything else (the `/api/v1/ui/*` API, scope, ACL, scheduler, jobs, graph,
+lifecycle and the admin endpoints) works the same in both modes.
+`/api/v1/status` and `/api/v1/version` report the mode in `integration`.
 
 ## Identity, directory and lifecycle (E02)
 

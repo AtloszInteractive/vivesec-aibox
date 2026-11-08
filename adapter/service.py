@@ -43,6 +43,11 @@ Identity (E02): every user endpoint resolves its caller through identity.py
 users locked by a lifecycle event (lifecycle.py). ADAPTER_HTTP_SCOPE=pairing
 limits the plain-HTTP listener to status/version/pairing for network peers.
 
+Integration (E27): ADAPTER_INTEGRATION=vivesecbox (default) | standalone
+(integration.py). Standalone mode requires signed tokens and turns off the
+ViVeSecBox surfaces: pairing, /api/v1/index/* sync, ws-fs, SSDP, mutual TLS.
+An unknown value or an unsafe standalone configuration stops the adapter.
+
 Access control (E03): acl.py decides which documents inside the drive scope a
 caller may see (file/folder/room allow and deny lists, classification). The
 RAG stores the flattened ACL per document and filters inside its queries; the
@@ -110,6 +115,7 @@ import graph  # noqa: E402
 import graph_context  # noqa: E402
 import gpu_gate  # noqa: E402
 import identity  # noqa: E402
+import integration  # noqa: E402
 import investigation_export  # noqa: E402
 import jobstore  # noqa: E402
 import lifecycle  # noqa: E402
@@ -129,6 +135,14 @@ import storage  # noqa: E402
 import voice  # noqa: E402
 import wsfs  # noqa: E402
 from meta import MetaMirror, under as _under_path  # noqa: E402
+
+# Integration mode (E27), checked before anything else is set up: an unknown
+# mode or an unsafe standalone configuration stops the adapter.
+try:
+    INTEGRATION = integration.from_env()
+except integration.ConfigError as _integration_error:
+    sys.stderr.write("[adapter] refusing to start: %s\n" % _integration_error)
+    raise SystemExit(2)
 
 HOST = os.environ.get("ADAPTER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ADAPTER_PORT", "8080"))
@@ -761,6 +775,7 @@ def status_payload(trusted=True):
     # plus storage_locked; the legacy dash keys are kept for one transition
     # release so older ViVeSecBox builds / the demo UI do not break.
     return {"ok": True,
+            "integration": INTEGRATION,
             "ui_ready": ui_ready, "fs_ready": fs_ready,
             "storage_locked": locked,
             "ui-ready": ui_ready, "fs-ready": fs_ready,  # legacy (transition)
@@ -818,6 +833,7 @@ def version_payload():
     except Exception:  # noqa: BLE001
         pass
     return {"ok": True, "version": version_block(rag_build),
+            "integration": INTEGRATION,
             "paired": PROVISIONER.is_initialized(),
             "ws_fs": {"connected": WSFS.connected()},
             "storage_locked": STORAGE.is_locked() or _PRESENCE_LOST[0]}
@@ -1866,6 +1882,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(403, {"ok": False, "error": "endpoint available over mutual TLS only"})
         return True
 
+    def _integration_guard(self, path):
+        """Refuse a ViVeSecBox-only endpoint (pairing, index sync, ws-fs) in
+        standalone mode. Returns True when the request must stop."""
+        if integration.vivesecbox_surfaces(INTEGRATION) or not integration.is_vivesecbox_path(path):
+            return False
+        self._send(404, {"ok": False, "error": "not available in standalone mode"})
+        return True
+
     def _authenticate(self, drive=None):
         """The caller of this request, or None after the refusal was sent.
 
@@ -1914,6 +1938,8 @@ class Handler(BaseHTTPRequestHandler):
         self._caller = None
         self._access_ctx = None
         if self._http_scope_guard("GET", path):
+            return
+        if self._integration_guard(path):
             return
         if path == "/api/v1/status":
             self._send(200, status_payload(self._trusted_channel()))
@@ -1964,6 +1990,8 @@ class Handler(BaseHTTPRequestHandler):
         self._caller = None
         self._access_ctx = None
         if self._http_scope_guard("POST", path.rstrip("/")):
+            return
+        if self._integration_guard(path):
             return
         try:
             if path.startswith(CONTENT_PREFIX):
@@ -3667,6 +3695,9 @@ def _admin_paths(payload):
 
 
 def _ensure_tls_listener():
+    # The mutual-TLS listener serves the ViVeSecBox only.
+    if not integration.vivesecbox_surfaces(INTEGRATION):
+        return None
     with _TLS_LOCK:
         if _TLS_SERVER[0] is not None:
             return _TLS_SERVER[0]
@@ -3685,7 +3716,10 @@ def _ensure_tls_listener():
 
 def main():
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
+    vivesecbox = integration.vivesecbox_surfaces(INTEGRATION)
     print("ViVeSec AIBox adapter on http://%s:%d" % (HOST, PORT))
+    print("  Integration :", INTEGRATION if vivesecbox else
+          "%s (pairing, index sync, ws-fs, SSDP and mutual TLS off)" % INTEGRATION)
     print("  RAG backend :", RAG_URL, "(auth=%s)" % ("on" if RAG_API_KEY else "off"))
     print("  Tenant      :", TENANT_ID)
     print("  Drive prefix:", corpus.DRIVE_PREFIX)
@@ -3710,13 +3744,16 @@ def main():
         acl_settings["default_classification"], acl_settings["default_clearance"]))
     print("  Provisioning:", "%s | TLS=%s" % (
         "initialized" if PROVISIONER.is_initialized() else "not initialized",
-        "on" if TLS_ENABLED else "off"))
+        "on" if TLS_ENABLED and vivesecbox else "off"))
     print("  Generation  :", "%s via %s (mode=%s)" % (llm.GEN_MODEL, llm.OLLAMA_URL, llm.GENERATE))
-    print("  WS-fs       :", "GET /api/v1/ws/fs (put-file retries=%d, delay=%.1fs)"
-          % (PUTFILE_RETRIES, PUTFILE_RETRY_DELAY))
+    if vivesecbox:
+        print("  WS-fs       :", "GET /api/v1/ws/fs (put-file retries=%d, delay=%.1fs)"
+              % (PUTFILE_RETRIES, PUTFILE_RETRY_DELAY))
+    else:
+        print("  WS-fs       : off")
     print("  Files       :", FILES.root or "(disabled)")
     # SSDP/UPnP discovery so the ViVeSecBox finds us on the LAN (spec sec 2.5).
-    responder = discovery.from_env(default_port=PORT, uuid_dir=PKI_DIR)
+    responder = discovery.from_env(default_port=PORT, uuid_dir=PKI_DIR) if vivesecbox else None
     if responder is not None:
         print("  Discovery   :", "SSDP %s -> %s" % (responder.st, responder.current_location()))
         threading.Thread(target=responder.run, daemon=True).start()
@@ -3729,7 +3766,9 @@ def main():
         threading.Thread(target=reset_mon.run, daemon=True).start()
     else:
         print("  Factory pin : off")
-    if TLS_ENABLED:
+    if TLS_ENABLED and not vivesecbox:
+        print("  TLS         : ADAPTER_TLS ignored in standalone mode (no ViVeSecBox peer)")
+    elif TLS_ENABLED:
         if PROVISIONER.is_initialized():
             try:
                 _ensure_tls_listener()

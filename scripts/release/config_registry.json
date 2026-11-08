@@ -891,6 +891,23 @@
       "internal": false
     },
     {
+      "name": "ADAPTER_INTEGRATION",
+      "component": "adapter",
+      "category": "security",
+      "type": "enum",
+      "default": "vivesecbox",
+      "allowed": "vivesecbox, standalone",
+      "fail_safe": "Unset or empty is vivesecbox. An unknown value stops the adapter at start-up (no fallback to either mode). standalone also stops the adapter unless ADAPTER_IDENTITY_MODE=require and ADAPTER_DIRECTORY=token are set and ADAPTER_SCOPE_ALL_DRIVES is off.",
+      "impact": "Integration mode (E27). vivesecbox: the ViVeSecBox owns users, files and drive permissions (pairing, index sync, ws-fs, SSDP, mutual TLS). standalone: the box runs without a ViVeSecBox; /api/v1/init/*, /api/v1/index/* and /api/v1/ws/fs answer 404, SSDP and the mutual-TLS listener stay off (ADAPTER_TLS is ignored).",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "vivesecbox",
+        "standalone"
+      ]
+    },
+    {
       "name": "ADAPTER_JOBS_DIR",
       "component": "adapter",
       "category": "jobs",
