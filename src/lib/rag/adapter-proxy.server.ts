@@ -52,6 +52,22 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * Removes every identity header a browser sent. VVS-Drive/User are set below,
+ * but VVS-Other-Drives would widen the adapter's scope and VVS-Identity /
+ * VVS-Session would bind to a token the box never issued: only the box may set
+ * any of them. The adapter's identity header name is configurable.
+ */
+export function dropClientIdentityHeaders(headers: Headers): void {
+  const identityHeader = (process.env.ADAPTER_IDENTITY_HEADER ?? "").trim().toLowerCase();
+  const names = [...headers.keys()].filter(
+    (name) =>
+      name.toLowerCase().startsWith("vvs-") ||
+      (identityHeader && name.toLowerCase() === identityHeader),
+  );
+  for (const name of names) headers.delete(name);
+}
+
 /** Handles /api/v1/* for the box-hosted demo, or null when it is not our call. */
 export async function handleAdapterProxy(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
@@ -86,6 +102,7 @@ export async function handleAdapterProxy(request: Request): Promise<Response | n
   const drive = hinted || DEMO_DRIVE();
 
   const headers = new Headers(request.headers);
+  dropClientIdentityHeaders(headers);
   headers.delete("X-Demo-Drive");
   headers.delete("host");
   for (const h of HOP_BY_HOP) headers.delete(h);
