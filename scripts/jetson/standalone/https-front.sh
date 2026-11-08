@@ -220,13 +220,14 @@ check_front_ports_free() {
   while IFS= read -r socket; do
     port=${socket##*:}
     address=${socket%:*}
+    address=${address%%\%*}
     address=${address#[}
     address=${address%]}
     [[ $port == 80 || $port == 443 ]] || continue
     for ip in "${listen_ips[@]}"; do
       if [[ $address == "$ip" || $address == 0.0.0.0 || $address == "*" || $address == :: ||
             $ip == 0.0.0.0 ]]; then
-        die "port $port is already taken ($socket); in vivesecbox mode the adapter owns :80/:443"
+        die "port $port is already taken ($socket); set AIBOX_HTTPS_LISTEN to the LAN address, or free the port (in vivesecbox mode the adapter owns :80/:443)"
       fi
     done
   done < <(listeners)
