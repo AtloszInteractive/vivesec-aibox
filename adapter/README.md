@@ -118,8 +118,17 @@ In standalone mode the ViVeSecBox surfaces are off:
 | Mutual-TLS listener towards the ViVeSecBox | not started; `ADAPTER_TLS` is ignored |
 
 Everything else (the `/api/v1/ui/*` API, scope, ACL, scheduler, jobs, graph,
-lifecycle and the admin endpoints) works the same in both modes.
+lifecycle and the admin endpoints) works the same in both modes, with one
+addition: the active drive (`VVS-Drive`) must be one of the rooms in the
+token's `drives` claim. The scope always includes the active drive, so a token
+without `drives`, or a `VVS-Drive` it does not list, is refused with `403
+identity not accepted` (`integration.drive_granted`). Endpoints without a drive
+(voice) are not affected.
 `/api/v1/status` and `/api/v1/version` report the mode in `integration`.
+
+The login gate is the web UI server (`src/lib/auth/gate.server.ts`), backed by
+[`auth_service/`](../auth_service/README.md); `scripts/jetson/standalone/auth_deploy.py`
+switches a box between the modes.
 
 ## Identity, directory and lifecycle (E02)
 

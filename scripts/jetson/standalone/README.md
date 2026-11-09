@@ -15,6 +15,8 @@ Browser ──HTTPS :443──▶ nginx (vivesec-https) ──HTTP, loopback─�
 | `https-front.sh` | Renders the nginx configuration, deploys the container, verifies it |
 | `lib.sh` | Shared name and address validation |
 | `standalone_tls_test.py` | Tests of both scripts (bash + openssl; docker end-to-end optional) |
+| `auth_deploy.py` | Authentication service container and the standalone switch (S4, below) |
+| `auth_deploy_test.py` | Tests of the switch and the image recipe |
 
 ## Security properties
 
@@ -42,8 +44,8 @@ Browser ──HTTPS :443──▶ nginx (vivesec-https) ──HTTP, loopback─�
 - The container runs read-only with every capability dropped except the four
   nginx needs, and `no-new-privileges`.
 - `https-front.sh deploy` refuses to start while an internal service (UI 8080,
-  adapter 8088, RAG 8090, Ollama 11434) listens on a non-loopback address,
-  because HTTPS could then be bypassed.
+  adapter 8088, RAG 8090, authentication 8097, Ollama 11434) listens on a
+  non-loopback address, because HTTPS could then be bypassed.
 
 ## Procedure on the box
 
@@ -102,12 +104,12 @@ Every parameter is in [`CONFIGURATION.md`](../../../CONFIGURATION.md)
 | `AIBOX_HTTPS_UPSTREAM` | `127.0.0.1:8080` | The web UI; loopback only |
 | `AIBOX_HTTPS_IMAGE` | `nginx:1.28-alpine` | nginx image |
 | `AIBOX_HTTPS_CONF_DIR` | `/data/https` | Rendered `nginx.conf` (+ `.prev`) |
-| `AIBOX_INTERNAL_PORTS` | `8080 8088 8090 11434` | Ports that must listen on loopback only |
+| `AIBOX_INTERNAL_PORTS` | `8080 8088 8090 8097 11434` | Ports that must listen on loopback only |
 
 ## Tests
 
 ```powershell
-Push-Location scripts\jetson\standalone; python -m unittest standalone_tls_test; Pop-Location
+Push-Location scripts\jetson\standalone; python -m unittest standalone_tls_test auth_deploy_test; Pop-Location
 ```
 
 With `AIBOX_STANDALONE_DOCKER_TEST=1` and a running docker daemon, the
@@ -116,3 +118,33 @@ checked by `https-front.sh verify`.
 
 The installation guide for the client machines (Windows, Firefox) is a
 customer document in `docs/hu/`.
+
+## Login: authentication service and the mode switch (E27 S4)
+
+`auth_deploy.py` runs the [authentication service](../../../auth_service/README.md)
+as the `vivesec-auth` container and switches the adapter and the web UI between
+`vivesecbox` and `standalone` mode. It needs docker only (no sudo).
+
+| Command | What it does |
+| --- | --- |
+| `deploy <source-dir>` | Runs the auth tests in the base image, builds `vivesec-auth:release-<stamp>` (service files only, user 10001), creates `AIBOX_AUTH_DIR` (0700, owner 10001) and its keys (`manage.py init`, never overwrites), and (re)starts `vivesec-auth` on `127.0.0.1:AIBOX_AUTH_PORT`: read-only, every capability dropped, `no-new-privileges`, 256 MB. A failed health check brings the previous container back. |
+| `enable` | Recreates the adapter with `ADAPTER_INTEGRATION=standalone`, `ADAPTER_IDENTITY_MODE=require`, `ADAPTER_DIRECTORY=token`, HS256 with the issuer and audience of the service, without `ADAPTER_SCOPE_ALL_DRIVES`, and `identity-hs256.key` mounted read-only; then the web UI with `ADAPTER_INTEGRATION=standalone`, `AUTH_URL` and only `service.key` mounted read-only. Same image, settings and binds otherwise. If either does not come up in the new mode, both are put back. |
+| `disable` | The reverse: removes exactly those settings and mounts. |
+| `status` | Mode, image and key mounts of the three containers, auth health. |
+
+`<source-dir>` contains `auth_service/` and `adapter/`: the `build` directory of a
+release stage (`172-release-box.py pack` includes `auth_service`) or a checkout.
+The previous containers stay stopped as `<name>-prev-<stamp>`.
+
+```bash
+python3 auth_deploy.py deploy ~/vivesec-release-<stamp>-*/build
+docker exec -it vivesec-auth python /app/auth_service/manage.py create-user admin \
+    --display-name "Administrator" --role admin --drive /storage/drives/<room>/ --temporary
+python3 auth_deploy.py enable
+```
+
+The first login asks for the temporary password, then enrols the authenticator
+app with a QR code, then requires a new password. Later releases keep standalone
+mode (they inherit the container settings and mounts); in standalone mode
+`172-release-box.py verify` signs its own two-minute token with the adapter's
+key. After a release that changes `auth_service/`, run `deploy` again.

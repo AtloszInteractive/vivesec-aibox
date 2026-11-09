@@ -72,6 +72,7 @@ import {
   type RequestPurpose,
 } from "@/lib/rag/adapter-client";
 import { useVoice } from "./use-voice";
+import { AccountMenu } from "./AccountMenu";
 import {
   ArrowLeft,
   ArrowRight,
@@ -2492,6 +2493,7 @@ function ViveSecAppInner() {
                   style={{ color: boxState === "online" ? ACCENT_TEXT : "#FB7185" }}
                 />
               </button>
+              <AccountMenu />
               <LanguageSelector />
             </div>
           </div>

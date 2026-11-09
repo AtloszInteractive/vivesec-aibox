@@ -574,6 +574,13 @@ export async function listDrives(): Promise<DriveList> {
   const cfg = await adapterDemoConfig();
   const current = cfg?.drive || adapterDefaultDrive() || (await adapterSession()).drive;
   const picker = cfg?.picker ?? false;
+  if (cfg?.drives) {
+    // Standalone box: the rooms come from the user's identity token.
+    const drives = cfg.drives
+      .map((path) => ({ name: path.split("/").filter(Boolean).pop() ?? path, path }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, drives, current, picker };
+  }
   if (!picker) return { ok: true, drives: [], current, picker: false };
   try {
     const children = await adapterChildren(cfg?.driveRoot ?? driveRoot());

@@ -338,7 +338,8 @@ class Authenticator:
         self.store.touch_session(session["id"], self.clock())
         return {"user": session_user(user), "session_id": session["id"],
                 "expires_at": session["expires_at"],
-                "password_change_required": user["must_change_password"]}
+                "password_change_required": user["must_change_password"],
+                "password_min_length": self.settings.password_min_length}
 
     def issue_token(self, session_secret):
         session, user = self._session(session_secret)

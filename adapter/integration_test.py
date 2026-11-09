@@ -114,6 +114,28 @@ class VivesecboxPathTest(unittest.TestCase):
         self.assertFalse(integration.vivesecbox_surfaces(integration.MODE_STANDALONE))
 
 
+class DriveGrantTest(unittest.TestCase):
+    def test_standalone_needs_the_active_drive_in_the_token(self):
+        granted = ["/storage/drives/finance/", "/storage/drives/hr"]
+        for drive in ("/storage/drives/finance", "/storage/drives/finance/", "/storage/drives/hr/"):
+            self.assertTrue(integration.drive_granted(integration.MODE_STANDALONE, drive, granted),
+                            drive)
+        for drive in ("/storage/drives/board/", "/storage/drives/fin", "/storage/drives/"):
+            self.assertFalse(integration.drive_granted(integration.MODE_STANDALONE, drive, granted),
+                             drive)
+
+    def test_standalone_token_without_drives_grants_none(self):
+        self.assertFalse(integration.drive_granted(integration.MODE_STANDALONE,
+                                                   "/storage/drives/finance/", None))
+        self.assertFalse(integration.drive_granted(integration.MODE_STANDALONE,
+                                                   "/storage/drives/finance/", []))
+
+    def test_no_drive_and_vivesecbox_mode_are_not_restricted(self):
+        self.assertTrue(integration.drive_granted(integration.MODE_STANDALONE, None, []))
+        self.assertTrue(integration.drive_granted(integration.MODE_VIVESECBOX,
+                                                  "/storage/drives/board/", None))
+
+
 class StartupRefusalTest(unittest.TestCase):
     """The real entry point: a bad configuration exits before anything binds."""
 

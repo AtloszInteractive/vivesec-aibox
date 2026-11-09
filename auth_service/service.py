@@ -12,7 +12,7 @@ status. Request bodies (passwords, codes, session secrets) are never logged.
   GET  /auth/health
   POST /auth/login          {username, password, client?}  -> step, challenge[, totp_secret, otpauth_uri]
   POST /auth/login/totp     {challenge, code, client?}     -> session, session_id, expires_at, user
-  POST /auth/me             {session}                      -> user, password_change_required
+  POST /auth/me             {session}                      -> user, password_change_required, password_min_length
   POST /auth/token          {session}                      -> token, expires_at, user
   POST /auth/password       {session, current_password, new_password, client?}
   POST /auth/logout         {session, client?}

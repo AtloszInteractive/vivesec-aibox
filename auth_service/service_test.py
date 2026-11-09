@@ -111,6 +111,7 @@ class ServiceTest(unittest.TestCase):
         session = self.sign_in("anna", "Anna-jelszava-2026")
         status, me = self.call("/auth/me", {"session": session})
         self.assertEqual((status, me["user"]["username"]), (200, "anna"))
+        self.assertEqual(me["password_min_length"], 12)
         status, issued = self.call("/auth/token", {"session": session})
         self.assertEqual(status, 200)
         self.assertEqual(issued["token"].count("."), 2)

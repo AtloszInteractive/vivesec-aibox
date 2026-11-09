@@ -1903,6 +1903,11 @@ class Handler(BaseHTTPRequestHandler):
                              % (self.client_address[0], e.reason))
             self._send(e.status, {"ok": False, "error": "identity not accepted"})
             return None
+        if not integration.drive_granted(INTEGRATION, drive, caller.drives):
+            sys.stderr.write("[adapter] identity rejected from %s: drive not granted by the token\n"
+                             % (self.client_address[0],))
+            self._send(403, {"ok": False, "error": "identity not accepted"})
+            return None
         state = _user_locked(*caller.keys())
         if state == "unavailable":
             sys.stderr.write("[adapter] lifecycle state unavailable -> refusing users\n")

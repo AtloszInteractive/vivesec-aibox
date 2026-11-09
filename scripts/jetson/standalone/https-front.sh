@@ -22,7 +22,7 @@
 #   AIBOX_HTTPS_IMAGE      nginx image                  (default nginx:1.28-alpine)
 #   AIBOX_HTTPS_CONF_DIR   rendered configuration       (default /data/https)
 #   AIBOX_INTERNAL_PORTS   ports that must listen on loopback only
-#                          (default "8080 8088 8090 11434": UI, adapter, RAG, Ollama)
+#                          (default "8080 8088 8090 8097 11434": UI, adapter, RAG, auth, Ollama)
 set -euo pipefail
 
 # shellcheck source=lib.sh
@@ -34,7 +34,7 @@ tls_dir="${AIBOX_TLS_DIR:-/data/tls}"
 conf_dir="${AIBOX_HTTPS_CONF_DIR:-/data/https}"
 image="${AIBOX_HTTPS_IMAGE:-nginx:1.28-alpine}"
 upstream="${AIBOX_HTTPS_UPSTREAM:-127.0.0.1:8080}"
-internal_ports="${AIBOX_INTERNAL_PORTS:-8080 8088 8090 11434}"
+internal_ports="${AIBOX_INTERNAL_PORTS:-8080 8088 8090 8097 11434}"
 # Identity headers only the box may set (adapter scope.py / identity.py).
 CLIENT_HEADERS_DROPPED=(VVS-Drive VVS-User VVS-Session VVS-Identity VVS-Other-Drives)
 

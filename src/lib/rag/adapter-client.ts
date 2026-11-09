@@ -14,6 +14,7 @@
 //   ADAPTER_DEMO_DRIVE  default VVS-Drive path (default /storage/drives/finance/)
 //   ADAPTER_DEMO_USER   default VVS-User id (default demo)
 
+import { followAuthSignal, withCsrf } from "../auth/client";
 import { readBoxVersion, type BoxVersion } from "../build-info";
 
 export type ChatProfile = "grounded" | "hybrid";
@@ -285,10 +286,17 @@ export function isEmbedded(): boolean {
 }
 
 // Embedded, requests must travel through the ViVeSecBox frame socket rather than
-// the browser network stack — every call in this module goes through here.
+// the browser network stack — every call in this module goes through here. On a
+// standalone box the login gate wants its CSRF token on state-changing calls and
+// signals an expired session, which sends the browser to the login page.
 function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   const tunnel = (globalThis as { frameSocketFetcher?: typeof fetch }).frameSocketFetcher;
-  return (tunnel ?? fetch)(input, init);
+  if (tunnel) return tunnel(input, init);
+  if (!IS_BROWSER) return fetch(input, init);
+  return fetch(input, withCsrf(init)).then((res) => {
+    followAuthSignal(res);
+    return res;
+  });
 }
 
 function env(name: string): string | undefined {
@@ -334,7 +342,13 @@ export function drivePickerEnabled(): boolean {
   return (env("ADAPTER_DEMO_DRIVE_PICKER") ?? "") === "1";
 }
 
-export type DemoConfig = { drive: string; driveRoot: string; picker: boolean };
+export type DemoConfig = {
+  drive: string;
+  driveRoot: string;
+  picker: boolean;
+  /** Standalone box: the rooms the signed-in user may open (from the identity token). */
+  drives?: string[];
+};
 
 /** Demo-proxy config; absent (404) when the UI runs embedded in the ViVeSecBox. */
 export async function adapterDemoConfig(): Promise<DemoConfig | null> {

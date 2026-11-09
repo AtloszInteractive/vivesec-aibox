@@ -24,6 +24,7 @@ Standalone mode has preconditions, checked before the adapter starts:
 """
 import os
 
+import corpus
 import directory
 import identity
 
@@ -104,3 +105,18 @@ def vivesecbox_surfaces(mode):
     """Whether pairing, index sync, ws-fs, SSDP and the mutual-TLS listener
     are served in `mode`."""
     return mode == MODE_VIVESECBOX
+
+
+def drive_granted(mode, drive, token_drives):
+    """Whether a request may name `drive` as its active VVS-Drive.
+
+    The scope always includes the active drive, so in standalone mode it must
+    be one of the rooms the signed token grants; a token without a `drives`
+    claim grants none. In vivesecbox mode the ViVeSecBox picks the drive.
+    """
+    if mode != MODE_STANDALONE or drive is None:
+        return True
+    if token_drives is None:
+        return False
+    wanted = corpus.norm(drive)
+    return any(corpus.norm(str(granted)) == wanted for granted in token_drives if granted)

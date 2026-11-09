@@ -2,6 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { handleLoginGate } from "./lib/auth/gate.server";
 import { handleAdapterProxy } from "./lib/rag/adapter-proxy.server";
 
 type ServerEntry = {
@@ -41,6 +42,10 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      // Standalone mode: the login gate decides every API call and every page;
+      // it hands only signed-in pages, the login page and assets to the app.
+      const gated = await handleLoginGate(request);
+      if (gated) return gated;
       const proxied = await handleAdapterProxy(request);
       if (proxied) return proxied;
       const handler = await getServerEntry();
