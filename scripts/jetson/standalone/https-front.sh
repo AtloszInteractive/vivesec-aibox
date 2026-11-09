@@ -266,7 +266,10 @@ cmd_deploy() {
   chmod 0644 "$new_conf"
   log "validating the configuration"
   set_run_args "$new_conf"
-  docker run --rm --network none "${run_args[@]:2}" "$image" -t -q ||
+  # `nginx -t` binds the listen addresses, so it needs the host network: a
+  # LAN address does not exist anywhere else. A port still held by the running
+  # front is accepted in test mode; an address missing from the box is not.
+  docker run --rm "${run_args[@]}" "$image" -t -q ||
     die "nginx rejected the configuration (kept in $new_conf)"
   stamp=$(date -u +%Y%m%d-%H%M%S)
   if [[ -f $conf ]]; then cp -p "$conf" "$conf.prev"; fi

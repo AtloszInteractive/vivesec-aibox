@@ -281,6 +281,48 @@ class FrontRenderTest(ScriptTestCase):
         self.assertIn("listen 0.0.0.0:443 ssl;", self.render().stdout)
 
 
+FAKE_TOOLS = r'''#!/usr/bin/env bash
+case $(basename "$0") in
+  ss) exit 0 ;;
+  docker)
+    printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
+    case $1 in
+      inspect) exit 1 ;;
+      image) exit 0 ;;
+      run) exit 1 ;;
+    esac ;;
+esac
+exit 0
+'''
+
+
+class FrontDeployTest(ScriptTestCase):
+    """`deploy` up to the configuration check, with stub docker and ss."""
+
+    def test_configuration_is_validated_on_the_host_network(self):
+        # A specific LAN address only exists on the host network; validating
+        # elsewhere fails on the box before the front ever starts.
+        self.bash([PKI, "init"])
+        bin_dir = self.root + "/bin"
+        os.makedirs(bin_dir)
+        for tool in ("docker", "ss"):
+            with open(os.path.join(bin_dir, tool), "w", newline="\n") as handle:
+                handle.write(FAKE_TOOLS)
+        log = self.root + "/docker.log"
+        path = self.bash(["-c", 'chmod +x "$1"/*; printf %s "$PATH"', "x", bin_dir]).stdout
+        result = self.bash([FRONT, "deploy"], check=False, PATH=bin_dir + ":" + path,
+                           FAKE_DOCKER_LOG=log, AIBOX_HTTPS_LISTEN="192.168.10.50",
+                           AIBOX_HTTPS_CONF_DIR=self.root + "/https")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("nginx rejected the configuration", result.stderr)
+        with open(log, encoding="utf-8") as handle:
+            validation = [line for line in handle if line.startswith("run ")]
+        self.assertEqual(len(validation), 1, validation)
+        self.assertIn("--network host", validation[0])
+        self.assertNotIn("--network none", validation[0])
+        self.assertTrue(validation[0].rstrip().endswith("-t -q"), validation[0])
+
+
 def docker_ready():
     if os.environ.get("AIBOX_STANDALONE_DOCKER_TEST") != "1" or not shutil.which("docker"):
         return False
