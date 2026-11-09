@@ -235,6 +235,27 @@ Check a running box: `python scripts/release/config_registry.py validate env.txt
 | `GRAPH_STORE` | `memory` |  | memory \| neo4j | restart | Graph store backend: memory (tests and demos, not persistent) or neo4j (persistent). | Any other value stops the service at startup. |
 | `GRAPH_TESSERACT` | *unset* |  | path to the tesseract binary (empty: PATH lookup) | restart | Tesseract executable used for OCR. | Not found: OCR is unavailable and scans are reported as such. |
 
+## Authentication service (standalone mode)
+
+| Parameter | Default | Image | Allowed | Change | Impact | Invalid value |
+| --- | --- | --- | --- | --- | --- | --- |
+| `AUTH_CLIENT_MAX_FAILURES` | `20` |  | 5-1000 | restart | Failed attempts from one client address within AUTH_CLIENT_WINDOW_SECONDS before it is refused (password spraying). | An invalid or out-of-range value falls back to 20 with a warning. |
+| `AUTH_CLIENT_WINDOW_SECONDS` | `900` |  | 60-86400 | restart | Window of the per-client throttle. | An invalid or out-of-range value falls back to 900 with a warning. |
+| `AUTH_DATA_DIR` | `/data/auth` |  | a directory (created 0700) | restart | Users, sessions and the event log (auth.db, 0600) and, by default, both key files. On a production box it belongs on the encrypted volume (E05). | Unset or empty is the default. |
+| `AUTH_HOST` | `127.0.0.1` |  | a loopback address (127.x, ::1, localhost) | restart | Listen address of the authentication service (E27 standalone mode). | Any other address stops the service at start: only the web UI server on the box may reach it. |
+| `AUTH_JWT_AUDIENCE` | `vivesec-aibox-adapter` |  | any string | restart | aud claim of the identity tokens; set ADAPTER_IDENTITY_AUDIENCE to the same value to have the adapter check it. | Unset or empty is the default. |
+| `AUTH_JWT_ISSUER` | `vivesec-aibox-auth` |  | any string | restart | iss claim of the identity tokens; set ADAPTER_IDENTITY_ISSUER to the same value to have the adapter check it. | Unset or empty is the default. |
+| `AUTH_JWT_SECRET_FILE` | `<AUTH_DATA_DIR>/identity-hs256.key` |  | a file of at least 32 bytes | restart | HS256 key of the identity tokens; the adapter reads the same file (ADAPTER_IDENTITY_HS256_SECRET_FILE). | Missing or shorter than 32 bytes: the service does not start. `manage.py init` creates it (0600). |
+| `AUTH_LOCKOUT_SECONDS` | `900` |  | 60-86400 | restart | How long a locked account stays locked (an administrator can unlock it earlier). | An invalid or out-of-range value falls back to 900 with a warning. |
+| `AUTH_LOCKOUT_THRESHOLD` | `5` |  | 3-20 | restart | Failed passwords or TOTP codes in a row that lock the account. | An invalid or out-of-range value falls back to 5 with a warning. |
+| `AUTH_PASSWORD_MIN_LENGTH` | `12` |  | 10-128 | restart | Minimum length of a new password. | An invalid or out-of-range value falls back to 12 with a warning. |
+| `AUTH_PORT` | `8097` |  | 1-65535 | restart | Listen port of the authentication service. | An invalid or out-of-range value falls back to 8097 with a warning. |
+| `AUTH_SERVICE_KEY_FILE` | `<AUTH_DATA_DIR>/service.key` |  | a file of at least 32 bytes | restart | Shared key the web UI server presents in X-Auth-Service-Key; every other caller on the box is refused. | Missing or shorter than 32 bytes: the service does not start. `manage.py init` creates it (0600). |
+| `AUTH_SESSION_IDLE_SECONDS` | `1800` |  | 60-86400 | restart | A session without activity for this long ends. | An invalid or out-of-range value falls back to 1800 with a warning; a value above AUTH_SESSION_MAX_SECONDS is lowered to it. |
+| `AUTH_SESSION_MAX_SECONDS` | `43200` |  | 300-604800 | restart | Absolute lifetime of a session, whatever the activity. | An invalid or out-of-range value falls back to 43200 with a warning. |
+| `AUTH_TOKEN_TTL_SECONDS` | `300` |  | 30-3600 | restart | Lifetime of an identity token; it never outlives the session. Must stay within ADAPTER_IDENTITY_MAX_TTL_SECONDS. | An invalid or out-of-range value falls back to 300 with a warning. |
+| `AUTH_TOTP_ISSUER` | `ViVeSec AI Box` |  | any string | restart | Account name prefix the authenticator app shows. | Unset or empty is the default. |
+
 ## Shared (several components)
 
 | Parameter | Default | Image | Allowed | Change | Impact | Invalid value |
