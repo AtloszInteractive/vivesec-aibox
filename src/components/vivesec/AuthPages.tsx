@@ -140,17 +140,26 @@ function Field({
 }
 
 function PrimaryButton({ busy, children }: { busy: boolean; children: ReactNode }) {
+  // Disabled until the page script runs: on a slow link the server-rendered
+  // form shows up long before it, and a native submit must never happen.
+  const ready = useHydrated();
   return (
     <button
       type="submit"
-      disabled={busy}
+      disabled={busy || !ready}
       className="inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition hover:brightness-110 disabled:opacity-60"
       style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
     >
-      {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+      {(busy || !ready) && <Loader2 className="h-4 w-4 animate-spin" />}
       {children}
     </button>
   );
+}
+
+function useHydrated(): boolean {
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+  return hydrated;
 }
 
 function SecondaryButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
@@ -277,7 +286,7 @@ function LoginFlow() {
   if (step.kind === "credentials") {
     return (
       <GateShell title={tm("Sign in to the AI Box")} icon={<KeyRound className="h-5 w-5" />}>
-        <form onSubmit={submitPassword} noValidate>
+        <form method="post" onSubmit={submitPassword} noValidate>
           <ErrorLine text={error} />
           <Field
             label={tm("Username")}
@@ -323,7 +332,7 @@ function LoginFlow() {
   if (step.kind === "totp") {
     return (
       <GateShell title={tm("Two-step verification")} icon={<ShieldCheck className="h-5 w-5" />}>
-        <form onSubmit={submitCode} noValidate>
+        <form method="post" onSubmit={submitCode} noValidate>
           <p className="mb-4 text-sm text-white/75">
             {tm("Enter the 6-digit code from your authenticator app.")}
           </p>
@@ -344,7 +353,7 @@ function LoginFlow() {
       title={tm("Set up two-step verification")}
       icon={<ShieldCheck className="h-5 w-5" />}
     >
-      <form onSubmit={submitCode} noValidate>
+      <form method="post" onSubmit={submitCode} noValidate>
         <ol className="mb-4 space-y-3 text-sm text-white/75">
           <li>
             {tm(
@@ -461,7 +470,7 @@ function PasswordFlow() {
           <Loader2 className="h-5 w-5 animate-spin text-white/60" />
         </div>
       ) : (
-        <form onSubmit={submit} noValidate>
+        <form method="post" onSubmit={submit} noValidate>
           {forced && (
             <p className="mb-4 rounded-lg border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
               {tm("Your password is temporary. Choose a new one to continue.")}

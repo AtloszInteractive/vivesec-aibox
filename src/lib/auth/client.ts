@@ -60,6 +60,9 @@ async function readJson<T>(res: Response): Promise<T | GateError> {
 }
 
 async function post<T>(path: string, body: Record<string, unknown>): Promise<T | GateError> {
+  // The CSRF cookie comes with /auth/session, which the page asks for when it
+  // loads; on a slow link the form can be sent before that answer arrived.
+  if (!readCsrfCookie()) await fetchGateSession();
   try {
     const res = await fetch(
       gatePath(path),

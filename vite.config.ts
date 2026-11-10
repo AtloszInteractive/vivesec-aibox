@@ -160,7 +160,12 @@ export default defineConfig({
   // Cloud Run injects (defaults to 8080).
   // The embed build skips nitro: its SPA prerender boots a preview server from
   // dist/server/server.js, which the nitro output layout does not produce.
-  nitro: EMBED_SPA ? false : { preset: "node-server" },
+  // Precompressed assets (gzip + brotli) are served to browsers that accept them:
+  // the main bundle shrinks to about a third, which matters on a slow link to the box.
+  // The wrapper's type lists only some nitro options but passes all of them on.
+  nitro: EMBED_SPA
+    ? false
+    : ({ preset: "node-server", compressPublicAssets: true } as { preset: string }),
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
