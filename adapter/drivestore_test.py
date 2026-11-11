@@ -337,9 +337,11 @@ class DiskTest(StoreTestBase):
         os.symlink(os.path.join(outside, "secret.txt"),
                    os.path.join(self.root, "rooms", "cases", "file.txt"))
         self.assertEqual(self.store.list_dir(ROOM), [])
+        for path in (ROOM + "/link/secret.txt", ROOM + "/file.txt"):
+            with self.assertRaises(StoreError, msg=path):
+                self.store.read_bytes(path)
         with self.assertRaises(StoreError):
-            self.store.read_bytes(ROOM + "/link/secret.txt")
-        self.assertIsNone(self.store.read_bytes(ROOM + "/file.txt"))
+            self.store.kind(ROOM + "/link")
 
     def test_purge(self):
         self.upload(ROOM + "/a.txt")
