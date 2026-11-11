@@ -21,8 +21,8 @@
 #   AIBOX_HTTPS_UPSTREAM   the web UI, loopback only    (default 127.0.0.1:8080)
 #   AIBOX_HTTPS_IMAGE      nginx image                  (default nginx:1.28-alpine)
 #   AIBOX_HTTPS_CONF_DIR   rendered configuration       (default /data/https)
-#   AIBOX_HTTPS_MAX_BODY   largest request body, nginx size (default 256m: the
-#                          upload limit of the file store, ADAPTER_UPLOAD_MAX_BYTES)
+#   AIBOX_HTTPS_MAX_BODY   largest request body, nginx size (default 64m: above
+#                          the upload limit of the file store, ADAPTER_UPLOAD_MAX_BYTES)
 #   AIBOX_INTERNAL_PORTS   ports that must listen on loopback only
 #                          (default "8080 8088 8090 8097 11434": UI, adapter, RAG, auth, Ollama)
 set -euo pipefail
@@ -36,7 +36,7 @@ tls_dir="${AIBOX_TLS_DIR:-/data/tls}"
 conf_dir="${AIBOX_HTTPS_CONF_DIR:-/data/https}"
 image="${AIBOX_HTTPS_IMAGE:-nginx:1.28-alpine}"
 upstream="${AIBOX_HTTPS_UPSTREAM:-127.0.0.1:8080}"
-max_body="${AIBOX_HTTPS_MAX_BODY:-256m}"
+max_body="${AIBOX_HTTPS_MAX_BODY:-64m}"
 internal_ports="${AIBOX_INTERNAL_PORTS:-8080 8088 8090 8097 11434}"
 # Identity headers only the box may set (adapter scope.py / identity.py).
 CLIENT_HEADERS_DROPPED=(VVS-Drive VVS-User VVS-Session VVS-Identity VVS-Other-Drives)

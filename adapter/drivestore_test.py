@@ -78,6 +78,9 @@ class PathTest(unittest.TestCase):
                                                   warn=lambda m: None),
                          frozenset({"role:admin", "group:cases"}))
         self.assertEqual(drivestore.parse_writers("bogus", warn=lambda m: None), frozenset())
+        # The upload limit follows the RAG's (RAG_MAX_FILE_BYTES, 20 MiB).
+        self.assertEqual(DriveStore.from_env({}).max_bytes, 20 * 1024 * 1024)
+        self.assertEqual(DriveStore.from_env({"ADAPTER_UPLOAD_MAX_BYTES": "1000"}).max_bytes, 1000)
 
     def test_may_write(self):
         admin = acl.Access(["user:anna", "role:admin"], 1, True)

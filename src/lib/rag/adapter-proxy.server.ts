@@ -144,7 +144,7 @@ export async function relayToAdapter(
   headers.set("X-Forwarded-Host", url.host || "unknown");
 
   const target = `${ADAPTER_URL()}${url.pathname}${url.search}`;
-  // An upload (up to the store's limit, 256 MB by default) streams through
+  // An upload (up to the store's limit, 20 MB by default) streams through
   // instead of being held in this server's memory; the adapter reads the
   // chunked body as it arrives and enforces the limit itself.
   const streamed =

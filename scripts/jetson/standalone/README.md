@@ -106,7 +106,7 @@ Every parameter is in [`CONFIGURATION.md`](../../../CONFIGURATION.md)
 | `AIBOX_HTTPS_UPSTREAM` | `127.0.0.1:8080` | The web UI; loopback only |
 | `AIBOX_HTTPS_IMAGE` | `nginx:1.28-alpine` | nginx image |
 | `AIBOX_HTTPS_CONF_DIR` | `/data/https` | Rendered `nginx.conf` (+ `.prev`) |
-| `AIBOX_HTTPS_MAX_BODY` | `256m` | Largest request body (the upload limit); bodies stream to the UI unbuffered |
+| `AIBOX_HTTPS_MAX_BODY` | `64m` | Largest request body (at or above the upload limit); bodies stream to the UI unbuffered |
 | `AIBOX_INTERNAL_PORTS` | `8080 8088 8090 8097 11434` | Ports that must listen on loopback only |
 
 ## Tests
@@ -168,7 +168,8 @@ docker only (no sudo).
 | `test` | The EICAR check alone. |
 
 clamd's `StreamMaxLength` and `MaxFileSize` are `AIBOX_CLAMAV_MAX_MB` (300 MB,
-above the 256 MiB upload limit) and `AlertExceedsMax` is on, so a file clamd
+well above the 20 MiB upload limit, so the upload limit can grow with the RAG
+limit) and `AlertExceedsMax` is on, so a file clamd
 cannot scan whole is reported as a finding, never passed as clean. freshclam is
 off by default (offline box); `AIBOX_CLAMAV_FRESHCLAM=on` lets a connected
 development box update its signatures. On an offline box the image must be
@@ -180,8 +181,9 @@ The adapter's defaults match (`ADAPTER_CLAMD=127.0.0.1:3310`,
 clamd is down, uploads stay in quarantine and the web UI says so.
 
 The nginx front must let the uploads through: `AIBOX_HTTPS_MAX_BODY` (default
-`256m`) and unbuffered request bodies (`proxy_request_buffering off`, because
-the container's `/tmp` is a small tmpfs). After changing it, run
+`64m`, above the 20 MiB upload limit) and unbuffered request bodies
+(`proxy_request_buffering off`, because the container's `/tmp` is a small
+tmpfs). After raising the upload limit beyond it, raise this too and run
 `https-front.sh deploy` again (root).
 
 | Parameter | Default | Meaning |

@@ -44,7 +44,9 @@ SCAN_ON = "on"
 SCAN_REQUIRED = "required"
 SCAN_MODES = (SCAN_OFF, SCAN_ON, SCAN_REQUIRED)
 
-DEFAULT_MAX_BYTES = 256 * 1024 * 1024
+# The RAG's own limit (RAG_MAX_FILE_BYTES, 20 MiB): a larger file could be
+# stored but never searched, which only confuses on a question-answering box.
+DEFAULT_MAX_BYTES = 20 * 1024 * 1024
 # What the RAG can read (rag_service/extract.py) plus the images OCR reads.
 DEFAULT_EXTENSIONS = (
     ".txt", ".md", ".markdown", ".text", ".csv", ".tsv", ".json", ".log", ".rst",

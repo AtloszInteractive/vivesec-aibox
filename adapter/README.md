@@ -187,13 +187,14 @@ store.
 | `ADAPTER_UPLOAD_SCAN` | `required` | `off`, `on` or `required`; unknown = `required`. |
 | `ADAPTER_CLAMD` | `127.0.0.1:3310` | clamd, loopback `host:port` or `unix:/path`; anything else counts as unreachable. |
 | `ADAPTER_CLAMD_TIMEOUT` | `120` | Seconds to wait for one clamd answer. |
-| `ADAPTER_UPLOAD_MAX_BYTES` | `268435456` | Largest upload (256 MiB); keep nginx (`AIBOX_HTTPS_MAX_BODY`) and clamd (`AIBOX_CLAMAV_MAX_MB`) at or above it. |
+| `ADAPTER_UPLOAD_MAX_BYTES` | `20971520` | Largest upload (20 MiB, the RAG's `RAG_MAX_FILE_BYTES`); raise both together. Keep nginx (`AIBOX_HTTPS_MAX_BODY`) and clamd (`AIBOX_CLAMAV_MAX_MB`) at or above it. |
 | `ADAPTER_UPLOAD_EXTENSIONS` | indexable types | Allowed extensions, or `*`. |
 | `ADAPTER_STORE_WRITERS` | `role:admin` | Principals that may upload, create folders and delete. |
 
-The clamd container is `scripts/jetson/standalone/clamav_deploy.py`. Files
-above the RAG limit (`RAG_MAX_FILE_BYTES`, 20 MiB by default) are stored but
-not indexed (`stored`, reason `too_large`).
+The clamd container is `scripts/jetson/standalone/clamav_deploy.py`. By
+default the upload limit equals the RAG limit (`RAG_MAX_FILE_BYTES`, 20 MiB),
+so every accepted file is searchable. If only the upload limit is raised,
+larger files are stored but not indexed (`stored`, reason `too_large`).
 
 ## Identity, directory and lifecycle (E02)
 
