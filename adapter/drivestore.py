@@ -227,6 +227,11 @@ class DriveStore:
         """Create the layout; on a locked LUKS volume /data is not mounted yet,
         so this is retried by every operation that needs the disk."""
         try:
+            os.makedirs(self.root, mode=0o700, exist_ok=True)
+            os.chmod(self.root, 0o700)
+            for name in ("events.jsonl", "uploads.json"):
+                if os.path.exists(os.path.join(self.root, name)):
+                    os.chmod(os.path.join(self.root, name), 0o600)
             for name in ("rooms", "quarantine"):
                 os.makedirs(os.path.join(self.root, name), mode=0o700, exist_ok=True)
         except OSError as e:
@@ -562,7 +567,8 @@ class DriveStore:
         drop = {r["id"] for r in finished[:max(0, len(keep) - RECORD_MAX)]}
         self._records = {r["id"]: r for r in keep if r["id"] not in drop}
         tmp = self._records_path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as handle:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump({"uploads": list(self._records.values())}, handle)
         os.replace(tmp, self._records_path())
 
@@ -650,7 +656,9 @@ class DriveStore:
         entry.update({key: value for key, value in detail.items() if value is not None})
         try:
             with self.lock:
-                with open(os.path.join(self.root, "events.jsonl"), "a", encoding="utf-8") as handle:
+                fd = os.open(os.path.join(self.root, "events.jsonl"),
+                             os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                with os.fdopen(fd, "a", encoding="utf-8") as handle:
                     handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except OSError as e:
             _warn("event log not written (%s)" % e)

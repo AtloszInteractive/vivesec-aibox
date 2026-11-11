@@ -3965,7 +3965,7 @@ class Handler(BaseHTTPRequestHandler):
         STORE.cancel_under(path, ctx["user"])
         res = _store_unindex(path)
         STORE.remove(path)
-        STORE.event("delete", ctx["user"], path, files=len(on_disk) or None,
+        STORE.event("delete", ctx["user"], path, entries=len(on_disk) or None,
                     indexed=res.get("deleted_documents"))
         self._send(200, {"ok": True, "path": path, "removed": len(on_disk),
                          "removed_from_index": res.get("deleted_documents", 0)})

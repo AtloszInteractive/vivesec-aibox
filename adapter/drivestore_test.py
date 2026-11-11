@@ -343,6 +343,16 @@ class DiskTest(StoreTestBase):
         with self.assertRaises(StoreError):
             self.store.kind(ROOM + "/link")
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX permissions")
+    def test_store_files_are_private(self):
+        self.upload(ROOM + "/a.txt")
+        self.worker.drain()
+        mode = lambda *p: os.stat(os.path.join(self.root, *p)).st_mode & 0o777  # noqa: E731
+        self.assertEqual(mode(), 0o700)
+        self.assertEqual(mode("events.jsonl"), 0o600)
+        self.assertEqual(mode("uploads.json"), 0o600)
+        self.assertEqual(mode("quarantine"), 0o700)
+
     def test_purge(self):
         self.upload(ROOM + "/a.txt")
         self.worker.drain()
