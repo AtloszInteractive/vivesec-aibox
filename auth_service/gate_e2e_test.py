@@ -64,8 +64,18 @@ class StubAdapter(BaseHTTPRequestHandler):
         pass
 
     def _answer(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length) if length else b""
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            body = b""
+            while True:
+                size = int(self.rfile.readline().split(b";")[0].strip(), 16)
+                if size == 0:
+                    self.rfile.readline()
+                    break
+                body += self.rfile.read(size)
+                self.rfile.read(2)
+        else:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length) if length else b""
         seen = {name.lower(): value for name, value in self.headers.items()}
         try:
             caller = self.server.verifier.resolve(self.headers)
@@ -73,7 +83,8 @@ class StubAdapter(BaseHTTPRequestHandler):
         except identity.IdentityError as e:
             verified = {"error": e.reason}
         self.server.calls.append({"path": self.path, "method": self.command, "headers": seen,
-                                  "verified": verified, "body": body.decode("utf-8", "replace")})
+                                  "verified": verified, "body": body.decode("utf-8", "replace"),
+                                  "raw": body})
         data = json.dumps({"ok": True, "path": self.path}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -426,6 +437,36 @@ class LoginGateEndToEndTest(unittest.TestCase):
         headers = self.adapter.calls[-1]["headers"]
         self.assertNotIn("vvs-drive", headers)
         self.assertEqual(self.adapter.calls[-1]["verified"], {"user": "bob", "drives": []})
+        # The same session (one login per user: the TOTP window is short):
+        # an upload is refused without CSRF, and streams through with it.
+        self.adapter.calls.clear()
+        status, _, body = browser.request("POST", "/api/v1/ui/store/upload", {"x": 1})
+        self.assertEqual((status, body["error"]), (403, "csrf"))
+        self.assertEqual(self.adapter.calls, [])
+        self.check_streamed_upload(browser)
+
+    def check_streamed_upload(self, browser):
+        payload = bytes(range(256)) * 4096
+        conn = http.client.HTTPConnection("127.0.0.1", self.ui_port, timeout=60)
+        conn.request("POST", "/api/v1/ui/store/upload", body=payload, headers={
+            "Host": browser.host, "Origin": "https://" + browser.host,
+            "Sec-Fetch-Site": "same-origin", "Content-Type": "application/octet-stream",
+            "Cookie": "; ".join("%s=%s" % item for item in browser.cookies.items()),
+            "X-AIBox-CSRF": browser.cookies.get("__Host-aibox_csrf", ""),
+            "X-Store-Path": "%2Fstorage%2Fdrives%2Fx%2Fa%20b.pdf", "VVS-User": "mallory"})
+        response = conn.getresponse()
+        response.read()
+        conn.close()
+        self.assertEqual(response.status, 200)
+        call = self.adapter.calls[-1]
+        self.assertEqual(call["path"], "/api/v1/ui/store/upload")
+        self.assertEqual(call["verified"], {"user": "bob", "drives": []})
+        self.assertEqual(call["headers"]["x-store-path"], "%2Fstorage%2Fdrives%2Fx%2Fa%20b.pdf")
+        self.assertEqual(call["headers"]["vvs-user"], "bob")
+        self.assertNotIn("cookie", call["headers"])
+        # Streamed, not buffered: the relay sends the body chunked.
+        self.assertEqual(call["headers"].get("transfer-encoding"), "chunked")
+        self.assertEqual(call["raw"], payload)
 
 
 if __name__ == "__main__":

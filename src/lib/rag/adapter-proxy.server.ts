@@ -27,6 +27,9 @@ const RELAYED_EXACT = new Set(["/api/v1/status", "/api/v1/version", "/api/v1/ui-
 // The box sync read carries no identity and no ACL (E03). It is relayed only for
 // the demo drive picker, and only for the drive root, i.e. the drive names.
 const CHILDREN_PATH = "/api/v1/index/get/children";
+// The standalone file store's upload (adapter drivestore.py): the only relayed
+// call whose body is streamed rather than buffered.
+const STORE_UPLOAD_PATH = "/api/v1/ui/store/upload";
 export const isRelayed = (pathname: string) => {
   const path = pathname.replace(/\/+$/, "");
   return RELAYED_EXACT.has(path) || path.startsWith("/api/v1/ui/");
@@ -141,14 +144,25 @@ export async function relayToAdapter(
   headers.set("X-Forwarded-Host", url.host || "unknown");
 
   const target = `${ADAPTER_URL()}${url.pathname}${url.search}`;
-  const body =
-    bodyOverride ??
-    (request.method === "GET" || request.method === "HEAD"
-      ? undefined
-      : await request.arrayBuffer());
+  // An upload (up to the store's limit, 256 MB by default) streams through
+  // instead of being held in this server's memory; the adapter reads the
+  // chunked body as it arrives and enforces the limit itself.
+  const streamed =
+    !bodyOverride &&
+    request.method === "POST" &&
+    request.body !== null &&
+    url.pathname.replace(/\/+$/, "") === STORE_UPLOAD_PATH;
+  const body = streamed
+    ? request.body
+    : (bodyOverride ??
+      (request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : await request.arrayBuffer()));
 
   try {
-    const res = await fetch(target, { method: request.method, headers, body });
+    const init: RequestInit & { duplex?: "half" } = { method: request.method, headers, body };
+    if (streamed) init.duplex = "half";
+    const res = await fetch(target, init);
     const out = new Headers(res.headers);
     out.delete("content-encoding");
     out.delete("content-length");

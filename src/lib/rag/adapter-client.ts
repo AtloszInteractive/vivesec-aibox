@@ -15,6 +15,7 @@
 //   ADAPTER_DEMO_USER   default VVS-User id (default demo)
 
 import { followAuthSignal, withCsrf } from "../auth/client";
+import { AUTH_SIGNAL_HEADER } from "../auth/protocol";
 import { readBoxVersion, type BoxVersion } from "../build-info";
 
 export type ChatProfile = "grounded" | "hybrid";
@@ -1298,6 +1299,201 @@ export async function adapterDriveFile(input: {
     blob: await res.blob(),
     contentType: res.headers.get("content-type") ?? "application/octet-stream",
   };
+}
+
+// ---------------------------------------------------------------------------
+// Standalone file store (E27 S5). The box keeps the originals itself: uploads
+// are scanned in quarantine, then indexed on the box. Every call goes through
+// the login gate, which adds the signed identity; the adapter checks the room,
+// the ACL and whether the caller may write (ADAPTER_STORE_WRITERS).
+// ---------------------------------------------------------------------------
+
+export type StoreInfo = {
+  writable: boolean;
+  maxBytes: number;
+  /** Lower-case extensions with the dot; null = any type. */
+  extensions: string[] | null;
+  scan: string;
+  scanner: { ok: boolean } | null;
+  rooms: string[];
+};
+
+export type StoreEntry = {
+  path: string;
+  name: string;
+  file: boolean;
+  size: number | null;
+  /** Milliseconds since the epoch; null for an entry only the index knows. */
+  modified: number | null;
+  /** The original is held on the box (downloadable). */
+  stored: boolean;
+  indexed: boolean;
+};
+
+export type StoreUploadStatus =
+  | "queued"
+  | "waiting_scanner"
+  | "indexing"
+  | "index_pending"
+  | "indexed"
+  | "stored"
+  | "infected"
+  | "rejected"
+  | "failed"
+  | "cancelled";
+
+export type StoreUpload = {
+  id: string;
+  path: string;
+  size: number;
+  sha256: string;
+  status: StoreUploadStatus;
+  scan: string | null;
+  signature: string | null;
+  reason: string | null;
+  chunks: number | null;
+  created: number;
+  updated: number;
+};
+
+export const STORE_FINAL_STATES: ReadonlySet<StoreUploadStatus> = new Set([
+  "indexed",
+  "stored",
+  "infected",
+  "rejected",
+  "failed",
+  "cancelled",
+]);
+
+export class StoreError extends Error {
+  constructor(
+    readonly code: string,
+    readonly status: number,
+  ) {
+    super(code);
+    this.name = "StoreError";
+  }
+}
+
+const STORE_TIMEOUT_MS = 15_000;
+
+async function storeCall(
+  drive: string,
+  endpoint: string,
+  body?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  let res: Response;
+  try {
+    res = await apiFetch(`${adapterUrl()}/api/v1/ui/store/${endpoint}`, {
+      method: body ? "POST" : "GET",
+      headers: vvsHeaders(drive, demoUser()),
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(STORE_TIMEOUT_MS),
+    });
+  } catch {
+    throw new StoreError("network", 0);
+  }
+  const j = await safeJson(res);
+  if (!res.ok) throw new StoreError(String(j.error ?? `http_${res.status}`), res.status);
+  return j;
+}
+
+/** What the store allows this caller; null when the box has no file store
+ *  (a ViVeSecBox-integrated box, where the ViVeSecBox owns the files). */
+export async function storeInfo(drive: string): Promise<StoreInfo | null> {
+  if (isEmbedded()) return null;
+  try {
+    const j = await storeCall(drive, "info");
+    return {
+      writable: Boolean(j.writable),
+      maxBytes: Number(j.max_bytes) || 0,
+      extensions: Array.isArray(j.extensions) ? (j.extensions as string[]) : null,
+      scan: String(j.scan ?? ""),
+      scanner: (j.scanner as { ok: boolean } | null) ?? null,
+      rooms: Array.isArray(j.rooms) ? (j.rooms as string[]) : [],
+    };
+  } catch (err) {
+    if (err instanceof StoreError && (err.status === 404 || err.status === 503)) return null;
+    throw err;
+  }
+}
+
+export async function storeList(
+  drive: string,
+  path: string,
+): Promise<{ path: string; room: string; writable: boolean; entries: StoreEntry[] }> {
+  const j = await storeCall(drive, "list", { path });
+  return {
+    path: String(j.path ?? path),
+    room: String(j.room ?? ""),
+    writable: Boolean(j.writable),
+    entries: Array.isArray(j.entries) ? (j.entries as StoreEntry[]) : [],
+  };
+}
+
+export async function storeUploads(drive: string): Promise<StoreUpload[]> {
+  const j = await storeCall(drive, "uploads");
+  return Array.isArray(j.uploads) ? (j.uploads as StoreUpload[]) : [];
+}
+
+export async function storeDismiss(drive: string, id: string): Promise<void> {
+  await storeCall(drive, "uploads/dismiss", { id });
+}
+
+export async function storeMkdir(drive: string, path: string): Promise<void> {
+  await storeCall(drive, "mkdir", { path });
+}
+
+export async function storeDelete(drive: string, path: string): Promise<void> {
+  await storeCall(drive, "delete", { path });
+}
+
+/**
+ * POST /api/v1/ui/store/upload — one file as the raw body. XMLHttpRequest
+ * rather than fetch, for the upload progress. The target path travels in a
+ * header (percent-encoded), so no file name ends up in an access log.
+ */
+export function storeUpload(input: {
+  drive: string;
+  path: string;
+  file: Blob;
+  overwrite?: boolean;
+  onProgress?: (sent: number, total: number) => void;
+  signal?: AbortSignal;
+}): Promise<StoreUpload> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${adapterUrl()}/api/v1/ui/store/upload`);
+    const headers = new Headers(withCsrf({ method: "POST" })?.headers);
+    headers.set("Content-Type", "application/octet-stream");
+    headers.set("X-Store-Path", encodeURIComponent(input.path));
+    if (input.drive) headers.set("X-Demo-Drive", input.drive);
+    if (input.overwrite) headers.set("X-Store-Overwrite", "1");
+    headers.forEach((value, name) => xhr.setRequestHeader(name, value));
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) input.onProgress?.(event.loaded, event.total);
+    };
+    xhr.onload = () => {
+      const signal = xhr.getResponseHeader(AUTH_SIGNAL_HEADER);
+      if (signal) {
+        followAuthSignal(
+          new Response(null, { status: xhr.status, headers: { [AUTH_SIGNAL_HEADER]: signal } }),
+        );
+      }
+      let j: Record<string, unknown> = {};
+      try {
+        j = JSON.parse(xhr.responseText) as Record<string, unknown>;
+      } catch {
+        j = {};
+      }
+      if (xhr.status === 202 && j.upload) resolve(j.upload as StoreUpload);
+      else reject(new StoreError(String(j.error ?? `http_${xhr.status}`), xhr.status));
+    };
+    xhr.onerror = () => reject(new StoreError("network", 0));
+    xhr.onabort = () => reject(new StoreError("aborted", 0));
+    input.signal?.addEventListener("abort", () => xhr.abort());
+    xhr.send(input.file);
+  });
 }
 
 // ---------------------------------------------------------------------------

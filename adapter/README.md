@@ -130,6 +130,71 @@ The login gate is the web UI server (`src/lib/auth/gate.server.ts`), backed by
 [`auth_service/`](../auth_service/README.md); `scripts/jetson/standalone/auth_deploy.py`
 switches a box between the modes.
 
+### File store and uploads (E27 S5)
+
+Without a ViVeSecBox the box keeps the original files itself
+(`drivestore.py`, under `ADAPTER_STORE_DIR`, default `/data/files`, which
+belongs on the encrypted volume). The endpoints exist only in standalone mode
+(`404` in `vivesecbox` mode):
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/v1/ui/store/info` | Upload limit, allowed types, scan mode, whether the caller may write, the rooms of the scope; for writers also whether clamd answers. |
+| `POST /api/v1/ui/store/list {path}` | One folder: the files on disk (`stored`) plus anything the index holds without an original here (a corpus synced before standalone mode, `stored: false`). Scope and ACL apply; a hidden folder answers like a missing one. |
+| `POST /api/v1/ui/store/upload` | One file as the raw body (Content-Length or chunked). The target is the `X-Store-Path` header (percent-encoded UTF-8, never in the URL, so file names stay out of the logs); `X-Store-Overwrite: 1` replaces an existing file. Answers `202` with the upload record. |
+| `GET /api/v1/ui/store/uploads` | The caller's own uploads and their state. |
+| `POST /api/v1/ui/store/uploads/dismiss {id}` | Remove a record from the list; an unfinished upload is cancelled. |
+| `POST /api/v1/ui/store/mkdir {path}` | Create a folder (and its parents) and index it. |
+| `POST /api/v1/ui/store/delete {path}` | Delete a file or a folder tree: from the index, the mirror and the graph first (like `drop/tree`), then from the disk. A room itself cannot be deleted. |
+
+An upload goes through these states, one at a time on a single worker thread:
+
+```text
+queued ──scan──▶ indexing ──index──▶ indexed | stored (not indexable: too large, unsupported, empty)
+   │                 └── index unreachable ─▶ index_pending (retried every 60 s)
+   ├── clamd unreachable, scan required ─▶ waiting_scanner (stays in quarantine, retried every 60 s)
+   ├── virus found ─▶ infected (deleted at once; the event log keeps name, signature, SHA-256)
+   ├── clamd error, scan required ─▶ rejected (deleted)
+   └── target taken meanwhile ─▶ failed (exists, is_folder, parent_is_file)
+```
+
+The scan uses clamd's `INSTREAM` command over a loopback socket (`clamd.py`,
+stdlib only; `ADAPTER_CLAMD`). `ADAPTER_UPLOAD_SCAN` is `required` unless set
+otherwise, and an unknown value is `required` too. Indexing takes the sync's
+own path: the folders (`/index/upsert/directory`), `/index/upsert/file/check`
+with the flattened ACL, the content, then the graph. Downloads
+(`/api/v1/ui/file`) and graph reprocessing read the stored original.
+
+Who may do what:
+
+- **read** (list, download): the room must be in the token's `drives` and the
+  ACL (`ADAPTER_ACL_RULES`) must allow the path, exactly as for search;
+- **write** (upload, folder, delete): additionally one of
+  `ADAPTER_STORE_WRITERS` (default `role:admin`). A delete is refused when the
+  tree holds anything the caller may not see.
+
+Paths are strict (NFC; no empty, `.` or `..` segment, no leading dot, no
+trailing space or dot, no separator, control character or bidirectional
+override; at most 255 bytes per name, 32 levels and 1024 bytes in total).
+Symlinks under the store root are neither listed nor followed. The event log
+`events.jsonl` records uploads, scans, stores, indexing, folders and deletes
+with user, path, size and SHA-256, never content. A factory reset empties the
+store.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ADAPTER_STORE_DIR` | `/data/files` | Store root; empty disables the store (`503`). |
+| `ADAPTER_UPLOAD_SCAN` | `required` | `off`, `on` or `required`; unknown = `required`. |
+| `ADAPTER_CLAMD` | `127.0.0.1:3310` | clamd, loopback `host:port` or `unix:/path`; anything else counts as unreachable. |
+| `ADAPTER_CLAMD_TIMEOUT` | `120` | Seconds to wait for one clamd answer. |
+| `ADAPTER_UPLOAD_MAX_BYTES` | `268435456` | Largest upload (256 MiB); keep nginx (`AIBOX_HTTPS_MAX_BODY`) and clamd (`AIBOX_CLAMAV_MAX_MB`) at or above it. |
+| `ADAPTER_UPLOAD_EXTENSIONS` | indexable types | Allowed extensions, or `*`. |
+| `ADAPTER_STORE_WRITERS` | `role:admin` | Principals that may upload, create folders and delete. |
+
+The clamd container is `scripts/jetson/standalone/clamav_deploy.py`. Files
+above the RAG limit (`RAG_MAX_FILE_BYTES`, 20 MiB by default) are stored but
+not indexed (`stored`, reason `too_large`).
+
 ## Identity, directory and lifecycle (E02)
 
 The ViVeSecBox owns users and login; the adapter verifies what it is told and

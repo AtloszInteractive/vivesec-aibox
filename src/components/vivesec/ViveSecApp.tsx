@@ -68,11 +68,13 @@ import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib
 import {
   AdapterGraphError,
   setRequestPurpose,
+  storeInfo,
   type AdapterPurposeConfig,
   type RequestPurpose,
 } from "@/lib/rag/adapter-client";
 import { useVoice } from "./use-voice";
 import { AccountMenu } from "./AccountMenu";
+import { DocumentStoreModal } from "./DocumentStoreModal";
 import {
   ArrowLeft,
   ArrowRight,
@@ -133,6 +135,7 @@ import {
   Network,
   FileSearch,
   RotateCcw,
+  FolderOpen,
 } from "lucide-react";
 import { GraphPanel, type GraphSource } from "./GraphPanel";
 import {
@@ -1038,6 +1041,26 @@ function ViveSecAppInner() {
   useEffect(() => {
     window.localStorage.setItem("vivesec_scope", JSON.stringify(selectedDrives));
   }, [selectedDrives]);
+
+  /* ---------- File store (standalone box, E27 S5) ----------
+     Only a box that keeps the files itself answers /ui/store/info; on a
+     ViVeSecBox-integrated box the ViVeSecBox owns them and nothing is shown. */
+  const [storeAvailable, setStoreAvailable] = useState(false);
+  const [storeOpen, setStoreOpen] = useState(false);
+  useEffect(() => {
+    if (!drive || boxState !== "online") return;
+    let cancelled = false;
+    void storeInfo(drive)
+      .then((info) => {
+        if (!cancelled) setStoreAvailable(Boolean(info));
+      })
+      .catch(() => {
+        if (!cancelled) setStoreAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drive, boxState]);
 
   const toggleScopeDrive = useCallback((path: string) => {
     setSelectedDrives((current) =>
@@ -2448,6 +2471,16 @@ function ViveSecAppInner() {
                 <Network className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{tm("Relationships")}</span>
               </button>
+              {storeAvailable && (
+                <button
+                  onClick={() => setStoreOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                  style={storeOpen ? { borderColor: `${ACCENT}88` } : undefined}
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">{tm("Documents")}</span>
+                </button>
+              )}
               {!analyst && (
                 <button
                   onClick={() => setDriveOpen((v) => !v)}
@@ -3478,6 +3511,16 @@ function ViveSecAppInner() {
             setViewerMode("side");
           }}
           onClose={() => setExplorerOpen(false)}
+        />
+      )}
+      {storeOpen && drive && (
+        <DocumentStoreModal
+          drive={drive}
+          onClose={() => {
+            setStoreOpen(false);
+            // Uploads and deletes may have changed the folder on screen.
+            if (!analyst) void loadFolder(drive, cwd || undefined);
+          }}
         />
       )}
       {purposeDialog && (

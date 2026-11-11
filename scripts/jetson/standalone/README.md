@@ -17,6 +17,8 @@ Browser ──HTTPS :443──▶ nginx (vivesec-https) ──HTTP, loopback─�
 | `standalone_tls_test.py` | Tests of both scripts (bash + openssl; docker end-to-end optional) |
 | `auth_deploy.py` | Authentication service container and the standalone switch (S4, below) |
 | `auth_deploy_test.py` | Tests of the switch and the image recipe |
+| `clamav_deploy.py` | clamd container for the upload scan (S5, below) |
+| `clamav_deploy_test.py` | Tests of its settings, container recipe and EICAR check |
 
 ## Security properties
 
@@ -104,12 +106,13 @@ Every parameter is in [`CONFIGURATION.md`](../../../CONFIGURATION.md)
 | `AIBOX_HTTPS_UPSTREAM` | `127.0.0.1:8080` | The web UI; loopback only |
 | `AIBOX_HTTPS_IMAGE` | `nginx:1.28-alpine` | nginx image |
 | `AIBOX_HTTPS_CONF_DIR` | `/data/https` | Rendered `nginx.conf` (+ `.prev`) |
+| `AIBOX_HTTPS_MAX_BODY` | `256m` | Largest request body (the upload limit); bodies stream to the UI unbuffered |
 | `AIBOX_INTERNAL_PORTS` | `8080 8088 8090 8097 11434` | Ports that must listen on loopback only |
 
 ## Tests
 
 ```powershell
-Push-Location scripts\jetson\standalone; python -m unittest standalone_tls_test auth_deploy_test; Pop-Location
+Push-Location scripts\jetson\standalone; python -m unittest standalone_tls_test auth_deploy_test clamav_deploy_test; Pop-Location
 ```
 
 With `AIBOX_STANDALONE_DOCKER_TEST=1` and a running docker daemon, the
@@ -148,3 +151,43 @@ app with a QR code, then requires a new password. Later releases keep standalone
 mode (they inherit the container settings and mounts); in standalone mode
 `172-release-box.py verify` signs its own two-minute token with the adapter's
 key. After a release that changes `auth_service/`, run `deploy` again.
+
+## Uploads: the virus scanner (E27 S5)
+
+In standalone mode the box keeps the uploaded files itself (see the
+[adapter README](../../../adapter/README.md#file-store-and-uploads-e27-s5)).
+Every upload waits in quarantine until clamd has scanned it.
+`clamav_deploy.py` runs clamd as the `vivesec-clamav` container
+(`clamav/clamav-debian`, arm64, signature database in the image). It needs
+docker only (no sudo).
+
+| Command | What it does |
+| --- | --- |
+| `deploy` | Pulls the image if missing, (re)starts `vivesec-clamav` published on `127.0.0.1:AIBOX_CLAMAV_PORT` only (bridge network, every capability dropped except the five its start script needs, `no-new-privileges`, memory limit), waits until clamd answers, then checks that the EICAR test string is found and a clean text is not. On failure the previous container runs again. |
+| `status` | Container state, clamd answer and the signature database version. |
+| `test` | The EICAR check alone. |
+
+clamd's `StreamMaxLength` and `MaxFileSize` are `AIBOX_CLAMAV_MAX_MB` (300 MB,
+above the 256 MiB upload limit) and `AlertExceedsMax` is on, so a file clamd
+cannot scan whole is reported as a finding, never passed as clean. freshclam is
+off by default (offline box); `AIBOX_CLAMAV_FRESHCLAM=on` lets a connected
+development box update its signatures. On an offline box the image must be
+present: `docker pull --platform linux/arm64 clamav/clamav-debian:1.4 && docker save ... -o clamav-image.tar`,
+then `docker load -i clamav-image.tar` on the box.
+
+The adapter's defaults match (`ADAPTER_CLAMD=127.0.0.1:3310`,
+`ADAPTER_UPLOAD_SCAN=required`), so no adapter setting has to change. While
+clamd is down, uploads stay in quarantine and the web UI says so.
+
+The nginx front must let the uploads through: `AIBOX_HTTPS_MAX_BODY` (default
+`256m`) and unbuffered request bodies (`proxy_request_buffering off`, because
+the container's `/tmp` is a small tmpfs). After changing it, run
+`https-front.sh deploy` again (root).
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `AIBOX_CLAMAV_IMAGE` | `clamav/clamav-debian:1.4` | clamd image |
+| `AIBOX_CLAMAV_PORT` | `3310` | Loopback port |
+| `AIBOX_CLAMAV_MEMORY` | `3g` | Memory limit (clamd needs about 1-1.5 GB) |
+| `AIBOX_CLAMAV_MAX_MB` | `300` | Largest stream/file clamd scans whole |
+| `AIBOX_CLAMAV_FRESHCLAM` | `off` | `on`: signature updates from the internet |

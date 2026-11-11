@@ -21,6 +21,8 @@
 #   AIBOX_HTTPS_UPSTREAM   the web UI, loopback only    (default 127.0.0.1:8080)
 #   AIBOX_HTTPS_IMAGE      nginx image                  (default nginx:1.28-alpine)
 #   AIBOX_HTTPS_CONF_DIR   rendered configuration       (default /data/https)
+#   AIBOX_HTTPS_MAX_BODY   largest request body, nginx size (default 256m: the
+#                          upload limit of the file store, ADAPTER_UPLOAD_MAX_BYTES)
 #   AIBOX_INTERNAL_PORTS   ports that must listen on loopback only
 #                          (default "8080 8088 8090 8097 11434": UI, adapter, RAG, auth, Ollama)
 set -euo pipefail
@@ -34,6 +36,7 @@ tls_dir="${AIBOX_TLS_DIR:-/data/tls}"
 conf_dir="${AIBOX_HTTPS_CONF_DIR:-/data/https}"
 image="${AIBOX_HTTPS_IMAGE:-nginx:1.28-alpine}"
 upstream="${AIBOX_HTTPS_UPSTREAM:-127.0.0.1:8080}"
+max_body="${AIBOX_HTTPS_MAX_BODY:-256m}"
 internal_ports="${AIBOX_INTERNAL_PORTS:-8080 8088 8090 8097 11434}"
 # Identity headers only the box may set (adapter scope.py / identity.py).
 CLIENT_HEADERS_DROPPED=(VVS-Drive VVS-User VVS-Session VVS-Identity VVS-Other-Drives)
@@ -53,6 +56,8 @@ read_front_config() {
   # from the network; only a loopback upstream is accepted.
   [[ $upstream =~ ^(127\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|localhost|\[::1\]):[0-9]{1,5}$ ]] ||
     die "AIBOX_HTTPS_UPSTREAM must be a loopback host:port, got: $upstream"
+  [[ $max_body =~ ^[1-9][0-9]{0,6}[kKmM]?$ ]] ||
+    die "AIBOX_HTTPS_MAX_BODY must be an nginx size such as 256m, got: $max_body"
 }
 
 security_headers() {
@@ -119,7 +124,7 @@ http {
                      '\$status \$body_bytes_sent \$request_time';
     access_log /dev/stdout aibox;
 
-    client_max_body_size 64m;
+    client_max_body_size $max_body;
     client_header_timeout 15s;
     client_body_timeout 60s;
 
@@ -181,6 +186,9 @@ EOF
             proxy_hide_header X-Powered-By;
             # Answers stream and long-poll; nothing may be held back or cut short.
             proxy_buffering off;
+            # Uploads stream through as well: a buffered body would have to fit
+            # the small /tmp tmpfs of this read-only container.
+            proxy_request_buffering off;
             proxy_read_timeout 900s;
             proxy_send_timeout 900s;
         }

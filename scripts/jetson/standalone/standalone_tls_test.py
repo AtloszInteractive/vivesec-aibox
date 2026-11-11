@@ -280,6 +280,18 @@ class FrontRenderTest(ScriptTestCase):
         self.assertIn("listen 0.0.0.0:80 default_server;", conf)
         self.assertIn("listen 0.0.0.0:443 ssl;", self.render().stdout)
 
+    def test_upload_body_limit_and_streaming(self):
+        conf = self.render().stdout
+        self.assertIn("client_max_body_size 256m;", conf)
+        # The read-only container has a small /tmp: request bodies must stream.
+        self.assertIn("proxy_request_buffering off;", conf)
+        self.assertIn("client_max_body_size 64m;",
+                      self.render(AIBOX_HTTPS_MAX_BODY="64m").stdout)
+        for value in ("0", "1g", "256 m", "256m;", "-1", "big"):
+            result = self.render(check=False, AIBOX_HTTPS_MAX_BODY=value)
+            self.assertNotEqual(result.returncode, 0, value)
+            self.assertIn("AIBOX_HTTPS_MAX_BODY", result.stderr, value)
+
 
 FAKE_TOOLS = r'''#!/usr/bin/env bash
 case $(basename "$0") in
