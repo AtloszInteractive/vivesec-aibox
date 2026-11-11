@@ -16,8 +16,10 @@ import os
 import sqlite3
 import threading
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ADMIN_ROLE = "admin"
+# Columns added after version 1; an older database gets them on open.
+_ADDED_USER_COLUMNS = (("directory_dn", "TEXT"), ("directory_synced_at", "REAL"))
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -38,7 +40,9 @@ CREATE TABLE IF NOT EXISTS users (
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
     password_changed_at REAL,
-    last_login_at REAL
+    last_login_at REAL,
+    directory_dn TEXT,
+    directory_synced_at REAL
 );
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -73,7 +77,7 @@ CREATE TABLE IF NOT EXISTS events (
 _LIST_FIELDS = {"roles": "roles", "groups": "user_groups", "drives": "drives"}
 _PLAIN_FIELDS = ("display_name", "source", "password_hash", "status", "must_change_password",
                  "totp_secret", "totp_last_step", "failed_count", "locked_until",
-                 "password_changed_at", "last_login_at")
+                 "password_changed_at", "last_login_at", "directory_dn", "directory_synced_at")
 
 
 def secret_hash(secret):
@@ -102,7 +106,11 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         with self._lock, self._conn:
             self._conn.executescript(_SCHEMA)
-            self._conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?)",
+            present = {row["name"] for row in self._conn.execute("PRAGMA table_info(users)")}
+            for column, kind in _ADDED_USER_COLUMNS:
+                if column not in present:
+                    self._conn.execute("ALTER TABLE users ADD COLUMN %s %s" % (column, kind))
+            self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema', ?)",
                                (str(SCHEMA_VERSION),))
 
     def close(self):

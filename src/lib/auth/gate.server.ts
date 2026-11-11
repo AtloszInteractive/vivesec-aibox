@@ -262,6 +262,7 @@ function asUser(raw: unknown): GateUser | null {
   return {
     username: u.username,
     display_name: typeof u.display_name === "string" ? u.display_name : "",
+    source: u.source === "ldap" ? "ldap" : "local",
     roles: list(u.roles),
     drives: list(u.drives),
   };

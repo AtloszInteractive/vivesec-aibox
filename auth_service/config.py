@@ -23,6 +23,9 @@ NUMBERS = {
     "AUTH_PASSWORD_MIN_LENGTH": (12, 10, 128),
     "AUTH_CLIENT_MAX_FAILURES": (20, 5, 1000),
     "AUTH_CLIENT_WINDOW_SECONDS": (900, 60, 86400),
+    "AUTH_LDAP_TIMEOUT_SECONDS": (5, 1, 60),
+    "AUTH_LDAP_REFRESH_SECONDS": (300, 60, 3600),
+    "AUTH_LDAP_MAX_STALE_SECONDS": (900, 60, 86400),
 }
 
 DEFAULT_DATA_DIR = "/data/auth"
@@ -57,6 +60,17 @@ class Settings:
         self.session_idle_seconds = min(self.session_idle_seconds, self.session_max_seconds)
         self.challenge_seconds = values.get("challenge_seconds", CHALLENGE_SECONDS)
         self.challenge_attempts = values.get("challenge_attempts", CHALLENGE_ATTEMPTS)
+        # Directory (AD) login, E27 S6: off without URLs.
+        self.ldap_urls = list(values.get("ldap_urls") or [])
+        self.ldap_tls_pins = list(values.get("ldap_tls_pins") or [])
+        self.ldap_ca_file = values.get("ldap_ca_file") or ""
+        self.ldap_bind_dn = values.get("ldap_bind_dn") or ""
+        self.ldap_bind_password_file = values.get("ldap_bind_password_file") \
+            or os.path.join(self.data_dir, "ldap-bind.password")
+        self.ldap_base_dn = values.get("ldap_base_dn") or ""
+        self.ldap_user_attribute = values.get("ldap_user_attribute") or "sAMAccountName"
+        self.ldap_map_file = values.get("ldap_map_file") or os.path.join(self.data_dir, "ldap-groups.json")
+        self.ldap_max_stale_seconds = max(self.ldap_max_stale_seconds, self.ldap_refresh_seconds)
 
     @classmethod
     def from_env(cls, env=None, warn=None):
@@ -92,5 +106,18 @@ class Settings:
             jwt_issuer=text("AUTH_JWT_ISSUER", DEFAULT_ISSUER),
             jwt_audience=text("AUTH_JWT_AUDIENCE", DEFAULT_AUDIENCE),
             totp_issuer=text("AUTH_TOTP_ISSUER", DEFAULT_TOTP_ISSUER),
+            ldap_urls=_list(env.get("AUTH_LDAP_URLS")),
+            ldap_tls_pins=_list(env.get("AUTH_LDAP_TLS_PINS")),
+            ldap_ca_file=text("AUTH_LDAP_CA_FILE", ""),
+            ldap_bind_dn=text("AUTH_LDAP_BIND_DN", ""),
+            ldap_bind_password_file=text("AUTH_LDAP_BIND_PASSWORD_FILE", ""),
+            ldap_base_dn=text("AUTH_LDAP_BASE_DN", ""),
+            ldap_user_attribute=text("AUTH_LDAP_USER_ATTRIBUTE", "sAMAccountName"),
+            ldap_map_file=text("AUTH_LDAP_MAP_FILE", ""),
         )
         return cls(**values)
+
+
+def _list(raw):
+    """Comma- or space-separated values."""
+    return [item for item in (raw or "").replace(",", " ").split() if item]

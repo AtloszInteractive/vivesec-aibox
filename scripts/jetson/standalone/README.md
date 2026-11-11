@@ -152,6 +152,17 @@ mode (they inherit the container settings and mounts); in standalone mode
 `172-release-box.py verify` signs its own two-minute token with the adapter's
 key. After a release that changes `auth_service/`, run `deploy` again.
 
+**Active Directory (S6):** `deploy` passes every `AUTH_*` variable of the
+caller's environment to the container and keeps the previous container's, so
+the directory settings (`AUTH_LDAP_URLS`, `AUTH_LDAP_TLS_PINS`,
+`AUTH_LDAP_BASE_DN`, `AUTH_LDAP_BIND_DN`) are given once at a `deploy`. The
+service account password and the group map go into `AIBOX_AUTH_DIR` with
+`manage.py ldap-password` and `ldap-map import` (see the
+[authentication service README](../../../auth_service/README.md#directory-login-active-directory-s6)).
+The container uses the host network, so it reaches the domain controllers like
+the box does (TCP 636, or 389 with StartTLS). For tests,
+`auth_service/samba_ad/samba_ad.py` runs a Samba AD test domain on loopback.
+
 ## Uploads: the virus scanner (E27 S5)
 
 In standalone mode the box keeps the uploaded files itself (see the

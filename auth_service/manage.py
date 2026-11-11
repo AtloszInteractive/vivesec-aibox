@@ -12,6 +12,14 @@
   python manage.py list-users
   python manage.py events [--limit N] [--user NAME]
 
+Directory (AD) login, E27 S6:
+
+  python manage.py ldap-cert ldaps://dc01.example.local   # fingerprint of the server certificate, to pin
+  python manage.py ldap-password [--password-stdin]       # the service account password -> its file
+  python manage.py ldap-map import FILE|-                 # validate and install the group map
+  python manage.py ldap-map show
+  python manage.py ldap-check [NAME]                      # bind, mapped groups, what NAME would get
+
 Uses the same AUTH_* environment as the service. Passwords are read from the
 terminal (twice), or as one line from standard input with --password-stdin;
 they are never taken from the command line. Every change is in the event log
@@ -21,6 +29,7 @@ import argparse
 import getpass
 import json
 import os
+import ssl
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +38,8 @@ if HERE not in sys.path:
 
 import auth  # noqa: E402
 import config  # noqa: E402
+import directory  # noqa: E402
+import ldap_client  # noqa: E402
 import service  # noqa: E402
 import store as store_module  # noqa: E402
 import tokens  # noqa: E402
@@ -92,7 +103,63 @@ def build_parser():
     events = commands.add_parser("events")
     events.add_argument("--limit", type=int, default=50)
     events.add_argument("--user")
+    commands.add_parser("ldap-cert").add_argument("url")
+    commands.add_parser("ldap-password").add_argument("--password-stdin", action="store_true")
+    group_map = commands.add_parser("ldap-map")
+    group_map.add_argument("action", choices=("import", "show"))
+    group_map.add_argument("file", nargs="?")
+    commands.add_parser("ldap-check").add_argument("username", nargs="?")
     return parser
+
+
+def ldap_command(args, settings, out, stdin):
+    """The ldap-* commands; they do not open the user database."""
+    if args.command == "ldap-cert":
+        der = ldap_client.fetch_certificate(args.url, settings.ldap_timeout_seconds)
+        out.write("SHA-256 fingerprint: %s\n" % ldap_client.format_fingerprint(ldap_client.fingerprint(der)))
+        out.write("Compare it with the certificate on the domain controller before pinning it "
+                  "(AUTH_LDAP_TLS_PINS).\n")
+        out.write(ssl.DER_cert_to_PEM_cert(der))
+        return 0
+    if args.command == "ldap-password":
+        password = read_password(args.password_stdin, stdin)
+        if not password:
+            raise auth.AuthError("password_empty", 400)
+        directory.write_private(settings.ldap_bind_password_file, (password + "\n").encode("utf-8"))
+        out.write("service account password written to %s\n" % settings.ldap_bind_password_file)
+        return 0
+    if args.command == "ldap-map":
+        if args.action == "show":
+            group_map = directory.read_group_map(settings.ldap_map_file)
+            out.write(json.dumps({"file": settings.ldap_map_file,
+                                  "groups": [{"dn": dn, "name": name, "roles": roles}
+                                             for dn, name, roles in group_map.groups],
+                                  "roles": group_map.roles}, indent=2, ensure_ascii=False) + "\n")
+            return 0
+        if not args.file:
+            raise SystemExit("ldap-map import needs a file (or - for standard input)")
+        if args.file == "-":
+            raw = (stdin or sys.stdin).read()
+        else:
+            with open(args.file, encoding="utf-8") as handle:
+                raw = handle.read()
+        data = json.loads(raw)
+        group_map = directory.parse_group_map(data)
+        directory.write_private(settings.ldap_map_file,
+                                (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+        out.write("group map written to %s: %d groups, %d roles\n"
+                  % (settings.ldap_map_file, len(group_map.groups), len(group_map.roles)))
+        return 0
+    checker = directory.Directory(settings, log=lambda message: sys.stderr.write("directory: %s\n" % message))
+    report = {"state": checker.state, "problem": checker.problem or None,
+              "urls": settings.ldap_urls, "map_file": settings.ldap_map_file}
+    if checker.enabled:
+        try:
+            report.update(checker.check(auth.normalize_username(args.username) if args.username else None))
+        except directory.Unavailable as e:
+            report["error"] = e.reason
+    out.write(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    return 0 if checker.enabled and "error" not in report else 1
 
 
 def _list_option(args, name):
@@ -107,6 +174,8 @@ def run(argv, env=None, out=sys.stdout, stdin=None):
     if args.command == "init":
         init(settings, out)
         return 0
+    if args.command.startswith("ldap-"):
+        return ldap_command(args, settings, out, stdin)
     authenticator = service.open_service(settings)
     try:
         command = args.command
@@ -145,6 +214,9 @@ def main(argv=None):
         return run(sys.argv[1:] if argv is None else argv)
     except auth.AuthError as e:
         sys.stderr.write("error: %s\n" % e.code)
+        return 1
+    except (ValueError, OSError, ldap_client.LdapError) as e:
+        sys.stderr.write("error: %s\n" % e)
         return 1
     except (config.ConfigError, tokens.KeyFileError) as e:
         sys.stderr.write("error: %s (run `manage.py init` first?)\n" % e)

@@ -21,6 +21,14 @@ Failures: an unknown user, a wrong password and a locked account all answer
 timing tells which usernames exist. Wrong passwords and wrong codes count
 towards the account lockout; every failure also counts towards the client
 throttle (password spraying across accounts from one machine).
+
+Directory users (E27 S6, `directory.py`): a name that is not a local user is
+looked up in Active Directory when it is configured. The directory checks the
+password; the box keeps a `source = "ldap"` record for the TOTP secret, the
+lockout and the sessions, with the groups, roles and rooms the group map gives.
+A local user always wins: a directory account cannot take over a local name.
+The record is refreshed from the directory while sessions run; see
+`_directory_user`.
 """
 import collections
 import re
@@ -28,12 +36,17 @@ import secrets
 import threading
 import time
 
+import directory as directory_module
 import passwords
 import tokens
 import totp
 
 ADMIN_ROLE = "admin"
 STATUSES = ("active", "suspended")
+LOCAL, DIRECTORY = "local", "ldap"
+# A failed directory refresh is not retried for this long, so an outage does
+# not turn every request into a connection attempt.
+DIRECTORY_RETRY_SECONDS = 30
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
 ROLE_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 GROUP_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.@-]{0,127}$")
@@ -164,6 +177,7 @@ class ClientThrottle:
 def session_user(user):
     """What the web UI may know about the signed-in user."""
     return {"username": user["username"], "display_name": user["display_name"],
+            "source": user["source"],
             "roles": list(user["roles"]), "groups": list(user["groups"]),
             "drives": list(user["drives"]),
             "must_change_password": user["must_change_password"]}
@@ -179,11 +193,12 @@ def admin_user(user, now):
             "locked": user["locked_until"] > now,
             "locked_until": user["locked_until"] if user["locked_until"] > now else None,
             "created_at": user["created_at"], "password_changed_at": user["password_changed_at"],
-            "last_login_at": user["last_login_at"]}
+            "last_login_at": user["last_login_at"],
+            "directory_synced_at": user.get("directory_synced_at")}
 
 
 class Authenticator:
-    def __init__(self, store, settings, jwt_secret, clock=time.time):
+    def __init__(self, store, settings, jwt_secret, clock=time.time, directory=None):
         if not isinstance(jwt_secret, bytes) or len(jwt_secret) < tokens.MIN_SECRET_BYTES:
             raise ValueError("the token signing key must be at least %d bytes" % tokens.MIN_SECRET_BYTES)
         self.store = store
@@ -192,6 +207,14 @@ class Authenticator:
         self.clock = clock
         self.throttle = ClientThrottle(settings.client_max_failures,
                                        settings.client_window_seconds, clock)
+        self.directory = directory if directory is not None else directory_module.Directory(settings)
+        # Wrong directory passwords of names without a record on the box yet:
+        # without this only the per-client throttle would stop guessing (and
+        # locking the account in AD) from many addresses.
+        self.directory_guesses = ClientThrottle(settings.lockout_threshold, settings.lockout_seconds, clock)
+        self._refresh_lock = threading.Lock()
+        self._refreshing = set()
+        self._retry_at = {}
 
     # -- helpers ---------------------------------------------------------------
     def _event(self, event, username="", actor="", client="", detail=""):
@@ -227,7 +250,55 @@ class Authenticator:
         if user is None or user["status"] != "active" or not user["totp_secret"]:
             self.store.delete_session(session["id"])
             raise AuthError("session_invalid")
+        if user["source"] == DIRECTORY:
+            user = self._directory_user(user)
         return session, user
+
+    def _directory_user(self, user):
+        """The directory user's record, refreshed from the directory every
+        AUTH_LDAP_REFRESH_SECONDS. A user the directory no longer lets in
+        loses every session at once. While the directory cannot be reached the
+        last answer stays valid for AUTH_LDAP_MAX_STALE_SECONDS after it was
+        read; after that the request fails closed (503) until it answers."""
+        now = self.clock()
+        name = user["username"]
+        synced = user.get("directory_synced_at") or 0
+        if now - synced < self.settings.ldap_refresh_seconds:
+            return user
+        stale = now - synced >= self.settings.ldap_max_stale_seconds
+        with self._refresh_lock:
+            busy = name in self._refreshing or self._retry_at.get(name, 0) > now
+            if not busy:
+                self._refreshing.add(name)
+        if busy:
+            # Another request is asking the directory, or it just failed.
+            if stale:
+                raise AuthError("directory_unavailable", 503)
+            return user
+        try:
+            if self.directory.state == "off":
+                raise directory_module.Refused("directory_off")
+            found = self.directory.lookup(name)
+        except directory_module.Unavailable as e:
+            with self._refresh_lock:
+                self._retry_at[name] = now + DIRECTORY_RETRY_SECONDS
+            if stale:
+                self._event("directory_unavailable", name, detail="refresh: " + e.reason)
+                raise AuthError("directory_unavailable", 503)
+            return user
+        except directory_module.Refused as e:
+            ended = self.store.delete_user_sessions(name)
+            self._event("directory_access_ended", name, detail="%s, sessions ended: %d" % (e.reason, ended))
+            raise AuthError("session_invalid")
+        finally:
+            with self._refresh_lock:
+                self._refreshing.discard(name)
+        with self._refresh_lock:
+            self._retry_at.pop(name, None)
+        self.store.update_user(name, now, directory_synced_at=now, **found.fields())
+        if (found.roles, found.drives) != (user["roles"], user["drives"]):
+            self._event("directory_user_updated", name, detail="roles=%s" % ",".join(found.roles))
+        return self.store.get_user(name)
 
     def _require_user(self, username):
         name = normalize_username(username)
@@ -243,7 +314,9 @@ class Authenticator:
         self._check_throttle(client)
         name = normalize_username(username)
         user = self.store.get_user(name) if name else None
-        if user is None or user["source"] != "local" or not user["password_hash"]:
+        if name and (user["source"] == DIRECTORY if user else self.directory.state != "off"):
+            return self._directory_login(name, user, password, client, now)
+        if user is None or user["source"] != LOCAL or not user["password_hash"]:
             passwords.burn(password)
             self.throttle.failure(client)
             # The typed name is not logged: users sometimes type the password
@@ -265,6 +338,11 @@ class Authenticator:
             raise invalid_credentials()
         if passwords.needs_rehash(user["password_hash"]):
             self.store.update_user(name, now, password_hash=passwords.hash_password(password))
+        return self._open_challenge(user, client, now)
+
+    def _open_challenge(self, user, client, now):
+        """The second login step for a user whose password was right."""
+        name = user["username"]
         challenge = secrets.token_urlsafe(32)
         stage = "totp" if user["totp_secret"] else "enroll"
         pending = None if user["totp_secret"] else totp.new_secret()
@@ -277,6 +355,55 @@ class Authenticator:
             result["totp_secret"] = pending
             result["otpauth_uri"] = totp.provisioning_uri(pending, name, self.settings.totp_issuer)
         return result
+
+    def _directory_login(self, name, user, password, client, now):
+        """The password step of a directory user (`user`: the box's record, or
+        None on the first login)."""
+        if self.directory.state == "off":
+            # The directory was switched off: its users cannot sign in.
+            passwords.burn(password)
+            self.throttle.failure(client)
+            self._event("login_failed", name, client=client, detail="directory_off")
+            raise invalid_credentials()
+        if (user is not None and user["locked_until"] > now) \
+                or (user is None and self.directory_guesses.blocked(name)):
+            passwords.burn(password)
+            self.throttle.failure(client)
+            self._event("login_failed", name if user is not None else "", client=client, detail="locked")
+            raise invalid_credentials()
+        try:
+            found = self.directory.authenticate(name, password)
+        except directory_module.Refused as e:
+            # Same work as a local refusal, so the timing tells nothing either.
+            passwords.burn(password)
+            if e.reason == "bad_password" and user is not None:
+                self._user_failure(user, client, "directory_bad_password")
+            else:
+                self.throttle.failure(client)
+                if e.reason == "bad_password":
+                    self.directory_guesses.failure(name)
+                self._event("login_failed", name if e.user_found else "", client=client,
+                            detail="directory_" + e.reason)
+            raise invalid_credentials()
+        except directory_module.Unavailable as e:
+            self._event("directory_unavailable", name if user is not None else "", client=client,
+                        detail="login: " + e.reason)
+            raise AuthError("directory_unavailable", 503)
+        if user is None:
+            if self.store.insert_user(name, now, source=DIRECTORY, must_change_password=False):
+                self._event("directory_user_created", name, client=client,
+                            detail="roles=%s" % ",".join(found.roles))
+            user = self.store.get_user(name)
+            if user is None or user["source"] != DIRECTORY:
+                # A local user of this name was created in the meantime: it wins.
+                self._event("login_failed", name, client=client, detail="directory_name_taken")
+                raise invalid_credentials()
+        self.store.update_user(name, now, directory_synced_at=now, **found.fields())
+        user = self.store.get_user(name)
+        if user["status"] != "active":
+            self._event("login_failed", name, client=client, detail="suspended")
+            raise invalid_credentials()
+        return self._open_challenge(user, client, now)
 
     def complete_login(self, challenge, code, client=""):
         if not isinstance(challenge, str) or not challenge:
@@ -362,6 +489,8 @@ class Authenticator:
 
     def change_password(self, session_secret, current, new, client=""):
         session, user = self._session(session_secret)
+        if user["source"] != LOCAL:
+            raise AuthError("managed_by_directory", 403)
         self._check_throttle(client)
         name = user["username"]
         if not passwords.verify_password(current, user["password_hash"] or ""):
@@ -431,6 +560,10 @@ class Authenticator:
     def update_user(self, actor, username, display_name=None, roles=None, groups=None,
                     drives=None, status=None, client=""):
         user = self._require_user(username)
+        if user["source"] != LOCAL and any(value is not None for value in (display_name, roles, groups, drives)):
+            # The directory and the group map own these; a local edit would be
+            # overwritten at the next refresh anyway.
+            raise AuthError("managed_by_directory", 409)
         fields = {}
         if display_name is not None:
             fields["display_name"] = normalize_display_name(display_name)
@@ -480,6 +613,8 @@ class Authenticator:
 
     def reset_password(self, actor, username, password, temporary=True, client=""):
         user = self._require_user(username)
+        if user["source"] != LOCAL:
+            raise AuthError("managed_by_directory", 409)
         problem = passwords.policy_problem(password, user["username"], self.settings.password_min_length)
         if problem:
             raise AuthError(problem, 400)

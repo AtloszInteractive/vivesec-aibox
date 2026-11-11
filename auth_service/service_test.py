@@ -92,7 +92,7 @@ class ServiceTest(unittest.TestCase):
 
     def test_health_needs_no_key(self):
         with urllib.request.urlopen(self.base + "/auth/health", timeout=10) as response:
-            self.assertEqual(json.loads(response.read()), {"ok": True, "service": "auth"})
+            self.assertEqual(json.loads(response.read()), {"ok": True, "service": "auth", "directory": "off"})
 
     @unittest.skipUnless(socket.has_ipv6, "no IPv6 on this machine")
     def test_listens_on_ipv6_loopback(self):

@@ -9,7 +9,7 @@ Every endpoint but the health check is `POST` with a JSON object; the answer is
 `{"ok": true, ...}` or `{"ok": false, "error": "<code>"}` with a matching HTTP
 status. Request bodies (passwords, codes, session secrets) are never logged.
 
-  GET  /auth/health
+  GET  /auth/health                                        -> service, directory (off | ready | invalid)
   POST /auth/login          {username, password, client?}  -> step, challenge[, totp_secret, otpauth_uri]
   POST /auth/login/totp     {challenge, code, client?}     -> session, session_id, expires_at, user
   POST /auth/me             {session}                      -> user, password_change_required, password_min_length
@@ -27,6 +27,10 @@ status. Request bodies (passwords, codes, session secrets) are never logged.
 
 `client` is the browser's address as the web UI server saw it; it feeds the
 per-client throttle and the event log.
+
+A directory user's login or session answers `directory_unavailable` (503)
+when Active Directory cannot be asked (E27 S6, `directory.py`); password,
+role and room changes of a directory user answer `managed_by_directory`.
 """
 import hmac
 import json
@@ -120,7 +124,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/auth/health":
-            self._send(200, {"ok": True, "service": "auth"})
+            self._send(200, {"ok": True, "service": "auth",
+                             "directory": self.server.authenticator.directory.state})
         else:
             self._send(404, {"ok": False, "error": "not_found"})
 

@@ -77,14 +77,16 @@ export function AccountMenu() {
               </p>
             )}
           </div>
-          <a
-            role="menuitem"
-            href={gatePath(PASSWORD_PATH)}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:bg-white/5 hover:text-brand-soft"
-          >
-            <KeyRound className="h-3.5 w-3.5" />
-            {tm("Change password")}
-          </a>
+          {user.source !== "ldap" && (
+            <a
+              role="menuitem"
+              href={gatePath(PASSWORD_PATH)}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:bg-white/5 hover:text-brand-soft"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              {tm("Change password")}
+            </a>
+          )}
           <button
             role="menuitem"
             type="button"

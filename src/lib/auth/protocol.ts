@@ -17,6 +17,8 @@ export const PASSWORD_PATH = "/password";
 export type GateUser = {
   username: string;
   display_name: string;
+  /** "ldap": a directory (AD) user, whose password the directory owns. */
+  source: "local" | "ldap";
   roles: string[];
   drives: string[];
 };

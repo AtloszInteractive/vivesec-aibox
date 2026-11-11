@@ -32,6 +32,10 @@ const ERROR_TEXT: Record<string, string> = {
   too_many_attempts:
     "Too many failed attempts from this computer. Wait a few minutes and try again.",
   auth_unavailable: "The sign-in service is not available. Try again in a minute.",
+  directory_unavailable:
+    "The company directory (Active Directory) cannot be reached. Try again later or contact the administrator.",
+  managed_by_directory:
+    "Your password is managed in the company directory (Active Directory). Change it on your Windows computer.",
   network: "The sign-in service is not available. Try again in a minute.",
   csrf: "The page has expired. Reload it and try again.",
   wrong_password: "The current password is not correct.",
