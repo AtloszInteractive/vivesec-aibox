@@ -13,6 +13,9 @@ export const AUTH_SIGNAL_HEADER = "X-AIBox-Auth";
 
 export const LOGIN_PATH = "/login";
 export const PASSWORD_PATH = "/password";
+/** The administration page (E27 S7); only for users with ADMIN_ROLE. */
+export const ADMIN_PATH = "/admin";
+export const ADMIN_ROLE = "admin";
 
 export type GateUser = {
   username: string;

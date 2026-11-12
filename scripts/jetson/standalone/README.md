@@ -131,8 +131,8 @@ as the `vivesec-auth` container and switches the adapter and the web UI between
 | Command | What it does |
 | --- | --- |
 | `deploy <source-dir>` | Runs the auth tests in the base image, builds `vivesec-auth:release-<stamp>` (service files only, user 10001), creates `AIBOX_AUTH_DIR` (0700, owner 10001) and its keys (`manage.py init`, never overwrites), and (re)starts `vivesec-auth` on `127.0.0.1:AIBOX_AUTH_PORT`: read-only, every capability dropped, `no-new-privileges`, 256 MB. A failed health check brings the previous container back. |
-| `enable` | Recreates the adapter with `ADAPTER_INTEGRATION=standalone`, `ADAPTER_IDENTITY_MODE=require`, `ADAPTER_DIRECTORY=token`, HS256 with the issuer and audience of the service, without `ADAPTER_SCOPE_ALL_DRIVES`, and `identity-hs256.key` mounted read-only; then the web UI with `ADAPTER_INTEGRATION=standalone`, `AUTH_URL` and only `service.key` mounted read-only. Same image, settings and binds otherwise. If either does not come up in the new mode, both are put back. |
-| `disable` | The reverse: removes exactly those settings and mounts. |
+| `enable` | Recreates the adapter with `ADAPTER_INTEGRATION=standalone`, `ADAPTER_IDENTITY_MODE=require`, `ADAPTER_DIRECTORY=token`, HS256 with the issuer and audience of the service, without `ADAPTER_SCOPE_ALL_DRIVES`, and `identity-hs256.key` mounted read-only; then the web UI with `ADAPTER_INTEGRATION=standalone`, `AUTH_URL` and only `service.key` mounted read-only. Same image, settings and binds otherwise. If either does not come up in the new mode, both are put back. When the adapter has no `ADAPTER_ACL_RULES`, `enable` sets it to `AIBOX_ADAPTER_ACL_RULES` (default `/data/acl-rules.json`, a path in the adapter container; it must lie in one of its writable mounts, else `enable` stops) and creates the file as `{}` (no rules, owner-only) when it is missing, so the administration page (S7) can edit the permission rules. An existing file is never touched. |
+| `disable` | The reverse: removes exactly those settings and mounts (`ADAPTER_ACL_RULES` only when `enable` set it; the file stays). |
 | `status` | Mode, image and key mounts of the three containers, auth health. |
 
 `<source-dir>` contains `auth_service/` and `adapter/`: the `build` directory of a
@@ -150,7 +150,13 @@ The first login asks for the temporary password, then enrols the authenticator
 app with a QR code, then requires a new password. Later releases keep standalone
 mode (they inherit the container settings and mounts); in standalone mode
 `172-release-box.py verify` signs its own two-minute token with the adapter's
-key. After a release that changes `auth_service/`, run `deploy` again.
+key. After a release that changes `auth_service/`, run `deploy` again. On a box
+that was switched before S7, run `enable` once more: it only adds the
+permission rules file.
+
+**Administration (S7):** an administrator (role `admin`) opens it from the
+account menu (`/admin`): users, two-factor resets, the AD group mapping, rooms
+and permission rules, the clock and the virus definitions, the event logs.
 
 **Active Directory (S6):** `deploy` passes every `AUTH_*` variable of the
 caller's environment to the container and keeps the previous container's, so

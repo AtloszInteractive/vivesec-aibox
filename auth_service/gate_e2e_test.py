@@ -36,6 +36,8 @@ HR = "/storage/drives/hr/"
 TEMP_PW = "Ideiglenes-jelszo-2026"
 NEW_PW = "Uj-Biztos-Jelszo-2026"
 BOB_PW = "Bob-sajat-jelszava-2026"
+CARLA_PW = "Carla-admin-jelszava-2026"
+DORA_PW = "Dora-sajat-jelszava-2026"
 CLIENT_IP = "198.51.100.7"
 
 
@@ -166,6 +168,10 @@ class LoginGateEndToEndTest(unittest.TestCase):
                        env=env, check=True, capture_output=True, input=TEMP_PW + "\n", text=True)
         subprocess.run(manage + ["create-user", "bob", "--password-stdin"],
                        env=env, check=True, capture_output=True, input=BOB_PW + "\n", text=True)
+        subprocess.run(manage + ["create-user", "carla", "--role", "admin", "--password-stdin"],
+                       env=env, check=True, capture_output=True, input=CARLA_PW + "\n", text=True)
+        subprocess.run(manage + ["create-user", "dora", "--password-stdin"],
+                       env=env, check=True, capture_output=True, input=DORA_PW + "\n", text=True)
         cls.manage, cls.env = manage, env
         cls.auth_log = open(os.path.join(cls.temp.name, "auth.log"), "wb")
         cls.auth = subprocess.Popen([sys.executable, os.path.join(HERE, "service.py")], env=env,
@@ -467,6 +473,59 @@ class LoginGateEndToEndTest(unittest.TestCase):
         # Streamed, not buffered: the relay sends the body chunked.
         self.assertEqual(call["headers"].get("transfer-encoding"), "chunked")
         self.assertEqual(call["raw"], payload)
+
+    def test_administration_is_relayed_for_administrators_only(self):
+        admin = self.browser()
+        self.sign_in(admin, "carla", CARLA_PW)
+        status, _, page = admin.request("GET", "/admin")
+        self.assertEqual(status, 200)
+        self.assertIn("<html", page)
+        # The service checks the role; the gate adds the session and CSRF.
+        status, _, body = admin.request("POST", "/auth/admin/users", {})
+        self.assertEqual((status, body["error"]), (403, "csrf"))
+        status, _, body = admin.request("POST", "/auth/admin/users", {"session": "forged" * 8},
+                                        csrf=True)
+        self.assertEqual(status, 200, body)
+        self.assertIn("carla", [u["username"] for u in body["users"]])
+        self.assertNotIn("totp_secret", json.dumps(body))
+        for path, method in (("/auth/admin/nothing", "POST"), ("/auth/admin/users", "GET"),
+                             ("/auth/admin/users/", "POST"), ("/auth/admin/users/x", "POST")):
+            status, _, _ = admin.request(method, path, {}, csrf=True)
+            self.assertIn(status, (404, 405), path)
+        status, _, body = admin.request("POST", "/auth/admin/system", {}, csrf=True)
+        self.assertEqual((status, body["directory"]["state"]), (200, "off"))
+        status, _, body = admin.request(
+            "POST", "/auth/admin/users/create",
+            {"username": "erik", "password": "Erik-kezdo-jelszava-2026", "drives": [HR]}, csrf=True)
+        self.assertEqual((status, body["user"]["drives"]), (200, [HR]))
+        status, _, body = admin.request("POST", "/auth/admin/events", {"limit": 5}, csrf=True)
+        created = [e for e in body["events"] if e["event"] == "user_created"][0]
+        self.assertEqual((created["actor"], created["client"]), ("carla", CLIENT_IP))
+        # A change of the administrator's own rooms applies at the next call,
+        # not when the cached token expires.
+        admin.request("GET", "/api/v1/ui/init")
+        self.assertEqual(self.adapter.calls[-1]["verified"]["drives"], [])
+        status, _, _ = admin.request("POST", "/auth/admin/users/update",
+                                     {"username": "carla", "drives": [FINANCE]}, csrf=True)
+        self.assertEqual(status, 200)
+        admin.request("GET", "/api/v1/ui/init")
+        self.assertEqual(self.adapter.calls[-1]["verified"]["drives"], [FINANCE])
+
+        user = self.browser()
+        self.sign_in(user, "dora", DORA_PW)
+        status, headers, _ = user.request("GET", "/admin")
+        self.assertEqual((status, headers["Location"]), (302, "/"))
+        status, _, body = user.request("POST", "/auth/admin/users", {}, csrf=True)
+        self.assertEqual((status, body["error"]), (403, "forbidden"))
+        status, _, body = user.request("POST", "/auth/admin/users/delete",
+                                       {"username": "carla"}, csrf=True)
+        self.assertEqual((status, body["error"]), (403, "forbidden"))
+        anonymous = self.browser()
+        anonymous.request("GET", "/auth/session")
+        status, _, body = anonymous.request("POST", "/auth/admin/users", {}, csrf=True)
+        self.assertEqual((status, body["error"]), (401, "login_required"))
+        status, headers, _ = anonymous.request("GET", "/admin")
+        self.assertEqual((status, headers["Location"]), (302, "/login"))
 
 
 if __name__ == "__main__":

@@ -436,6 +436,12 @@ class Policy:
     def enforced(self):
         return self.mode != MODE_OFF
 
+    def reload(self):
+        """Re-read the rules file at the next use, even when a rewrite left
+        its modification time unchanged (coarse file system clocks)."""
+        with self._lock:
+            self._mtime = None
+
     # -- rules file -------------------------------------------------------------
     def _current_rules(self):
         """The parsed rules, or None when a configured file is unusable."""
@@ -482,6 +488,7 @@ class Policy:
                 "rules_error": self._rules_error,
                 "rule_paths": 0 if rules is None else len(rules["paths"]),
                 "default_classification": level_name(self.default_classification),
+                "box_default_classification": level_name(self._default_classification),
                 "default_clearance": level_name(self._default_clearance)}
 
     # -- documents --------------------------------------------------------------

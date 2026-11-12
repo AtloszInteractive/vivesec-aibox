@@ -55,7 +55,7 @@ const go = (path: string) => window.location.assign(gatePath(path));
 
 /* ------------------------------------------------------------------ shell */
 
-function GateLogo() {
+export function GateLogo() {
   const width = Math.round(180 * LOGO_FILE_RATIO);
   const height = Math.round(width * LOGO_ASPECT);
   return (
@@ -71,7 +71,7 @@ function GateLogo() {
   );
 }
 
-function LanguagePicker() {
+export function LanguagePicker() {
   const { lang, setLang, tm } = useLang();
   return (
     <div role="group" aria-label={tm("Language")} className="flex gap-1">

@@ -196,6 +196,34 @@ default the upload limit equals the RAG limit (`RAG_MAX_FILE_BYTES`, 20 MiB),
 so every accepted file is searchable. If only the upload limit is raised,
 larger files are stored but not indexed (`stored`, reason `too_large`).
 
+### Administration (E27 S7)
+
+The administration page of a standalone box (`/admin`, see the
+[auth_service README](../auth_service/README.md#administration-page-s7)) edits
+rooms and permissions here. The endpoints exist only in standalone mode (`404`
+otherwise) and need a verified token with the `admin` role (`role:admin`,
+`403 forbidden` otherwise); no drive is needed, and a `VVS-Drive` the token does
+not grant is still refused.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/v1/ui/admin/system` | clamd: reachable, engine, definitions version and date (`VERSION`), age in days and `stale` above `ADAPTER_CLAMAV_MAX_AGE_DAYS` (default 7); the scan mode; the rules file state (`ACL.settings()` + `configured`). |
+| `GET /api/v1/ui/admin/rooms` | Every room: on disk in the store and/or in the index (a corpus synced before standalone mode), with its number of indexed files. |
+| `POST /api/v1/ui/admin/rooms/create {name}` | One strict path segment (the store's rules, NFC). Creates the room folder and indexes it; `409 exists` when the store or the index has it. |
+| `POST /api/v1/ui/admin/rooms/delete {path}` | An **empty** room only (folders at most): `409 not_empty` with a file on disk or in the index, `409 busy` with an unfinished upload. Removes it from the index, the disk and the rules file. Users and roles that list it keep it until changed. |
+| `GET /api/v1/ui/admin/acl` | `ADAPTER_ACL_RULES`: `configured`, `exists`, the content, its `version` (SHA-256, `none` when missing), the levels and the defaults. A broken file is shown with its error (it hides everything until replaced). |
+| `POST /api/v1/ui/admin/acl {rules, base}` | Validates (`acl_admin.py`), writes atomically and owner-only (0600), and makes the policy re-read the file at once; the RAG copy is resynced in the background (meanwhile every answer is re-checked, as after any rules change). `400 invalid_rules` with a `message`, `409 rules_changed` when the file changed since `base`, `409 rules_not_configured` without `ADAPTER_ACL_RULES`. |
+| `GET /api/v1/ui/admin/events?limit=N` | The newest entries of the store's `events.jsonl` (at most 1000). |
+
+The editor is stricter than the reader: where `acl.py` would drop a bad entry
+or deny a subtree, the save is refused as a whole. Every path must be a
+canonical store path (NFC; an NFD spelling of an existing key would never
+match, because the keys are compared exactly), every principal `user:`,
+`group:`, `role:` or `everyone`, every level known; a path given twice in two
+spellings is refused, and nodes that set nothing are dropped. Room creation,
+deletion and rules changes are written to `events.jsonl` (`room_create`,
+`room_delete`, `acl_update`) with the administrator's name.
+
 ## Identity, directory and lifecycle (E02)
 
 The ViVeSecBox owns users and login; the adapter verifies what it is told and

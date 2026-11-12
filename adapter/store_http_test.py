@@ -72,7 +72,9 @@ class FakeRag:
         return [body["path"] for path, body in self.calls if path == kind]
 
 
-class StoreHttpTest(unittest.TestCase):
+class StandaloneHttpCase(unittest.TestCase):
+    """A standalone adapter over HTTP with fakes; no tests of its own."""
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -172,6 +174,8 @@ class StoreHttpTest(unittest.TestCase):
         status, raw, _ = self.request("POST", "/api/v1/ui/store/upload", body, headers, chunked)
         return status, json.loads(raw.decode("utf-8")) if raw else {}
 
+
+class StoreHttpTest(StandaloneHttpCase):
     # -- tests -----------------------------------------------------------------
     def test_vivesecbox_mode_has_no_store(self):
         with patch.object(self.service, "INTEGRATION", integration.MODE_VIVESECBOX):

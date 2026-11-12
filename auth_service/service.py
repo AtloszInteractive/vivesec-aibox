@@ -23,10 +23,15 @@ status. Request bodies (passwords, codes, session secrets) are never logged.
   POST /auth/admin/users/reset-totp     {session, username}
   POST /auth/admin/users/unlock         {session, username}
   POST /auth/admin/users/reset-password {session, username, password, temporary?}
-  POST /auth/admin/events               {session, limit?, username?}
+  POST /auth/admin/events               {session, limit?, username?, before?}
+  POST /auth/admin/system               {session}  -> now, clock (kernel sync), directory state
+  POST /auth/admin/directory            {session}  -> settings (no secrets), map, map_version
+  POST /auth/admin/directory/map        {session, map, base}  (base = the map_version read)
+  POST /auth/admin/directory/check      {session, username?}
 
 `client` is the browser's address as the web UI server saw it; it feeds the
-per-client throttle and the event log.
+per-client throttle and the event log. A refusal of an administrative call may
+carry a `message` for the administrator (what is wrong with a group map).
 
 A directory user's login or session answers `directory_unavailable` (503)
 when Active Directory cannot be asked (E27 S6, `directory.py`); password,
@@ -69,6 +74,15 @@ def _flag(body, name, default):
     return value
 
 
+def _int(body, name, default=None):
+    value = body.get(name, default)
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise auth.AuthError("invalid_" + name, 400)
+    return value
+
+
 ROUTES = {
     "/auth/login": lambda a, b, c: a.login(b.get("username"), b.get("password"), c),
     "/auth/login/totp": lambda a, b, c: a.complete_login(b.get("challenge"), b.get("code"), c),
@@ -93,7 +107,13 @@ ROUTES = {
     "/auth/admin/users/reset-password": _admin(lambda a, b, c, actor: {"user": a.reset_password(
         actor, b.get("username"), b.get("password"), _flag(b, "temporary", True), c)}),
     "/auth/admin/events": _admin(lambda a, b, c, actor: {"events": a.list_events(
-        b.get("limit") if isinstance(b.get("limit"), int) else 200, b.get("username"))}),
+        _int(b, "limit", 200), b.get("username"), _int(b, "before"))}),
+    "/auth/admin/system": _admin(lambda a, b, c, actor: a.system()),
+    "/auth/admin/directory": _admin(lambda a, b, c, actor: {"directory": a.directory_info()}),
+    "/auth/admin/directory/map": _admin(lambda a, b, c, actor: {"directory": a.set_group_map(
+        actor, b.get("map"), b.get("base"), c)}),
+    "/auth/admin/directory/check": _admin(lambda a, b, c, actor: {"check": a.directory_check(
+        actor, b.get("username"), c)}),
 }
 
 
@@ -157,7 +177,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             result = route(self.server.authenticator, body, client)
         except auth.AuthError as e:
-            self._send(e.status, {"ok": False, "error": e.code})
+            answer = {"ok": False, "error": e.code}
+            if e.detail and self.path.startswith("/auth/admin/"):
+                answer["message"] = str(e.detail)[:500]
+            self._send(e.status, answer)
             return
         except Exception:  # noqa: BLE001 - the details go to the log, not to the caller
             sys.stderr.write("[auth] error in %s\n%s" % (self.path, traceback.format_exc()))

@@ -30,6 +30,8 @@ import process from "node:process";
 
 import { encodeVvsDrive, isRelayed, relayToAdapter } from "../rag/adapter-proxy.server";
 import {
+  ADMIN_PATH,
+  ADMIN_ROLE,
   AUTH_SIGNAL_HEADER,
   CSRF_COOKIE,
   CSRF_HEADER,
@@ -43,6 +45,8 @@ import { qrModules } from "./qr.server";
 
 const AUTH_TIMEOUT_MS = 20_000; // scrypt waits for a free slot under load
 const MAX_AUTH_BODY = 8 * 1024;
+// The group map of the directory is the largest administrative request.
+const MAX_ADMIN_BODY = 64 * 1024;
 const TOKEN_REFRESH_MARGIN_S = 30;
 const MAX_CACHED_TOKENS = 1000;
 const SECRET_RE = /^[A-Za-z0-9_-]{20,128}$/;
@@ -279,6 +283,15 @@ function forgetSession(secret: string | null) {
   if (secret) tokens.delete(cacheKey(secret));
 }
 
+/** Drop the cached tokens of the users an administrator just changed, so a
+ *  new role, room or suspension applies at the next request instead of when
+ *  the cached token expires. */
+function forgetUsers(match: (user: GateUser) => boolean) {
+  for (const [key, cached] of tokens) {
+    if (match(cached.user)) tokens.delete(key);
+  }
+}
+
 type TokenResult =
   | { ok: true; token: string; user: GateUser }
   | { ok: false; reason: "login" | "password" | "unavailable" };
@@ -359,11 +372,14 @@ const withSlash = (path: string) => `${normDrive(path)}/`;
 
 // ---------------------------------------------------------------- handlers
 
-/** The body as JSON, or null when it is larger than MAX_AUTH_BODY or not an object.
+/** The body as JSON, or null when it is larger than `limit` or not an object.
  *  Read in chunks, so an oversized body is dropped before it is held in memory. */
-async function readJson(request: Request): Promise<Record<string, unknown> | null> {
+async function readJson(
+  request: Request,
+  limit = MAX_AUTH_BODY,
+): Promise<Record<string, unknown> | null> {
   const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_AUTH_BODY) return null;
+  if (declared > limit) return null;
   const reader = request.body?.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -372,7 +388,7 @@ async function readJson(request: Request): Promise<Record<string, unknown> | nul
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_AUTH_BODY) {
+      if (size > limit) {
         await reader.cancel().catch(() => undefined);
         return null;
       }
@@ -546,12 +562,62 @@ function passwordRequired(): Response {
   return json({ ok: false, error: "password_change_required" }, 403, headers);
 }
 
+// Administration (E27 S7): what the admin page may ask the authentication
+// service. The service checks the admin role itself; the gate only adds the
+// session and the client address, which the browser can never set.
+const ADMIN_ACTIONS = new Set([
+  "users",
+  "users/create",
+  "users/update",
+  "users/delete",
+  "users/reset-totp",
+  "users/unlock",
+  "users/reset-password",
+  "events",
+  "system",
+  "directory",
+  "directory/map",
+  "directory/check",
+]);
+
+async function adminCall(request: Request, action: string): Promise<Response> {
+  if (!ADMIN_ACTIONS.has(action)) return json({ ok: false, error: "not_found" }, 404);
+  if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (!csrfValid(request)) return json({ ok: false, error: "csrf" }, 403);
+  const secret = secretCookie(request, SESSION_COOKIE);
+  if (!secret) return loginRequired();
+  const body = await readJson(request, MAX_ADMIN_BODY);
+  if (!body) return json({ ok: false, error: "bad_request" }, 400);
+  const reply = await authCall(`/auth/admin/${action}`, {
+    ...body,
+    session: secret,
+    client: clientAddress(request),
+  });
+  if (reply.status === 401) {
+    forgetSession(secret);
+    return loginRequired();
+  }
+  if (reply.status === 403 && reply.data.error === "password_change_required") {
+    return passwordRequired();
+  }
+  if (reply.status === 200) {
+    if (action.startsWith("users/") && typeof body.username === "string") {
+      const target = body.username.trim().toLowerCase();
+      forgetUsers((user) => user.username === target);
+    } else if (action === "directory/map") {
+      forgetUsers((user) => user.source === "ldap");
+    }
+  }
+  return json(reply.data, reply.status);
+}
+
 async function handleAuthEndpoint(request: Request, path: string): Promise<Response> {
   if (path === "/auth/session") {
     return isSafeMethod(request.method)
       ? sessionInfo(request)
       : json({ ok: false, error: "method_not_allowed" }, 405);
   }
+  if (path.startsWith("/auth/admin/")) return adminCall(request, path.slice("/auth/admin/".length));
   const actions: Record<string, (r: Request, b: Record<string, unknown>) => Promise<Response>> = {
     "/auth/login": login,
     "/auth/login/totp": loginCode,
@@ -638,6 +704,9 @@ async function handlePage(request: Request, url: URL): Promise<Response | null> 
     if (serverFn || !isSafeMethod(request.method)) return passwordRequired();
     return redirect(PASSWORD_PATH);
   }
+  // The administration page is for administrators only; the services check
+  // every call again, this only keeps others from a page that cannot work.
+  if (path === ADMIN_PATH && !session.user.roles.includes(ADMIN_ROLE)) return redirect("/");
   return null;
 }
 

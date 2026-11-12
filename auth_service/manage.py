@@ -146,7 +146,8 @@ def ldap_command(args, settings, out, stdin):
         data = json.loads(raw)
         group_map = directory.parse_group_map(data)
         directory.write_private(settings.ldap_map_file,
-                                (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
+                                (json.dumps(group_map.as_dict(), indent=2, ensure_ascii=False) + "\n")
+                                .encode("utf-8"))
         out.write("group map written to %s: %d groups, %d roles\n"
                   % (settings.ldap_map_file, len(group_map.groups), len(group_map.roles)))
         return 0

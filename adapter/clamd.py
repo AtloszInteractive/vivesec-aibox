@@ -17,10 +17,13 @@ Results:
   ScanUnavailable          -- clamd could not be reached; worth retrying;
   ScanError                -- clamd answered with an error for this file.
 """
+import calendar
 import ipaddress
 import os
+import re
 import socket
 import struct
+import time
 
 DEFAULT_ADDRESS = "127.0.0.1:3310"
 CHUNK = 64 * 1024
@@ -164,6 +167,28 @@ class Clamd:
     def scan_file(self, path):
         with open(path, "rb") as handle:
             return self.scan_stream(handle)
+
+
+_VERSION_RE = re.compile(r"^ClamAV\s+([^/\s]+)(?:/(\d+)/(.+))?$")
+
+
+def parse_version(reply):
+    """{"engine", "database", "database_time"} of a VERSION answer such as
+    `ClamAV 1.4.6/28177/Sun Nov  8 06:23:52 2026`. The database time is read as
+    UTC (clamd prints it in its own time zone; a day's accuracy is enough to
+    tell stale definitions). Missing parts are None."""
+    match = _VERSION_RE.match((reply or "").strip())
+    if not match:
+        return {"engine": None, "database": None, "database_time": None}
+    engine, database, stamp = match.groups()
+    when = None
+    if stamp:
+        try:
+            when = calendar.timegm(time.strptime(" ".join(stamp.split()), "%a %b %d %H:%M:%S %Y"))
+        except ValueError:
+            when = None
+    return {"engine": engine, "database": int(database) if database else None,
+            "database_time": when}
 
 
 def interpret(reply):

@@ -31,11 +31,13 @@ The record is refreshed from the directory while sessions run; see
 `_directory_user`.
 """
 import collections
+import json
 import re
 import secrets
 import threading
 import time
 
+import clock as clock_module
 import directory as directory_module
 import passwords
 import tokens
@@ -56,12 +58,14 @@ MAX_CLIENTS_TRACKED = 10000
 
 
 class AuthError(Exception):
-    """A refused request. `code` is the stable error name for the caller."""
+    """A refused request. `code` is the stable error name for the caller;
+    `detail` an optional explanation for an administrator (never a secret)."""
 
-    def __init__(self, code, status=401):
+    def __init__(self, code, status=401, detail=None):
         super().__init__(code)
         self.code = code
         self.status = status
+        self.detail = detail
 
 
 def invalid_credentials():
@@ -215,6 +219,8 @@ class Authenticator:
         self._refresh_lock = threading.Lock()
         self._refreshing = set()
         self._retry_at = {}
+        self._map_lock = threading.Lock()
+        self.kernel_clock = clock_module.kernel_sync
 
     # -- helpers ---------------------------------------------------------------
     def _event(self, event, username="", actor="", client="", detail=""):
@@ -533,7 +539,9 @@ class Authenticator:
 
     def list_users(self):
         now = self.clock()
-        return [admin_user(user, now) for user in self.store.list_users()]
+        sessions = self.store.active_sessions(now, self.settings.session_idle_seconds)
+        return [dict(admin_user(user, now), sessions=sessions.get(user["username"], 0))
+                for user in self.store.list_users()]
 
     def create_user(self, actor, username, password, display_name="", roles=(), groups=(),
                     drives=(), temporary=True, client=""):
@@ -627,5 +635,68 @@ class Authenticator:
                     detail="sessions ended: %d" % ended)
         return admin_user(self.store.get_user(user["username"]), now)
 
-    def list_events(self, limit=200, username=None):
-        return self.store.list_events(limit, normalize_username(username) if username else None)
+    def list_events(self, limit=200, username=None, before=None):
+        return self.store.list_events(limit, normalize_username(username) if username else None,
+                                      before)
+
+    # -- administration: the box and the directory (S7) -------------------------
+    def system(self):
+        """What the administration page shows about this service: the box's
+        time (the browser compares it with its own clock), whether the kernel
+        clock is synchronised, and the directory state."""
+        return {"now": self.clock(), "clock": self.kernel_clock(),
+                "totp_step_seconds": totp.PERIOD, "totp_tolerance_steps": totp.WINDOW,
+                "directory": {"state": self.directory.state,
+                              "problem": self.directory.problem or None}}
+
+    def directory_info(self):
+        """The directory settings without secrets, and the group map."""
+        settings = self.settings
+        group_map, error, version = directory_module.group_map_snapshot(settings.ldap_map_file)
+        users = [user for user in self.store.list_users() if user["source"] == DIRECTORY]
+        return {"state": self.directory.state, "problem": self.directory.problem or None,
+                "urls": list(settings.ldap_urls), "base_dn": settings.ldap_base_dn,
+                "bind_dn": settings.ldap_bind_dn, "user_attribute": settings.ldap_user_attribute,
+                "pins": len(settings.ldap_tls_pins), "ca_file": bool(settings.ldap_ca_file),
+                "refresh_seconds": settings.ldap_refresh_seconds,
+                "max_stale_seconds": settings.ldap_max_stale_seconds,
+                "users": len(users),
+                "map": group_map.as_dict() if group_map is not None else None,
+                "map_error": error, "map_version": version}
+
+    def set_group_map(self, actor, data, base, client=""):
+        """Validate and write the group map. `base` is the `map_version` the
+        page read; a map changed meanwhile is not overwritten (409). Directory
+        users get the new roles and rooms at their next request."""
+        try:
+            group_map = directory_module.parse_group_map(data)
+        except ValueError as e:
+            raise AuthError("invalid_group_map", 400, str(e))
+        path = self.settings.ldap_map_file
+        with self._map_lock:
+            _current, _error, version = directory_module.group_map_snapshot(path)
+            if not isinstance(base, str) or base != version:
+                raise AuthError("map_changed", 409)
+            text = json.dumps(group_map.as_dict(), indent=2, ensure_ascii=False) + "\n"
+            directory_module.write_private(path, text.encode("utf-8"))
+        now = self.clock()
+        self.store.expire_directory_sync(now - self.settings.ldap_refresh_seconds)
+        self._event("group_map_updated", actor=actor, client=client,
+                    detail="groups=%d roles=%d" % (len(group_map.groups), len(group_map.roles)))
+        return self.directory_info()
+
+    def directory_check(self, actor, username=None, client=""):
+        """The service account bind, whether each mapped group exists, and what
+        `username` would get -- without any user password."""
+        if self.directory.state != "ready":
+            raise AuthError("directory_" + self.directory.state, 409)
+        name = None
+        if username:
+            name = normalize_username(username)
+            if name is None:
+                raise AuthError("invalid_username", 400)
+        self._event("directory_checked", name or "", actor=actor, client=client)
+        try:
+            return self.directory.check(name)
+        except directory_module.Unavailable as e:
+            return {"error": e.reason}

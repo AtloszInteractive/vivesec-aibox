@@ -27,6 +27,7 @@ offline as it is.
 | `directory.py` | Active Directory login: lookup, nested groups, user bind, group map (S6) |
 | `ldap_client.py` | Minimal LDAP v3 client: LDAPS / StartTLS, certificate pinning, bind, search |
 | `config.py` | `AUTH_*` settings |
+| `clock.py` | Kernel clock synchronisation state for the administration page (S7) |
 | `manage.py` | Administration from the box's shell |
 | `samba_ad/` | Samba AD test domain controller (development and tests only, not in the image) |
 
@@ -168,6 +169,35 @@ is the only caller of this service:
 In `vivesecbox` mode the gate only answers `GET /auth/session` with
 `{"standalone": false}`; the embedded UI bundle never calls it.
 
+## Administration page (S7)
+
+An administrator (role `admin`) opens `/admin` from the account menu. The gate
+serves the page only to administrators (others are sent to `/`) and relays
+`POST /auth/admin/<action>` to this service for an allowlist of actions, with
+the CSRF check, the session from the cookie and the client address it saw
+(whatever the browser put into `session` or `client` is overwritten). The
+service checks the admin role again on every call. After a successful change
+of a user the gate drops that user's cached token, and after a new group map
+those of every directory user, so roles, rooms and suspensions apply at the
+next request instead of when the token expires.
+
+| Tab | Backend | What it does |
+| --- | --- | --- |
+| Overview | `/auth/admin/system`, adapter `/api/v1/ui/admin/system` | The box time compared with the browser's clock (half the round trip), the kernel clock state (`clock.py`: `adjtimex` read-only, works in the container: synchronised / not / unknown), the virus definitions' age (`ADAPTER_CLAMAV_MAX_AGE_DAYS`), the directory state, the permission rules file. Anything not fine also puts a dot on the account menu. |
+| Users | `/auth/admin/users/*` | List (with live session counts), create (generated temporary password), edit display name, roles, groups and rooms (rooms are chosen from the adapter's room list), suspend / reactivate, unlock, new password, reset the TOTP, delete. Directory users: suspend, unlock, TOTP reset and delete only. |
+| Rooms and permissions | adapter `/api/v1/ui/admin/*` | See [adapter README](../adapter/README.md#administration-e27-s7). |
+| AD groups | `/auth/admin/directory*` | Settings without secrets, the group map editor, and a test: service account bind, whether each mapped group exists, what a user would get. |
+| Event log | `/auth/admin/events`, adapter `/api/v1/ui/admin/events` | Sign-in and administrative events (filter by user, paging with `before`), and the file store's events. |
+
+The group map is saved with `POST /auth/admin/directory/map {map, base}`:
+validated like `manage.py ldap-map import` (a refusal carries a `message` for the
+administrator), written atomically and owner-only in its normalised form, and
+refused with `409 map_changed` when the file changed since the page read it
+(`base` is the `map_version`, the SHA-256 of the file, `none` when missing). Every
+directory user's next request then asks the directory again (the outage grace
+period does not grow). `manage.py ldap-map import` writes the same normalised
+form. Connection settings and the service account password stay shell-only.
+
 ## Security properties
 
 - Listens on loopback only (`AUTH_HOST` must be a loopback address or the
@@ -257,12 +287,16 @@ Push-Location auth_service; python -m unittest discover -p "*_test.py"; Pop-Loca
 
 `auth_test.py` checks the issued tokens with the adapter's own verifier
 (`adapter/identity.py`), so a contract change on either side fails the tests.
+`admin_test.py` covers the administration backend (clock, group map editing,
+directory test, session counts, event paging).
 
 `gate_e2e_test.py` runs the login gate end to end: this service, the built web
 UI server (`node .output/server/index.mjs`) and a stub adapter that verifies the
 token with the adapter's verifier. It covers redirects, CSRF and origin checks,
 cookie flags, enrolment with the QR code, the temporary password, the relayed
-identity and room, dropped browser headers, logout and session replay. It needs
+identity and room, dropped browser headers, logout and session replay, and the
+administration relay (CSRF, admin-only page and calls, the overwritten session,
+the dropped token cache). It needs
 Node.js and `npm run build`, so it is skipped unless asked for:
 
 ```powershell

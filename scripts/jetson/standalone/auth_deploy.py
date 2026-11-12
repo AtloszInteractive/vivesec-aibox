@@ -54,6 +54,12 @@ ADAPTER_STANDALONE_KEYS = ("ADAPTER_INTEGRATION", "ADAPTER_IDENTITY_MODE", "ADAP
 UI_STANDALONE_KEYS = ("ADAPTER_INTEGRATION", "AUTH_URL", "AUTH_SERVICE_KEY_FILE")
 # Must not be on in standalone mode: it grants every drive to every user.
 ADAPTER_FORBIDDEN_KEYS = ("ADAPTER_SCOPE_ALL_DRIVES",)
+# The permission rules file the administration page edits (S7). `enable` sets
+# it only when the adapter has none, inside one of the adapter's mounts, and
+# creates it empty ({}: no rules) when missing; a configured but missing file
+# would hide every document.
+ACL_RULES_KEY = "ADAPTER_ACL_RULES"
+DEFAULT_ACL_RULES = "/data/acl-rules.json"
 
 
 def settings(env=None):
@@ -154,16 +160,52 @@ def with_binds(binds, add, remove_targets):
     return kept + [bind for bind in add if bind not in kept]
 
 
-def adapter_change(env, binds, data_dir, auth_env, enable):
+def host_path(binds, container_path):
+    """The host path behind `container_path` through the writable bind with the
+    longest matching target, or None when no bind covers it."""
+    best = None
+    for bind in binds or []:
+        parts = bind.split(":")
+        if len(parts) < 2 or (len(parts) > 2 and "ro" in parts[2].split(",")):
+            continue
+        source, target = parts[0], parts[1].rstrip("/") or "/"
+        if container_path == target or container_path.startswith(target.rstrip("/") + "/"):
+            if best is None or len(target) > len(best[1]):
+                best = (source, target)
+    if best is None:
+        return None
+    return best[0].rstrip("/") + container_path[len(best[1].rstrip("/")):]
+
+
+def acl_rules_path(env, binds, wanted=DEFAULT_ACL_RULES):
+    """(container path, host path) of the rules file `enable` uses: the one
+    the adapter already has, else `wanted`. SystemExit when no writable mount
+    holds it (the file would vanish with the container)."""
+    path = (env.get(ACL_RULES_KEY) or "").strip() or wanted
+    if not path.startswith("/") or ".." in path.split("/"):
+        raise SystemExit("%s must be an absolute path" % ACL_RULES_KEY)
+    host = host_path(binds, path)
+    if host is None:
+        raise SystemExit("%s=%s is not inside a writable mount of the adapter; set "
+                         "AIBOX_ADAPTER_ACL_RULES to a path below one of: %s"
+                         % (ACL_RULES_KEY, path, ", ".join(b.split(":")[1] for b in binds or [])))
+    return path, host
+
+
+def adapter_change(env, binds, data_dir, auth_env, enable, acl_rules=DEFAULT_ACL_RULES):
     keys = ADAPTER_STANDALONE_KEYS + ADAPTER_FORBIDDEN_KEYS
     targets = {ADAPTER_KEY}
     if not enable:
-        return with_settings(env, {}, keys), with_binds(binds, [], targets)
+        # The rules file stays when somebody set it up by hand.
+        drop = keys + ((ACL_RULES_KEY,) if env.get(ACL_RULES_KEY) == acl_rules else ())
+        return with_settings(env, {}, drop), with_binds(binds, [], targets)
     values = {"ADAPTER_INTEGRATION": "standalone", "ADAPTER_IDENTITY_MODE": "require",
               "ADAPTER_DIRECTORY": "token", "ADAPTER_IDENTITY_ALGORITHMS": "HS256",
               "ADAPTER_IDENTITY_HS256_SECRET_FILE": ADAPTER_KEY,
               "ADAPTER_IDENTITY_ISSUER": auth_env.get("AUTH_JWT_ISSUER") or DEFAULT_ISSUER,
               "ADAPTER_IDENTITY_AUDIENCE": auth_env.get("AUTH_JWT_AUDIENCE") or DEFAULT_AUDIENCE}
+    if not (env.get(ACL_RULES_KEY) or "").strip():
+        values[ACL_RULES_KEY] = acl_rules
     bind = data_dir + "/identity-hs256.key:" + ADAPTER_KEY + ":ro"
     return with_settings(env, values, keys), with_binds(binds, [bind], targets)
 
@@ -331,6 +373,15 @@ def ui_ready(port, standalone):
     return probe
 
 
+def seed_acl_rules(host, user, image):
+    """Create the rules file as `{}` (no rules) when it is missing, owned by
+    the adapter's user and readable by it only. An existing file is kept."""
+    directory, name = os.path.dirname(host), os.path.basename(host)
+    script = 'test -e "/host/$1" || { umask 077; printf "{}\\n" > "/host/$1"; }; ls -ln "/host/$1"'
+    print(command("docker", "run", "--rm", "--network", "none", "--user", user,
+                  "-v", directory + ":/host", image, "sh", "-c", script, "seed", name), flush=True)
+
+
 def switch(enable):
     config = settings()
     adapter, ui = inspect("vivesec-adapter"), inspect("vivesec-ui")
@@ -345,8 +396,13 @@ def switch(enable):
             raise SystemExit("vivesec-auth does not answer on port %d" % config["port"])
     auth_env = environment(auth) if auth else {}
     adapter_env, ui_env = environment(adapter), environment(ui)
-    new_adapter = adapter_change(adapter_env, adapter["HostConfig"].get("Binds"), config["data_dir"],
-                                 auth_env, enable)
+    adapter_binds = adapter["HostConfig"].get("Binds")
+    acl_rules = (os.environ.get("AIBOX_ADAPTER_ACL_RULES") or "").strip() or DEFAULT_ACL_RULES
+    if enable:
+        acl_rules, acl_host = acl_rules_path(adapter_env, adapter_binds, acl_rules)
+        seed_acl_rules(acl_host, adapter["Config"].get("User") or "0:0", config["base_image"])
+    new_adapter = adapter_change(adapter_env, adapter_binds, config["data_dir"],
+                                 auth_env, enable, acl_rules)
     new_ui = ui_change(ui_env, ui["HostConfig"].get("Binds"), config["data_dir"], config["port"], enable)
     mode = "standalone" if enable else "vivesecbox"
     if (new_adapter, new_ui) == ((adapter_env, adapter["HostConfig"].get("Binds") or []),

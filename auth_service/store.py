@@ -251,6 +251,20 @@ class Store:
     def count_sessions(self, username):
         return self._one("SELECT COUNT(*) AS n FROM sessions WHERE username = ?", (username,))["n"]
 
+    def active_sessions(self, now, idle_seconds):
+        """{username: number of sessions that are still valid}."""
+        rows = self._all("SELECT username, COUNT(*) AS n FROM sessions WHERE expires_at > ? "
+                         "AND last_seen > ? GROUP BY username", (now, now - idle_seconds))
+        return {row["username"]: row["n"] for row in rows}
+
+    def expire_directory_sync(self, synced_before):
+        """Make every directory user's next request ask the directory again: a
+        newer sync time is moved back to `synced_before`, an older one stays
+        (so the outage grace period never grows)."""
+        return self._write("UPDATE users SET directory_synced_at = ? WHERE source = 'ldap' AND "
+                           "(directory_synced_at IS NULL OR directory_synced_at > ?)",
+                           (synced_before, synced_before))
+
     # -- login challenges ------------------------------------------------------
     def create_challenge(self, secret, username, stage, pending_secret, expires_at, client):
         with self._lock, self._conn:
@@ -287,11 +301,16 @@ class Store:
                     "VALUES (?, ?, ?, ?, ?, ?)", (now, event, username or "", actor or "",
                                                   client or "", detail or ""))
 
-    def list_events(self, limit=200, username=None):
+    def list_events(self, limit=200, username=None, before=None):
+        """The newest events first; `before` (an event id) pages further back."""
         limit = max(1, min(int(limit), 1000))
+        where, args = [], []
         if username:
-            rows = self._all("SELECT * FROM events WHERE username = ? ORDER BY id DESC LIMIT ?",
-                             (username, limit))
-        else:
-            rows = self._all("SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,))
-        return [dict(row) for row in rows]
+            where.append("username = ?")
+            args.append(username)
+        if before is not None:
+            where.append("id < ?")
+            args.append(int(before))
+        sql = "SELECT * FROM events%s ORDER BY id DESC LIMIT ?" % (
+            " WHERE " + " AND ".join(where) if where else "")
+        return [dict(row) for row in self._all(sql, args + [limit])]

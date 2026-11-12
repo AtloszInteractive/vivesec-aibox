@@ -79,6 +79,7 @@ RETRIED = frozenset((WAITING_SCANNER, INDEX_PENDING))
 RECORD_KEEP_SECONDS = 7 * 24 * 3600
 RECORD_MAX = 2000
 COPY_CHUNK = 1024 * 1024
+EVENT_TAIL_BYTES = 4 * 1024 * 1024
 
 
 class StoreError(Exception):
@@ -435,6 +436,83 @@ class DriveStore:
             else:
                 os.remove(local)
         return True
+
+    # -- rooms (administration, E27 S7) -------------------------------------------
+    def rooms(self):
+        """The canonical root of every room folder on disk."""
+        self._ready()
+        try:
+            names = os.listdir(self._real_rooms)
+        except OSError:
+            return []
+        out = []
+        for name in sorted(names):
+            try:
+                if check_segment(name) != name:
+                    continue
+                info = os.lstat(os.path.join(self._real_rooms, name))
+            except (StoreError, OSError):
+                continue
+            if stat.S_ISDIR(info.st_mode):
+                out.append(self.prefix + "/" + name)
+        return out
+
+    def create_room(self, name):
+        """The canonical root of a new, empty room. StoreError `exists` when
+        the room is already there."""
+        room = check_segment(name)
+        root = self.prefix + "/" + room
+        with self.lock:
+            if self.kind(root) is not None or os.path.lexists(self._local(root)):
+                raise StoreError("exists", "the room exists", 409)
+            os.mkdir(self._local(root), 0o750)
+        return root
+
+    def remove_room(self, root):
+        """Delete an empty room: folders only, no file anywhere below it.
+        StoreError `not_empty` otherwise."""
+        if not self.is_room_root(root):
+            raise StoreError("invalid_path", "not a room", 400)
+        with self.lock:
+            entries = self.walk(root)
+            if not entries:
+                return False
+            if any(self.kind(path) != "folder" for path in entries):
+                raise StoreError("not_empty", "the room holds files", 409)
+            shutil.rmtree(self._local(root))
+        return True
+
+    def tail_events(self, limit=200):
+        """The newest `limit` entries of the event log, newest first."""
+        if not self._usable():
+            return []
+        limit = max(1, min(int(limit), 1000))
+        path = os.path.join(self.root, "events.jsonl")
+        try:
+            with open(path, "rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                start = max(0, size - EVENT_TAIL_BYTES)
+                handle.seek(start)
+                data = handle.read()
+        except OSError:
+            return []
+        lines = data.split(b"\n")
+        if start:
+            lines = lines[1:]  # the first line may be cut
+        out = []
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                continue
+            if isinstance(entry, dict):
+                out.append(entry)
+                if len(out) >= limit:
+                    break
+        return out
 
     def purge(self):
         """Factory reset: every stored file, quarantined upload and record."""

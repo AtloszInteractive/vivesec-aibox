@@ -33,6 +33,7 @@ Group map (AUTH_LDAP_MAP_FILE, JSON, re-read when it changes):
 `group:` ACL principals); it defaults to the first CN of the DN. Every role a
 group grants must be listed under `roles`, with its rooms (possibly none).
 """
+import hashlib
 import json
 import os
 import re
@@ -102,6 +103,12 @@ class GroupMap:
     def __init__(self, groups, roles):
         self.groups = groups    # [(dn, name, [roles])]
         self.roles = roles      # {role: [drives]}
+
+    def as_dict(self):
+        """The normalised JSON form: what the box writes and the admin page shows."""
+        return {"groups": [{"dn": dn, "name": name, "roles": list(roles)}
+                           for dn, name, roles in self.groups],
+                "roles": {role: list(drives) for role, drives in self.roles.items()}}
 
     def resolve(self, member_dns):
         """(group names, roles, drives) for the mapped groups in `member_dns`."""
@@ -175,9 +182,7 @@ def parse_group_map(data):
     return GroupMap(groups, roles)
 
 
-def read_group_map(path):
-    with open(path, "rb") as handle:
-        raw = handle.read(MAX_MAP_BYTES + 1)
+def _decode_group_map(raw):
     if len(raw) > MAX_MAP_BYTES:
         raise ValueError("the group map is larger than %d bytes" % MAX_MAP_BYTES)
     try:
@@ -185,6 +190,34 @@ def read_group_map(path):
     except (UnicodeDecodeError, ValueError) as e:
         raise ValueError("the group map is not valid JSON: %s" % e)
     return parse_group_map(data)
+
+
+def read_group_map(path):
+    with open(path, "rb") as handle:
+        raw = handle.read(MAX_MAP_BYTES + 1)
+    return _decode_group_map(raw)
+
+
+def map_version(raw):
+    """The version of a group map file's content (`none` for no file): the
+    administration page sends it back, so a save never overwrites a change it
+    has not seen."""
+    return "none" if raw is None else hashlib.sha256(raw).hexdigest()
+
+
+def group_map_snapshot(path):
+    """(GroupMap or None, error or None, version) of the file as it is now."""
+    try:
+        with open(path, "rb") as handle:
+            raw = handle.read(MAX_MAP_BYTES + 1)
+    except FileNotFoundError:
+        return None, None, map_version(None)
+    except OSError as e:
+        return None, "unreadable: %s" % e.strerror, "unreadable"
+    try:
+        return _decode_group_map(raw), None, map_version(raw)
+    except ValueError as e:
+        return None, str(e), map_version(raw)
 
 
 def write_private(path, data):

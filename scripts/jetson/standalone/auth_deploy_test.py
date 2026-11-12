@@ -55,6 +55,7 @@ class SwitchTest(unittest.TestCase):
 
     def test_disable_restores_the_vivesecbox_configuration(self):
         env, binds = auth_deploy.adapter_change(ADAPTER_ENV, ADAPTER_BINDS, "/data/auth", {}, True)
+        self.assertEqual(env["ADAPTER_ACL_RULES"], "/data/acl-rules.json")
         env, binds = auth_deploy.adapter_change(env, binds, "/data/auth", {}, False)
         expected = {key: value for key, value in ADAPTER_ENV.items()
                     if key not in ("ADAPTER_SCOPE_ALL_DRIVES", "ADAPTER_IDENTITY_MODE")}
@@ -62,6 +63,29 @@ class SwitchTest(unittest.TestCase):
         ui_env, ui_binds = auth_deploy.ui_change(UI_ENV, UI_BINDS, "/data/auth", 8097, True)
         self.assertEqual(auth_deploy.ui_change(ui_env, ui_binds, "/data/auth", 8097, False),
                          (UI_ENV, UI_BINDS))
+
+    def test_a_rules_file_set_up_by_hand_is_kept(self):
+        own = dict(ADAPTER_ENV, ADAPTER_ACL_RULES="/data/jobs/rules.json")
+        env, binds = auth_deploy.adapter_change(own, ADAPTER_BINDS, "/data/auth", {}, True)
+        self.assertEqual(env["ADAPTER_ACL_RULES"], "/data/jobs/rules.json")
+        env, _ = auth_deploy.adapter_change(env, binds, "/data/auth", {}, False)
+        self.assertEqual(env["ADAPTER_ACL_RULES"], "/data/jobs/rules.json")
+
+    def test_the_rules_file_must_live_in_a_writable_mount(self):
+        binds = ADAPTER_BINDS + ["/data/auth/identity-hs256.key:/run/aibox-auth/identity-hs256.key:ro"]
+        self.assertEqual(auth_deploy.acl_rules_path({}, binds),
+                         ("/data/acl-rules.json", "/data/adapter/acl-rules.json"))
+        self.assertEqual(auth_deploy.acl_rules_path({"ADAPTER_ACL_RULES": "/data/jobs/r.json"}, binds),
+                         ("/data/jobs/r.json", "/data/jobs/r.json"))
+        layout = ["/data/adapter:/data/adapter", "/data/jobs:/data/jobs"]
+        with self.assertRaises(SystemExit):
+            auth_deploy.acl_rules_path({}, layout)
+        self.assertEqual(auth_deploy.acl_rules_path({}, layout, "/data/adapter/acl-rules.json")[1],
+                         "/data/adapter/acl-rules.json")
+        with self.assertRaises(SystemExit):
+            auth_deploy.acl_rules_path({}, binds, "/run/aibox-auth/identity-hs256.key")
+        with self.assertRaises(SystemExit):
+            auth_deploy.acl_rules_path({}, binds, "/data/../etc/x")
 
 
 class ServiceTest(unittest.TestCase):

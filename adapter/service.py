@@ -41,6 +41,13 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/ui/store/uploads/dismiss     {id}
     POST /api/v1/ui/store/mkdir               {path}
     POST /api/v1/ui/store/delete              {path}  (index first, then the disk)
+    GET  /api/v1/ui/admin/system              (standalone admin, E27 S7: clamd definitions, rules file)
+    GET  /api/v1/ui/admin/rooms               (rooms on disk and in the index)
+    POST /api/v1/ui/admin/rooms/create        {name}
+    POST /api/v1/ui/admin/rooms/delete        {path}  (an empty room only)
+    GET  /api/v1/ui/admin/acl                 (ADAPTER_ACL_RULES content and version)
+    POST /api/v1/ui/admin/acl                 {rules, base}
+    GET  /api/v1/ui/admin/events?limit=N      (the file store's event log)
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -108,6 +115,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import acl  # noqa: E402
+import acl_admin  # noqa: E402
 import analysis_checkpoint  # noqa: E402
 import build_info  # noqa: E402
 import clamd  # noqa: E402
@@ -801,6 +809,38 @@ def _store_unindex(path):
 
 
 UPLOADS = drivestore.UploadWorker(STORE, CLAMD, UPLOAD_SCAN, _store_index, _store_unindex)
+
+# Administration of a standalone box (E27 S7): only callers whose verified
+# token carries the admin role (the authentication service's ADMIN_ROLE).
+ADMIN_PRINCIPAL = "role:admin"
+_ACL_RULES_LOCK = threading.Lock()
+
+
+def _clamav_max_age_days(raw):
+    """Virus definitions older than this are flagged on the admin page."""
+    value = (raw or "").strip()
+    if not value:
+        return 7
+    try:
+        days = int(value)
+    except ValueError:
+        days = 0
+    if not 1 <= days <= 365:
+        sys.stderr.write("[adapter] ADAPTER_CLAMAV_MAX_AGE_DAYS=%r is not 1..365 -> 7\n" % raw)
+        return 7
+    return days
+
+
+CLAMAV_MAX_AGE_DAYS = _clamav_max_age_days(os.environ.get("ADAPTER_CLAMAV_MAX_AGE_DAYS"))
+
+
+def _acl_resync_now():
+    """Push a rules change to the RAG at once instead of at the next loop
+    pass; the loop retries when this fails."""
+    try:
+        _acl_resync()
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("[adapter] acl resync after a rules change failed: %s\n" % e)
 
 
 def _upload_view(record):
@@ -2139,6 +2179,16 @@ class Handler(BaseHTTPRequestHandler):
             except drivestore.StoreError as e:
                 self._store_refusal(e)
             return
+        admin_route = {"/api/v1/ui/admin/system": self._admin_system,
+                       "/api/v1/ui/admin/rooms": self._admin_rooms,
+                       "/api/v1/ui/admin/acl": self._admin_acl_get,
+                       "/api/v1/ui/admin/events": self._admin_events}.get(path)
+        if admin_route is not None:
+            try:
+                admin_route(query)
+            except drivestore.StoreError as e:
+                self._store_refusal(e)
+            return
         if self.path in ("/", ""):
             self._send(200, {"ok": True, "service": "ViVeSec AIBox adapter"})
             return
@@ -2211,6 +2261,9 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/store/mkdir": self._store_mkdir,
                 "/api/v1/ui/store/delete": self._store_delete,
                 "/api/v1/ui/store/uploads/dismiss": self._store_dismiss,
+                "/api/v1/ui/admin/rooms/create": self._admin_room_create,
+                "/api/v1/ui/admin/rooms/delete": self._admin_room_delete,
+                "/api/v1/ui/admin/acl": self._admin_acl_save,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -3969,6 +4022,205 @@ class Handler(BaseHTTPRequestHandler):
                     indexed=res.get("deleted_documents"))
         self._send(200, {"ok": True, "path": path, "removed": len(on_disk),
                          "removed_from_index": res.get("deleted_documents", 0)})
+
+    # -- administration of a standalone box (E27 S7) -----------------------------
+    def _admin_caller(self):
+        """The administrator of this request, or None after the refusal.
+        Standalone only (the ViVeSecBox administers its own box); no drive is
+        needed, the verified token must carry the admin role."""
+        if INTEGRATION != integration.MODE_STANDALONE:
+            self._send(404, {"ok": False, "error": "not available in this mode"})
+            return None
+        caller = self._authenticate_optional_drive()
+        if caller is None:
+            return None
+        if ADMIN_PRINCIPAL not in self._access().principals:
+            self._send(403, {"ok": False, "error": "forbidden"})
+            return None
+        return caller
+
+    def _admin_event(self, action, caller, path, **detail):
+        sys.stderr.write("[adapter] admin: %s %s by %r\n" % (action, path, caller.user))
+        STORE.event(action, caller.user, path, **detail)
+
+    def _admin_system(self, _query=""):
+        """Virus scanner and definitions, the rules file, the box time."""
+        if self._admin_caller() is None:
+            return
+        now = time.time()
+        scanner = {"reachable": False, "engine": None, "database": None,
+                   "database_time": None, "age_days": None, "stale": False}
+        try:
+            scanner.update(clamd.parse_version(CLAMD.version()))
+            scanner["reachable"] = True
+        except clamd.ScanUnavailable:
+            pass
+        if scanner["database_time"]:
+            scanner["age_days"] = round(max(0.0, now - scanner["database_time"]) / 86400.0, 1)
+            scanner["stale"] = scanner["age_days"] > CLAMAV_MAX_AGE_DAYS
+        self._send(200, {"ok": True, "now": now, "scan": UPLOAD_SCAN, "clamd": scanner,
+                         "max_age_days": CLAMAV_MAX_AGE_DAYS, "store": STORE.enabled,
+                         "acl": dict(ACL.settings(), configured=bool(ACL.rules_path))})
+
+    def _admin_rooms(self, _query=""):
+        """Every room: on disk (the store) and/or in the index (a corpus synced
+        before standalone mode), with its number of indexed files."""
+        if self._admin_caller() is None:
+            return
+        rooms = {}
+
+        def entry(root):
+            return rooms.setdefault(root, {"path": root, "name": root.rsplit("/", 1)[-1],
+                                           "stored": False, "indexed": False, "files": 0})
+
+        if STORE.enabled:
+            for root in STORE.rooms():
+                entry(root)["stored"] = True
+        prefix = corpus.norm(corpus.DRIVE_PREFIX)
+        for path in MIRROR.paths_under(prefix):
+            root = corpus.drive_root_of_path(path)
+            if root is not None:
+                entry(root)["indexed"] = True
+        for meta in MIRROR.files():
+            root = corpus.drive_root_of_path(meta.get("path") or "")
+            if root in rooms:
+                rooms[root]["files"] += 1
+        self._send(200, {"ok": True, "prefix": prefix, "store": STORE.enabled,
+                         "rooms": [rooms[root] for root in sorted(rooms)]})
+
+    def _admin_room_create(self):
+        caller = self._admin_caller()
+        if caller is None or self._locked_guard():
+            return
+        payload = self._read_json()
+        name = payload.get("name") if isinstance(payload, dict) else None
+        if not isinstance(name, str):
+            self._send(400, {"ok": False, "error": "invalid_path"})
+            return
+        root = STORE.prefix + "/" + drivestore.check_segment(name)
+        if MIRROR.get(root) is not None or MIRROR.paths_under(root):
+            self._send(409, {"ok": False, "error": "exists"})
+            return
+        root = STORE.create_room(name)
+        indexed = True
+        try:
+            _store_index_dir(root)
+        except Exception as e:  # noqa: BLE001 - the first upload indexes the folder again
+            indexed = False
+            sys.stderr.write("[adapter] room %s not indexed yet: %s\n" % (root, e))
+        self._admin_event("room_create", caller, root)
+        self._send(200, {"ok": True, "room": {"path": root, "name": root.rsplit("/", 1)[-1],
+                                              "stored": True, "indexed": indexed, "files": 0}})
+
+    def _admin_room_delete(self):
+        """Delete an EMPTY room (folders at most): from the index, the disk and
+        the rules file. A room with files is refused; delete them first."""
+        caller = self._admin_caller()
+        if caller is None or self._locked_guard():
+            return
+        payload = self._read_json()
+        raw = payload.get("path") if isinstance(payload, dict) else None
+        root = STORE.canonical(raw if isinstance(raw, str) else "")
+        if not STORE.is_room_root(root):
+            self._send(400, {"ok": False, "error": "not_a_room"})
+            return
+        known = STORE.kind(root) is not None or MIRROR.paths_under(root)
+        if not known:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        if any((MIRROR.get(path) or {}).get("file") for path in MIRROR.paths_under(root)) \
+                or any(STORE.kind(path) == "file" for path in STORE.walk(root)):
+            self._send(409, {"ok": False, "error": "not_empty"})
+            return
+        if any(r["path"] == root or r["path"].startswith(root + "/")
+               for r in STORE.records() if r.get("status") not in drivestore.FINAL):
+            self._send(409, {"ok": False, "error": "busy"})
+            return
+        _store_unindex(root)
+        STORE.remove_room(root)
+        removed_rules = 0
+        if ACL.rules_path:
+            with _ACL_RULES_LOCK:
+                raw, version = acl_admin.read(ACL.rules_path)
+                data, error = acl_admin.decode(raw)
+                if raw is not None and error is None:
+                    kept = acl_admin.without_tree(data, root)
+                    removed_rules = len(data.get("paths") or {}) - len(kept["paths"])
+                    if removed_rules:
+                        try:
+                            acl_admin.write(ACL.rules_path, kept, version)
+                        except (acl_admin.RulesConflict, OSError) as e:
+                            removed_rules = 0
+                            sys.stderr.write("[adapter] rules of the deleted room %s kept: %s\n"
+                                             % (root, e))
+            if removed_rules:
+                ACL.reload()
+        self._admin_event("room_delete", caller, root, rules=removed_rules or None)
+        self._send(200, {"ok": True, "path": root, "rules_removed": removed_rules})
+
+    def _admin_acl_get(self, _query=""):
+        if self._admin_caller() is None:
+            return
+        info = {"ok": True, "configured": bool(ACL.rules_path), "levels": list(acl.LEVELS),
+                "settings": ACL.settings()}
+        if ACL.rules_path:
+            try:
+                raw, version = acl_admin.read(ACL.rules_path)
+            except OSError as e:
+                sys.stderr.write("[adapter] rules file unreadable: %s\n" % e)
+                self._send(503, {"ok": False, "error": "rules_unreadable"})
+                return
+            rules, error = acl_admin.decode(raw)
+            info.update(exists=raw is not None, version=version, rules=rules, error=error)
+        self._send(200, info)
+
+    def _admin_acl_save(self):
+        """Validate and write the rules file; the policy reads it at once and
+        the RAG copy follows in the background."""
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        if not ACL.rules_path:
+            self._send(409, {"ok": False, "error": "rules_not_configured"})
+            return
+        payload = self._read_json()
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        try:
+            rules = acl_admin.validate(payload.get("rules"), corpus.DRIVE_PREFIX)
+        except acl_admin.RulesInvalid as e:
+            self._send(400, {"ok": False, "error": "invalid_rules", "message": str(e)[:500]})
+            return
+        with _ACL_RULES_LOCK:
+            try:
+                version = acl_admin.write(ACL.rules_path, rules, payload.get("base"))
+            except acl_admin.RulesConflict:
+                self._send(409, {"ok": False, "error": "rules_changed"})
+                return
+            except OSError as e:
+                sys.stderr.write("[adapter] rules file not written: %s\n" % e)
+                self._send(503, {"ok": False, "error": "rules_unwritable"})
+                return
+        ACL.reload()
+        _acl_resync_needed()
+        threading.Thread(target=_acl_resync_now, name="acl-resync", daemon=True).start()
+        self._admin_event("acl_update", caller, corpus.norm(corpus.DRIVE_PREFIX),
+                          rules=len(rules["paths"]))
+        self._send(200, {"ok": True, "version": version, "rules": rules,
+                         "settings": ACL.settings()})
+
+    def _admin_events(self, query=""):
+        """The newest entries of the file store's event log (uploads, scans,
+        deletes, room and permission changes)."""
+        if self._admin_caller() is None:
+            return
+        params = urllib.parse.parse_qs(query or "")
+        try:
+            limit = int((params.get("limit") or ["200"])[0])
+        except ValueError:
+            limit = 200
+        events = STORE.tail_events(limit) if STORE.enabled else []
+        self._send(200, {"ok": True, "events": events})
 
     # -- voice I/O (on-box STT/TTS; voice.py) --------------------------------
     def _stt(self):

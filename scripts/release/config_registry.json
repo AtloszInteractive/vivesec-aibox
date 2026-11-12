@@ -76,7 +76,7 @@
       "default": "",
       "allowed": "path of a JSON rules file (paths, clearance, default_classification)",
       "fail_safe": "Empty means no administrator rules. A configured file that is missing, unreadable or malformed denies every document until it is fixed; a malformed single rule denies its subtree.",
-      "impact": "Administrator ACLs for rooms (drive roots) and folders, document classification and user clearance by user, group or role. Re-read on change; the RAG copy is resynced automatically.",
+      "impact": "Administrator ACLs for rooms (drive roots) and folders, document classification and user clearance by user, group or role. Re-read on change; the RAG copy is resynced automatically. In standalone mode the administration page edits it (validated, atomic, 0600); auth_deploy.py enable sets /data/acl-rules.json when unset.",
       "change": "restart",
       "secret": false,
       "internal": false
@@ -3969,6 +3969,19 @@
       "allowed": "loopback host:port, or unix:/absolute/path",
       "fail_safe": "A TCP address that is not loopback (or a malformed value) is refused: the scanner counts as unreachable, so with ADAPTER_UPLOAD_SCAN=required uploads wait in quarantine. Documents are never sent off the box to be scanned.",
       "impact": "Where the adapter reaches clamd (INSTREAM protocol) for the upload scan.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_CLAMAV_MAX_AGE_DAYS",
+      "component": "adapter",
+      "category": "security",
+      "type": "int",
+      "default": "7",
+      "allowed": "1..365",
+      "fail_safe": "Unset, non-numeric or out-of-range values mean 7 (logged). Only a warning: uploads are still scanned with the definitions clamd has.",
+      "impact": "Standalone administration page (E27 S7): virus definitions older than this many days are flagged on the overview and by the warning dot of the account menu.",
       "change": "restart",
       "secret": false,
       "internal": false
