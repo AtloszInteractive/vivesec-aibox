@@ -2,7 +2,7 @@
 
 Layout (Neo4j Community 5):
   (:Document {doc_id, corpus_id, source_path, title, kind, pages, profile, sha256,
-              acl_json, rel_ids, attr_entities})
+              acl_json, record_acl_json, rel_ids, attr_entities})
   (:Entity {id, type, subtype, label, status, merged_into})
   (:Mention {id, doc_id, text, page, start, end, method, confidence})-[:OF]->(:Entity)
   (:Attr {doc_id, name, value, page})-[:OF]->(:Entity)
@@ -57,7 +57,8 @@ def _document(d: dict) -> Document:
     return Document(d["doc_id"], d["corpus_id"], d["source_path"], d.get("title") or "",
                     json.loads(d["acl_json"]) if d.get("acl_json") else None,
                     d.get("kind") or "", d.get("pages") or 0, d.get("profile") or "",
-                    d.get("sha256") or "")
+                    d.get("sha256") or "",
+                    json.loads(d["record_acl_json"]) if d.get("record_acl_json") else None)
 
 
 class Neo4jGraphStore:
@@ -138,12 +139,14 @@ class Neo4jGraphStore:
         rel_ids = self._add_relations_tx(tx, relations)
         tx.run("CREATE (d:Document {doc_id: $doc_id, corpus_id: $corpus_id, "
                "source_path: $source_path, title: $title, kind: $kind, pages: $pages, "
-               "profile: $profile, sha256: $sha256, acl_json: $acl, rel_ids: $rel_ids, "
+               "profile: $profile, sha256: $sha256, acl_json: $acl, "
+               "record_acl_json: $record_acl, rel_ids: $rel_ids, "
                "attr_entities: $attr_entities})",
                doc_id=doc.doc_id, corpus_id=doc.corpus_id, source_path=doc.source_path,
                title=doc.title, kind=doc.kind, pages=doc.pages, profile=doc.profile,
                sha256=doc.content_sha256,
                acl=json.dumps(doc.acl) if doc.acl is not None else None,
+               record_acl=json.dumps(doc.record_acl) if doc.record_acl is not None else None,
                rel_ids=sorted(set(rel_ids.values())),
                attr_entities=sorted({a["eid"] for a in attrs}))
 

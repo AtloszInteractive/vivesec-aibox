@@ -757,9 +757,19 @@ from one starting point: a person (by name or registry number) or an identifier
 `/query/investigate` walks the caller's visible graph. Level 1 is the people
 linked to the start. From a person, the next level is reached through the
 person-to-person relations of `ADAPTER_INVESTIGATE_RELATIONS` (default
-`RELATIVE_OF`, the bv profile's stand-in for an approved contact), or through an
+`RELATIVE_OF,CONTACT_OF`: `CONTACT_OF` is the approved contact from the
+structured contact list, bv profile v5; `RELATIVE_OF` the contacts documents
+name), or through an
 entity shared over `ADAPTER_INVESTIGATE_VIA` (default `INVOLVED_IN`: two people
-in the same incident). Each person appears once, at the first level that
+in the same incident). With `ADAPTER_INVESTIGATE_SHARED_CONTACT` (`ask`, the
+default: when the planner sets `shared_contact: true` because the message asks
+for it; `always`; `off`, also for any unknown value) one more step is possible:
+from a person to the other holders of a phone, e-mail or address they hold
+(the profile's holding relations), one level, labelled "közös elérhetőség:
++36 …" in the path, the spreadsheet and the diagram. It never says the two are
+one person (a household phone, or two records of one mother without a person
+key). The export, the subgraph and the summaries take the request's
+`shared_contact` and run the step again. Each person appears once, at the first level that
 reaches them, with up to 5 links from the previous level (a "Y" branch). The
 planner chooses 1–4 levels (default 2). `ADAPTER_INVESTIGATE_BRANCH` caps the new
 people taken from one person (default 50, 1–50), and `ADAPTER_INVESTIGATE_MAX_ROWS`
@@ -969,6 +979,65 @@ and an EU act after "(EU) " / "(EK) " (`2016/679`). A real number of that shape
 | Variable | Default | Meaning / fail-safe |
 | --- | --- | --- |
 | `ADAPTER_DOCUMENT_REFS` | `case_number` | Comma list of identifier subtypes. `off` asks for none. An unknown subtype matches nothing. An older graph ignores the field. |
+
+#### Structured import of periodic exports (`/ui/graph/import`, E28)
+
+The BV hands over the result set of a periodic export run (FŐNIX base data,
+placements, the approved-contact list; later the intelligence log, ODIN, BvBank,
+JFK) as CSV or XLSX. These are read by rule, never by the model: no GPU time and
+no extraction error. A graph administrator (`ADAPTER_GRAPH_ADMINS`) sends one
+file per call:
+
+`POST /api/v1/ui/graph/import` `{source, as_of, folder, filename, content_b64,
+mode?, force?, wait?}`; `/ui/graph/import/sources` lists the sources,
+`/ui/graph/import/status {job}` reports an import still running after `wait`
+seconds (default 60). `graph-corpus/structured_import_run.py` calls it on a box
+(without files it imports the synthetic exports of `structured_samples.py`).
+
+- **Mapping from the profile.** `structured_sources` in the graph profile names,
+  per source, the record id column(s), the columns of each entity (person,
+  place, identifier) and attribute (birth data, registry number), the relations
+  with their start, end and label columns, code lists (code → text) and the
+  record's own access rule. A new source or column is a profile change, not a
+  code change; validation is strict (an unknown key, column role, relation or
+  subtype rejects the profile). The `bv` profile v5 has `fonix_base`,
+  `placement` (institution → facility → unit → cell, `PLACED_IN` with start, end
+  and the in/out reasons) and `contacts` (`CONTACT_OF` with the permission dates
+  and the relationship, phone, e-mail, address). The column names are our
+  assumption until BV sends samples. Subtypes and relations marked
+  `structured_only` (contact, facility, unit, `CONTACT_OF`) stay out of the
+  extraction prompts, so the model reads documents exactly as before.
+- **Records.** Each row becomes its own graph document: id from source + record
+  id (the idempotency key), path `<folder>/~records/<source>/<hash>`, tag
+  `record:<source>@<as_of>`, its row as `Column: value` text (codes with their
+  meaning, without the record id) as the verbatim evidence. The same export again
+  changes nothing; a newer `as_of` replaces a record; an older one never
+  overwrites or deletes. `mode` (per source, default `delta`; BV decision pending):
+  `delta` upserts and removes only rows marked deleted (`deleted` column);
+  `full` also removes the source's records of that folder the export no longer
+  lists, refused (409) when that is more than `full_max_delete` (default 50 %)
+  unless `force`. Records are not listed for reprocessing.
+- **Access.** A record is visible to a caller who may read the folder (its
+  flattened ACL now; the adapter's ACL push and resync keep it current, and
+  deleting the folder removes the records) AND whom the record's own rule
+  admits: in `bv`, `group:bv-intezet-<institution code>` or `group:bv-orszagos`
+  (D23 open: institution-level is the narrower assumption). An unknown code
+  admits only the national group. The file itself is not stored on a drive or
+  in the RAG. Free-text fields go to the RAG with the intelligence log and ODIN
+  (later step, after the informant protection).
+- **Contacts without an ID.** A source entity with `person_key` gets a hidden,
+  salted key (HMAC-SHA256, salt in `GRAPH_PERSON_KEY_SALT_FILE`, created by the
+  install kit) of name, birth place, birth date and mother's name, normalised;
+  any field missing gives no key. Resolution treats it as a strong key like a
+  registry number: the brothers' mother in two contact records is one person,
+  and the investigation reaches one brother from the other through her. The key
+  is never shown (not in node attributes, queries, exports) and cannot be made
+  from a name. `key_only` (contacts) links only through such a key: name + birth
+  date or mother's name, and the same name + a shared phone, e-mail or address,
+  are review pairs at most (shown only to a caller who may read the record they
+  rest on); the name alone gives neither, a conflicting birth date or mother's
+  name never; name-based joining (`same_name`) leaves them alone. Without a salt
+  no contact is linked automatically.
 
 #### Planner: contact chains as one investigation
 

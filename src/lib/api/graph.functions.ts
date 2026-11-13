@@ -241,6 +241,7 @@ export const graphApi = {
       auditId?: string;
       lang: string;
       deliver: "download" | "drive";
+      sharedContact?: boolean;
     },
   ) =>
     adapterGraph<GraphInvestigationExport>(
@@ -252,6 +253,7 @@ export const graphApi = {
         audit_id: req.auditId,
         lang: req.lang,
         deliver: req.deliver,
+        shared_contact: req.sharedContact || undefined,
       },
       drive,
     ),
@@ -259,7 +261,13 @@ export const graphApi = {
    *  within the caller's current access, in the neighbourhood shape. */
   investigationGraph: (
     drive: string,
-    req: { start: string; levels: number; drives?: string[]; auditId?: string },
+    req: {
+      start: string;
+      levels: number;
+      drives?: string[];
+      auditId?: string;
+      sharedContact?: boolean;
+    },
   ) =>
     adapterGraph<GraphInvestigationView>(
       "investigation/graph",
@@ -268,6 +276,7 @@ export const graphApi = {
         levels: req.levels,
         drives: req.drives?.length ? req.drives : undefined,
         audit_id: req.auditId,
+        shared_contact: req.sharedContact || undefined,
       },
       drive,
     ),
@@ -276,7 +285,14 @@ export const graphApi = {
    *  the result comes back as a finished background task (an answer card). */
   investigationSummaries: (
     drive: string,
-    req: { start: string; levels: number; drives?: string[]; auditId?: string; lang: string },
+    req: {
+      start: string;
+      levels: number;
+      drives?: string[];
+      auditId?: string;
+      lang: string;
+      sharedContact?: boolean;
+    },
   ) =>
     adapterGraph<GraphInvestigationSummaries>(
       "investigation/summaries",
@@ -286,6 +302,7 @@ export const graphApi = {
         drives: req.drives?.length ? req.drives : undefined,
         audit_id: req.auditId,
         lang: req.lang,
+        shared_contact: req.sharedContact || undefined,
       },
       drive,
     ),

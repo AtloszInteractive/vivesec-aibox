@@ -242,11 +242,22 @@ def parse_request(payload):
     return start, levels
 
 
-def investigate(run, start, levels):
+def parse_shared_contact(payload):
+    """Whether the request's investigation took the shared-contact step (E28)."""
+    value = payload.get("shared_contact", False)
+    if not isinstance(value, bool):
+        raise ValueError("shared_contact must be true or false")
+    return value
+
+
+def investigate(run, start, levels, shared_contact=False):
     """The investigation of one starting point within the run's scope and
     access, or None when nothing of it is visible. Raises orchestrator.Clarify
     when the start fits several different entities."""
-    run.run([{"tool": "investigate", "args": {"start": start, "levels": levels}}])
+    args = {"start": start, "levels": levels}
+    if shared_contact:
+        args["shared_contact"] = True
+    run.run([{"tool": "investigate", "args": args}])
     return run.investigations[0] if run.investigations else None
 
 

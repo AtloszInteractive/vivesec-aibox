@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import re
 
-from model import (CORE_TYPES, METHODS, SUBTYPE_ATTR, AttributeValue, Document, Entity, Evidence,
-                   Mention, Relation)
+from model import (CORE_TYPES, HIDDEN_ATTRS, METHODS, SUBTYPE_ATTR, AttributeValue, Document,
+                   Entity, Evidence, Mention, Relation)
 from visibility import parse_doc_acl
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -72,7 +72,9 @@ def _list(raw, name):
     return raw
 
 
-def parse_document_payload(body: dict, profile: dict):
+def parse_document_payload(body: dict, profile: dict, allow_hidden: bool = False):
+    """allow_hidden: the payload may carry the internal record attributes
+    (person_key, key_only); only the structured importer builds such payloads."""
     d = body.get("document")
     if not isinstance(d, dict):
         raise IngestError("document is required")
@@ -107,8 +109,9 @@ def parse_document_payload(body: dict, profile: dict):
         for j, a in enumerate(_list(e.get("attributes"), where + ".attributes")):
             if not isinstance(a, dict):
                 raise IngestError("%s.attributes[%d] must be an object" % (where, j))
-            if a.get("name") == SUBTYPE_ATTR:
-                raise IngestError("%s.attributes[%d]: %r is reserved" % (where, j, SUBTYPE_ATTR))
+            if a.get("name") == SUBTYPE_ATTR or (a.get("name") in HIDDEN_ATTRS
+                                                 and not allow_hidden):
+                raise IngestError("%s.attributes[%d]: %r is reserved" % (where, j, a.get("name")))
             attrs.append(AttributeValue(_str(a.get("name"), "attribute name", limit=100),
                                         _str(a.get("value"), "attribute value"), doc.doc_id,
                                         _page(a.get("page"), "attribute page")))

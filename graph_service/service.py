@@ -12,6 +12,8 @@ request and sends it with every query (corpus_ids + access).
   extract  POST /ingest/document (bytes, extracted in the background)  /ingest/status
            POST /review/list  /review/decide (possible same-person pairs, one or many)
            POST /review/history  /review/undo (decisions, newest first; take one back)
+  import   POST /import/sources  /import/records (a periodic CSV/XLSX export of a
+           structured source, by the profile's mapping)  /import/status
   queries  POST /query/find  /query/mentioned  /query/entity  /query/path  /query/common
            POST /query/copresence  /query/shared  /query/timeline
            POST /query/neighborhood  /query/communities  /query/ranking
@@ -25,6 +27,8 @@ GRAPH_STORE ("memory" for tests and demos, "neo4j" for persistent use with
 GRAPH_NEO4J_URI / _USER / _DATABASE and the password in GRAPH_NEO4J_PASSWORD_FILE).
 Extraction: GRAPH_INGEST (on), GRAPH_INGEST_QUEUE_MB (512), GRAPH_REVIEW_PATH,
 and the model / OCR settings GRAPH_LLM_* / GRAPH_OCR* (llm_client, text_source).
+Structured imports: GRAPH_PERSON_KEY_SALT_FILE (the salt of the person key; unset:
+no key, so no contact record is linked automatically).
 """
 from __future__ import annotations
 
@@ -45,7 +49,8 @@ import namesakes  # noqa: E402
 import queries  # noqa: E402
 from graph_store import MemoryGraphStore, StoreError  # noqa: E402
 from ingest import IngestError, parse_document_payload  # noqa: E402
-from model import CORE_TYPES  # noqa: E402
+from model import CORE_TYPES, RECORD_KIND  # noqa: E402
+from structured_import import RECORDS_DIR  # noqa: E402
 from visibility import Scope, ScopeError, parse_doc_acl  # noqa: E402
 
 HOST = os.environ.get("GRAPH_HOST", "127.0.0.1")
@@ -133,6 +138,8 @@ def documents_by_profile(state: State, body: dict) -> dict:
         docs = list(store.documents.values())
     counts, stale, paths = {}, [], []
     for doc in docs:
+        if doc.kind == RECORD_KIND:
+            continue  # imported records are not extracted: never stale, nothing to fetch
         if not scope.allows(doc):
             continue
         if prefix and doc.source_path != prefix and not doc.source_path.startswith(prefix + "/"):
@@ -253,9 +260,12 @@ def _investigate(state: State, view, body: dict) -> dict:
     levels = _int(body, "levels", 2, 1, queries.MAX_LEVELS)
     branch = _int(body, "branch", 10, 1, queries.MAX_BRANCH)
     limit = _int(body, "limit", 200, 1, queries.MAX_RESULTS)
+    shared = body.get("shared_contact", False)
+    if not isinstance(shared, bool):
+        raise HttpError(400, "shared_contact must be true or false")
     view, joined = _joined(state, view, body)
     out = queries.investigate(view, seeds, relations, via, levels, branch, limit,
-                              state.holding_types())
+                              state.holding_types(), shared)
     if joined is not None:
         out["namesakes"] = {"ambiguous": len(joined.ambiguous)}
     return out
@@ -349,6 +359,71 @@ def _worker(state: State):
     return state.worker
 
 
+_AS_OF = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def import_sources(state: State) -> dict:
+    """The profile's structured sources, as an importer needs to know them."""
+    return {"sources": [{"id": s["id"], "label": s["label"], "title": s["title"],
+                         "mode": s["mode"], "record_id": s["record_id"],
+                         "columns": sorted({c for e in s["entities"]
+                                            for c in [e["name"], *e["attributes"].values()] if c}
+                                           | {c for r in s["relations"]
+                                              for c in [r["start"], r["end"], *r["label"]] if c}
+                                           | set(s["record_id"])),
+                         "acl": bool(s.get("acl"))}
+                        for s in state.profile.get("structured_sources") or []]}
+
+
+def _import_records(state: State, worker, body: dict) -> dict:
+    """A periodic export into the record documents of one structured source. The
+    adapter decides where they go (corpus, folder) and the folder's access rule;
+    the record's own rule comes from the profile."""
+    import structured_import
+    from ingest_jobs import QueueFull
+
+    source = _id(body, "source")
+    if source not in {s["id"] for s in state.profile.get("structured_sources") or []}:
+        raise HttpError(400, "the profile has no structured source %r" % source)
+    as_of = body.get("as_of")
+    if not isinstance(as_of, str) or not _AS_OF.match(as_of):
+        raise HttpError(400, "as_of must be the export's date (YYYY-MM-DD)")
+    folder = _id(body, "folder").rstrip("/")
+    if not folder.startswith("/") or any(p in ("..", structured_import.RECORDS_DIR)
+                                         for p in folder.split("/")):
+        raise HttpError(400, "folder must be an absolute path without '..' or %s"
+                        % structured_import.RECORDS_DIR)
+    mode = body.get("mode")
+    if mode is not None and mode not in ("delta", "full"):
+        raise HttpError(400, "mode must be delta or full")
+    request = {"source": source, "as_of": as_of, "folder": folder,
+               "corpus_id": _id(body, "corpus_id"), "filename": _id(body, "filename")[:300],
+               "mode": mode, "force": bool(body.get("force", False))}
+    if body.get("acl") is not None:
+        try:
+            parse_doc_acl(body["acl"])
+        except ValueError as e:
+            raise HttpError(400, str(e))
+        request["acl"] = body["acl"]
+    try:
+        raw = base64.b64decode(_id(body, "content_b64"), validate=True)
+    except (binascii.Error, ValueError):
+        raise HttpError(400, "content_b64 is not valid base64")
+    try:
+        job = worker.submit_import(request, raw)
+    except QueueFull as e:
+        raise HttpError(429, str(e))
+    return _import_answer(worker.import_result(job, _int(body, "wait", 60, 0, 300)))
+
+
+def _import_answer(item: dict) -> dict:
+    if item.get("status") == "refused":
+        raise HttpError(409, item.get("error") or "refused")
+    if item.get("status") == "failed":
+        raise HttpError(422, item.get("error") or "import failed")
+    return {"import": item}
+
+
 def handle_extract(state: State, path: str, body: dict) -> dict:
     from ingest_jobs import QueueFull
 
@@ -376,6 +451,13 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
             raise HttpError(429, str(e))
     if path == "/ingest/status":
         return worker.status()
+    if path == "/import/records":
+        return _import_records(state, worker, body)
+    if path == "/import/status":
+        item = worker.import_result(_id(body, "job"), _int(body, "wait", 0, 0, 300))
+        if item is None:
+            raise HttpError(404, "no such import")
+        return _import_answer(item)
     try:
         scope = Scope.parse(body)
     except ScopeError as e:
@@ -446,11 +528,29 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
     raise HttpError(404, "not found")
 
 
+def _record_folders(state: State, corpus_id: str) -> dict[str, list[str]] | None:
+    """{folder: [record doc ids]} of one corpus, from one pass over the memory
+    store or the Neo4j mirror (an ACL push lists thousands of paths); None
+    without a mirror (then each path asks the store)."""
+    store = getattr(state.store, "mirror", state.store)
+    if not hasattr(store, "_by_path"):
+        return None
+    marker = "/" + RECORDS_DIR + "/"
+    out: dict[str, list[str]] = {}
+    with store._lock:
+        for (c, path), doc_id in store._by_path.items():
+            if c == corpus_id and marker in path:
+                out.setdefault(path.split(marker, 1)[0], []).append(doc_id)
+    return out
+
+
 def handle_post(state: State, path: str, body: dict) -> dict:
     if path.startswith("/query/"):
         return run_query(state, path[len("/query/"):], body)
-    if path.startswith(("/ingest/", "/review/")):
+    if path.startswith(("/ingest/", "/review/", "/import/records", "/import/status")):
         return handle_extract(state, path, body)
+    if path == "/import/sources":
+        return import_sources(state)
     if path == "/documents/profile":
         return documents_by_profile(state, body)
     if path == "/profile/get":
@@ -508,10 +608,17 @@ def handle_post(state: State, path: str, body: dict) -> dict:
             except ValueError as e:
                 raise HttpError(400, str(e))
         updated = 0
+        records = _record_folders(state, corpus_id)
         for source_path, acl in parsed:
             if state.worker is not None:
                 state.worker.update_acl(corpus_id, source_path, acl)
             for doc_id in state.store.doc_ids_by_path(corpus_id, source_path):
+                updated += bool(state.store.set_acl(doc_id, acl))
+            # Records imported into this folder follow its rule (their own rule stays).
+            folder = source_path.rstrip("/")
+            ids = records.get(folder, ()) if records is not None else \
+                state.store.doc_ids_by_path(corpus_id, folder + "/" + RECORDS_DIR, True, True)
+            for doc_id in ids:
                 updated += bool(state.store.set_acl(doc_id, acl))
         return {"updated": updated}
     if path == "/graph/document/acl":

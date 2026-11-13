@@ -1,13 +1,16 @@
 {
   "id": "bv",
-  "version": 4,
+  "version": 5,
   "name": {"en": "Corrections and law enforcement", "hu": "Büntetés-végrehajtás és rendészet", "da": "Kriminalforsorg og retshåndhævelse", "de": "Justizvollzug und Strafverfolgung"},
   "description": "People, institutions, cells, visits, calls, transfers and incidents. Hungarian identifier formats. Shows connections; it never scores or predicts individuals.",
   "entity_subtypes": [
     {"id": "inmate", "type": "person", "label": {"en": "Inmate", "hu": "Fogvatartott", "da": "Indsat", "de": "Gefangener"}},
     {"id": "visitor", "type": "person", "label": {"en": "Visitor", "hu": "Látogató", "da": "Besøgende", "de": "Besucher"}},
     {"id": "staff", "type": "person", "label": {"en": "Staff member", "hu": "Munkatárs", "da": "Medarbejder", "de": "Mitarbeiter"}},
+    {"id": "contact", "type": "person", "label": {"en": "Approved contact", "hu": "Kapcsolattartó", "da": "Godkendt kontaktperson", "de": "Zugelassene Kontaktperson"}, "structured_only": true},
     {"id": "institution", "type": "place", "label": {"en": "Institution", "hu": "Intézet", "da": "Institution", "de": "Anstalt"}},
+    {"id": "facility", "type": "place", "label": {"en": "Facility (building)", "hu": "Objektum", "da": "Bygning", "de": "Objekt (Gebäude)"}, "structured_only": true},
+    {"id": "unit", "type": "place", "label": {"en": "Unit (wing)", "hu": "Részleg", "da": "Afdeling", "de": "Abteilung"}, "structured_only": true},
     {"id": "cell", "type": "place", "label": {"en": "Cell", "hu": "Zárka", "da": "Celle", "de": "Haftraum"}, "within": ["institution"]},
     {"id": "address", "type": "place", "label": {"en": "Address", "hu": "Cím", "da": "Adresse", "de": "Adresse"}},
     {"id": "phone", "type": "identifier", "label": {"en": "Phone number", "hu": "Telefonszám", "da": "Telefonnummer", "de": "Telefonnummer"}},
@@ -36,6 +39,7 @@
     {"id": "INVOLVED_IN", "label": {"en": "Involved in", "hu": "Érintett", "da": "Involveret i", "de": "Beteiligt an"}, "from": ["person"], "to": ["event"], "presence": true, "synonyms": ["érintett", "jelen volt", "részt vett"]},
     {"id": "WORKS_FOR", "label": {"en": "Works for", "hu": "Alkalmazottja", "da": "Ansat hos", "de": "Arbeitet für"}, "from": ["person"], "to": ["organization"], "synonyms": ["alkalmazott", "munkakör", "dolgozik"]},
     {"id": "RELATIVE_OF", "label": {"en": "Relative of", "hu": "Rokona", "da": "Slægtning til", "de": "Verwandt mit"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["testvére", "élettársa", "házastársa", "anyja", "unokatestvére", "nagybátyja", "kapcsolattartó"]},
+    {"id": "CONTACT_OF", "label": {"en": "Approved contact of", "hu": "Kapcsolattartója", "da": "Godkendt kontakt for", "de": "Zugelassene Kontaktperson von"}, "from": ["person"], "to": ["person"], "from_subtypes": ["contact"], "to_subtypes": ["inmate"], "synonyms": ["kapcsolattartó", "kapcsolattartója", "engedélyezett kapcsolattartó", "kapcsolattartás"], "structured_only": true},
     {"id": "MET", "label": {"en": "Met", "hu": "Találkozott", "da": "Mødtes med", "de": "Traf"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["találkozott", "egyeztetett"]},
     {"id": "USES", "holding": true, "label": {"en": "Uses", "hu": "Használja", "da": "Bruger", "de": "Nutzt"}, "from": ["person", "organization"], "to": ["identifier", "object"], "synonyms": ["használja", "üzemben tartó", "használó", "birtokában", "gépjárművel érkezett"]},
     {"id": "OWNS", "holding": true, "label": {"en": "Owns", "hu": "Tulajdonosa", "da": "Ejer", "de": "Besitzt"}, "from": ["person", "organization"], "to": ["identifier", "object", "place"], "synonyms": ["céges gépjármű", "tulajdonában"]},
@@ -48,5 +52,49 @@
     "organization": {"strong_keys": [], "match_fields": ["name", "address"], "auto_merge": 0.95, "review": 0.75},
     "place": {"strong_keys": [], "match_fields": ["name"], "auto_merge": 0.97, "review": 0.8}
   },
-  "cooccurrence": {"window": "sentence", "max_entities": 12}
+  "cooccurrence": {"window": "sentence", "max_entities": 12},
+  "structured_sources": [
+    {"id": "fonix_base", "label": {"en": "FŐNIX base data", "hu": "FŐNIX alapadatok", "da": "FŐNIX stamdata", "de": "FŐNIX-Stammdaten"}, "title": "FŐNIX alapadatok",
+     "record_id": "Rekordazonosító", "mode": "delta", "deleted": {"column": "Törölve", "values": ["igen", "i", "1", "true", "x"]},
+     "codelists": {"intezet": {"01": "Kőhegyi Országos Büntetés-végrehajtási Intézet", "02": "Nyírvölgyi Fegyház és Börtön", "03": "Szőlőhegyi Büntetés-végrehajtási Intézet"}},
+     "entities": [
+       {"ref": "inmate", "type": "person", "subtype": "inmate", "name": "Név", "person_key": true,
+        "attributes": {"registry_number": "Nyilvántartási szám", "birth_place": "Születési hely", "birth_date": "Születési idő", "mother_name": "Anyja neve"}}
+     ],
+     "acl": {"column": "Intézet kód", "pattern": "group:bv-intezet-{value}", "always": ["group:bv-orszagos"]}},
+    {"id": "placement", "label": {"en": "Placement records", "hu": "Elhelyezési kimutatás", "da": "Anbringelser", "de": "Unterbringungsnachweis"}, "title": "Elhelyezési kimutatás",
+     "record_id": "Rekordazonosító", "mode": "delta", "deleted": {"column": "Törölve", "values": ["igen", "i", "1", "true", "x"]},
+     "codelists": {
+       "intezet": {"01": "Kőhegyi Országos Büntetés-végrehajtási Intézet", "02": "Nyírvölgyi Fegyház és Börtön", "03": "Szőlőhegyi Büntetés-végrehajtási Intézet"},
+       "indok": {"BEF": "befogadás", "ATSZ": "átszállítás", "ATH": "áthelyezés intézeten belül", "EGESZ": "egészségügyi ok", "FEGY": "fegyelmi ok", "SZAB": "szabadulás", "BIZT": "biztonsági ok"}},
+     "entities": [
+       {"ref": "inmate", "type": "person", "subtype": "inmate", "name": "Fogvatartott neve", "attributes": {"registry_number": "Nyilvántartási szám"}},
+       {"ref": "institution", "type": "place", "subtype": "institution", "name": "Intézet kód", "codelist": "intezet"},
+       {"ref": "facility", "type": "place", "subtype": "facility", "name": "Objektum", "within": "institution"},
+       {"ref": "unit", "type": "place", "subtype": "unit", "name": "Részleg", "within": "facility"},
+       {"ref": "cell", "type": "place", "subtype": "cell", "name": "Zárka", "within": "unit"}
+     ],
+     "relations": [
+       {"type": "PLACED_IN", "from": "inmate", "to": "cell", "start": "Elhelyezés kezdete", "end": "Elhelyezés vége", "label": ["Behelyezés indoka", "Kihelyezés indoka"], "label_codelist": "indok"}
+     ],
+     "acl": {"column": "Intézet kód", "pattern": "group:bv-intezet-{value}", "always": ["group:bv-orszagos"]}},
+    {"id": "contacts", "label": {"en": "Approved contacts", "hu": "Kapcsolattartói lista", "da": "Godkendte kontaktpersoner", "de": "Zugelassene Kontaktpersonen"}, "title": "Kapcsolattartói lista",
+     "record_id": "Rekordazonosító", "mode": "delta", "deleted": {"column": "Törölve", "values": ["igen", "i", "1", "true", "x"]},
+     "codelists": {"kapcsolat": {"ANYA": "anyja", "APA": "apja", "TESTV": "testvére", "HAZT": "házastársa", "ELT": "élettársa", "GYERM": "gyermeke", "ROKON": "egyéb rokon", "ISM": "ismerős", "VED": "védő"}},
+     "entities": [
+       {"ref": "inmate", "type": "person", "subtype": "inmate", "name": "Fogvatartott neve", "attributes": {"registry_number": "Fogvatartott nyilvántartási száma"}},
+       {"ref": "contact", "type": "person", "subtype": "contact", "name": "Kapcsolattartó neve", "person_key": true, "key_only": true,
+        "attributes": {"birth_place": "Születési hely", "birth_date": "Születési idő", "mother_name": "Anyja neve"}},
+       {"ref": "phone", "type": "identifier", "subtype": "phone", "name": "Telefonszám"},
+       {"ref": "email", "type": "identifier", "subtype": "email", "name": "E-mail"},
+       {"ref": "address", "type": "place", "subtype": "address", "name": "Lakcím"}
+     ],
+     "relations": [
+       {"type": "CONTACT_OF", "from": "contact", "to": "inmate", "start": "Engedély kezdete", "end": "Engedély vége", "label": "Kapcsolat jellege", "label_codelist": "kapcsolat"},
+       {"type": "USES", "from": "contact", "to": "phone"},
+       {"type": "USES", "from": "contact", "to": "email"},
+       {"type": "RESIDES_AT", "from": "contact", "to": "address"}
+     ],
+     "acl": {"column": "Intézet kód", "pattern": "group:bv-intezet-{value}", "always": ["group:bv-orszagos"]}}
+  ]
 }

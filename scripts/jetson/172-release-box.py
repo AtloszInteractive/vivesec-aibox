@@ -7,7 +7,11 @@
 verify asks a general question in the hybrid profile and expects an answer
 without document citations; the model now and then cites a related passage
 anyway, so it asks up to 3 times (a fresh user each time) and passes on the
-first uncited answer.
+first uncited answer. Where the box requires a purpose, the question carries
+the fields it asks for: a legal basis, and/or a case reference taken from
+RELEASE_VERIFY_CASE_REF or else formed from the release time to match
+ADAPTER_CASE_REF_PATTERN (e.g. 2026/1113/2310; verify stops naming the
+variable when no form matches).
 
 prepare adds Tesseract (hun, deu, dan; eng and osd come with it) to a RAG image
 that lacks it (E10b OCR), which needs the package mirrors once, and prints the
@@ -397,16 +401,39 @@ def hybrid_probe(ask, attempts=HYBRID_ATTEMPTS):
                                     ensure_ascii=False)[:800])
 
 
-def verification_purpose(stage, manifest):
+def verification_purpose(stage, manifest, now=None):
     """The purpose the verification questions carry where the box requires one
-    (concept 5.2): the first allowed legal basis, else a named verification. The
+    (concept 5.2): the fields the box asks for (status app.purpose.fields). The
+    legal basis is the first allowed one, else a named verification; the case
+    reference is RELEASE_VERIFY_CASE_REF, else the first of a few release-stamp
+    forms that matches ADAPTER_CASE_REF_PATTERN (BV: 2026/1113/2310). The
     queries are then in the query log like any other."""
     status = json.loads((Path(stage) / "status.json").read_text())
     config = (status.get("app") or {}).get("purpose") or {}
     if config.get("mode", "off") == "off":
         return {}
-    bases = config.get("legal_bases") or []
-    return {"legal_basis": bases[0] if bases else "release verification " + manifest["stamp"]}
+    fields = config.get("fields") or ["case_ref", "legal_basis"]
+    purpose = {}
+    if "legal_basis" in fields:
+        bases = config.get("legal_bases") or []
+        purpose["legal_basis"] = bases[0] if bases else "release verification " + manifest["stamp"]
+    if "case_ref" in fields and (config.get("require") == "all" or "legal_basis" not in purpose):
+        purpose["case_ref"] = verification_case_ref(config.get("case_ref_pattern"), manifest["stamp"], now)
+    return purpose
+
+
+def verification_case_ref(pattern, stamp, now=None):
+    explicit = os.environ.get("RELEASE_VERIFY_CASE_REF", "").strip()
+    if explicit:
+        return explicit
+    candidates = ["release-" + stamp, time.strftime("%Y/%m%d/%H%M", time.localtime(now)), "REL-" + stamp]
+    if not pattern:
+        return candidates[0]
+    for candidate in candidates:
+        if re.fullmatch(pattern, candidate):
+            return candidate
+    raise AssertionError("No verification case reference matches ADAPTER_CASE_REF_PATTERN; "
+                         "set RELEASE_VERIFY_CASE_REF")
 
 
 def verification_headers(adapter_env, user, drive):

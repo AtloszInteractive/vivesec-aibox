@@ -16,6 +16,16 @@ A score at or above auto_merge links to the existing person. A score between
 review and auto_merge creates a new person and queues the pair for a human
 decision ("may be the same"), so a wrong automatic merge cannot create a false
 connection.
+
+Structured records (structured_import.py) add two rules:
+  person_key  the salted key of name, birth place, birth date and mother's name
+              (person_key.py) is a strong key like a registry number: the same
+              key links the records;
+  key_only    a record marked so (a contact: no ID number) links to anyone only
+              through a strong key. Name + birth date or mother's name, and the
+              same name + a shared phone, e-mail or address, only queue a review
+              pair; the name alone gives neither. Both sides count: an extracted
+              person is not merged into a key-only record without a key either.
 """
 from __future__ import annotations
 
@@ -23,10 +33,20 @@ import hashlib
 import threading
 
 from extraction import LocalEntity, fold
+from model import KEY_ONLY_ATTR, PERSON_KEY_ATTR
 
 # Numbers that name one person: a personal ID number, or the person's number in an
-# institution's own register (an inmate registry number).
-ID_ATTRS = ("id_number", "registry_number")
+# institution's own register (an inmate registry number); and the structured
+# records' person key.
+ID_ATTRS = ("id_number", "registry_number", PERSON_KEY_ATTR)
+
+
+def _key_label(key: str) -> str:
+    """"same registry_number" -- the person key only as what it stands for."""
+    kind, name = key.split(":")[:2]
+    if kind != "attr":
+        return "same " + kind
+    return "same personal data" if name == PERSON_KEY_ATTR else "same " + name
 
 
 def _attr_keys(attrs: dict) -> set[str]:
@@ -65,10 +85,15 @@ class Resolver:
         self.rules = profile.get("resolution", {})
         self.holding = {r["id"] for r in profile["relation_types"] if r.get("holding")}
         self.lock = threading.Lock()
-        self.people: dict[str, dict] = {}  # id -> {"names", "attrs", "keys"}
+        self.people: dict[str, dict] = {}  # id -> {"names", "attrs", "keys", "contacts", ...}
         self.by_full: dict[str, set[str]] = {}
         self.by_initial: dict[str, set[str]] = {}
         self.by_key: dict[str, set[str]] = {}
+        # Held phone, e-mail and address ids -> people (key-only review pairs).
+        self.by_contact: dict[str, set[str]] = {}
+        # Folded person -> the person it was merged into (a human decision): a
+        # document read again resolves its earlier person to the survivor.
+        self.merged: dict[str, str] = {}
         self.review: list[dict] = []
         self._pending: set[str] = set()
         self._pairs: set[tuple[str, str]] = set()
@@ -83,35 +108,66 @@ class Resolver:
         rule = self.rules.get(type_) or {}
         return rule.get("auto_merge", 0.95), rule.get("review", 0.7)
 
-    def remember_person(self, pid: str, names, attrs: dict, keys=()) -> None:
-        p = self.people.setdefault(pid, {"names": set(), "attrs": {}, "keys": set()})
+    @staticmethod
+    def _blank() -> dict:
+        return {"names": set(), "attrs": {}, "keys": set(), "contacts": set(), "key_only": False,
+                # (attribute, folded value) / contact id -> the documents stating it: a
+                # key-only review pair names them, and is shown only where one is visible.
+                "attr_docs": {}, "contact_docs": {}}
+
+    def remember_person(self, pid: str, names, attrs: dict, keys=(), contacts=(),
+                        key_only: bool = False, doc_id: str = "", contact_docs=None) -> None:
+        p = self.people.setdefault(pid, self._blank())
         for k in set(keys) | _attr_keys(attrs):
             p["keys"].add(k)
             self.by_key.setdefault(k, set()).add(pid)
+        for c in contacts:
+            p["contacts"].add(c)
+            self.by_contact.setdefault(c, set()).add(pid)
+            docs = (contact_docs or {}).get(c) or ({doc_id} if doc_id else set())
+            p["contact_docs"].setdefault(c, set()).update(docs)
+        p["key_only"] = p["key_only"] or bool(key_only)
         for n in names:
             p["names"].add(n)
             full, initial = _person_keys(n)
             self.by_full.setdefault(full, set()).add(pid)
             self.by_initial.setdefault(initial, set()).add(pid)
         for k, v in attrs.items():
-            p["attrs"].setdefault(k, set()).add(fold(v))
+            if k != KEY_ONLY_ATTR:
+                p["attrs"].setdefault(k, set()).add(fold(v))
+                if doc_id:
+                    p["attr_docs"].setdefault((k, fold(v)), set()).add(doc_id)
+
+    def survivor(self, pid: str) -> str:
+        """The person `pid` was (over any number of merges) folded into."""
+        seen = set()
+        while pid in self.merged and pid not in seen:
+            seen.add(pid)
+            pid = self.merged[pid]
+        return pid
 
     def merge(self, keep: str, drop: str) -> None:
         """Follow a store merge: later documents resolve to `keep`, never to `drop`."""
         with self.lock:
+            self.merged[drop] = keep
             gone = self.people.pop(drop, None)
             if not gone:
                 return
-            for index in (self.by_full, self.by_initial, self.by_key):
+            for index in (self.by_full, self.by_initial, self.by_key, self.by_contact):
                 for ids in index.values():
                     if drop in ids:
                         ids.discard(drop)
                         ids.add(keep)
-            p = self.people.setdefault(keep, {"names": set(), "attrs": {}, "keys": set()})
+            p = self.people.setdefault(keep, self._blank())
             p["names"] |= gone["names"]
             p["keys"] |= gone["keys"]
+            p["contacts"] |= gone["contacts"]
+            p["key_only"] = p["key_only"] or gone["key_only"]
             for k, v in gone["attrs"].items():
                 p["attrs"].setdefault(k, set()).update(v)
+            for field in ("attr_docs", "contact_docs"):
+                for k, docs in gone[field].items():
+                    p[field].setdefault(k, set()).update(docs)
 
     def rebuild(self, store) -> None:
         """Re-read every person from the store (after an undone merge split one)."""
@@ -120,6 +176,8 @@ class Resolver:
             self.by_full.clear()
             self.by_initial.clear()
             self.by_key.clear()
+            self.by_contact.clear()
+            self.merged.clear()
             with store._lock:
                 self.load_from_store(store)
 
@@ -127,21 +185,38 @@ class Resolver:
         """Rebuild the person index from an existing (mirror) memory store."""
         strong = self.strong_key_subtypes()
         keys: dict[str, set[str]] = {}
+        contacts: dict[str, dict[str, set[str]]] = {}
         for r in store.relations.values():
+            if r.type in self.holding and r.a.startswith("person:") \
+                    and not r.b.startswith("person:"):
+                contacts.setdefault(r.a, {}).setdefault(r.b, set()).update(
+                    ev.doc_id for ev in r.evidence)
             if r.type in self.holding and r.a.startswith("person:") and r.b.startswith("id:"):
                 _, sub, value = r.b.split(":", 2)
                 if sub in strong:
                     keys.setdefault(r.a, set()).add("%s:%s" % (sub, value))
         for e in store.entities.values():
+            if e.type == "person" and e.status == "merged" and e.merged_into:
+                self.merged[e.id] = e.merged_into
             if e.type != "person" or e.status != "active":
                 continue
             names = {store.mentions[m].text for m in store._mentions_of.get(e.id, ())}
             attrs = {}
             for a in e.attributes:
                 attrs.setdefault(a.name, a.value)
-            self.remember_person(e.id, names, attrs, keys.get(e.id, ()))
+            # A person may hold the keys of several records (a merge): all count.
+            own = {"attr:%s:%s" % (PERSON_KEY_ATTR, fold(a.value)) for a in e.attributes
+                   if a.name == PERSON_KEY_ATTR and a.value}
+            held = contacts.get(e.id, {})
+            self.remember_person(e.id, names, attrs, keys.get(e.id, set()) | own, held,
+                                 any(a.name == KEY_ONLY_ATTR for a in e.attributes),
+                                 contact_docs=held)
+            p = self.people[e.id]
+            for a in e.attributes:
+                p["attr_docs"].setdefault((a.name, fold(a.value)), set()).add(a.doc_id)
 
-    def _score(self, ent: LocalEntity, pid: str, keys=frozenset()) -> tuple[float, str]:
+    def _score(self, ent: LocalEntity, pid: str, keys=frozenset(), contacts=frozenset(),
+               key_only: bool = False) -> tuple[float, str]:
         other = self.people[pid]
         mine = {k: fold(v) for k, (v, _) in ent.attrs.items()}
         for key in ("id_number", "registry_number", "birth_date", "mother_name"):
@@ -165,21 +240,35 @@ class Resolver:
             # The same ID or registry number, or the same held ID card, links the same
             # person; under another name it is only a lead for a human (a typo in the
             # name or the number, or a borrowed document).
-            kind, name = shared[0].split(":")[:2]
-            label = "same " + (name if kind == "attr" else kind)
+            label = _key_label(shared[0])
             return (1.0, label) if name_score >= 0.6 else (0.8, label + ", different name")
         if not name_score:
             return 0.0, why
+        if key_only or other["key_only"]:
+            # A key-only record: what would otherwise merge is a review pair at most.
+            auto, review = self._thresholds("person")
+            if review >= auto:
+                return 0.0, why
+            if "birth_date" in mine and mine["birth_date"] in other["attrs"].get("birth_date", ()):
+                return review, why + " + birth date"
+            if "mother_name" in mine and mine["mother_name"] in other["attrs"].get("mother_name",
+                                                                                   ()):
+                return review, why + " + mother's name"
+            if set(contacts) & other["contacts"]:
+                return review, why + " + shared contact data"
+            return 0.0, why + " only"
         if "birth_date" in mine and mine["birth_date"] in other["attrs"].get("birth_date", ()):
             return (0.98 if name_score >= 0.75 else 0.95), why + " + birth date"
         if "mother_name" in mine and mine["mother_name"] in other["attrs"].get("mother_name", ()):
             return (0.97 if name_score >= 0.75 else 0.93), why + " + mother's name"
         return name_score, why
 
-    def _candidates(self, ent: LocalEntity, keys=frozenset()) -> set[str]:
+    def _candidates(self, ent: LocalEntity, keys=frozenset(), contacts=frozenset()) -> set[str]:
         out = set()
         for k in set(keys) | _attr_keys({k: v for k, (v, _) in ent.attrs.items()}):
             out |= self.by_key.get(k, set())
+        for c in contacts:
+            out |= self.by_contact.get(c, set())
         for n in ent.names:
             full, initial = _person_keys(n)
             out |= self.by_full.get(full, set()) | self.by_initial.get(initial, set())
@@ -188,31 +277,48 @@ class Resolver:
                     out |= self.by_full[key]
         return out
 
-    def resolve(self, doc_id: str, ent: LocalEntity, keys=frozenset()) -> str:
-        """Global id of a document entity; keys: "subtype:value" strong identifiers it holds."""
+    def resolve(self, doc_id: str, ent: LocalEntity, keys=frozenset(), contacts=frozenset(),
+                key_only: bool = False, new_id: str = "") -> str:
+        """Global id of a document entity; keys: "subtype:value" strong identifiers it
+        holds; contacts: ids of the phones, e-mails and addresses it holds (only
+        key-only pairs use them); new_id: the id a new person gets (default: from
+        the document and the entity's ref)."""
         if ent.type == "identifier":
             return "id:%s:%s" % (ent.subtype or "other", ent.value or fold(ent.names[0]))
         if ent.type in ("place", "organization", "object"):
             return "%s:%s" % (ent.type, min(fold(n) for n in ent.names))
         if ent.type == "event":
             return "event:%s:%s" % (doc_id, ent.ref)
-        new_id = "person:" + hashlib.sha1(("%s\0%s" % (doc_id, ent.ref)).encode()).hexdigest()[:16]
+        new_id = new_id or "person:" + hashlib.sha1(
+            ("%s\0%s" % (doc_id, ent.ref)).encode()).hexdigest()[:16]
         auto, review = self._thresholds("person")
         attrs = {k: v for k, (v, _) in ent.attrs.items()}
+        key_only = key_only or KEY_ONLY_ATTR in attrs
+        contacts = frozenset(contacts)
         with self.lock:
             # A person this document named before keeps its id (unless the
             # document now says something that conflicts with it).
             for name in ent.names:
                 target = self.sticky.get(fold(name))
-                if target in self.people and \
-                        not self._score(ent, target, keys)[1].startswith("conflicting"):
-                    self.remember_person(target, ent.names, attrs, keys)
+                if target not in self.people:
+                    continue
+                score, why = self._score(ent, target, keys, contacts, key_only)
+                # A key-only record keeps a person only while a strong key holds.
+                if not why.startswith("conflicting") and (not key_only or score >= auto):
+                    self.remember_person(target, ent.names, attrs, keys, contacts, key_only, doc_id)
                     return target
-            scored = sorted(((*self._score(ent, pid, keys), pid)
-                             for pid in self._candidates(ent, keys) - {new_id}), reverse=True)
+            # The person this record made before was merged by a human: stay merged.
+            target = self.survivor(new_id)
+            if target != new_id and target in self.people and not self._score(
+                    ent, target, keys, contacts, key_only)[1].startswith("conflicting"):
+                self.remember_person(target, ent.names, attrs, keys, contacts, key_only, doc_id)
+                return target
+            scored = sorted(((*self._score(ent, pid, keys, contacts, key_only), pid)
+                             for pid in self._candidates(ent, keys, contacts) - {new_id}),
+                            reverse=True)
             if scored and scored[0][0] >= auto:
                 target = scored[0][2]
-                self.remember_person(target, ent.names, attrs, keys)
+                self.remember_person(target, ent.names, attrs, keys, contacts, key_only, doc_id)
                 return target
             # Review pairs go to the best-scoring earlier people, and to people that
             # are themselves waiting for review only when nobody else fits: one
@@ -230,9 +336,23 @@ class Resolver:
                 if score == best and (new_id, pid) not in self._pairs \
                         and (pid, new_id) not in self._pairs:
                     self._pairs.add((new_id, pid))
-                    self.review.append({"a": new_id, "b": pid, "score": score, "reason": why,
-                                        "doc_id": doc_id, "names": sorted(ent.names)})
+                    item = {"a": new_id, "b": pid, "score": score, "reason": why,
+                            "doc_id": doc_id, "names": sorted(ent.names)}
+                    if key_only or self.people[pid]["key_only"]:
+                        item["basis"] = self._basis(ent, pid, contacts, why)
+                    self.review.append(item)
                     self._pending.add(new_id)
                     self._pending_n += 1
-            self.remember_person(new_id, ent.names, attrs, keys)
+            self.remember_person(new_id, ent.names, attrs, keys, contacts, key_only, doc_id)
             return new_id
+
+    def _basis(self, ent: LocalEntity, pid: str, contacts, why: str) -> list[str]:
+        """The documents of `pid` that state what a key-only pair matched on: the
+        pair is shown only to a caller who may read one of them."""
+        other = self.people[pid]
+        if why.endswith("shared contact data"):
+            return sorted({d for c in set(contacts) & other["contacts"]
+                           for d in other["contact_docs"].get(c, ())})
+        name = "birth_date" if why.endswith("birth date") else "mother_name"
+        value = fold(ent.attrs[name][0]) if name in ent.attrs else ""
+        return sorted(other["attr_docs"].get((name, value), ()))

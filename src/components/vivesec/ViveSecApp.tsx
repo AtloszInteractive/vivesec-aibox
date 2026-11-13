@@ -5757,6 +5757,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
         levels: inv.levels,
         drives: inv.drives,
         auditId: meta.auditId,
+        sharedContact: inv.sharedContact,
       });
       openGraph(res);
       if (res.rows.length !== inv.rows) setNote(rebuilt(res.rows.length));
@@ -5780,6 +5781,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
         levels: inv.levels,
         drives: inv.drives,
         auditId: meta.auditId,
+        sharedContact: inv.sharedContact,
         lang: lang.toLowerCase(),
       });
       toast.success(tm("Summaries started as a background task."));
@@ -5811,6 +5813,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
         levels: inv.levels,
         drives: inv.drives,
         auditId: meta.auditId,
+        sharedContact: inv.sharedContact,
         lang: lang.toLowerCase(),
         deliver,
       });

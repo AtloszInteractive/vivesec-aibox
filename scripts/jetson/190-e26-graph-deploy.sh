@@ -87,10 +87,17 @@ if [ ! -s "$SECRETS/graph_api_key" ]; then
   python3 -c 'import secrets; print(secrets.token_hex(24))' > "$SECRETS/graph_api_key"
   echo "  new graph API key"
 fi
+# E28: salt of the hidden person key of structured contact records. Keep it with
+# the graph data: a new salt no longer matches the stored keys (re-import then).
+if [ ! -s "$SECRETS/person_key_salt" ]; then
+  python3 -c 'import secrets; print(secrets.token_hex(32))' > "$SECRETS/person_key_salt"
+  echo "  new person-key salt"
+fi
 printf 'neo4j/%s' "$(cat "$SECRETS/neo4j_password")" > "$SECRETS/neo4j_auth"
 # Readable inside the containers (their users differ); the 0700 directory
 # keeps them private on the host.
-chmod 644 "$SECRETS/neo4j_password" "$SECRETS/neo4j_auth" "$SECRETS/graph_api_key"
+chmod 644 "$SECRETS/neo4j_password" "$SECRETS/neo4j_auth" "$SECRETS/graph_api_key" \
+  "$SECRETS/person_key_salt"
 GRAPH_API_KEY=$(cat "$SECRETS/graph_api_key")
 
 echo
@@ -148,9 +155,11 @@ docker tag "vivesec-graph:e26-$TS" vivesec-graph:latest
 docker run -d --name vivesec-graph --network host --restart unless-stopped \
   -v /data/graph:/data/graph \
   -v "$SECRETS/neo4j_password:/run/secrets/neo4j_password:ro" \
+  -v "$SECRETS/person_key_salt:/run/secrets/person_key_salt:ro" \
   -e GRAPH_HOST=127.0.0.1 -e GRAPH_PORT=$GRAPH_PORT -e GRAPH_API_KEY="$GRAPH_API_KEY" \
   -e GRAPH_STORE=neo4j -e GRAPH_NEO4J_URI=bolt://127.0.0.1:7687 \
   -e GRAPH_NEO4J_PASSWORD_FILE=/run/secrets/neo4j_password \
+  -e GRAPH_PERSON_KEY_SALT_FILE=/run/secrets/person_key_salt \
   -e GRAPH_PROFILE="$PROFILE" -e GRAPH_PROFILE_PATH=/data/graph/profile.json \
   -e GRAPH_REVIEW_PATH=/data/graph/review.jsonl -e GRAPH_INGEST=on \
   -e GRAPH_LLM_URL=http://127.0.0.1:$BROKER_PORT -e GRAPH_LLM_MODEL="${MODEL:-qwen3.6:35b}" \

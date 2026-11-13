@@ -21,7 +21,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 
-from domain_profile import normalize_value, relation_line, reversed_by_subtypes
+from domain_profile import for_extraction, normalize_value, relation_line, reversed_by_subtypes
 from extraction import (ATTRIBUTE_KEYS, LocalEntity, LocalRelation, _dates_in, fold, squash)
 from model import CORE_TYPES
 
@@ -351,6 +351,7 @@ class TableMapper:
     """Header signature -> Mapping, asked from the model once per layout."""
 
     def __init__(self, profile: dict, llm, pinned: dict | None = None):
+        profile = for_extraction(profile)
         self.profile = profile
         self.llm = llm
         self.lock = threading.Lock()

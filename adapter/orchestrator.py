@@ -195,6 +195,11 @@ INVESTIGATE_TOOL = (
     "starting point covers every level of its chain: no other call is needed for it, and "
     "more stays false.\n"
 )
+INVESTIGATE_SHARED_ARG = (
+    " shared_contact: true only when the message asks to follow shared phone numbers, "
+    "e-mail addresses or addresses as well (people who share one are linked through it, "
+    "never as the same person); otherwise leave it out."
+)
 
 _TEXT = {
     "ambiguous": {
@@ -361,6 +366,18 @@ _TEXT = {
         "da": "%s (personer forbundet med samme enhed)",
         "de": "%s (Personen, die mit demselben Eintrag verbunden sind)",
     },
+    "investigate_contact_step": {
+        "en": "the other holders of a shared phone, e-mail or address (not the same person)",
+        "hu": "a k\u00f6z\u00f6s telefonsz\u00e1m, e-mail-c\u00edm vagy lakc\u00edm t\u00f6bbi "
+              "haszn\u00e1l\u00f3ja (nem azonos szem\u00e9ly)",
+        "da": "de \u00f8vrige brugere af et f\u00e6lles telefonnummer, e-mail eller adresse "
+              "(ikke samme person)",
+        "de": "die weiteren Nutzer einer gemeinsamen Telefonnummer, E-Mail oder Adresse "
+              "(nicht dieselbe Person)",
+    },
+    "investigate_contact_link": {"en": "shared contact data", "hu": "k\u00f6z\u00f6s el\u00e9rhet\u0151s\u00e9g",
+                                 "da": "f\u00e6lles kontaktoplysning",
+                                 "de": "gemeinsame Kontaktangabe"},
     "investigate_more": {
         "en": " (%d more linked people not listed: table limit)",
         "hu": " (tov\u00e1bbi %d kapcsol\u00f3d\u00f3 szem\u00e9ly a t\u00e1bla korl\u00e1tja "
@@ -563,19 +580,37 @@ def vocabulary(prof, lang=None):
             % ("; ".join(kinds), "; ".join(relations)))
 
 
-def investigate_config(prof, relations, via, branch=50, max_rows=500, answer_rows=80):
+SHARED_CONTACT_MODES = ("off", "ask", "always")
+
+
+def shared_contact_mode(raw):
+    """ADAPTER_INVESTIGATE_SHARED_CONTACT: ask (default when unset), always or off;
+    an unknown value is off (the investigation then never takes the step)."""
+    if raw is None or not raw.strip():
+        return "ask"
+    value = raw.strip().lower()
+    return value if value in SHARED_CONTACT_MODES else "off"
+
+
+def investigate_config(prof, relations, via, branch=50, max_rows=500, answer_rows=80,
+                       shared_contact="off"):
     """The links an investigation follows, limited to the profile's relations;
     None (no investigate tool) when none of them is there: an unknown id must
     not turn into "follow everything". `answer_rows`: the rows given to the
-    answer model (the export, the diagram and the summaries get them all)."""
+    answer model (the export, the diagram and the summaries get them all).
+    `shared_contact`: whether the "through a shared contact" step is off, taken
+    when the message asks for it, or always; only with holding relations."""
     known = {r.get("id") for r in (prof or {}).get("relation_types") or []}
     relations = [r for r in relations or [] if r in known and r not in GENERIC_RELATIONS]
     via = [r for r in via or [] if r in known and r not in GENERIC_RELATIONS]
     if not relations and not via:
         return None
+    holding = any(r.get("holding") for r in (prof or {}).get("relation_types") or [])
+    if shared_contact not in SHARED_CONTACT_MODES or not holding:
+        shared_contact = "off"
     return {"relations": relations, "via": via, "branch": max(1, min(int(branch), 50)),
             "max_rows": max(1, min(int(max_rows), 500)),
-            "answer_rows": max(1, min(int(answer_rows), 500))}
+            "answer_rows": max(1, min(int(answer_rows), 500)), "shared_contact": shared_contact}
 
 
 def investigate_tool(prof, config, lang=None):
@@ -588,7 +623,10 @@ def investigate_tool(prof, config, lang=None):
     parts = ["%s (%s)" % (rid, labels.get(rid, rid)) for rid in config["relations"]]
     parts += ["people sharing a %s (%s) link to the same entity" % (rid, labels.get(rid, rid))
               for rid in config["via"]]
-    return INVESTIGATE_TOOL % " and ".join(parts)
+    line = INVESTIGATE_TOOL % " and ".join(parts)
+    if config.get("shared_contact") == "ask":
+        line = line.rstrip("\n") + INVESTIGATE_SHARED_ARG + "\n"
+    return line
 
 
 # -- planning ------------------------------------------------------------------
@@ -637,7 +675,10 @@ def _clean_args(tool, args):
             levels = int(levels.strip())
         if isinstance(levels, bool) or not isinstance(levels, int):
             levels = DEFAULT_INVESTIGATE_LEVELS
-        return {"start": start, "levels": max(1, min(levels, MAX_INVESTIGATE_LEVELS))}
+        out = {"start": start, "levels": max(1, min(levels, MAX_INVESTIGATE_LEVELS))}
+        if args.get("shared_contact") is True:
+            out["shared_contact"] = True
+        return out
     out = {}
     for key in ("entity", "a", "b", "kind", "name", "relation", "other_kind", "first", "then"):
         value = _text(args.get(key))
@@ -1511,8 +1552,12 @@ class Run:
         return None
 
     def _link_label(self, link):
-        name = self._relation_word(link["edge"]["type"])
         through = link.get("through")
+        if link.get("shared_contact"):
+            # Two records sharing a number are linked through it, not as one person.
+            return "%s: %s" % (_t("investigate_contact_link", self.code),
+                               (through or {}).get("label") or (through or {}).get("id"))
+        name = self._relation_word(link["edge"]["type"])
         if through:
             name = "%s: %s" % (name, through.get("label") or through.get("id"))
         return name
@@ -1603,9 +1648,12 @@ class Run:
             # From a number or address, level 1 is its holders; a message about
             # their contacts (BV 2.2) needs the next level too.
             levels = args["levels"] = 2
+        mode = cfg.get("shared_contact", "off")
+        shared = mode == "always" or (mode == "ask" and bool(args.get("shared_contact")))
+        extra = {"shared_contact": True} if shared else {}
         res = self.query("investigate", seeds=ids[:20], relations=cfg["relations"],
                          via_relations=cfg["via"], levels=levels, branch=cfg["branch"],
-                         limit=cfg["max_rows"])
+                         limit=cfg["max_rows"], **extra)
         answer_rows = cfg.get("answer_rows", cfg["max_rows"])
         kept, rows = {}, []
         sub_nodes, sub_edges = {}, {}
@@ -1666,6 +1714,8 @@ class Run:
         follows = [self._relation_word(r) for r in cfg["relations"]]
         follows += [_t("investigate_shared", self.code) % self._relation_word(r)
                     for r in cfg["via"]]
+        if shared:
+            follows.append(_t("investigate_contact_step", self.code))
         truncated = bool(res.get("truncated"))
         cut = _t("investigate_cut", self.code) % (cfg["branch"], cfg["max_rows"])
         tail = cut if truncated else _t("investigate_complete", self.code)
@@ -1682,6 +1732,8 @@ class Run:
             ", ".join(follows), tail))
         self.investigations.append({"start": args["start"], "levels": levels,
                                     "truncated": truncated, "rows": rows})
+        if shared:
+            self.investigations[-1]["shared_contact"] = True
         self.investigation_graphs.append(self._sub_graph(sub_nodes, sub_edges, rows, truncated))
         return len(rows)
 
@@ -1791,6 +1843,8 @@ class Run:
                 if key in by_start:
                     by_start[key]["args"]["levels"] = max(by_start[key]["args"]["levels"],
                                                           call["args"]["levels"])
+                    if call["args"].get("shared_contact"):
+                        by_start[key]["args"]["shared_contact"] = True
                     continue
                 call = dict(call, args=dict(call["args"]))
                 by_start[key] = call

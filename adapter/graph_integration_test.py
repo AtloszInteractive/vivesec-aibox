@@ -119,9 +119,13 @@ class GraphIntegrationTest(unittest.TestCase):
         cls.rag_url = "http://127.0.0.1:%d" % rag_port
         cls.rag = _start(os.path.join("rag_service", "service.py"), rag_env,
                          cls.rag_url + "/ready")
+        cls.salt = os.path.join(cls.temp.name, "person-key.salt")
+        with open(cls.salt, "w") as f:
+            f.write("integration-test-salt-0123456789")
         graph_env = dict(os.environ, GRAPH_PORT=str(graph_port), GRAPH_HOST="127.0.0.1",
                          GRAPH_API_KEY="", GRAPH_STORE="memory", GRAPH_PROFILE="bv",
                          GRAPH_OCR="off", GRAPH_INGEST="on",
+                         GRAPH_PERSON_KEY_SALT_FILE=cls.salt,
                          GRAPH_LLM_URL="http://127.0.0.1:%d" % cls.model.server_port)
         cls.graph_url = "http://127.0.0.1:%d" % graph_port
         cls.graph = _start(os.path.join("graph_service", "service.py"), graph_env,
@@ -232,6 +236,46 @@ class GraphIntegrationTest(unittest.TestCase):
         return {e["label"] for e in out["entities"]}
 
     # -- tests -----------------------------------------------------------------------
+    def test_a_graph_admin_imports_a_structured_export_with_record_rules(self):
+        sys.path.append(os.path.join(REPO, "graph-corpus"))
+        import structured_samples as samples
+        header, rows = samples.exports()["contacts"]
+        body = {"source": "contacts", "as_of": samples.AS_OF, "folder": DRIVE + "/hr",
+                "filename": "contacts.csv",
+                "content_b64": base64.b64encode(samples.to_csv(header, rows)).decode("ascii")}
+        status, out = self.call("/api/v1/ui/graph/import", body, user="lars")
+        self.assertEqual(403, status, out)  # not a graph administrator
+        status, out = self.call("/api/v1/ui/graph/import", dict(body, folder=DRIVE + "/nope"),
+                                user="hanna")
+        self.assertEqual(404, status, out)
+        status, out = self.call("/api/v1/ui/graph/import", body, user="hanna")
+        self.assertEqual(200, status, out)
+        self.assertEqual((6, "on"), (out["import"]["stats"]["created"],
+                                     out["import"]["stats"]["person_key"]))
+        status, sources = self.call("/api/v1/ui/graph/import/sources", {}, user="hanna")
+        self.assertIn("contacts", [s["id"] for s in sources["sources"]])
+        # The folder admits hr; the records also need their institution or the national group.
+        self.assertEqual(set(), self.people("hanna", "Kerekes"))
+        with patch.dict(GROUPS, {"hanna": ["hr", "bv-orszagos"],
+                                 "lars": ["bv-orszagos"]}):
+            self.assertEqual({"Kerekes Ilona"}, self.people("hanna", "Kerekes"))
+            self.assertEqual(set(), self.people("lars", "Kerekes"))
+            request = {"start": "NY-1005", "levels": 3, "lang": "hu"}
+            status, plain = self.call("/api/v1/ui/graph/investigation/graph", request,
+                                      user="hanna")
+            self.assertEqual(200, status, plain)
+            self.assertNotIn("Varga Péter", [r["name"] for r in plain["rows"]])
+            status, shared = self.call("/api/v1/ui/graph/investigation/graph",
+                                       dict(request, shared_contact=True), user="hanna")
+            self.assertEqual(200, status, shared)
+            paths = {r["name"]: r["path"] for r in shared["rows"]}
+            self.assertIn("Varga Péter", paths)
+            self.assertIn("közös elérhetőség: +36 20 777 2222", paths["Varga Péter"])
+            self.assertTrue(shared["shared_contact"])
+        status, out = self.call("/api/v1/ui/graph/investigation/graph",
+                                dict(request, shared_contact="yes"), user="hanna")
+        self.assertEqual(400, status, out)
+
     def test_synced_files_become_a_graph_and_hidden_ones_stay_hidden(self):
         self.assertEqual({"Kovács János"}, self.people("lars", "Kovács"))
         self.assertEqual({"Nagy Éva"}, self.people("lars", "Nagy"))
