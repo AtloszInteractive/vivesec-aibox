@@ -25,6 +25,17 @@ WEAK_METHODS = ("cooccurrence",)
 # A document's subtype for an entity is kept as this attribute of that document,
 # so a caller sees a subtype only from documents they can read.
 SUBTYPE_ATTR = "subtype"
+# Internal attributes of structured records (structured_import.py): kept per
+# document like any attribute, read by resolution, never shown by a view.
+#   person_key  salted key of the four natural identifiers (name, birth place,
+#               birth date, mother's name), a strong key that names one person;
+#   key_only    the record links to an existing person only through a strong
+#               key (never through name, birth date or a shared phone alone).
+PERSON_KEY_ATTR = "person_key"
+KEY_ONLY_ATTR = "key_only"
+HIDDEN_ATTRS = (SUBTYPE_ATTR, PERSON_KEY_ATTR, KEY_ONLY_ATTR)
+# Document.kind of one structured record (one row of a periodic export).
+RECORD_KIND = "record"
 
 ENTITY_STATUSES = ("active", "merged", "rejected")
 
@@ -44,6 +55,10 @@ class Document:
     # SHA-256 of the file it was extracted from; "" when unknown. The same file
     # sent again (a drive re-sync) is not extracted again.
     content_sha256: str = ""
+    # A structured record's own rule (e.g. its institution's group), applied IN
+    # ADDITION to `acl` (the rule of the folder it was imported into): a record
+    # is visible only to a caller both admit.
+    record_acl: dict | None = None
 
 
 @dataclass

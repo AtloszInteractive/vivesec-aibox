@@ -11,7 +11,7 @@ import re
 import unicodedata
 from collections import Counter, deque
 
-from model import IDENTIFIER, ORGANIZATION, PERSON
+from model import IDENTIFIER, ORGANIZATION, PERSON, PLACE
 
 MAX_HOPS = 8
 MAX_RESULTS = 500
@@ -349,7 +349,8 @@ def _label_key(view, eid: str):
 
 
 def investigate(view, seeds, relations=(), via_relations=(), levels: int = 2,
-                branch: int = 10, limit: int = 200, holding=()) -> dict:
+                branch: int = 10, limit: int = 200, holding=(), shared_contact: bool = False
+                ) -> dict:
     """A level-by-level investigation from the seeds over the visible graph.
 
     From a person, `relations` lead to other people directly (either direction);
@@ -357,6 +358,10 @@ def investigate(view, seeds, relations=(), via_relations=(), levels: int = 2,
     from it to the other people linked to it the same way: one level, the
     entity named in the link. A seed that is not a person (a phone number, an
     address) reaches the people linked to it by any relation at level 1.
+    `shared_contact`: from a person also to the other holders of a phone,
+    e-mail or address it holds (the `holding` relations), as one level; the link
+    says so ("shared_contact"), because sharing a number is not being one person
+    (two records of one mother, or a household).
 
     Each person appears once, at the first level that reaches them, with the
     links from the previous level (at most MAX_VIA, a "Y" branch). `branch`
@@ -387,7 +392,8 @@ def investigate(view, seeds, relations=(), via_relations=(), levels: int = 2,
             view.prefetch_edges(frontier)
         new: dict[str, dict] = {}
         for cur in frontier:
-            found = _investigate_step(view, cur, rows[cur]["node"], relations, via_relations)
+            found = _investigate_step(view, cur, rows[cur]["node"], relations, via_relations,
+                                      holding if shared_contact else ())
             fresh = sorted((o for o in found if o not in rows and o not in new),
                            key=lambda e: _label_key(view, e))
             taken = set(fresh[:branch])
@@ -426,9 +432,11 @@ def investigate(view, seeds, relations=(), via_relations=(), levels: int = 2,
             "levels": max([r["level"] for r in out] or [0])}
 
 
-def _investigate_step(view, cur: str, node: dict, relations, via_relations) -> dict:
+def _investigate_step(view, cur: str, node: dict, relations, via_relations,
+                      contact_relations=()) -> dict:
     """{person id: [links]} one level on from `cur`; a link is
-    {"from", "edge", "through"?, "edge2"?}."""
+    {"from", "edge", "through"?, "edge2"?, "shared_contact"?}. Direct links sort
+    before those through a shared contact."""
     found: dict[str, list] = {}
 
     def add(other, link):
@@ -441,7 +449,7 @@ def _investigate_step(view, cur: str, node: dict, relations, via_relations) -> d
             if (view.node(o) or {}).get("type") == PERSON:
                 add(o, {"from": cur, "edge": e})
         return found
-    through = []
+    through, contacts = [], []
     for e in edges:
         o = _other(e, cur)
         other = view.node(o)
@@ -451,16 +459,27 @@ def _investigate_step(view, cur: str, node: dict, relations, via_relations) -> d
             add(o, {"from": cur, "edge": e})
         elif e["type"] in via_relations and other["type"] != PERSON:
             through.append((o, e))
-    if through and hasattr(view, "prefetch_edges"):
-        view.prefetch_edges([o for o, _ in through])
+        if e["type"] in contact_relations and other["type"] in (IDENTIFIER, PLACE) \
+                and e["a"] == cur:
+            contacts.append((o, e))
+    if (through or contacts) and hasattr(view, "prefetch_edges"):
+        view.prefetch_edges([o for o, _ in through + contacts])
     for mid, e in through:
         for e2 in view.edges_of(mid):
             o2 = _other(e2, mid)
             if e2["type"] in via_relations and o2 != cur \
                     and (view.node(o2) or {}).get("type") == PERSON:
                 add(o2, {"from": cur, "edge": e, "through": view.node(mid), "edge2": e2})
+    for mid, e in contacts:
+        for e2 in view.edges_of(mid):
+            o2 = _other(e2, mid)
+            if e2["type"] in contact_relations and e2["b"] == mid and o2 != cur \
+                    and (view.node(o2) or {}).get("type") == PERSON:
+                add(o2, {"from": cur, "edge": e, "through": view.node(mid), "edge2": e2,
+                         "shared_contact": True})
     for links in found.values():
-        links.sort(key=lambda link: (link["edge"]["id"], (link.get("edge2") or {}).get("id", "")))
+        links.sort(key=lambda link: (bool(link.get("shared_contact")), link["edge"]["id"],
+                                     (link.get("edge2") or {}).get("id", "")))
     return found
 
 

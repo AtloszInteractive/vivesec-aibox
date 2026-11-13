@@ -42,7 +42,10 @@ class Scope:
         return cls(raw, access)
 
     def allows(self, doc) -> bool:
-        return doc.corpus_id in self.corpus_ids and doc_access.doc_allowed(doc.acl, self.access)
+        # A structured record also carries its own rule: both must admit the caller.
+        return doc.corpus_id in self.corpus_ids and doc_access.doc_allowed(doc.acl, self.access) \
+            and (getattr(doc, "record_acl", None) is None
+                 or doc_access.doc_allowed(doc.record_acl, self.access))
 
 
 def parse_doc_acl(raw):

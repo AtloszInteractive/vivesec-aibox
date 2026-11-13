@@ -82,6 +82,8 @@ export type AdapterInvestigation = {
   truncated: boolean;
   /** The scope of the table; the export narrows to the same drives. */
   drives?: string[];
+  /** It took the "through a shared contact" step: the rebuild must take it too. */
+  sharedContact?: boolean;
 };
 
 function investigationsOf(graph: unknown): AdapterInvestigation[] | undefined {
@@ -99,6 +101,7 @@ function investigationsOf(graph: unknown): AdapterInvestigation[] | undefined {
         drives: Array.isArray(inv.drives)
           ? inv.drives.filter((d): d is string => typeof d === "string")
           : undefined,
+        sharedContact: inv.shared_contact === true ? true : undefined,
       },
     ];
   });

@@ -27,12 +27,15 @@ import json
 import os
 import threading
 import time
+import uuid
 
+import person_key
+import structured_import
 from extraction import fold
 from ingest import IngestError, parse_document_payload
 from graph_store import StoreError
 from llm_client import LLMError
-from model import Entity, Evidence, Relation
+from model import Document, Entity, Evidence, Relation
 from domain_profile import profile_tag  # noqa: F401 (re-exported)
 from pipeline import extract_document
 from resolution import Resolver
@@ -76,6 +79,7 @@ class IngestWorker:
         self.queued_bytes = 0
         self.running: dict | None = None
         self.recent: collections.deque = collections.deque(maxlen=RECENT)
+        self.imports: collections.OrderedDict = collections.OrderedDict()  # job -> record
         self.totals = collections.Counter()
         self.decided: set[tuple[str, str]] = set()
         # pair -> its "decided" event, oldest first (undone ones removed).
@@ -176,6 +180,36 @@ class IngestWorker:
             self.cond.notify()
             return len(self.queue)
 
+    def submit_import(self, request: dict, raw: bytes) -> str:
+        """Queue a structured import (structured_import.py) ahead of the documents:
+        it runs on this worker, the only writer, without the model. Returns its job id."""
+        job = uuid.uuid4().hex[:16]
+        meta = {"doc_id": "import:" + job, "corpus_id": request["corpus_id"],
+                "source_path": request["folder"], "acl": request.get("acl"),
+                "import": request, "job": job}
+        with self.cond:
+            if self.queue and self.queued_bytes + len(raw) > self.max_queue_bytes:
+                raise QueueFull("ingest queue is full")
+            self.queue.appendleft((meta, raw, time.time()))
+            self.queued_bytes += len(raw)
+            self.imports[job] = {"job": job, "status": "queued"}
+            while len(self.imports) > RECENT:
+                self.imports.popitem(last=False)
+            self.cond.notify_all()
+        return job
+
+    def import_result(self, job: str, wait: float = 0.0) -> dict | None:
+        """The import's record (status queued, running, done, refused or failed);
+        waits up to `wait` seconds for it to finish. None: unknown job."""
+        end = time.time() + max(0.0, wait)
+        with self.cond:
+            while True:
+                item = self.imports.get(job)
+                if item is None or item["status"] not in ("queued", "running") \
+                        or time.time() >= end:
+                    return dict(item) if item else None
+                self.cond.wait(min(0.2, max(0.01, end - time.time())))
+
     def forget(self, corpus_id: str, path: str) -> int:
         """Drop queued documents at or below a deleted path."""
         prefix = path.rstrip("/") + "/"
@@ -232,8 +266,13 @@ class IngestWorker:
                 self.queued_bytes -= len(raw)
                 self.running = {"doc_id": meta["doc_id"], "corpus_id": meta.get("corpus_id"),
                                 "source_path": meta.get("source_path"), "started": time.time()}
+                if meta.get("job"):
+                    self.running["job"] = meta["job"]
+                    self.imports[meta["job"]] = {"job": meta["job"], "status": "running"}
             record = {"doc_id": meta["doc_id"], "source_path": meta.get("source_path"),
                       "waited": round(time.time() - queued_at, 1)}
+            if meta.get("job"):
+                record.update(kind="import", job=meta["job"])
             try:
                 record.update(self._process(meta, raw))
                 self.totals["done"] += 1
@@ -246,6 +285,8 @@ class IngestWorker:
             with self.cond:
                 self.running = None
                 self.recent.append(record)
+                if meta.get("job"):
+                    self.imports[meta["job"]] = record
                 self.cond.notify_all()
 
     def _sticky_people(self, meta: dict) -> dict[str, str]:
@@ -276,6 +317,8 @@ class IngestWorker:
         profile = self.state.profile
         if (profile["id"], profile["version"]) != self.profile_version:
             self._reset_models()
+        if meta.get("import"):
+            return self._import(meta, raw)
         with self.cond:
             waiting = len(self.queue)
         # A long queue (a large sync) is drained by rules, tables and forms first; the
@@ -316,6 +359,131 @@ class IngestWorker:
         return {"status": status, "stats": {k: v for k, v in stats.items()
                                             if k != "llm_error_detail"}}
 
+    # -- structured imports ----------------------------------------------------------
+
+    def _import(self, meta: dict, raw: bytes) -> dict:
+        """One export file of a structured source into record documents (see
+        structured_import.py); runs on this thread, writes under the queue lock."""
+        req = meta["import"]
+        profile = self.state.profile
+        source = next((s for s in profile.get("structured_sources") or []
+                       if s["id"] == req["source"]), None)
+        if source is None:
+            return {"status": "failed", "error": "the profile has no source %r" % req["source"]}
+        salt = person_key.load_salt()
+        try:
+            header, rows = structured_import.read_table(raw, req.get("filename") or "",
+                                                        source.get("sheet"))
+            plan = structured_import.plan_import(profile, source, header, rows, salt)
+        except structured_import.StructuredImportError as e:
+            return {"status": "failed", "error": str(e)}
+        mode = req.get("mode") or source["mode"]
+        as_of, folder, corpus_id = req["as_of"], req["folder"], req["corpus_id"]
+        store = self._mirror()
+        root = structured_import.records_root(folder, source["id"])
+        with store._lock:
+            known = {d: store.documents[d] for d in store.doc_ids_by_path(
+                corpus_id, root, tree=True, keep_exact=True) if d in store.documents}
+        removed_tag = structured_import.REMOVED_SUFFIX
+        existing = {d: doc for d, doc in known.items() if not doc.profile.endswith(removed_tag)}
+
+        def key(rid):
+            return structured_import.doc_id_of(source["id"], rid, corpus_id, folder)
+        seen = {key(rid) for rid in plan.records}
+
+        def newer(doc) -> bool:
+            return structured_import.as_of_of(doc.profile) > as_of
+        unlisted = []
+        if mode == "full":
+            unlisted = sorted(d for d, doc in existing.items() if d not in seen and not newer(doc))
+            if existing and len(unlisted) > source["full_max_delete"] * len(existing) \
+                    and not req.get("force"):
+                return {"status": "refused", "error": (
+                    "a full export would remove %d of the %d records of %s in this folder "
+                    "(more than %d%%): import it again with force if that is right"
+                    % (len(unlisted), len(existing), source["id"],
+                       round(source["full_max_delete"] * 100))),
+                    "stats": {"rows": plan.rows, "records": len(plan.records),
+                              "would_remove": len(unlisted)}}
+        stats = {"source": source["id"], "as_of": as_of, "mode": mode, "rows": plan.rows,
+                 "records": len(plan.records), "created": 0, "updated": 0, "unchanged": 0,
+                 "older": 0, "removed": 0, "problems": plan.problem_count,
+                 "problem_rows": plan.problems, "duplicates": plan.duplicates,
+                 "missing_columns": plan.missing_columns,
+                 "unknown_codes": {k: sorted(v)[:20] for k, v in plan.unknown_codes.items()},
+                 "person_key": "on" if salt else "off", "person_keys": plan.person_keys,
+                 "acl_nobody": 0}
+        review_before = len(self.resolver.review)
+        written = []
+
+        def base_acl():
+            with self.cond:
+                return self.running.get("acl") if self.running and \
+                    self.running.get("acl_changed") else meta.get("acl")
+        for rid, rec in plan.records.items():
+            if rec.deleted:
+                continue
+            doc_id = key(rid)
+            acl = base_acl()
+            old = known.get(doc_id)
+            if old is not None and newer(old):
+                stats["older"] += 1  # a newer export wrote or removed it
+                continue
+            own_acl = structured_import.record_acl(source, rec.acl_value)
+            if own_acl is not None and not own_acl["allow"]:
+                stats["acl_nobody"] += 1
+            if old is not None and old.content_sha256 == hashlib.sha256(
+                    rec.text.encode("utf-8")).hexdigest() \
+                    and old.acl == parse_doc_acl(acl) and old.record_acl == own_acl \
+                    and structured_import.as_of_of(old.profile) >= as_of \
+                    and not old.profile.endswith(removed_tag):
+                stats["unchanged"] += 1
+                continue
+            payload = structured_import.build_payload(
+                profile, source, rec, folder, corpus_id, acl, self.resolver,
+                lambda d, c, p: self._sticky_people({"doc_id": d, "corpus_id": c,
+                                                     "source_path": p}), salt)
+            doc, entities, mentions, relations = structured_import.parse_record_payload(
+                payload, profile, source, as_of, rec)
+            with self.cond:
+                self.state.store.put_document(doc, entities, mentions, relations)
+            written.append(doc_id)
+            fresh = old is None or old.profile.endswith(removed_tag)
+            # The same row of a newer export: written again only to move its date on.
+            same = not fresh and old.content_sha256 == doc.content_sha256 \
+                and old.acl == doc.acl and old.record_acl == doc.record_acl
+            stats["created" if fresh else "unchanged" if same else "updated"] += 1
+        removals = {key(rid): rid for rid, rec in plan.records.items() if rec.deleted}
+        for doc in unlisted:
+            removals.setdefault(doc, None)
+        for doc_id in sorted(removals):
+            old = known.get(doc_id)
+            if old is not None and (newer(old) or old.profile.endswith(removed_tag)
+                                    and structured_import.as_of_of(old.profile) == as_of):
+                stats["older" if newer(old) else "unchanged"] += 1
+                continue
+            # An empty record marks the removal: an older export cannot bring it back.
+            path = old.source_path if old is not None else structured_import.path_of(
+                folder, source["id"], removals[doc_id])
+            marker = Document(doc_id, corpus_id, path, source["title"],
+                              parse_doc_acl(base_acl()), structured_import.RECORD_KIND, 0,
+                              structured_import.tag_of(source["id"], as_of) + removed_tag)
+            with self.cond:
+                self.state.store.put_document(marker, [], [], [])
+            written.append(doc_id)
+            if old is not None and not old.profile.endswith(removed_tag):
+                stats["removed"] += 1
+        with self.cond:
+            if self.running and self.running.get("acl_changed"):
+                # The folder's rule changed while this ran: every record gets the new one.
+                for doc_id in written:
+                    self.state.store.set_acl(doc_id, parse_doc_acl(self.running["acl"]))
+        stats["review_new"] = len(self.resolver.review) - review_before
+        new = self.resolver.review[self._saved:]
+        self._save_review([{"op": "candidate", "item": item} for item in new])
+        self._saved = len(self.resolver.review)
+        return {"status": "done", "stats": stats}
+
     # -- review ----------------------------------------------------------------------
 
     def open_review(self, view=None) -> list[dict]:
@@ -333,7 +501,11 @@ class IngestWorker:
                 na, nb = view.node(item["a"]), view.node(item["b"])
                 if na is None or nb is None:
                     continue
+                if "basis" in item and not any(view.document(d) for d in item["basis"]):
+                    # A key-only pair rests on a record the caller cannot read.
+                    continue
                 item = dict(item, a_label=na["label"], b_label=nb["label"])
+                item.pop("basis", None)
             out.append(item)
         return out
 
@@ -461,6 +633,8 @@ class IngestWorker:
             else:
                 na, nb = view.node(pair[0]), view.node(pair[1])
                 if na is None or nb is None:
+                    continue
+                if "basis" in item and not any(view.document(d) for d in item["basis"]):
                     continue
                 entry.update(a_label=na["label"], b_label=nb["label"], undoable=True)
             out.append(entry)

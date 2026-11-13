@@ -14,8 +14,8 @@ import threading
 import unicodedata
 from collections import Counter
 
-from model import (SUBTYPE_ATTR, WEAK_METHODS, AttributeValue, Document, Entity, Evidence,
-                   Mention, Relation)
+from model import (HIDDEN_ATTRS, KEY_ONLY_ATTR, SUBTYPE_ATTR, WEAK_METHODS, AttributeValue,
+                   Document, Entity, Evidence, Mention, Relation)
 
 
 class StoreError(ValueError):
@@ -401,7 +401,7 @@ class GraphView:
             doc = self._docs.get(e.id.rsplit("@doc:", 1)[1])
             if doc is not None:
                 label = "%s (%s)" % (label, doc.title or doc.source_path.rsplit("/", 1)[-1])
-        return {"id": e.id, "type": e.type,
+        node = {"id": e.id, "type": e.type,
                 # Only what readable documents say: another document may type the
                 # same person (an inmate) for readers of that document alone.
                 "subtype": _visible_subtype(attrs), "label": label,
@@ -410,7 +410,12 @@ class GraphView:
                 "attributes": [{"name": a.name, "value": a.value, "doc_id": a.doc_id,
                                 "page": a.page}
                                for a in sorted(attrs, key=lambda a: (a.name, a.value, a.doc_id))
-                               if a.name != SUBTYPE_ATTR]}
+                               if a.name not in HIDDEN_ATTRS]}
+        if any(a.name == KEY_ONLY_ATTR for a in attrs):
+            # A visible record of this person may be linked by a strong key only:
+            # name-based joining must leave it alone (namesakes.py).
+            node["link_rule"] = "key_only"
+        return node
 
     def node(self, eid: str) -> dict | None:
         if eid not in self._node_cache:

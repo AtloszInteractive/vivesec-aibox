@@ -63,6 +63,13 @@ def _types(raw, where):
     return list(raw)
 
 
+def _flag(obj, key, where) -> bool:
+    value = obj.get(key, False)
+    if not isinstance(value, bool):
+        raise ProfileError("%s.%s must be true or false" % (where, key))
+    return value
+
+
 SCOPED_TYPES = ("place", "organization")
 # Raised when extraction itself changes what it produces from the same text (not
 # the profile): documents extracted before then count as stale and can be
@@ -104,7 +111,8 @@ def relation_line(r: dict) -> str:
 
 def validate(raw: dict) -> dict:
     _keys(raw, ("id", "version", "name", "description", "entity_subtypes", "identifier_patterns",
-                "relation_types", "resolution", "cooccurrence", "table_mappings"), "profile")
+                "relation_types", "resolution", "cooccurrence", "table_mappings",
+                "structured_sources"), "profile")
     if not isinstance(raw.get("id"), str) or not _ID.match(raw["id"]):
         raise ProfileError("profile.id must be a lowercase identifier")
     if not isinstance(raw.get("version"), int) or raw["version"] < 1:
@@ -115,7 +123,7 @@ def validate(raw: dict) -> dict:
     subtypes = {}
     for i, s in enumerate(raw.get("entity_subtypes", [])):
         where = "entity_subtypes[%d]" % i
-        _keys(s, ("id", "type", "label", "within"), where)
+        _keys(s, ("id", "type", "label", "within", "structured_only"), where)
         if not isinstance(s.get("id"), str) or not _ID.match(s["id"]) or s["id"] in subtypes:
             raise ProfileError("%s.id must be a unique lowercase identifier" % where)
         if s.get("type") not in CORE_TYPES:
@@ -123,6 +131,8 @@ def validate(raw: dict) -> dict:
         subtypes[s["id"]] = {"id": s["id"], "type": s["type"], "label": _label(s.get("label"), where)}
         if "within" in s:
             subtypes[s["id"]]["within"] = s["within"]
+        if _flag(s, "structured_only", where):
+            subtypes[s["id"]]["structured_only"] = True
     # within: a place known only inside a larger one (a cell inside an institution).
     # Its identity then includes that container, so cell 102 of two prisons are
     # two places; without a container in the document it stays document-local.
@@ -166,7 +176,7 @@ def validate(raw: dict) -> dict:
     for i, r in enumerate(raw.get("relation_types", [])):
         where = "relation_types[%d]" % i
         _keys(r, ("id", "label", "from", "to", "symmetric", "presence", "holding", "synonyms",
-                  "from_subtypes", "to_subtypes"), where)
+                  "from_subtypes", "to_subtypes", "structured_only"), where)
         # A saved profile echoes the built-ins back; accept them only unchanged.
         if r.get("id") in BUILTIN_RELATIONS and r == BUILTIN_RELATIONS[r["id"]] \
                 and i == list(BUILTIN_RELATIONS).index(r["id"]):
@@ -182,6 +192,8 @@ def validate(raw: dict) -> dict:
                               "symmetric": bool(r.get("symmetric", False)),
                               "presence": bool(r.get("presence", False)),
                               "holding": bool(r.get("holding", False)), "synonyms": synonyms}
+        if _flag(r, "structured_only", where):
+            relations[r["id"]]["structured_only"] = True
         for side in ("from", "to"):
             # Which subtype does what: a visit goes from the visitor to the inmate.
             key = side + "_subtypes"
@@ -256,6 +268,219 @@ def validate(raw: dict) -> dict:
             pinned[name]["form"] = True
     if pinned:
         out["table_mappings"] = pinned
+    sources = _structured_sources(raw.get("structured_sources"), out)
+    if sources:
+        out["structured_sources"] = sources
+    return out
+
+
+# -- structured sources (periodic exports, structured_import.py) --------------------
+
+ATTRIBUTE_NAMES = ("birth_date", "birth_place", "mother_name", "id_number", "registry_number")
+SOURCE_MODES = ("delta", "full")
+_PRINCIPAL = re.compile(r"^(user|group|role):[^\s]{1,200}$")
+
+
+def _column(raw, where, required=True):
+    if raw is None and not required:
+        return None
+    if not isinstance(raw, str) or not raw.strip() or len(raw) > 120:
+        raise ProfileError("%s must name a column" % where)
+    return raw.strip()
+
+
+def _principals(raw, where):
+    if not isinstance(raw, list) or any(not isinstance(p, str) or not _PRINCIPAL.match(p.strip())
+                                        for p in raw):
+        raise ProfileError("%s must be a list of principals (user:/group:/role:...)" % where)
+    return [p.strip().casefold() for p in raw]
+
+
+def _structured_sources(raw, profile: dict) -> list[dict]:
+    """Periodic exports (CSV/XLSX) read by rule, never by the model: which column
+    is the record id, which columns make which entity and relation, the code
+    lists that turn codes into text, and the record's own access rule. Strict
+    like the rest: an unknown key, column role, relation or subtype rejects the
+    whole profile."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 50:
+        raise ProfileError("structured_sources must be a list of at most 50 sources")
+    subtypes = {s["id"]: s for s in profile["entity_subtypes"]}
+    rels = {r["id"]: r for r in profile["relation_types"]}
+    out, seen = [], set()
+    for i, s in enumerate(raw):
+        where = "structured_sources[%d]" % i
+        _keys(s, ("id", "label", "title", "record_id", "mode", "deleted", "sheet", "codelists",
+                  "entities", "relations", "acl", "full_max_delete"), where)
+        if not isinstance(s.get("id"), str) or not _ID.match(s["id"]) or s["id"] in seen:
+            raise ProfileError("%s.id must be a unique lowercase identifier" % where)
+        seen.add(s["id"])
+        src = {"id": s["id"], "label": _label(s.get("label"), where)}
+        title = s.get("title", "")
+        if not isinstance(title, str) or len(title) > 120:
+            raise ProfileError("%s.title must be a short text" % where)
+        src["title"] = title.strip() or src["label"]["en"]
+        ids = s.get("record_id")
+        ids = [ids] if isinstance(ids, str) else ids
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 5:
+            raise ProfileError("%s.record_id must name 1..5 columns" % where)
+        src["record_id"] = [_column(c, where + ".record_id") for c in ids]
+        mode = s.get("mode", "delta")
+        if mode not in SOURCE_MODES:
+            raise ProfileError("%s.mode must be one of %s" % (where, SOURCE_MODES))
+        src["mode"] = mode
+        share = s.get("full_max_delete", 0.5)
+        if isinstance(share, bool) or not isinstance(share, (int, float)) or not 0 <= share <= 1:
+            raise ProfileError("%s.full_max_delete must be between 0 and 1" % where)
+        src["full_max_delete"] = float(share)
+        if s.get("deleted") is not None:
+            d = s["deleted"]
+            _keys(d, ("column", "values"), where + ".deleted")
+            values = d.get("values")
+            if not isinstance(values, list) or not values \
+                    or any(not isinstance(v, str) or not v.strip() for v in values):
+                raise ProfileError("%s.deleted.values must list the marks of a deleted record"
+                                   % where)
+            src["deleted"] = {"column": _column(d.get("column"), where + ".deleted.column"),
+                              "values": [v.strip() for v in values]}
+        if s.get("sheet") is not None:
+            src["sheet"] = _column(s["sheet"], where + ".sheet")
+        codelists = s.get("codelists") or {}
+        if not isinstance(codelists, dict) or any(
+                not _ID.match(str(k)) or not isinstance(v, dict) or len(v) > 5000
+                or any(not isinstance(c, str) or not isinstance(t, str) or not t.strip()
+                       for c, t in v.items()) for k, v in codelists.items()):
+            raise ProfileError("%s.codelists must map list ids to {code: text}" % where)
+        src["codelists"] = {k: {c.strip(): t.strip() for c, t in v.items()}
+                            for k, v in codelists.items()}
+
+        def codelist(name, at):
+            if name is None:
+                return None
+            if name not in src["codelists"]:
+                raise ProfileError("%s: unknown code list %r" % (at, name))
+            return name
+
+        ents = {}
+        raw_ents = s.get("entities")
+        if not isinstance(raw_ents, list) or not 1 <= len(raw_ents) <= 20:
+            raise ProfileError("%s.entities must list 1..20 entities" % where)
+        for j, e in enumerate(raw_ents):
+            at = "%s.entities[%d]" % (where, j)
+            _keys(e, ("ref", "type", "subtype", "name", "codelist", "attributes", "person_key",
+                      "key_only", "within"), at)
+            if not isinstance(e.get("ref"), str) or not _ID.match(e["ref"]) or e["ref"] in ents:
+                raise ProfileError("%s.ref must be a unique lowercase identifier" % at)
+            if e.get("type") not in CORE_TYPES or e["type"] == "event":
+                raise ProfileError("%s.type must be an entity type other than event" % at)
+            sub = e.get("subtype") or ""
+            if sub and subtypes.get(sub, {}).get("type") != e["type"]:
+                raise ProfileError("%s.subtype must be a %s subtype of the profile"
+                                   % (at, e["type"]))
+            ent = {"ref": e["ref"], "type": e["type"], "subtype": sub,
+                   "name": _column(e.get("name"), at + ".name", required=False),
+                   "codelist": codelist(e.get("codelist"), at + ".codelist"),
+                   "attributes": {}, "person_key": _flag(e, "person_key", at),
+                   "key_only": _flag(e, "key_only", at)}
+            attrs = e.get("attributes") or {}
+            if not isinstance(attrs, dict) or any(k not in ATTRIBUTE_NAMES for k in attrs):
+                raise ProfileError("%s.attributes must map %s to columns" % (at, ATTRIBUTE_NAMES))
+            if attrs and e["type"] != "person":
+                raise ProfileError("%s.attributes: only a person has attributes" % at)
+            ent["attributes"] = {k: _column(v, "%s.attributes.%s" % (at, k))
+                                 for k, v in attrs.items()}
+            if e["type"] != "person" and (ent["person_key"] or ent["key_only"]):
+                raise ProfileError("%s: person_key and key_only are for persons" % at)
+            if ent["person_key"] and not all(k in ent["attributes"] for k in
+                                             ("birth_date", "birth_place", "mother_name")) \
+                    or ent["person_key"] and not ent["name"]:
+                raise ProfileError("%s.person_key needs the name, birth_place, birth_date and "
+                                   "mother_name columns" % at)
+            if not ent["name"] and not (e["type"] == "person"
+                                        and "registry_number" in ent["attributes"]):
+                raise ProfileError("%s.name is required (a person may be named by its "
+                                   "registry_number instead)" % at)
+            if e.get("within") is not None:
+                if e["type"] != "place":
+                    raise ProfileError("%s.within: only a place lies within another" % at)
+                ent["within"] = e["within"]
+            ents[e["ref"]] = ent
+        for ref, ent in ents.items():
+            # A container chain (cell -> unit -> facility -> institution) without loops.
+            seen_refs, cur = {ref}, ent
+            while cur.get("within"):
+                nxt = ents.get(cur["within"])
+                if nxt is None or nxt["type"] != "place" or cur["within"] in seen_refs:
+                    raise ProfileError("%s.entities: %r lies within an unknown place or in a "
+                                       "loop" % (where, ref))
+                seen_refs.add(cur["within"])
+                cur = nxt
+        src["entities"] = list(ents.values())
+        src_rels = []
+        raw_rels = s.get("relations") or []
+        if not isinstance(raw_rels, list) or len(raw_rels) > 20:
+            raise ProfileError("%s.relations must be a list of at most 20 relations" % where)
+        for j, r in enumerate(raw_rels):
+            at = "%s.relations[%d]" % (where, j)
+            _keys(r, ("type", "from", "to", "start", "end", "label", "label_codelist"), at)
+            spec = rels.get(r.get("type"))
+            a, b = ents.get(r.get("from")), ents.get(r.get("to"))
+            if spec is None or spec["id"] in BUILTIN_RELATIONS or a is None or b is None \
+                    or r["from"] == r["to"]:
+                raise ProfileError("%s needs a profile relation type and two entity refs" % at)
+            if a["type"] not in spec["from"] or b["type"] not in spec["to"]:
+                raise ProfileError("%s: %s cannot go from %s to %s" % (at, spec["id"], a["type"],
+                                                                       b["type"]))
+            labels = r.get("label")
+            labels = [labels] if isinstance(labels, str) or labels is None else labels
+            if not isinstance(labels, list) or len(labels) > 4:
+                raise ProfileError("%s.label must name 1..4 columns" % at)
+            src_rels.append({"type": spec["id"], "from": r["from"], "to": r["to"],
+                             "start": _column(r.get("start"), at + ".start", required=False),
+                             "end": _column(r.get("end"), at + ".end", required=False),
+                             "label": [_column(c, at + ".label") for c in labels
+                                       if c is not None],
+                             "label_codelist": codelist(r.get("label_codelist"),
+                                                        at + ".label_codelist")})
+        if any(e.get("within") for e in ents.values()) and "PART_OF" not in rels:
+            raise ProfileError("%s: a place within another needs the PART_OF relation" % where)
+        src["relations"] = src_rels
+        if s.get("acl") is not None:
+            acl = s["acl"]
+            at = where + ".acl"
+            _keys(acl, ("column", "groups", "pattern", "always", "classification"), at)
+            groups = acl.get("groups") or {}
+            if not isinstance(groups, dict):
+                raise ProfileError("%s.groups must map column values to principals" % at)
+            pattern = acl.get("pattern")
+            if pattern is not None and (not isinstance(pattern, str) or "{value}" not in pattern
+                                        or not _PRINCIPAL.match(pattern.replace("{value}", "x"))):
+                raise ProfileError("%s.pattern must be a principal with {value} in it" % at)
+            level = acl.get("classification", 0)
+            if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 4:
+                raise ProfileError("%s.classification must be 0..4" % at)
+            src["acl"] = {"column": _column(acl.get("column"), at + ".column", required=False),
+                          "groups": {str(k).strip(): _principals(v, "%s.groups.%s" % (at, k))
+                                     for k, v in groups.items()},
+                          "pattern": pattern.strip().casefold() if pattern else None,
+                          "always": _principals(acl.get("always") or [], at + ".always"),
+                          "classification": level}
+            if not src["acl"]["column"] and (src["acl"]["groups"] or src["acl"]["pattern"]):
+                raise ProfileError("%s: groups and pattern need the column they read" % at)
+        out.append(src)
+    return out
+
+
+def for_extraction(profile: dict) -> dict:
+    """The profile as the extraction model and the table mapper see it: without
+    the subtypes and relations only structured imports produce."""
+    if not any(x.get("structured_only") for x in
+               profile["entity_subtypes"] + profile["relation_types"]):
+        return profile
+    out = dict(profile)
+    out["entity_subtypes"] = [s for s in profile["entity_subtypes"] if not s.get("structured_only")]
+    out["relation_types"] = [r for r in profile["relation_types"] if not r.get("structured_only")]
     return out
 
 

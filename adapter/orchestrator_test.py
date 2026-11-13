@@ -1036,11 +1036,33 @@ class InvestigateTest(unittest.TestCase):
         cfg = orchestrator.investigate_config(prof, ["RELATIVE_OF", "CONTACT_OF", "RELATED_TO"],
                                               ["INVOLVED_IN"], 99, 9999)
         self.assertEqual({"relations": ["RELATIVE_OF"], "via": ["INVOLVED_IN"], "branch": 50,
-                          "max_rows": 500, "answer_rows": 80}, cfg)
+                          "max_rows": 500, "answer_rows": 80, "shared_contact": "off"}, cfg)
         self.assertIsNone(orchestrator.investigate_config(prof, ["CONTACT_OF"], ["RELATED_TO"]))
         line = orchestrator.investigate_tool(prof, cfg, "Hungarian")
         self.assertIn("RELATIVE_OF (Rokona) and people sharing a INVOLVED_IN (Érintett)", line)
+        self.assertNotIn("shared_contact", line)
         self.assertEqual("", orchestrator.investigate_tool(prof, None))
+
+    def test_the_shared_contact_step_is_asked_for_and_fails_safe(self):
+        self.assertEqual(["ask", "ask", "always", "off", "off"],
+                         [orchestrator.shared_contact_mode(v)
+                          for v in (None, " ", "ALWAYS", "off", "yes")])
+        prof = InvestigationGraph().post("/profile/get", {})["profile"]
+        holding = dict(prof, relation_types=prof["relation_types"] + [
+            {"id": "USES", "label": {"en": "Uses"}, "from": ["person"], "to": ["identifier"],
+             "holding": True}])
+        cfg = orchestrator.investigate_config(holding, ["RELATIVE_OF"], [], shared_contact="ask")
+        self.assertEqual("ask", cfg["shared_contact"])
+        line = orchestrator.investigate_tool(holding, cfg)
+        self.assertIn("shared_contact: true only when", line)
+        self.assertTrue(line.endswith("\n"))
+        # Without a holding relation there is nothing to share.
+        self.assertEqual("off", orchestrator.investigate_config(
+            prof, ["RELATIVE_OF"], [], shared_contact="always")["shared_contact"])
+        p = orchestrator.parse_plan(json.dumps({"action": "tools", "calls": [
+            {"tool": "investigate", "args": {"start": "NY-1", "shared_contact": True}},
+            {"tool": "investigate", "args": {"start": "NY-2", "shared_contact": "yes"}}]}))
+        self.assertEqual([True, None], [c["args"].get("shared_contact") for c in p["calls"]])
 
     def test_the_planner_gets_the_tool_only_when_offered_and_args_are_cleaned(self):
         p = orchestrator.parse_plan(json.dumps({"action": "tools", "calls": [

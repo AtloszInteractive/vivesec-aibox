@@ -6,6 +6,7 @@ import os
 import re
 import time
 
+from domain_profile import for_extraction
 from extraction import (Chunk, LocalEntity, LocalRelation, chunk_pages, co_mentions,
                         find_identifiers, fold, llm_extract, squash)
 from llm_client import LLMError, LLMTruncated
@@ -221,6 +222,7 @@ def extract_document(raw: bytes, meta: dict, profile: dict, llm, resolver, table
     new table or form layout.
     """
     started = time.time()
+    profile = for_extraction(profile)
     before = _llm_counters(llm)
     pages, how = document_pages(raw, meta["source_path"])
     stats = {"doc_id": meta["doc_id"], "text": how, "pages": len(pages), "chunks": 0,

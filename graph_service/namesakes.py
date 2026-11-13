@@ -14,7 +14,8 @@ people) unless an identifying key confirms they are one (the same registry or
 ID number, or the same birth date and mother's name: extraction now and then
 types an inmate as a visitor in one document), different birth dates,
 mothers' names or ID numbers, and no pair of
-them may have been decided "separate". Only attributes from documents the
+them may have been decided "separate". A structured contact record (`link_rule`
+key_only, E28) is never joined by name: only its person key links it. Only attributes from documents the
 caller may see are compared, so a hidden document can neither join nor split
 records. Joined nodes carry "joined": [record ids], so the caller can say which
 links rest on the name alone.
@@ -99,6 +100,9 @@ class JoinedView:
 
     @classmethod
     def _conflict(cls, nodes, separate) -> bool:
+        if any(n.get("link_rule") == "key_only" for n in nodes):
+            # A contact record is linked by its person key only, never by name.
+            return True
         if cls._subtype_conflict(nodes):
             return True
         for name in CONFLICT_ATTRS:

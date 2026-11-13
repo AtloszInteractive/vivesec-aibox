@@ -678,8 +678,13 @@ def _bounded_int(name, default, low, high):
 # relations it follows and those that link people through a shared entity (an
 # incident). Ids the active profile lacks are dropped; none left (or "off" for
 # both) leaves the tool out of the plan.
-INVESTIGATE_RELATIONS = _relation_list("ADAPTER_INVESTIGATE_RELATIONS", "RELATIVE_OF")
+INVESTIGATE_RELATIONS = _relation_list("ADAPTER_INVESTIGATE_RELATIONS", "RELATIVE_OF,CONTACT_OF")
 INVESTIGATE_VIA = _relation_list("ADAPTER_INVESTIGATE_VIA", "INVOLVED_IN")
+# The "through a shared contact" step (E28): from a person to the other holders of
+# a phone, e-mail or address they hold, labelled as such -- never an identity.
+# ask: when the message asks for it (default); always; off. Anything else: off.
+INVESTIGATE_SHARED_CONTACT = orchestrator.shared_contact_mode(
+    os.environ.get("ADAPTER_INVESTIGATE_SHARED_CONTACT"))
 INVESTIGATE_BRANCH = _bounded_int("ADAPTER_INVESTIGATE_BRANCH", 50, 1, 50)
 INVESTIGATE_MAX_ROWS = _bounded_int("ADAPTER_INVESTIGATE_MAX_ROWS", 500, 1, 500)
 # The rows of one table given to the answer model as facts; the export, the
@@ -1454,7 +1459,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         investigate = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS,
                                                       INVESTIGATE_VIA, INVESTIGATE_BRANCH,
                                                       INVESTIGATE_MAX_ROWS,
-                                                      INVESTIGATE_ANSWER_ROWS)
+                                                      INVESTIGATE_ANSWER_ROWS,
+                                                      INVESTIGATE_SHARED_CONTACT)
         investigate_line = orchestrator.investigate_tool(domain, investigate, lang)
         planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ,
                                     investigate=investigate_line)
@@ -1791,7 +1797,7 @@ HEAVY_SCHEDULER = scheduler.HeavyScheduler(
     _job_worker, max_queued_per_user=JOB_QUEUE_MAX)
 
 
-def _rebuild_investigation(req_scope, access, start, levels, lang):
+def _rebuild_investigation(req_scope, access, start, levels, lang, shared_contact=False):
     """One investigation table run again with this scope and access now, as
     the answer ran it: {run, inv, prof, config}. RagError(status, body) when
     it cannot be: graph down, no investigation in the profile (409), an
@@ -1802,7 +1808,7 @@ def _rebuild_investigation(req_scope, access, start, levels, lang):
         raise RagError(e.status, e.body)
     cfg = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS, INVESTIGATE_VIA,
                                           INVESTIGATE_BRANCH, INVESTIGATE_MAX_ROWS,
-                                          INVESTIGATE_ANSWER_ROWS)
+                                          INVESTIGATE_ANSWER_ROWS, INVESTIGATE_SHARED_CONTACT)
     if cfg is None:
         raise RagError(409, {"ok": False, "error": "the investigation is not available with "
                                                    "the active profile"})
@@ -1813,7 +1819,7 @@ def _rebuild_investigation(req_scope, access, start, levels, lang):
         _LANG_NAMES.get(lang, "English"), ORCHESTRATOR_MAX_FACTS, domain,
         name_join=GRAPH_NAME_JOIN, investigate=cfg, doc_refs=DOCUMENT_REFS)
     try:
-        inv = investigation_export.investigate(run, start, levels)
+        inv = investigation_export.investigate(run, start, levels, shared_contact)
     except orchestrator.Clarify as e:
         raise RagError(409, {"ok": False, "error": "ambiguous", "question": e.question})
     except graph.GraphError as e:
@@ -1874,7 +1880,8 @@ def _summary_worker(job_id, user, drive, cancel_event=None):
     try:
         stage("investigate", 0, 0)
         built = _rebuild_investigation(req_scope, access, request.get("start"),
-                                       request.get("levels"), lang)
+                                       request.get("levels"), lang,
+                                       bool(request.get("shared_contact")))
         inv = built["inv"]
         out = person_summary.summarize(
             built["run"], inv, rag_post_json,
@@ -2275,6 +2282,9 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/reprocess/status": self._graph_reprocess_status,
                 "/api/v1/ui/graph/reprocess/start": self._graph_reprocess_start,
                 "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
+                "/api/v1/ui/graph/import": self._graph_import,
+                "/api/v1/ui/graph/import/sources": self._graph_import_sources,
+                "/api/v1/ui/graph/import/status": self._graph_import_status,
                 "/api/v1/ui/index/skipped": self._index_skipped,
                 "/api/v1/ui/store/list": self._store_list,
                 "/api/v1/ui/store/upload": self._store_upload,
@@ -3474,6 +3484,63 @@ class Handler(BaseHTTPRequestHandler):
                          % (len(docs), prefix or "whole scope", user))
         self._send(200, {"ok": True, "run": run})
 
+    def _graph_import_sources(self):
+        """The profile's structured sources (E28), for a graph administrator."""
+        ctx = self._graph_request()
+        if ctx is None or not self._graph_admin(ctx[0]):
+            return
+        res = self._graph_post("/import/sources", {})
+        if res is not None:
+            self._send(200, res)
+
+    def _graph_import(self):
+        """A graph administrator imports a periodic export (CSV/XLSX) of a
+        structured source into a folder of their scope (E28). The records live
+        in the graph only -- the file is not stored on a drive or in the RAG --
+        and each is visible to a caller who may read the folder (its rule now
+        and as it changes) AND whom the record's own rule (the profile: e.g. its
+        institution's group) admits."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, req_scope, access, _ = ctx
+        if not self._graph_admin(user):
+            return
+        raw_folder = str(payload.get("folder") or "").strip()
+        folder = corpus.norm(raw_folder).rstrip("/") if raw_folder else ""
+        if not folder or ".." in folder.split("/") or not req_scope.contains_path(folder) \
+                or not _visible(access)(folder):
+            self._send(403, {"ok": False, "error": "folder outside the request scope"})
+            return
+        node = MIRROR.get(folder)
+        if node is None or node.get("file"):
+            self._send(404, {"ok": False, "error": "no such folder"})
+            return
+        body = {"corpus_id": corpus.corpus_id_of_path(folder), "folder": folder,
+                "acl": _flat_acl(folder)}
+        for key in ("source", "as_of", "filename", "content_b64", "mode"):
+            if payload.get(key) is not None:
+                body[key] = payload[key]
+        body["force"] = payload.get("force") is True
+        body["wait"] = _review_int(payload, "wait", 60)
+        res = self._graph_post("/import/records", body)
+        if res is None:
+            return
+        stats = (res.get("import") or {}).get("stats") or {}
+        sys.stderr.write("[adapter] graph: import %s (%s, %s) into %s by %s: %s\n" % (
+            body.get("source"), body.get("as_of"), stats.get("mode"), folder, user,
+            {k: stats.get(k) for k in ("records", "created", "updated", "removed")}))
+        self._send(200, res)
+
+    def _graph_import_status(self):
+        ctx = self._graph_request()
+        if ctx is None or not self._graph_admin(ctx[0]):
+            return
+        res = self._graph_post("/import/status", {"job": str(ctx[1].get("job") or ""),
+                                                  "wait": _review_int(ctx[1], "wait", 0)})
+        if res is not None:
+            self._send(200, res)
+
     def _graph_reprocess_cancel(self):
         ctx = self._graph_request()
         if ctx is None:
@@ -3620,14 +3687,16 @@ class Handler(BaseHTTPRequestHandler):
         start, levels, lang, audit_id, prof, config}, or None after the refusal."""
         _, payload, req_scope, access, _ = ctx
         start, levels = investigation_export.parse_request(payload)
+        shared = investigation_export.parse_shared_contact(payload)
         lang = investigation_export.lang_code(payload.get("lang"))
         audit_id = re.sub(r"[^\w\-]", "", str(payload.get("audit_id") or ""))[:64]
         try:
-            built = _rebuild_investigation(req_scope, access, start, levels, lang)
+            built = _rebuild_investigation(req_scope, access, start, levels, lang, shared)
         except RagError as e:
             self._send(e.status, e.body)
             return None
-        return dict(built, start=start, levels=levels, lang=lang, audit_id=audit_id)
+        return dict(built, start=start, levels=levels, lang=lang, audit_id=audit_id,
+                    shared_contact=shared)
 
     def _graph_investigation_graph(self):
         """The subgraph of one investigation table (BV 1.3 / 2.3) in the
@@ -3653,7 +3722,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         sys.stderr.write("[adapter] graph: investigation subgraph (%d nodes, %d edges) by %s\n"
                          % (len(sub["nodes"]), len(sub["edges"]), user))
-        self._send(200, dict(sub, ok=True, start=start, levels=levels))
+        self._send(200, dict(sub, ok=True, start=start, levels=levels,
+                             shared_contact=built["shared_contact"]))
 
     def _graph_investigation_summaries(self):
         """Per-person summaries of one investigation (BV 1.4 / 2.4) as a
@@ -3686,6 +3756,7 @@ class Handler(BaseHTTPRequestHandler):
         request = {"kind": "person_summaries",
                    "query": person_summary.title(_LANG_NAMES.get(built["lang"]), built["start"]),
                    "action": None, "start": built["start"], "levels": built["levels"],
+                   "shared_contact": built["shared_contact"],
                    "ids": ids, "lang": built["lang"], "audit_id": built["audit_id"],
                    "scope_drives": list(req_scope.drive_roots), "origin": "background",
                    "profile": "grounded", "access": access.to_dict(), "purpose": self._bound}
