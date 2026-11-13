@@ -2,10 +2,10 @@ import { Database, HardDrive, Cpu, ShieldCheck, FileText, Lock, AlertTriangle } 
 import { useLang } from "./i18n";
 import { getDataInsightCopy } from "./data-insight";
 import type { PlatformInsight, InsightValue } from "@/lib/api/rag.functions";
+import { ACCENT, ACCENT_TEXT } from "./brand";
 
-const LIME = "#C6F24E";
-const PANEL = "#2A2F35";
-const PANEL_HI = "#333941";
+const PANEL = "#152B44";
+const PANEL_HI = "#1C3550";
 
 function fmtNumber(n: number): string {
   return n.toLocaleString("en-US").replace(/,/g, " ");
@@ -36,7 +36,7 @@ function KpiCard({ icon: Icon, label, value, note }: {
       style={{ backgroundColor: PANEL_HI }}
     >
       <div className="flex items-center gap-1.5 text-[11px] leading-tight text-white/55">
-        <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: missing ? "rgba(255,255,255,0.3)" : LIME }} />
+        <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: missing ? "rgba(255,255,255,0.3)" : ACCENT_TEXT }} />
         <span className="break-words">{label}</span>
       </div>
       <div className={`mt-2 break-words text-lg font-bold leading-none ${missing ? "italic text-white/30" : "text-white"}`}>
@@ -102,7 +102,7 @@ export function DataInsightCard({
       {/* Header */}
       <div className="border-b border-white/[0.07] px-4 py-3">
         <div className="flex items-center gap-2">
-          <Database className="h-4 w-4" style={{ color: LIME }} />
+          <Database className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           <span className="text-[13px] font-bold leading-tight text-white">{c.cardTitle}</span>
         </div>
         <div className="mt-2 space-y-0.5 text-[11px] text-white/50">
@@ -132,7 +132,7 @@ export function DataInsightCard({
         {/* ViVeSecBox — storage side */}
         <div className="p-4" style={{ backgroundColor: PANEL }}>
           <div className="mb-2 flex items-center gap-1.5 border-b border-white/[0.07] pb-2 text-[12px] font-bold text-white">
-            <HardDrive className="h-3.5 w-3.5" style={{ color: LIME }} />
+            <HardDrive className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
             {c.boxTitle}
           </div>
           <Row label={c.kpiVvsUsers} value={num(box.users)} />
@@ -167,7 +167,7 @@ export function DataInsightCard({
         {/* AI Box — index + runtime */}
         <div className="p-4" style={{ backgroundColor: PANEL }}>
           <div className="mb-2 flex items-center gap-1.5 border-b border-white/[0.07] pb-2 text-[12px] font-bold text-white">
-            <Cpu className="h-3.5 w-3.5" style={{ color: LIME }} />
+            <Cpu className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
             {c.aiTitle}
           </div>
 
@@ -205,7 +205,7 @@ export function DataInsightCard({
       {/* Air-gapped stamp */}
       <div
         className="flex items-center gap-1.5 border-t border-white/[0.07] px-4 py-2 text-[10px]"
-        style={{ color: LIME, backgroundColor: `${LIME}0d` }}
+        style={{ color: ACCENT_TEXT, backgroundColor: `${ACCENT}0d` }}
       >
         <Lock className="h-3 w-3 shrink-0" />
         {c.stamp}

@@ -59,24 +59,33 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* ViVeSec brand (brandbook 1.1): purple for fills, its tint for text on navy,
+     pale lilac for highlights. Mirrors src/components/vivesec/brand.ts. */
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-pale: var(--brand-pale);
+  --font-sans: Arial, "Liberation Sans", "Nimbus Sans", Helvetica, sans-serif;
 }
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
+  --brand: #8C49E9;
+  --brand-soft: #7A3AD6;
+  --brand-pale: #F3ECFD;
+  --background: #FFFFFF;
+  --foreground: #071625;
+  --card: #FFFFFF;
+  --card-foreground: #071625;
+  --popover: #FFFFFF;
+  --popover-foreground: #071625;
+  --primary: #8C49E9;
+  --primary-foreground: #FFFFFF;
+  --secondary: #F3ECFD;
+  --secondary-foreground: #071625;
   --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
+  --muted-foreground: #526071;
+  --accent: #F3ECFD;
+  --accent-foreground: #071625;
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(0.929 0.013 255.508);
@@ -98,33 +107,36 @@
 }
 
 .dark {
-  --background: #1E2225;
+  --brand: #8C49E9;
+  --brand-soft: #B48CF5;
+  --brand-pale: #F3ECFD;
+  --background: #0C1E31;
   --foreground: #E6EAEE;
-  --card: #2A2F35;
+  --card: #152B44;
   --card-foreground: #E6EAEE;
-  --popover: #2A2F35;
+  --popover: #152B44;
   --popover-foreground: #E6EAEE;
-  --primary: #C6F24E;
-  --primary-foreground: #1E2225;
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
+  --primary: #8C49E9;
+  --primary-foreground: #FFFFFF;
+  --secondary: #1C3550;
+  --secondary-foreground: #E6EAEE;
+  --muted: #1C3550;
   --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
+  --accent: #1C3550;
+  --accent-foreground: #E6EAEE;
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.551 0.027 264.364);
+  --ring: #B48CF5;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.208 0.042 265.755);
+  --sidebar: #071625;
   --sidebar-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: #8C49E9;
   --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
   --sidebar-accent: oklch(0.279 0.041 260.031);
   --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
@@ -140,6 +152,7 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
   }
 }
 
@@ -205,7 +218,7 @@
     90deg,
     rgba(255, 255, 255, 0.5) 0%,
     rgba(255, 255, 255, 0.5) 42%,
-    #c6f24e 50%,
+    #b48cf5 50%,
     rgba(255, 255, 255, 0.5) 58%,
     rgba(255, 255, 255, 0.5) 100%
   );

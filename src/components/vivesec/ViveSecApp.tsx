@@ -68,10 +68,13 @@ import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib
 import {
   AdapterGraphError,
   setRequestPurpose,
+  storeInfo,
   type AdapterPurposeConfig,
   type RequestPurpose,
 } from "@/lib/rag/adapter-client";
 import { useVoice } from "./use-voice";
+import { AccountMenu } from "./AccountMenu";
+import { DocumentStoreModal } from "./DocumentStoreModal";
 import {
   ArrowLeft,
   ArrowRight,
@@ -132,8 +135,18 @@ import {
   Network,
   FileSearch,
   RotateCcw,
+  FolderOpen,
 } from "lucide-react";
 import { GraphPanel, type GraphSource } from "./GraphPanel";
+import {
+  ACCENT,
+  ACCENT_TEXT,
+  LOGO_ASPECT,
+  LOGO_FILE_RATIO,
+  LOGO_ON_DARK,
+  NAVY,
+  ON_ACCENT,
+} from "./brand";
 
 /* ---------- Types ---------- */
 // One command per function specification v2 quick action (F1-F7), plus /data.
@@ -426,10 +439,9 @@ const SLASH_COMMANDS: { cmd: SlashCmd; label: string; desc: string; icon: typeof
   },
 ];
 
-const LIME = "#C6F24E";
-const PANEL = "#2A2F35";
-const PANEL_HI = "#333941";
-const BG = "#1E2225";
+const PANEL = "#152B44";
+const PANEL_HI = "#1C3550";
+const BG = "#0C1E31";
 
 /** Staging delay before an assistant message appears (the "typing" beat). */
 const AI_REPLY_DELAY_MS = 350;
@@ -1029,6 +1041,26 @@ function ViveSecAppInner() {
   useEffect(() => {
     window.localStorage.setItem("vivesec_scope", JSON.stringify(selectedDrives));
   }, [selectedDrives]);
+
+  /* ---------- File store (standalone box, E27 S5) ----------
+     Only a box that keeps the files itself answers /ui/store/info; on a
+     ViVeSecBox-integrated box the ViVeSecBox owns them and nothing is shown. */
+  const [storeAvailable, setStoreAvailable] = useState(false);
+  const [storeOpen, setStoreOpen] = useState(false);
+  useEffect(() => {
+    if (!drive || boxState !== "online") return;
+    let cancelled = false;
+    void storeInfo(drive)
+      .then((info) => {
+        if (!cancelled) setStoreAvailable(Boolean(info));
+      })
+      .catch(() => {
+        if (!cancelled) setStoreAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drive, boxState]);
 
   const toggleScopeDrive = useCallback((path: string) => {
     setSelectedDrives((current) =>
@@ -1825,9 +1857,9 @@ function ViveSecAppInner() {
         >
           <div className="grid h-7 w-7 shrink-0 place-items-center">
             {running ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-lime-300" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-soft" />
             ) : job.status === "done" ? (
-              <Check className="h-3.5 w-3.5 text-lime-300" />
+              <Check className="h-3.5 w-3.5 text-brand-soft" />
             ) : (
               <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
             )}
@@ -1840,17 +1872,17 @@ function ViveSecAppInner() {
               {unseen && (
                 <span
                   className="h-1.5 w-1.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: LIME }}
+                  style={{ backgroundColor: ACCENT }}
                   title={tm("new")}
                 />
               )}
             </div>
             <div className="text-[10.5px] text-white/40">{status}</div>
             {job.status === "running" && jobStage && (
-              <div className="text-[10px] text-lime-200/60">{jobStage}</div>
+              <div className="text-[10px] text-brand-soft/60">{jobStage}</div>
             )}
             {job.status === "running" && !job.progress_phase && (job.progress_tokens ?? 0) > 0 && (
-              <div className="text-[10px] text-lime-200/60">
+              <div className="text-[10px] text-brand-soft/60">
                 {job.progress_tokens} {tm("tokens")} · {job.progress_chars ?? 0} {tm("chars")}
               </div>
             )}
@@ -2414,36 +2446,41 @@ function ViveSecAppInner() {
         style={{
           height: "100dvh",
           backgroundColor: BG,
-          fontFamily:
-            "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Inter, sans-serif",
+          fontFamily: "Arial, 'Liberation Sans', 'Nimbus Sans', Helvetica, sans-serif",
         }}
       >
         {/* Header */}
-        <header
-          className="z-30 shrink-0 border-b border-white/5"
-          style={{ backgroundColor: "#15181B" }}
-        >
-          <div className="flex items-center gap-3 px-4 py-3">
-            <LogoMark />
-            <div className="min-w-0">
-              <div className="truncate text-[15px] font-semibold tracking-tight">
-                {t.headerTitle}
-              </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-white/50">
+        <header className="z-30 shrink-0 border-b border-white/5" style={{ backgroundColor: NAVY }}>
+          <div className="flex items-center gap-3 px-4 py-2">
+            <BrandLogo />
+            {/* Kept apart from the logo: the guide forbids any text (or a "BOX"
+                suffix) set against it. */}
+            <div className="hidden min-w-0 border-l border-white/10 pl-3 sm:block">
+              <div className="flex items-center gap-1.5 text-[11px] text-white/60">
                 <Lock className="h-3 w-3" />
-                <span>{t.localSecure}</span>
-                <CircleDot className="ml-1 h-2.5 w-2.5" style={{ color: LIME }} />
+                <span className="truncate">{t.localSecure}</span>
+                <CircleDot className="ml-1 h-2.5 w-2.5" style={{ color: ACCENT_TEXT }} />
               </div>
             </div>
             <div className="ml-auto flex items-center gap-2">
               <button
                 onClick={() => setGraphOpen((v) => !v)}
-                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
-                style={graphOpen ? { borderColor: `${LIME}88` } : undefined}
+                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                style={graphOpen ? { borderColor: `${ACCENT}88` } : undefined}
               >
                 <Network className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">{tm("Relationships")}</span>
               </button>
+              {storeAvailable && (
+                <button
+                  onClick={() => setStoreOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                  style={storeOpen ? { borderColor: `${ACCENT}88` } : undefined}
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">{tm("Documents")}</span>
+                </button>
+              )}
               {!analyst && (
                 <button
                   onClick={() => setDriveOpen((v) => !v)}
@@ -2463,10 +2500,10 @@ function ViveSecAppInner() {
                     ? `${tm("Connected to the AI Box")}${boxDetail ? ` · ${boxDetail}` : ""}`
                     : `${tm("AI Box unreachable — click to retry")}${boxDetail ? ` · ${boxDetail}` : ""}`
                 }
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition disabled:opacity-60 ${boxState === "online" ? "text-white" : "text-rose-200/90 hover:bg-rose-400/15"}`}
+                className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition disabled:opacity-60 ${boxState === "online" ? "text-white" : "text-rose-200/90 hover:bg-rose-400/15"}`}
                 style={
                   boxState === "online"
-                    ? { backgroundColor: `${LIME}15`, borderColor: `${LIME}55` }
+                    ? { backgroundColor: `${ACCENT}15`, borderColor: `${ACCENT}55` }
                     : {
                         backgroundColor: "rgba(244,63,94,0.12)",
                         borderColor: "rgba(244,63,94,0.45)",
@@ -2475,7 +2512,7 @@ function ViveSecAppInner() {
               >
                 <Sparkles
                   className="h-3.5 w-3.5"
-                  style={{ color: boxState === "online" ? LIME : "#FB7185" }}
+                  style={{ color: boxState === "online" ? ACCENT_TEXT : "#FB7185" }}
                 />
                 <span className="hidden sm:inline">
                   {boxState === "online"
@@ -2486,9 +2523,10 @@ function ViveSecAppInner() {
                 </span>
                 <CircleDot
                   className="h-2.5 w-2.5"
-                  style={{ color: boxState === "online" ? LIME : "#FB7185" }}
+                  style={{ color: boxState === "online" ? ACCENT_TEXT : "#FB7185" }}
                 />
               </button>
+              <AccountMenu />
               <LanguageSelector />
             </div>
           </div>
@@ -2516,7 +2554,7 @@ function ViveSecAppInner() {
                     className={`inline-flex min-h-8 max-w-[16rem] shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition hover:bg-white/10 ${purposeMissing ? "border-amber-300/50 text-amber-100" : "border-white/10 text-white/70"}`}
                     title={tm("Purpose of the queries")}
                   >
-                    <Scale className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                    <Scale className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                     <span className="truncate">{purposeLabel || tm("Set the purpose")}</span>
                   </button>
                 )}
@@ -2530,7 +2568,7 @@ function ViveSecAppInner() {
                       className="inline-flex min-h-8 max-w-[15rem] items-center gap-1.5 rounded-md border border-white/10 px-2 text-[11px] text-white/70 transition hover:bg-white/10 disabled:opacity-50"
                       title={tm("Conversations")}
                     >
-                      <List className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                      <List className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                       <span className="truncate">
                         {activeConversation?.title ||
                           tm(conversationId ? "Untitled conversation" : "Current conversation")}
@@ -2555,7 +2593,7 @@ function ViveSecAppInner() {
                         <div
                           role="dialog"
                           aria-label={tm("Conversations")}
-                          className="absolute left-0 top-full z-50 mt-2 max-h-80 w-80 overflow-y-auto rounded-xl border border-white/10 bg-[#23272B] py-1 shadow-2xl shadow-black/60"
+                          className="absolute left-0 top-full z-50 mt-2 max-h-80 w-80 overflow-y-auto rounded-xl border border-white/10 bg-[#10243A] py-1 shadow-2xl shadow-black/60"
                         >
                           <button
                             type="button"
@@ -2638,12 +2676,12 @@ function ViveSecAppInner() {
                   onClick={() => setMobilePane("results")}
                   className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden"
                 >
-                  <LayoutTemplate className="h-3.5 w-3.5" style={{ color: LIME }} />
+                  <LayoutTemplate className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                   {tm("Results")}
                   {resultMessages.length + activeBackgroundJobs + unseenBackgroundJobs > 0 && (
                     <span
                       className="rounded-full px-1.5 text-[10px] font-semibold"
-                      style={{ backgroundColor: `${LIME}22`, color: LIME }}
+                      style={{ backgroundColor: `${ACCENT}22`, color: ACCENT_TEXT }}
                     >
                       {resultMessages.length + activeBackgroundJobs + unseenBackgroundJobs}
                     </span>
@@ -2656,7 +2694,7 @@ function ViveSecAppInner() {
                     className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10"
                     aria-label="AI agents"
                   >
-                    <Bot className="h-3.5 w-3.5" style={{ color: LIME }} />
+                    <Bot className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                     <span className="text-white/80">
                       {tm(AGENTS.find((a) => a.id === activeAgent)?.name ?? "")}
                     </span>
@@ -2670,7 +2708,7 @@ function ViveSecAppInner() {
                       <div
                         role="dialog"
                         aria-label="AI agents"
-                        className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-white/10 bg-[#23272B] shadow-2xl shadow-black/60"
+                        className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-white/10 bg-[#10243A] shadow-2xl shadow-black/60"
                       >
                         <div className="px-3 py-2 text-[11px] uppercase tracking-wider text-white/40">
                           {t.activeAgents}
@@ -2691,7 +2729,7 @@ function ViveSecAppInner() {
                               <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/5">
                                 <Icon
                                   className="h-4 w-4"
-                                  style={{ color: active ? LIME : "rgba(255,255,255,0.7)" }}
+                                  style={{ color: active ? ACCENT_TEXT : "rgba(255,255,255,0.7)" }}
                                 />
                               </div>
                               <div className="min-w-0 flex-1">
@@ -2705,7 +2743,7 @@ function ViveSecAppInner() {
                               {active ? (
                                 <span
                                   className="h-2 w-2 shrink-0 rounded-full"
-                                  style={{ backgroundColor: LIME }}
+                                  style={{ backgroundColor: ACCENT }}
                                 />
                               ) : (
                                 !a.available && (
@@ -2757,7 +2795,7 @@ function ViveSecAppInner() {
                   <div className="pointer-events-none absolute -top-12 right-4 sm:right-8">
                     <button
                       onClick={() => setDriveOpen(true)}
-                      className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#222629]/90 px-3 py-1.5 text-xs text-white/80 shadow-lg backdrop-blur hover:bg-white/10 transition"
+                      className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#0F2236]/90 px-3 py-1.5 text-xs text-white/80 shadow-lg backdrop-blur hover:bg-white/10 transition"
                     >
                       <Laptop className="h-3.5 w-3.5" /> {t.browseDriveFloating}
                     </button>
@@ -2773,7 +2811,7 @@ function ViveSecAppInner() {
                     disabled={!!wizard}
                     className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/75 transition hover:bg-white/10 disabled:opacity-40"
                   >
-                    <Zap className="h-3 w-3" style={{ color: LIME }} />
+                    <Zap className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
                     {tm("Quick actions")}
                   </button>
                 </div>
@@ -2798,7 +2836,7 @@ function ViveSecAppInner() {
                   sub-prompts here would land in the retrieval query and
                   dilute it. */}
                 {showSlash && !wizard && !analyst && (
-                  <div className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border border-white/10 bg-[#23272B] shadow-xl max-h-[55vh] overflow-y-auto">
+                  <div className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border border-white/10 bg-[#10243A] shadow-xl max-h-[55vh] overflow-y-auto">
                     {SLASH_COMMANDS.filter((s) => s.cmd.startsWith(input.split(" ")[0] || "/")).map(
                       (s) => {
                         const Icon = s.icon;
@@ -2813,10 +2851,10 @@ function ViveSecAppInner() {
                             className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/5 transition"
                           >
                             <div className="grid h-7 w-7 place-items-center rounded-md bg-white/5">
-                              <Icon className="h-3.5 w-3.5" style={{ color: LIME }} />
+                              <Icon className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                             </div>
                             <div className="min-w-0">
-                              <div className="text-sm font-medium" style={{ color: LIME }}>
+                              <div className="text-sm font-medium" style={{ color: ACCENT_TEXT }}>
                                 {tm(s.label)}
                               </div>
                               <div className="truncate text-xs text-white/55">
@@ -2869,7 +2907,7 @@ function ViveSecAppInner() {
                 )}
 
                 {uiUpdateAvailable && (
-                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-lime-300/40 bg-lime-400/10 px-3 py-2 text-[12px] text-lime-50">
+                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-brand-soft/40 bg-brand/10 px-3 py-2 text-[12px] text-brand-pale">
                     <Sparkles className="h-4 w-4 shrink-0" />
                     <span className="flex-1">
                       {tm("A new version of the interface is available.")}
@@ -2878,7 +2916,7 @@ function ViveSecAppInner() {
                     <button
                       onClick={() => reloadKeepingDraft(input)}
                       disabled={liveBusy}
-                      className="shrink-0 rounded-lg border border-lime-300/40 px-2 py-1 text-[11px] font-semibold transition hover:bg-lime-400/20 disabled:opacity-50"
+                      className="shrink-0 rounded-lg border border-brand-soft/40 px-2 py-1 text-[11px] font-semibold transition hover:bg-brand/20 disabled:opacity-50"
                     >
                       <RefreshCw className="mr-1 inline h-3 w-3" />
                       {tm("Reload")}
@@ -2886,7 +2924,7 @@ function ViveSecAppInner() {
                   </div>
                 )}
 
-                <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-[#23272B] px-2 py-1.5 focus-within:border-white/20 transition">
+                <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-[#10243A] px-2 py-1.5 focus-within:border-white/20 transition">
                   <textarea
                     ref={textareaRef}
                     rows={1}
@@ -2973,8 +3011,8 @@ function ViveSecAppInner() {
                     onClick={handleSend}
                     className="grid h-9 w-9 place-items-center rounded-lg transition disabled:opacity-40"
                     style={{
-                      backgroundColor: input.trim() ? LIME : "transparent",
-                      color: input.trim() ? "#15181B" : "rgba(255,255,255,0.6)",
+                      backgroundColor: input.trim() ? ACCENT : "transparent",
+                      color: input.trim() ? ON_ACCENT : "rgba(255,255,255,0.6)",
                     }}
                     disabled={!input.trim() || boxState !== "online" || liveBusy || !!wizard}
                     title="Send"
@@ -3054,7 +3092,7 @@ function ViveSecAppInner() {
                     >
                       <ArrowLeft className="h-4 w-4 text-white/60" />
                     </button>
-                    <Zap className="h-4 w-4" style={{ color: LIME }} />
+                    <Zap className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
                     <div className="text-sm font-medium">{tm("Quick actions")}</div>
                     {unseenBackgroundJobs > 0 || activeBackgroundJobs > 0 ? (
                       <button
@@ -3102,7 +3140,7 @@ function ViveSecAppInner() {
                             : "border-white/10 bg-white/[0.04] hover:border-white/25"
                         }`}
                       >
-                        <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                        <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[12px] text-white/85">{s.cmd}</span>
                           <span className="block truncate text-[10.5px] text-white/40">
@@ -3135,7 +3173,7 @@ function ViveSecAppInner() {
                       onClick={submitAction}
                       disabled={pendingAction === "/search" && !actionBrief.trim()}
                       className="rounded-lg px-3 py-2 text-[12px] font-semibold disabled:opacity-40"
-                      style={{ backgroundColor: LIME, color: "#15181B" }}
+                      style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
                     >
                       {tm("Run")}
                     </button>
@@ -3350,7 +3388,7 @@ function ViveSecAppInner() {
                 <div className="border-t border-white/5 p-3">
                   <button
                     className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-40"
-                    style={{ backgroundColor: LIME, color: "#15181B" }}
+                    style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
                     disabled={boxState !== "online" || liveBusy || !!wizard}
                     onClick={() => analyzeDocument(previewFile)}
                   >
@@ -3475,6 +3513,16 @@ function ViveSecAppInner() {
           onClose={() => setExplorerOpen(false)}
         />
       )}
+      {storeOpen && drive && (
+        <DocumentStoreModal
+          drive={drive}
+          onClose={() => {
+            setStoreOpen(false);
+            // Uploads and deletes may have changed the folder on screen.
+            if (!analyst) void loadFolder(drive, cwd || undefined);
+          }}
+        />
+      )}
       {purposeDialog && (
         <PurposeDialog
           config={purposeConfig}
@@ -3546,14 +3594,14 @@ function PurposeDialog({
     >
       <div
         className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
-        style={{ backgroundColor: "#1B1F22" }}
+        style={{ backgroundColor: "#0A1B2D" }}
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
           if (e.key === "Enter") save();
         }}
       >
         <div className="mb-1 flex items-center gap-2 text-[13px] font-semibold">
-          <Scale className="h-4 w-4" style={{ color: LIME }} />
+          <Scale className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           {tm("Purpose of the queries")}
         </div>
         <p className="mb-3 text-[12px] text-white/60">
@@ -3611,7 +3659,7 @@ function PurposeDialog({
             onClick={save}
             disabled={disabled}
             className="rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-            style={{ backgroundColor: LIME, color: "#15181B" }}
+            style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
           >
             {tm("Save")}
           </button>
@@ -3651,7 +3699,7 @@ function ThreadDialog({
     >
       <div
         className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
-        style={{ backgroundColor: "#1B1F22" }}
+        style={{ backgroundColor: "#0A1B2D" }}
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
           if (e.key === "Enter" && !disabled) onConfirm(value);
@@ -3659,7 +3707,7 @@ function ThreadDialog({
       >
         <div className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
           {renaming ? (
-            <Pencil className="h-4 w-4" style={{ color: LIME }} />
+            <Pencil className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           ) : (
             <AlertTriangle className="h-4 w-4 text-rose-300" />
           )}
@@ -3698,8 +3746,8 @@ function ThreadDialog({
             autoFocus={!renaming}
             onClick={() => onConfirm(value)}
             disabled={disabled}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${renaming ? "" : "bg-rose-400 text-[#15181B]"}`}
-            style={renaming ? { backgroundColor: LIME, color: "#15181B" } : undefined}
+            className={`rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${renaming ? "" : "bg-rose-400 text-[#071625]"}`}
+            style={renaming ? { backgroundColor: ACCENT, color: ON_ACCENT } : undefined}
           >
             {tm(renaming ? "Save" : "Delete conversation")}
           </button>
@@ -3744,7 +3792,7 @@ function LanguageSelector() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -6, scale: 0.97 }}
               transition={{ type: "spring", stiffness: 320, damping: 26 }}
-              className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-xl border border-white/10 bg-[#23272B] shadow-2xl shadow-black/60"
+              className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-xl border border-white/10 bg-[#10243A] shadow-2xl shadow-black/60"
             >
               {LANGS.map((l) => {
                 const active = l.code === lang;
@@ -3755,16 +3803,16 @@ function LanguageSelector() {
                       setLang(l.code as Lang);
                       setOpen(false);
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:text-[#C6F24E] hover:bg-white/5"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:text-brand-soft hover:bg-white/5"
                   >
                     <span
                       className="w-7 shrink-0 font-semibold"
-                      style={active ? { color: LIME } : undefined}
+                      style={active ? { color: ACCENT_TEXT } : undefined}
                     >
                       {l.code}
                     </span>
                     <span className="flex-1 truncate text-white/60">{l.native}</span>
-                    {active && <Check className="h-3.5 w-3.5" style={{ color: LIME }} />}
+                    {active && <Check className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />}
                   </button>
                 );
               })}
@@ -3844,7 +3892,7 @@ function DocumentView({
   if (state.kind === "loading") {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-white/50">
-        <Loader2 className="h-5 w-5 animate-spin" style={{ color: LIME }} />
+        <Loader2 className="h-5 w-5 animate-spin" style={{ color: ACCENT_TEXT }} />
         {tm("Fetching the document from the ViVeSecBox…")}
       </div>
     );
@@ -3869,14 +3917,14 @@ function DocumentView({
         key={`${state.url}#${page ?? 1}`}
         src={`${state.url}#page=${page ?? 1}&view=FitH`}
         title={name}
-        className="flex-1 border-0 bg-[#23272B]"
+        className="flex-1 border-0 bg-[#10243A]"
       />
     );
   }
 
   if (state.kind === "image") {
     return (
-      <div className="vvs-scroll flex-1 overflow-auto bg-[#15181B] p-3">
+      <div className="vvs-scroll flex-1 overflow-auto bg-[#071625] p-3">
         <img src={state.url} alt={name} className="mx-auto max-w-full" />
       </div>
     );
@@ -3885,7 +3933,7 @@ function DocumentView({
   if (state.kind === "text") {
     return (
       <div className="vvs-scroll flex-1 overflow-auto p-3 sm:p-4">
-        <div className="mx-auto max-w-3xl rounded-md bg-[#F6F4EE] p-4 sm:p-6 text-[12.5px] leading-relaxed text-[#1E2225] shadow-2xl">
+        <div className="mx-auto max-w-3xl rounded-md bg-[#F6F4EE] p-4 sm:p-6 text-[12.5px] leading-relaxed text-[#0C1E31] shadow-2xl">
           <pre className="whitespace-pre-wrap break-words font-sans">
             <HighlightedText text={state.body} terms={terms ?? []} />
           </pre>
@@ -3909,7 +3957,7 @@ function DocumentView({
         href={state.url}
         download={name}
         className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold"
-        style={{ backgroundColor: LIME, color: "#15181B" }}
+        style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
       >
         <Download className="h-3.5 w-3.5" /> {tm("Download")}
       </a>
@@ -4007,7 +4055,7 @@ function PdfPreviewPane({
       className={`fixed inset-0 z-[60] flex h-[100dvh] flex-col lg:static lg:order-1 lg:z-auto lg:h-full animate-[fadeSlide_320ms_ease-out] ${
         isSplit ? "lg:w-3/5 lg:shrink-0" : "lg:min-w-0 lg:flex-1 lg:basis-0"
       }`}
-      style={{ backgroundColor: "#1B1F22" }}
+      style={{ backgroundColor: "#0A1B2D" }}
     >
       {/* Mobile drag handle — affordance for sheet-style dismissal */}
       <div className="flex justify-center pt-2 pb-1 lg:hidden">
@@ -4064,9 +4112,9 @@ function PdfPreviewPane({
           className="flex items-center gap-2 border-b border-white/5 px-3 py-2 text-[11.5px]"
           style={{ backgroundColor: "rgba(204,255,0,0.06)" }}
         >
-          <Link2 className="h-3.5 w-3.5" style={{ color: LIME }} />
+          <Link2 className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
           <span className="text-white/70">Jumped to</span>
-          <span className="truncate font-medium" style={{ color: LIME }}>
+          <span className="truncate font-medium" style={{ color: ACCENT_TEXT }}>
             {citation.label}
           </span>
           {typeof citation.score === "number" && (
@@ -4097,7 +4145,7 @@ function PdfPreviewPane({
       {tab === "passages" && (
       <div ref={scrollRef} className="vvs-scroll relative flex-1 overflow-y-auto p-3 sm:p-4">
         <div
-          className={`mx-auto rounded-md bg-[#F6F4EE] p-4 sm:p-6 text-[13px] leading-relaxed text-[#1E2225] shadow-2xl ${isSplit ? "max-w-2xl" : "w-full lg:max-w-xl"}`}
+          className={`mx-auto rounded-md bg-[#F6F4EE] p-4 sm:p-6 text-[13px] leading-relaxed text-[#0C1E31] shadow-2xl ${isSplit ? "max-w-2xl" : "w-full lg:max-w-xl"}`}
         >
           <div className="mb-3 flex items-center justify-between border-b border-black/10 pb-2 text-[10px] uppercase tracking-wider text-black/50">
             <span className="truncate">{file.name}</span>
@@ -4145,7 +4193,7 @@ function PdfPreviewPane({
           className="pointer-events-none sticky mt-4 flex justify-center"
           style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
         >
-          <div className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-white/10 bg-[#15181B]/95 px-1.5 py-1 shadow-2xl shadow-black/50 backdrop-blur">
+          <div className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-white/10 bg-[#071625]/95 px-1.5 py-1 shadow-2xl shadow-black/50 backdrop-blur">
             <button
               onClick={onPrevMatch}
               disabled={!matchCount || matchCount < 2}
@@ -4188,7 +4236,7 @@ function PdfPreviewPane({
           <ArrowLeft className="h-3 w-3" /> Prev
         </button>
         <span className="inline-flex items-center gap-1.5">
-          <ShieldCheck className="h-3 w-3" style={{ color: LIME }} />
+          <ShieldCheck className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
           Searched 100% locally on ViVeSecBox
         </span>
         <button
@@ -4220,7 +4268,7 @@ function HighlightedText({ text, terms }: { text: string; terms: string[] }) {
         testRe.test(p) ? (
           <mark
             key={i}
-            style={{ backgroundColor: LIME, color: "#15181B", padding: "0 2px", borderRadius: 3 }}
+            style={{ backgroundColor: ACCENT, color: ON_ACCENT, padding: "0 2px", borderRadius: 3 }}
           >
             {p}
           </mark>
@@ -4232,18 +4280,21 @@ function HighlightedText({ text, terms }: { text: string; terms: string[] }) {
   );
 }
 
-function LogoMark() {
+/** The full ViVeSec logo as delivered (clear space included in the PNG):
+ *  177 px file width = 160 px visible, the guide's digital minimum. */
+function BrandLogo() {
+  const width = Math.round(160 * LOGO_FILE_RATIO);
+  const height = Math.round(width * LOGO_ASPECT);
   return (
-    <div
-      className="relative grid h-9 w-9 place-items-center rounded-full"
-      style={{ backgroundColor: "#0F1113" }}
-    >
-      <Sparkles className="h-4 w-4" style={{ color: LIME }} />
-      <span
-        className="absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-[#15181B]"
-        style={{ backgroundColor: LIME }}
-      />
-    </div>
+    <img
+      src={LOGO_ON_DARK}
+      alt="ViVeSec"
+      width={width}
+      height={height}
+      draggable={false}
+      className="shrink-0 select-none"
+      style={{ width, height }}
+    />
   );
 }
 
@@ -4311,7 +4362,7 @@ function MessageView({
         <Avatar name={msg.name} />
         <div className="flex max-w-[78%] flex-col items-end">
           <div className="mb-1 flex items-center gap-1.5">
-            <span className="text-[12px] font-semibold" style={{ color: LIME }}>
+            <span className="text-[12px] font-semibold" style={{ color: ACCENT_TEXT }}>
               {msg.name}
             </span>
             <span className="text-[11px] text-white/40">{msg.ts}</span>
@@ -4328,8 +4379,8 @@ function MessageView({
   return (
     <div className="min-w-0">
       <div className="mb-1 flex items-center gap-1.5">
-        <Sparkles className="h-3 w-3" style={{ color: LIME }} />
-        <span className="text-[12px] font-semibold" style={{ color: LIME }}>
+        <Sparkles className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
+        <span className="text-[12px] font-semibold" style={{ color: ACCENT_TEXT }}>
           {msg.name}
         </span>
         <span className="text-[11px] text-white/40">{msg.ts}</span>
@@ -4347,7 +4398,7 @@ function MessageView({
               title={tm("Continues the analysis; the parts already read are not read again")}
               className="mt-2 flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.04] px-2.5 py-1 text-[12px] text-white/80 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
             >
-              <RotateCcw className="h-3.5 w-3.5" style={{ color: LIME }} />
+              <RotateCcw className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
               {tm("Resume analysis")}
             </button>
           )}
@@ -4436,7 +4487,7 @@ function ThinkingBubble({ startedAt, stage }: { startedAt: number; stage?: Adapt
           <span
             key={i}
             className="vvs-think-dot h-1.5 w-1.5 rounded-full"
-            style={{ backgroundColor: LIME, animationDelay: `${i * 160}ms` }}
+            style={{ backgroundColor: ACCENT, animationDelay: `${i * 160}ms` }}
           />
         ))}
       </span>
@@ -4478,7 +4529,7 @@ function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string
                 <button
                   key={j}
                   onClick={() => onChoose(optionValue(item.text))}
-                  className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-left text-[13px] text-white/85 transition hover:border-lime-300/50 hover:bg-white/10"
+                  className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-left text-[13px] text-white/85 transition hover:border-brand-soft/50 hover:bg-white/10"
                 >
                   {renderInline(item.text)}
                 </button>
@@ -4503,7 +4554,7 @@ function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string
             <div
               key={i}
               className="whitespace-pre-wrap rounded-lg border-l-2 px-3 py-2 text-[12.5px] text-white/70"
-              style={{ borderColor: LIME, backgroundColor: "rgba(255,255,255,0.03)" }}
+              style={{ borderColor: ACCENT, backgroundColor: "rgba(255,255,255,0.03)" }}
             >
               {renderInline(b.text)}
             </div>
@@ -4578,11 +4629,11 @@ function WizardPanel({
 
   return (
     <div
-      className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border bg-[#23272B] shadow-xl"
-      style={{ borderColor: `${LIME}44` }}
+      className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border bg-[#10243A] shadow-xl"
+      style={{ borderColor: `${ACCENT}44` }}
     >
       <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
-        <Sparkles className="h-3.5 w-3.5" style={{ color: LIME }} />
+        <Sparkles className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
         <span className="text-[11px] uppercase tracking-wider text-white/45">
           {tm(WIZARD_NOUN[kind])} · {tm("Step")} {stepIndex + 1}/{stepCount}
         </span>
@@ -4618,7 +4669,7 @@ function WizardPanel({
               onClick={() => submitText(step)}
               disabled={!text.trim()}
               className="rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40"
-              style={{ backgroundColor: LIME, color: "#15181B" }}
+              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
             >
               {tm("Continue")}
             </button>
@@ -4633,7 +4684,7 @@ function WizardPanel({
                 onClick={() => onAnswer({ [step]: o } as Partial<WizardState>, tm(o))}
                 className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-[13px] text-white/85 transition hover:border-white/25 hover:bg-white/[0.07]"
               >
-                <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                 {tm(o)}
               </button>
             ))}
@@ -4649,7 +4700,7 @@ function WizardPanel({
                   onClick={() => onAnswer({ purpose: p }, tm(p))}
                   className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-[13px] text-white/85 transition hover:border-white/25 hover:bg-white/[0.07]"
                 >
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                   {tm(p)}
                 </button>
               ))}
@@ -4676,7 +4727,7 @@ function WizardPanel({
                   onClick={() => submitText("purpose")}
                   disabled={!text.trim()}
                   className="rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40"
-                  style={{ backgroundColor: LIME, color: "#15181B" }}
+                  style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
                 >
                   {tm("Continue")}
                 </button>
@@ -4715,9 +4766,9 @@ function WizardPanel({
                   >
                     <span
                       className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "" : "border-white/20"}`}
-                      style={on ? { backgroundColor: LIME, borderColor: LIME } : {}}
+                      style={on ? { backgroundColor: ACCENT, borderColor: ACCENT } : {}}
                     >
-                      {on && <Check className="h-3 w-3 text-[#15181B]" />}
+                      {on && <Check className="h-3 w-3 text-white" />}
                     </span>
                     <Icon className={`h-3.5 w-3.5 shrink-0 ${fileTint(f.type).split(" ")[0]}`} />
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-white/85">
@@ -4739,7 +4790,7 @@ function WizardPanel({
                 onClick={() => onAnswer({ files: picked }, pickedNames)}
                 disabled={picked.length === 0}
                 className="ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
-                style={{ backgroundColor: LIME, color: "#15181B" }}
+                style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
               >
                 {tm("Use selected")} ({picked.length})
               </button>
@@ -4768,7 +4819,7 @@ function WizardPanel({
                 onClick={() => submitText("extra")}
                 disabled={!text.trim()}
                 className="ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-40"
-                style={{ backgroundColor: LIME, color: "#15181B" }}
+                style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
               >
                 {tm("Continue")}
               </button>
@@ -4927,7 +4978,7 @@ function CardShell({
     >
       {(title !== null || onToggleEdit) && (
         <div className="flex items-center gap-2 border-b border-white/[0.07] px-4 py-2.5">
-          <Icon className="h-4 w-4" style={{ color: LIME }} />
+          <Icon className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           <div className="min-w-0 flex-1 truncate text-[13px] font-semibold">
             {title === null ? "" : tm(title)}
           </div>
@@ -4937,7 +4988,7 @@ function CardShell({
               className="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold transition"
               style={
                 editing
-                  ? { borderColor: LIME, color: "#15181B", backgroundColor: LIME }
+                  ? { borderColor: ACCENT, color: ON_ACCENT, backgroundColor: ACCENT }
                   : { borderColor: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.7)" }
               }
               title={tm("Edit this output before saving")}
@@ -4995,7 +5046,7 @@ function SummaryCard({
             <li key={i} className="flex gap-2">
               <span
                 className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: LIME }}
+                style={{ backgroundColor: ACCENT }}
               />
               <EditableText
                 editing={editing}
@@ -5018,10 +5069,10 @@ function SummaryCard({
                 <button
                   onClick={() => onToggle(a.id)}
                   className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border transition ${a.done ? "" : "border-white/20"}`}
-                  style={a.done ? { backgroundColor: LIME, borderColor: LIME } : {}}
+                  style={a.done ? { backgroundColor: ACCENT, borderColor: ACCENT } : {}}
                   aria-label="Toggle"
                 >
-                  {a.done && <Check className="h-3.5 w-3.5 text-[#15181B]" />}
+                  {a.done && <Check className="h-3.5 w-3.5 text-white" />}
                 </button>
                 <span
                   className={`flex-1 text-[13.5px] ${a.done ? "text-white/40 line-through" : "text-white/90"}`}
@@ -5216,7 +5267,7 @@ function MemoCard({
         />
         <button
           className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium"
-          style={{ backgroundColor: LIME, color: "#15181B" }}
+          style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
         >
           <Mail className="h-3.5 w-3.5" /> {tm("Send for approval")}
         </button>
@@ -5310,14 +5361,17 @@ function SaveToDriveButton({
         className={cls}
         title={tm("Save this answer to the ViVeSecBox drive")}
       >
-        <Save className={variant === "chip" ? "h-3.5 w-3.5" : "h-3 w-3"} style={{ color: LIME }} />
+        <Save
+          className={variant === "chip" ? "h-3.5 w-3.5" : "h-3 w-3"}
+          style={{ color: ACCENT_TEXT }}
+        />
         {saving ? tm("Saving…") : tm("Save to drive")}
       </button>
 
       {/* Confirmation stays on the card: the user can see the save happened. */}
       {result && (
         <div className="mt-2 flex w-full items-center gap-1.5 text-[11px] text-white/60">
-          <Check className="h-3 w-3 shrink-0" style={{ color: LIME }} />
+          <Check className="h-3 w-3 shrink-0" style={{ color: ACCENT_TEXT }} />
           <span className="truncate">
             {result.downloaded
               ? `${tm("Downloaded from the AI Box")}: ${result.name}`
@@ -5402,10 +5456,10 @@ function SaveDialog({
     >
       <div
         className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
-        style={{ backgroundColor: "#1B1F22" }}
+        style={{ backgroundColor: "#0A1B2D" }}
       >
         <div className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
-          <Save className="h-4 w-4" style={{ color: LIME }} />
+          <Save className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           {tm("Save to drive")}
         </div>
 
@@ -5453,7 +5507,7 @@ function SaveDialog({
             onClick={onSave}
             disabled={saving || !name.trim()}
             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-            style={{ backgroundColor: LIME, color: "#15181B" }}
+            style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
           >
             {saving ? tm("Saving…") : tm("Save to drive")}
           </button>
@@ -5528,7 +5582,7 @@ function SearchCard({
       {!!msg.fileHits?.length && (
         <div className="mb-3 rounded-xl border border-white/10 bg-black/20 p-2.5">
           <div className="mb-1.5 flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-white/45">
-            <FileText className="h-3 w-3" style={{ color: LIME }} />
+            <FileText className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             {tm("Matching file names")} ({msg.fileHits.length})
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -5591,7 +5645,7 @@ function SearchCard({
                     title={tm("Read and analyse this whole document (may take minutes)")}
                     className="flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] px-1.5 text-center text-[10.5px] leading-tight text-white/65 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white/90"
                   >
-                    <FileSearch className="h-3.5 w-3.5" style={{ color: LIME }} />
+                    <FileSearch className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                     {tm("Full analysis")}
                   </button>
                 )}
@@ -5615,7 +5669,7 @@ function SearchCard({
       )}
       <div className="mt-3 flex items-center gap-3">
         <span className="inline-flex items-center gap-1.5 text-[10.5px] text-white/45">
-          <ShieldCheck className="h-3 w-3" style={{ color: LIME }} />
+          <ShieldCheck className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
           {tm("Searched 100% locally on ViVeSecBox")}
         </span>
         <SaveToDriveButton text={msg.answer} defaultName={saveName("ai-answer")} />
@@ -5765,7 +5819,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
             {busy === `${inv.start}|download` ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
-              <FileSpreadsheet className="h-3 w-3" style={{ color: LIME }} />
+              <FileSpreadsheet className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             )}
             {list.length > 1 ? `${tm("Export to Excel")} · ${inv.start}` : tm("Export to Excel")}
           </button>
@@ -5780,7 +5834,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
             {busy === `${inv.start}|graph` ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
-              <Network className="h-3 w-3" style={{ color: LIME }} />
+              <Network className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             )}
             {tm("Open as graph")}
           </button>
@@ -5795,7 +5849,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
             {busy === `${inv.start}|summaries` ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
-              <Users className="h-3 w-3" style={{ color: LIME }} />
+              <Users className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             )}
             {tm("Summary per person")}
           </button>
@@ -5807,7 +5861,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
             {busy === `${inv.start}|drive` ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
-              <Save className="h-3 w-3" style={{ color: LIME }} />
+              <Save className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             )}
             {tm("Save to drive")}
           </button>
@@ -5887,7 +5941,7 @@ function DeckCard({
     >
       {/* Header */}
       <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.07] px-4 py-2.5">
-        <Presentation className="h-4 w-4" style={{ color: LIME }} />
+        <Presentation className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
         <div className="text-[13px] font-semibold">{tm(msg.title)}</div>
         <span className="ml-1 rounded-full border border-white/10 bg-black/30 px-2 py-0.5 text-[10.5px] uppercase tracking-wider text-white/55">
           Slide {idx + 1} of {msg.slides.length}
@@ -5913,7 +5967,7 @@ function DeckCard({
       {/* Slide canvas */}
       <div className="p-3 sm:p-4">
         <div
-          className="relative w-full overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#15181B] to-[#1B1F22] shadow-inner"
+          className="relative w-full overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#071625] to-[#0A1B2D] shadow-inner"
           style={{ aspectRatio: "16 / 9" }}
         >
           <div key={slide.id} className="absolute inset-0 animate-[fadeSlide_320ms_ease-out]">
@@ -5929,7 +5983,7 @@ function DeckCard({
               className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full border border-white/10 bg-black/50 px-2 py-1 text-[10.5px] text-white/75 backdrop-blur hover:bg-black/70 hover:text-white"
               title="Open source in Drive"
             >
-              <Link2 className="h-3 w-3" style={{ color: LIME }} /> {tm("Source")}
+              <Link2 className="h-3 w-3" style={{ color: ACCENT_TEXT }} /> {tm("Source")}
             </button>
           )}
         </div>
@@ -5945,10 +5999,10 @@ function DeckCard({
               }}
               className={`group relative h-12 w-20 shrink-0 overflow-hidden rounded-md border text-[9px] transition ${
                 i === idx
-                  ? "border-[color:var(--lime)]"
+                  ? "border-[color:var(--vvs-accent)]"
                   : "border-white/10 opacity-70 hover:opacity-100"
               }`}
-              style={{ ["--lime" as any]: LIME, backgroundColor: "#15181B" }}
+              style={{ ["--vvs-accent" as any]: ACCENT_TEXT, backgroundColor: "#071625" }}
             >
               <div className="absolute left-1 top-1 rounded bg-black/40 px-1 text-white/70">
                 {i + 1}
@@ -5967,10 +6021,10 @@ function DeckCard({
           onClick={() => setEditing((v) => !v)}
           className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11.5px] transition ${
             editing
-              ? "border-[color:var(--lime)] text-[color:var(--lime)]"
+              ? "border-[color:var(--vvs-accent)] text-[color:var(--vvs-accent)]"
               : "border-white/10 bg-white/[0.04] text-white/80 hover:bg-white/10"
           }`}
-          style={{ ["--lime" as any]: LIME }}
+          style={{ ["--vvs-accent" as any]: ACCENT_TEXT }}
         >
           <Pencil className="h-3.5 w-3.5" /> {editing ? tm("Done editing") : tm("Edit Content")}
         </button>
@@ -6128,7 +6182,7 @@ function BarChart({ chart }: { chart: SlideChart }) {
                   <div
                     className="h-full w-full"
                     style={{
-                      backgroundColor: LIME,
+                      backgroundColor: ACCENT,
                       opacity: Math.abs(p.value) === peak ? 1 : 0.5,
                       borderRadius: up ? "3px 3px 0 0" : "0 0 3px 3px",
                     }}
@@ -6169,7 +6223,7 @@ function SlideCanvas({
       <div
         className={`${base} justify-center`}
         style={{
-          background: `radial-gradient(ellipse at 20% 10%, ${LIME}22, transparent 60%), #15181B`,
+          background: `radial-gradient(ellipse at 20% 10%, ${ACCENT}22, transparent 60%), #071625`,
         }}
       >
         <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/45">
@@ -6188,7 +6242,7 @@ function SlideCanvas({
             onChange={(v) => onPatch({ subtitle: v })}
           />
         </div>
-        <div className="mt-6 h-1 w-16 rounded-full" style={{ backgroundColor: LIME }} />
+        <div className="mt-6 h-1 w-16 rounded-full" style={{ backgroundColor: ACCENT }} />
       </div>
     );
   }
@@ -6220,7 +6274,7 @@ function SlideCanvas({
             >
               <span
                 className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full"
-                style={{ backgroundColor: LIME }}
+                style={{ backgroundColor: ACCENT }}
               />
               <EditableText
                 editing={editing}
@@ -6259,7 +6313,7 @@ function SlideCanvas({
             >
               <span
                 className="mt-1.5 h-1 w-1 shrink-0 rounded-full"
-                style={{ backgroundColor: LIME }}
+                style={{ backgroundColor: ACCENT }}
               />
               <EditableText
                 editing={editing}
@@ -6279,7 +6333,7 @@ function SlideCanvas({
     return (
       <div
         className={`${base} justify-center`}
-        style={{ background: `linear-gradient(135deg, ${LIME}18, transparent 55%), #15181B` }}
+        style={{ background: `linear-gradient(135deg, ${ACCENT}18, transparent 55%), #071625` }}
       >
         <EditableText
           editing={editing}
@@ -6289,7 +6343,7 @@ function SlideCanvas({
         />
         <div
           className="text-5xl font-bold leading-none tracking-tight sm:text-6xl"
-          style={{ color: LIME }}
+          style={{ color: ACCENT_TEXT }}
         >
           <EditableText
             editing={editing}
@@ -6359,7 +6413,7 @@ function SlideCanvas({
             <div key={i} className="flex items-start gap-3">
               <div
                 className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-bold"
-                style={{ backgroundColor: `${LIME}22`, color: LIME }}
+                style={{ backgroundColor: `${ACCENT}22`, color: ACCENT_TEXT }}
               >
                 {i + 1}
               </div>
@@ -6380,7 +6434,7 @@ function SlideCanvas({
   return (
     <div
       className={base}
-      style={{ background: `linear-gradient(180deg, transparent, ${LIME}10), #15181B` }}
+      style={{ background: `linear-gradient(180deg, transparent, ${ACCENT}10), #071625` }}
     >
       <EditableText
         editing={editing}
@@ -6396,7 +6450,7 @@ function SlideCanvas({
           >
             <span
               className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md text-[10px] font-bold"
-              style={{ backgroundColor: LIME, color: "#15181B" }}
+              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
             >
               {i + 1}
             </span>
@@ -6546,13 +6600,13 @@ function DrivePanel(props: {
         className={`fixed inset-y-0 right-0 z-50 flex min-h-0 w-[88vw] max-w-[400px] flex-col border-l border-white/5 transition-transform duration-500 ease-out lg:static lg:order-1 lg:max-w-none lg:translate-x-0 lg:border-l-0 ${
           open ? "translate-x-0" : "translate-x-full lg:hidden"
         } ${open ? "lg:flex lg:min-w-0 lg:flex-1 lg:basis-0" : ""}`}
-        style={{ backgroundColor: "#1B1F22" }}
+        style={{ backgroundColor: "#0A1B2D" }}
       >
         {/* Header — matches screenshot */}
         <div className="shrink-0 border-b border-white/5">
           <div
             className="flex items-center gap-3 px-4 py-3 lg:hidden"
-            style={{ backgroundColor: "#15181B" }}
+            style={{ backgroundColor: "#071625" }}
           >
             <button
               onClick={onClose}
@@ -6573,14 +6627,14 @@ function DrivePanel(props: {
                   className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[12px] text-white/85 hover:bg-white/10"
                   title={tm("Demo only: switch drive")}
                 >
-                  <Laptop className="h-3.5 w-3.5 shrink-0" style={{ color: LIME }} />
+                  <Laptop className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                   <span className="truncate">{driveName || t.driveRoot}</span>
                   <ChevronDown className="h-3 w-3 shrink-0 text-white/50" />
                 </button>
                 {driveMenu && (
                   <div
                     className="absolute left-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-white/10 shadow-xl"
-                    style={{ backgroundColor: "#23272B" }}
+                    style={{ backgroundColor: "#10243A" }}
                   >
                     <div className="border-b border-white/5 px-3 py-1.5 text-[10px] uppercase tracking-wider text-white/40">
                       {tm("Demo only: switch drive")}
@@ -6596,11 +6650,13 @@ function DrivePanel(props: {
                       >
                         <Laptop
                           className="h-3.5 w-3.5"
-                          style={{ color: d.path === props.drive ? LIME : "rgba(255,255,255,0.4)" }}
+                          style={{
+                            color: d.path === props.drive ? ACCENT_TEXT : "rgba(255,255,255,0.4)",
+                          }}
                         />
                         <span className="flex-1 truncate">{d.name}</span>
                         {d.path === props.drive && (
-                          <Check className="h-3.5 w-3.5" style={{ color: LIME }} />
+                          <Check className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                         )}
                       </button>
                     ))}
@@ -6629,7 +6685,7 @@ function DrivePanel(props: {
                 title={tm("Open File Explorer")}
                 aria-label={tm("Open File Explorer")}
               >
-                <Home className="h-4 w-4" style={{ color: LIME }} />
+                <Home className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
               </button>
               <button
                 onClick={() => {
@@ -6670,12 +6726,12 @@ function DrivePanel(props: {
                 onFocus={() => setAutoOpen(true)}
                 onBlur={() => setTimeout(() => setAutoOpen(false), 180)}
                 placeholder={t.searchInDriveRoot}
-                className="w-full rounded-md border border-white/10 bg-[#23272B] py-2 pl-7 pr-2 text-[12.5px] text-white placeholder:text-white/40 outline-none focus:border-white/20"
+                className="w-full rounded-md border border-white/10 bg-[#10243A] py-2 pl-7 pr-2 text-[12.5px] text-white placeholder:text-white/40 outline-none focus:border-white/20"
               />
               {autoOpen &&
                 search.trim().length >= 2 &&
                 (files.length > 0 || searchSnippets.length > 0) && (
-                  <div className="vvs-scroll absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-white/10 bg-[#1E2225] shadow-2xl shadow-black/60">
+                  <div className="vvs-scroll absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-white/10 bg-[#0C1E31] shadow-2xl shadow-black/60">
                     {files.length > 0 && (
                       <>
                         <div className="px-2.5 pt-2 pb-1 text-[10px] uppercase tracking-wider text-white/40">
@@ -6731,7 +6787,7 @@ function DrivePanel(props: {
             </div>
           </div>
           <div className="flex items-center justify-center gap-1.5 px-3 pb-2 text-[10px] text-white/45">
-            <ShieldCheck className="h-3 w-3" style={{ color: LIME }} />
+            <ShieldCheck className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             {tm("Searched 100% locally on ViVeSecBox")}
           </div>
 
@@ -6747,11 +6803,11 @@ function DrivePanel(props: {
                   onClick={props.onClearScope}
                   className={`rounded-full border px-2 py-1 text-[11px] transition ${
                     props.selectedDrives.length === 0
-                      ? "border-transparent text-black"
+                      ? "border-transparent text-white"
                       : "border-white/10 text-white/70 hover:bg-white/10"
                   }`}
                   style={
-                    props.selectedDrives.length === 0 ? { backgroundColor: LIME } : undefined
+                    props.selectedDrives.length === 0 ? { backgroundColor: ACCENT } : undefined
                   }
                 >
                   {tm("All drives")}
@@ -6765,15 +6821,15 @@ function DrivePanel(props: {
                       title={d.path}
                       className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition ${
                         on
-                          ? "border-transparent text-black"
+                          ? "border-transparent text-white"
                           : "border-white/10 text-white/70 hover:bg-white/10"
                       }`}
-                      style={on ? { backgroundColor: LIME } : undefined}
+                      style={on ? { backgroundColor: ACCENT } : undefined}
                     >
                       {d.active && (
                         <CircleDot
                           className="h-2.5 w-2.5"
-                          style={{ color: on ? "#15181B" : LIME }}
+                          style={{ color: on ? ON_ACCENT : ACCENT_TEXT }}
                         />
                       )}
                       {d.name}
@@ -6892,8 +6948,8 @@ function DrivePanel(props: {
                 return (
                   <li key={f.id}>
                     <div
-                      className={`group rounded-xl border transition ${hi ? "border-[color:var(--lime)] bg-[color:var(--lime)]/10" : "border-transparent hover:bg-white/[0.04]"}`}
-                      style={{ ["--lime" as any]: LIME }}
+                      className={`group rounded-xl border transition ${hi ? "border-[color:var(--vvs-accent)] bg-[color:var(--vvs-accent)]/10" : "border-transparent hover:bg-white/[0.04]"}`}
+                      style={{ ["--vvs-accent" as any]: ACCENT_TEXT }}
                     >
                       <div className="flex w-full items-center gap-3 px-2.5 py-2.5">
                         <button
@@ -6930,7 +6986,7 @@ function DrivePanel(props: {
                                 setActionFor(null);
                               }}
                               className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-md px-3 py-2 text-[12px] font-medium"
-                              style={{ backgroundColor: LIME, color: "#15181B" }}
+                              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
                             >
                               <Zap className="h-3.5 w-3.5" /> {tm("Analyze with AI")}
                             </button>
@@ -6960,8 +7016,8 @@ function DrivePanel(props: {
                   <button
                     key={f.id}
                     onClick={() => onSelectFile(f)}
-                    className={`rounded-xl border p-3 text-left transition ${hi ? "border-[color:var(--lime)] bg-[color:var(--lime)]/10" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"}`}
-                    style={{ ["--lime" as any]: LIME }}
+                    className={`rounded-xl border p-3 text-left transition ${hi ? "border-[color:var(--vvs-accent)] bg-[color:var(--vvs-accent)]/10" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"}`}
+                    style={{ ["--vvs-accent" as any]: ACCENT_TEXT }}
                   >
                     <div
                       className={`mb-2 grid h-9 w-9 place-items-center rounded-md ${fileTint(f.type)}`}

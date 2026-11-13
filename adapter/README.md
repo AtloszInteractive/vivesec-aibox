@@ -28,7 +28,7 @@ ViVeSecBox ──ViVeSec v2──▶ adapter ──RAG contract──▶ rag_ser
 | `POST /api/v1/ui/files/children`               | *(mirror, scope + ACL; E03)*            |
 | `GET  /api/v1/ui/insight`                      | `POST /rag/scope_stats` (E03)           |
 | `POST /api/v1/ui/graph/*`                      | graph_service `/query/*` ... (E26)      |
-| `POST /api/v1/storage/unlock`                  | *(stub until LUKS/init wired)*          |
+| `POST /api/v1/storage/unlock`                  | *(stub until LUKS/init wired; standalone: host volume, see E27 S8)* |
 
 Key translation decisions:
 
@@ -60,6 +60,7 @@ $env:ADAPTER_PORT="8088"; $env:RAG_URL="http://127.0.0.1:8090"; python adapter/s
 | `ADAPTER_META_PATH`          | *(in-memory)*           | mirror JSON path (persist)       |
 | `ADAPTER_WATCHDOG_SECONDS`   | `90`                    | status watchdog window           |
 | `ADAPTER_MAX_CONTEXT_TOKENS` | `4000`                  | query context budget             |
+| `ADAPTER_INTEGRATION`        | `vivesecbox`            | `vivesecbox` or `standalone` (E27) |
 
 This table lists the most common settings only. Every parameter, with its
 default, allowed range, fail-safe behaviour and impact, is in the configuration
@@ -86,6 +87,157 @@ repository `VERSION` file (`YY.MM.N`) and the git commit; see
   stamp reports `unknown` and never stops the service.
 - `ADAPTER_UI_VERSION` / `GET /api/v1/ui-version` is unrelated: it tells the
   ViVeSecBox which embedded UI bundle path (`latest` or a version) to load.
+
+## Integration mode (E27)
+
+`ADAPTER_INTEGRATION` (`integration.py`) says who owns users, login, files and
+drive permissions:
+
+| Value | Behaviour |
+| --- | --- |
+| `vivesecbox` (default) | Today's behaviour: the ViVeSecBox pairs with the box, syncs the index, serves files over ws-fs and finds the box by SSDP. |
+| `standalone` | The box runs without a ViVeSecBox (offline deployment). Users log in through the box's own login gate, which sends the adapter a short-lived signed token. |
+| anything else | The adapter **does not start** (exit code 2). |
+
+An unknown value never falls back to either mode: `vivesecbox` trusts the
+identity it is told in the headers. Standalone mode is checked before anything
+else is set up, and the adapter refuses to start unless:
+
+- `ADAPTER_IDENTITY_MODE=require`: every user request carries a verified token;
+- `ADAPTER_DIRECTORY=token`: groups and roles come from that token;
+- `ADAPTER_SCOPE_ALL_DRIVES` is off: the token's `drives` claim decides the scope.
+
+In standalone mode the ViVeSecBox surfaces are off:
+
+| Surface | Standalone |
+| --- | --- |
+| Pairing: `/api/v1/init/prepare`, `/api/v1/init/commit` | `404 not available in standalone mode` |
+| Index sync: everything under `/api/v1/index/` | `404 not available in standalone mode` |
+| File channel: `GET /api/v1/ws/fs` | `404 not available in standalone mode` |
+| SSDP discovery | not started, whatever `ADAPTER_DISCOVERY` says |
+| Mutual-TLS listener towards the ViVeSecBox | not started; `ADAPTER_TLS` is ignored |
+
+Everything else (the `/api/v1/ui/*` API, scope, ACL, scheduler, jobs, graph,
+lifecycle and the admin endpoints) works the same in both modes, with one
+addition: the active drive (`VVS-Drive`) must be one of the rooms in the
+token's `drives` claim. The scope always includes the active drive, so a token
+without `drives`, or a `VVS-Drive` it does not list, is refused with `403
+identity not accepted` (`integration.drive_granted`). Endpoints without a drive
+(voice) are not affected.
+`/api/v1/status` and `/api/v1/version` report the mode in `integration`.
+
+The login gate is the web UI server (`src/lib/auth/gate.server.ts`), backed by
+[`auth_service/`](../auth_service/README.md); `scripts/jetson/standalone/auth_deploy.py`
+switches a box between the modes.
+
+### File store and uploads (E27 S5)
+
+Without a ViVeSecBox the box keeps the original files itself
+(`drivestore.py`, under `ADAPTER_STORE_DIR`, default `/data/files`, which
+belongs on the encrypted volume). The endpoints exist only in standalone mode
+(`404` in `vivesecbox` mode):
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/v1/ui/store/info` | Upload limit, allowed types, scan mode, whether the caller may write, the rooms of the scope; for writers also whether clamd answers. |
+| `POST /api/v1/ui/store/list {path}` | One folder: the files on disk (`stored`) plus anything the index holds without an original here (a corpus synced before standalone mode, `stored: false`). Scope and ACL apply; a hidden folder answers like a missing one. |
+| `POST /api/v1/ui/store/upload` | One file as the raw body (Content-Length or chunked). The target is the `X-Store-Path` header (percent-encoded UTF-8, never in the URL, so file names stay out of the logs); `X-Store-Overwrite: 1` replaces an existing file. Answers `202` with the upload record. |
+| `GET /api/v1/ui/store/uploads` | The caller's own uploads and their state. |
+| `POST /api/v1/ui/store/uploads/dismiss {id}` | Remove a record from the list; an unfinished upload is cancelled. |
+| `POST /api/v1/ui/store/mkdir {path}` | Create a folder (and its parents) and index it. |
+| `POST /api/v1/ui/store/delete {path}` | Delete a file or a folder tree: from the index, the mirror and the graph first (like `drop/tree`), then from the disk. A room itself cannot be deleted. |
+
+An upload goes through these states, one at a time on a single worker thread:
+
+```text
+queued ──scan──▶ indexing ──index──▶ indexed | stored (not indexable: too large, unsupported, empty)
+   │                 └── index unreachable ─▶ index_pending (retried every 60 s)
+   ├── clamd unreachable, scan required ─▶ waiting_scanner (stays in quarantine, retried every 60 s)
+   ├── virus found ─▶ infected (deleted at once; the event log keeps name, signature, SHA-256)
+   ├── clamd error, scan required ─▶ rejected (deleted)
+   └── target taken meanwhile ─▶ failed (exists, is_folder, parent_is_file)
+```
+
+The scan uses clamd's `INSTREAM` command over a loopback socket (`clamd.py`,
+stdlib only; `ADAPTER_CLAMD`). `ADAPTER_UPLOAD_SCAN` is `required` unless set
+otherwise, and an unknown value is `required` too. Indexing takes the sync's
+own path: the folders (`/index/upsert/directory`), `/index/upsert/file/check`
+with the flattened ACL, the content, then the graph. Downloads
+(`/api/v1/ui/file`) and graph reprocessing read the stored original.
+
+Who may do what:
+
+- **read** (list, download): the room must be in the token's `drives` and the
+  ACL (`ADAPTER_ACL_RULES`) must allow the path, exactly as for search;
+- **write** (upload, folder, delete): additionally one of
+  `ADAPTER_STORE_WRITERS` (default `role:admin`). A delete is refused when the
+  tree holds anything the caller may not see.
+
+Paths are strict (NFC; no empty, `.` or `..` segment, no leading dot, no
+trailing space or dot, no separator, control character or bidirectional
+override; at most 255 bytes per name, 32 levels and 1024 bytes in total).
+Symlinks under the store root are neither listed nor followed. The event log
+`events.jsonl` records uploads, scans, stores, indexing, folders and deletes
+with user, path, size and SHA-256, never content. A factory reset empties the
+store.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `ADAPTER_STORE_DIR` | `/data/files` | Store root; empty disables the store (`503`). |
+| `ADAPTER_UPLOAD_SCAN` | `required` | `off`, `on` or `required`; unknown = `required`. |
+| `ADAPTER_CLAMD` | `127.0.0.1:3310` | clamd, loopback `host:port` or `unix:/path`; anything else counts as unreachable. |
+| `ADAPTER_CLAMD_TIMEOUT` | `120` | Seconds to wait for one clamd answer. |
+| `ADAPTER_UPLOAD_MAX_BYTES` | `20971520` | Largest upload (20 MiB, the RAG's `RAG_MAX_FILE_BYTES`); raise both together. Keep nginx (`AIBOX_HTTPS_MAX_BODY`) and clamd (`AIBOX_CLAMAV_MAX_MB`) at or above it. |
+| `ADAPTER_UPLOAD_EXTENSIONS` | indexable types | Allowed extensions, or `*`. |
+| `ADAPTER_STORE_WRITERS` | `role:admin` | Principals that may upload, create folders and delete. |
+
+The clamd container is `scripts/jetson/standalone/clamav_deploy.py`. By
+default the upload limit equals the RAG limit (`RAG_MAX_FILE_BYTES`, 20 MiB),
+so every accepted file is searchable. If only the upload limit is raised,
+larger files are stored but not indexed (`stored`, reason `too_large`).
+
+### Administration (E27 S7)
+
+The administration page of a standalone box (`/admin`, see the
+[auth_service README](../auth_service/README.md#administration-page-s7)) edits
+rooms and permissions here. The endpoints exist only in standalone mode (`404`
+otherwise) and need a verified token with the `admin` role (`role:admin`,
+`403 forbidden` otherwise); no drive is needed, and a `VVS-Drive` the token does
+not grant is still refused.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/v1/ui/admin/system` | clamd: reachable, engine, definitions version and date (`VERSION`), age in days and `stale` above `ADAPTER_CLAMAV_MAX_AGE_DAYS` (default 7); the scan mode; the rules file state (`ACL.settings()` + `configured`). |
+| `GET /api/v1/ui/admin/rooms` | Every room: on disk in the store and/or in the index (a corpus synced before standalone mode), with its number of indexed files. |
+| `POST /api/v1/ui/admin/rooms/create {name}` | One strict path segment (the store's rules, NFC). Creates the room folder and indexes it; `409 exists` when the store or the index has it. |
+| `POST /api/v1/ui/admin/rooms/delete {path}` | An **empty** room only (folders at most): `409 not_empty` with a file on disk or in the index, `409 busy` with an unfinished upload. Removes it from the index, the disk and the rules file. Users and roles that list it keep it until changed. |
+| `GET /api/v1/ui/admin/acl` | `ADAPTER_ACL_RULES`: `configured`, `exists`, the content, its `version` (SHA-256, `none` when missing), the levels and the defaults. A broken file is shown with its error (it hides everything until replaced). |
+| `POST /api/v1/ui/admin/acl {rules, base}` | Validates (`acl_admin.py`), writes atomically and owner-only (0600), and makes the policy re-read the file at once; the RAG copy is resynced in the background (meanwhile every answer is re-checked, as after any rules change). `400 invalid_rules` with a `message`, `409 rules_changed` when the file changed since `base`, `409 rules_not_configured` without `ADAPTER_ACL_RULES`. |
+| `GET /api/v1/ui/admin/events?limit=N` | The newest entries of the store's `events.jsonl` (at most 1000). |
+
+The editor is stricter than the reader: where `acl.py` would drop a bad entry
+or deny a subtree, the save is refused as a whole. Every path must be a
+canonical store path (NFC; an NFD spelling of an existing key would never
+match, because the keys are compared exactly), every principal `user:`,
+`group:`, `role:` or `everyone`, every level known; a path given twice in two
+spellings is refused, and nodes that set nothing are dropped. Room creation,
+deletion and rules changes are written to `events.jsonl` (`room_create`,
+`room_delete`, `acl_update`) with the administrator's name.
+
+### Encrypted storage in standalone mode (E05, E27 S8)
+
+A standalone box keeps the original documents, so its data must sit on an
+encrypted volume. The adapter's own LUKS layer (`storage.py`,
+`ADAPTER_STORAGE_MODE=luks`, `POST /api/v1/storage/unlock`) is the
+ViVeSecBox design, where the pairing delivers the key; it needs cryptsetup and
+mount rights inside the container. A standalone box does not use it
+(`ADAPTER_STORAGE_MODE` stays `off`): the host opens a LUKS2 volume before the
+containers start (`scripts/jetson/standalone/vault.py`, systemd unit
+`aibox-vault.service`), and every data directory of the adapter, the RAG
+service, the authentication service, the graph, the TLS keys and the secrets
+lies on it. While it is closed, the containers cannot start at all. Backup,
+restore and the key handling are host tools too: see the
+[standalone README](../scripts/jetson/standalone/README.md#encrypted-volume-backup-and-time-e27-s8).
 
 ## Identity, directory and lifecycle (E02)
 

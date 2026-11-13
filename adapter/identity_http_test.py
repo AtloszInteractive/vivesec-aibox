@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import directory
 import identity
+import integration
 import jobstore
 import lifecycle
 
@@ -160,6 +161,32 @@ class IdentityHttpTest(unittest.TestCase):
         status, _ = self.call("/api/v1/ui/conversations/list",
                               {"drives": ["/storage/drives/board/"]}, headers=headers)
         self.assertEqual(status, 403)
+
+    def test_standalone_active_drive_must_be_granted_by_the_token(self):
+        self.verifier.mode = identity.MODE_REQUIRE
+        mode = patch.object(self.service, "INTEGRATION", integration.MODE_STANDALONE)
+        mode.start()
+        self.addCleanup(mode.stop)
+        granted = self.token(drives=["/storage/drives/hr/", DRIVE])
+        status, body = self.call("/api/v1/ui/scope", headers=self.user_headers(token=granted))
+        self.assertEqual(status, 200)
+        self.assertEqual([d["path"] for d in body["drives"]],
+                         ["/storage/drives/finance", "/storage/drives/hr"])
+        # The active drive always joins the scope, so a room outside the token
+        # must not be accepted as VVS-Drive.
+        for token in (self.token(drives=["/storage/drives/hr/"]), self.token(drives=[]),
+                      self.token()):
+            for path, body in (("/api/v1/ui/scope", None), ("/api/v1/ui/init", None),
+                               ("/api/v1/ui/conversations/list", {})):
+                status, payload = self.call(path, body, headers=self.user_headers(token=token))
+                self.assertEqual(status, 403, path)
+                self.assertEqual(payload["error"], "identity not accepted")
+
+    def test_vivesecbox_mode_keeps_the_box_chosen_drive(self):
+        self.verifier.mode = identity.MODE_REQUIRE
+        headers = self.user_headers(token=self.token(drives=["/storage/drives/hr/"]))
+        status, _ = self.call("/api/v1/ui/scope", headers=headers)
+        self.assertEqual(status, 200)
 
     # -- lifecycle -------------------------------------------------------------
     def test_lifecycle_lock_and_reinstate(self):

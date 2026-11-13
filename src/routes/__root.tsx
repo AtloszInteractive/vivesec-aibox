@@ -76,14 +76,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "ViVeSec AI Platform" },
+      { title: "ViVeSec AI Box" },
       {
         name: "description",
         content:
           "Offline-first enterprise AI workspace with encrypted chat, agents, and secure document drive.",
       },
       { name: "author", content: "ViVeTech" },
-      { property: "og:title", content: "ViVeSec AI Platform" },
+      { property: "og:title", content: "ViVeSec AI Box" },
       {
         property: "og:description",
         content:
@@ -91,7 +91,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
-      { name: "theme-color", content: "#0a0a0a" },
+      { name: "theme-color", content: "#071625" },
       { name: "mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },

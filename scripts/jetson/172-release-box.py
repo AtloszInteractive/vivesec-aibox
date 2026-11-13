@@ -29,6 +29,7 @@ only print PRUNE_WARNING. RELEASE_KEEP_STAGES (default 2, minimum 2; 0 turns
 pruning off) sets how many deployed stages to keep.
 """
 import hashlib
+import hmac
 import base64
 import http.client
 import json
@@ -149,7 +150,7 @@ def pack(destination):
     subprocess.check_call([sys.executable, "scripts/release/build_info.py", "stamp"])
     stamped = {"adapter/build_info.json", "rag_service/build_info.json"}
     paths = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard",
-                                     "--", "adapter", "rag_service", "poc"]).decode("utf-8").split("\0")
+                                     "--", "adapter", "rag_service", "poc", "auth_service"]).decode("utf-8").split("\0")
     with tarfile.open(destination, "w:gz") as archive:
         for path in sorted((set(paths) | stamped) - {""}):
             if Path(path).is_file():
@@ -408,13 +409,41 @@ def verification_purpose(stage, manifest):
     return {"legal_basis": bases[0] if bases else "release verification " + manifest["stamp"]}
 
 
+def verification_headers(adapter_env, user, drive):
+    """Headers of a verification question asked as `user` on `drive`.
+
+    In standalone mode (E27) the adapter only accepts a signed identity token,
+    so the release signs a short-lived one with the adapter's own HS256 key,
+    read from the running container (anyone running this already controls
+    docker, and with it that key). It names only the verification drive."""
+    headers = {"Content-Type": "application/json",
+               "VVS-Drive": base64.urlsafe_b64encode(drive.encode()).decode(), "VVS-User": user}
+    if (adapter_env.get("ADAPTER_INTEGRATION") or "").strip().lower() != "standalone":
+        return headers
+    key = command("docker", "exec", "vivesec-adapter", "cat",
+                  adapter_env["ADAPTER_IDENTITY_HS256_SECRET_FILE"]).strip().encode()
+    now = int(time.time())
+    claims = {"sub": user, "upn": user, "drives": [drive], "iat": now, "nbf": now, "exp": now + 120,
+              "jti": base64.urlsafe_b64encode(os.urandom(9)).decode()}
+    for claim, name in (("iss", "ADAPTER_IDENTITY_ISSUER"), ("aud", "ADAPTER_IDENTITY_AUDIENCE")):
+        if adapter_env.get(name):
+            claims[claim] = adapter_env[name]
+
+    def encode(part):
+        return base64.urlsafe_b64encode(json.dumps(part, separators=(",", ":")).encode()).decode().rstrip("=")
+
+    signing_input = encode({"alg": "HS256", "typ": "JWT"}) + "." + encode(claims)
+    signature = base64.urlsafe_b64encode(hmac.new(key, signing_input.encode(), hashlib.sha256).digest())
+    headers[adapter_env.get("ADAPTER_IDENTITY_HEADER") or "VVS-Identity"] = \
+        signing_input + "." + signature.decode().rstrip("=")
+    return headers
+
+
 def verify(stage, manifest):
     check(stage, manifest)
     adapter_env = environment(manifest["old"]["adapter"])
     ui_env = environment(manifest["old"]["ui"])
-    headers = {"Content-Type": "application/json",
-               "VVS-Drive": base64.urlsafe_b64encode(ui_env["ADAPTER_DEMO_DRIVE"].encode()).decode(),
-               "VVS-User": "release-verification-" + manifest["stamp"]}
+    user = "release-verification-" + manifest["stamp"]
     base = "http://127.0.0.1:" + adapter_env["ADAPTER_PORT"]
 
     def post(url, body, request_headers):
@@ -426,7 +455,7 @@ def verify(stage, manifest):
         # A fresh user per attempt: an earlier answer must not become history.
         return post(base + "/api/v1/ui/query", dict({"query": "Mi\u00e9rt k\u00e9k az \u00e9g?", "profile": "hybrid",
                                                      "top_k": 5}, **verification_purpose(stage, manifest)),
-                    dict(headers, **{"VVS-User": headers["VVS-User"] + "-%d" % attempt}))
+                    verification_headers(adapter_env, user + "-%d" % attempt, ui_env["ADAPTER_DEMO_DRIVE"]))
 
     result, attempts = hybrid_probe(ask)
     rag_env = environment(manifest["old"]["rag"])

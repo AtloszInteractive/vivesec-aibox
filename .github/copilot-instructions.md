@@ -20,6 +20,7 @@ ViVeSecBox / web UI ──ViVeSec v2 API──▶ adapter ──RAG contract─�
 | --- | --- |
 | `adapter/` | External face of the box, written in **pure stdlib Python** (`ThreadingHTTPServer`, no pip dependencies). Handles scope/ACL, chat profiles, prompts and generation, sessions, durable jobs, the scheduler, exports, audit/feedback, mTLS, SSDP discovery and wsfs. Entry point: `adapter/service.py`. |
 | `rag_service/` | Internal extract → index → retrieve service (JSON, or SQLite + sqlite-vec + FTS5). It returns context, never the final answer. Dependencies: `rag_service/requirements.txt`. Imports chunking and embedding helpers from `poc/`. |
+| `auth_service/` | Standalone mode only (E27): local users, scrypt passwords, TOTP, sessions and the short-lived HS256 identity tokens the adapter verifies. Stdlib-only, loopback-only, called by the web UI server with a service key. |
 | `src/` | Web UI: React 19, TypeScript, TanStack Start/Router, Vite, Tailwind 4, shadcn/Radix. Main screen: `src/components/vivesec/ViveSecApp.tsx`. Model-output parsing: `live-parse.ts`. i18n: `i18n.tsx`, `i18n-data.ts`. Adapter clients: `src/lib/rag/adapter-client*.ts`. UI-facing operations: `src/lib/api/rag.functions.ts`. |
 | `sim/` | ViVeSecBox and drive simulators for integration testing. |
 | `scripts/jetson/` | Numbered install, deploy and diagnostic scripts for the box (the JetPack 6 installation kit). |
@@ -64,6 +65,7 @@ Python tests use `unittest` with flat module imports, so run them **from the mod
 ```powershell
 Push-Location adapter; python -m unittest discover -p "*_test.py"; Pop-Location
 Push-Location rag_service; python -m unittest discover -p "*_test.py"; Pop-Location
+Push-Location auth_service; python -m unittest discover -p "*_test.py"; Pop-Location
 # single module, e.g.:
 Push-Location adapter; python -m unittest chat_policy_test; Pop-Location
 ```

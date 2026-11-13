@@ -33,6 +33,21 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/ui/graph/query               {query,params[,drives]}  (E26, graph.py)
     POST /api/v1/ui/graph/status | review/list | review/decide | review/history | review/undo
                             | profile/get | profile/set
+  Standalone file store (E27 S5, drivestore.py; 404 in vivesecbox mode):
+    GET  /api/v1/ui/store/info                (limits, scan mode, may this caller write)
+    POST /api/v1/ui/store/list                {path}  (stored + indexed entries, scope + ACL)
+    POST /api/v1/ui/store/upload              raw body, X-Store-Path, X-Store-Overwrite
+    GET  /api/v1/ui/store/uploads             (the caller's uploads and their state)
+    POST /api/v1/ui/store/uploads/dismiss     {id}
+    POST /api/v1/ui/store/mkdir               {path}
+    POST /api/v1/ui/store/delete              {path}  (index first, then the disk)
+    GET  /api/v1/ui/admin/system              (standalone admin, E27 S7: clamd definitions, rules file)
+    GET  /api/v1/ui/admin/rooms               (rooms on disk and in the index)
+    POST /api/v1/ui/admin/rooms/create        {name}
+    POST /api/v1/ui/admin/rooms/delete        {path}  (an empty room only)
+    GET  /api/v1/ui/admin/acl                 (ADAPTER_ACL_RULES content and version)
+    POST /api/v1/ui/admin/acl                 {rules, base}
+    GET  /api/v1/ui/admin/events?limit=N      (the file store's event log)
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -42,6 +57,13 @@ Identity (E02): every user endpoint resolves its caller through identity.py
 (optional signed assertion in VVS-Identity, ADAPTER_IDENTITY_MODE) and refuses
 users locked by a lifecycle event (lifecycle.py). ADAPTER_HTTP_SCOPE=pairing
 limits the plain-HTTP listener to status/version/pairing for network peers.
+
+Integration (E27): ADAPTER_INTEGRATION=vivesecbox (default) | standalone
+(integration.py). Standalone mode requires signed tokens and turns off the
+ViVeSecBox surfaces: pairing, /api/v1/index/* sync, ws-fs, SSDP, mutual TLS.
+Instead the box keeps the original files itself (drivestore.py): uploads from
+the UI are scanned by clamd in quarantine and indexed on the sync's RAG path.
+An unknown value or an unsafe standalone configuration stops the adapter.
 
 Access control (E03): acl.py decides which documents inside the drive scope a
 caller may see (file/folder/room allow and deny lists, classification). The
@@ -93,8 +115,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import acl  # noqa: E402
+import acl_admin  # noqa: E402
 import analysis_checkpoint  # noqa: E402
 import build_info  # noqa: E402
+import clamd  # noqa: E402
 import confidence  # noqa: E402
 import conversations  # noqa: E402
 import corpus  # noqa: E402
@@ -102,6 +126,7 @@ import directory  # noqa: E402
 import discovery  # noqa: E402
 import docgen  # noqa: E402
 import dossier  # noqa: E402
+import drivestore  # noqa: E402
 import deep  # noqa: E402
 import factory_reset  # noqa: E402
 import feedback  # noqa: E402
@@ -110,6 +135,7 @@ import graph  # noqa: E402
 import graph_context  # noqa: E402
 import gpu_gate  # noqa: E402
 import identity  # noqa: E402
+import integration  # noqa: E402
 import investigation_export  # noqa: E402
 import jobstore  # noqa: E402
 import lifecycle  # noqa: E402
@@ -129,6 +155,14 @@ import storage  # noqa: E402
 import voice  # noqa: E402
 import wsfs  # noqa: E402
 from meta import MetaMirror, under as _under_path  # noqa: E402
+
+# Integration mode (E27), checked before anything else is set up: an unknown
+# mode or an unsafe standalone configuration stops the adapter.
+try:
+    INTEGRATION = integration.from_env()
+except integration.ConfigError as _integration_error:
+    sys.stderr.write("[adapter] refusing to start: %s\n" % _integration_error)
+    raise SystemExit(2)
 
 HOST = os.environ.get("ADAPTER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("ADAPTER_PORT", "8080"))
@@ -501,6 +535,13 @@ REPROCESS_SOURCE_DIR = (os.environ.get("ADAPTER_REPROCESS_SOURCE_DIR", "") or ""
 
 def _reprocess_fetch(user, path):
     """A file's content for reprocessing; None when it no longer exists."""
+    if INTEGRATION == integration.MODE_STANDALONE and STORE.enabled:
+        try:
+            data = STORE.read_bytes(path)
+        except drivestore.StoreError:
+            data = None
+        if data is not None:
+            return data
     if REPROCESS_SOURCE_DIR:
         root = os.path.realpath(REPROCESS_SOURCE_DIR)
         prefix = corpus.DRIVE_PREFIX.rstrip("/") + "/"
@@ -511,6 +552,9 @@ def _reprocess_fetch(user, path):
             return None
         with open(local, "rb") as handle:
             return handle.read()
+    if INTEGRATION == integration.MODE_STANDALONE:
+        # No ViVeSecBox to ask: what the box does not hold is gone.
+        return None
     try:
         header, content = WSFS.get_file(user, path, timeout=GETFILE_TIMEOUT)
     except wsfs.ChannelError as e:
@@ -695,6 +739,124 @@ GETFILE_TIMEOUT = float(os.environ.get("ADAPTER_GETFILE_TIMEOUT", "60") or 60)
 FILES_DOWNLOAD_PATH = "/api/v1/ui/files/download"
 DRIVE_FILE_PATH = "/api/v1/ui/file"
 
+# The box's own file store (E27 S5, standalone mode only): uploads wait in
+# quarantine until clamd has scanned them, then the upload worker moves them
+# into the room and indexes them on the sync's own RAG path (_store_index).
+STORE = drivestore.DriveStore.from_env()
+STORE_WRITERS = drivestore.parse_writers(os.environ.get("ADAPTER_STORE_WRITERS"))
+UPLOAD_SCAN = drivestore.parse_scan_mode(os.environ.get("ADAPTER_UPLOAD_SCAN"))
+CLAMD = clamd.Clamd.from_env()
+STORE_PREFIX = "/api/v1/ui/store/"
+# Bodies of refused uploads up to this size are read and dropped, so the client
+# sees the answer; a larger one is answered at once and the connection closed.
+_DRAIN_LIMIT = 1024 * 1024
+
+
+def _store_index_dir(path):
+    rag_post_json("/index/upsert/directory",
+                  {"corpus_id": corpus.corpus_id_of_path(path), "tenant_id": TENANT_ID,
+                   "path": path, "metadata": {"file": False}, "acl": _flat_acl(path)})
+    MIRROR.upsert(path, file=False, mtime=None, size=None)
+
+
+def _store_index(path):
+    """Index one stored file the way the ViVeSecBox sync does: its folders,
+    then file/check, then the content, then the graph. Raises while the index
+    cannot be reached; the upload worker retries."""
+    if STORAGE.is_locked() or _PRESENCE_LOST[0]:
+        raise RuntimeError("storage locked")
+    root = corpus.drive_root_of_path(path)
+    folders = [root]
+    for part in path[len(root) + 1:].split("/")[:-1]:
+        folders.append(folders[-1] + "/" + part)
+    for folder in folders:
+        if MIRROR.get(folder) is None:
+            _store_index_dir(folder)
+    info = STORE.stat_file(path)
+    data = STORE.read_bytes(path)
+    if info is None or data is None:
+        raise RuntimeError("stored file missing")
+    size, mtime = info
+    corpus_id = corpus.corpus_id_of_path(path)
+    head = base64.b64encode(data[:256]).decode("ascii")
+    flat = _flat_acl(path)
+    res = rag_post_json("/index/upsert/file/check",
+                        {"corpus_id": corpus_id, "tenant_id": TENANT_ID, "path": path,
+                         "size": size, "mtime": mtime,
+                         "content_type": resolve_content_type(path, head, None),
+                         "head": head, "acl": flat})
+    MIRROR.upsert(path, file=True, mtime=mtime, size=size)
+    token = res.get("token")
+    if not token:
+        return {"status": drivestore.STORED, "reason": res.get("reason") or "not_indexed"}
+    out = rag_post_raw("/index/upsert/file/content/" + token, data)
+    if _flat_acl(path) != flat:
+        _acl_changed(path)
+    if out.get("doc_id"):
+        GRAPH_FORWARD.file(path, corpus_id, out["doc_id"], data)
+    return {"status": drivestore.INDEXED, "chunks": out.get("chunks")}
+
+
+def _store_unindex(path):
+    """Remove a path and everything below it from the index, the mirror and
+    the graph -- in that order, like the sync's drop/tree."""
+    corpus_id = corpus.corpus_id_of_path(path)
+    res = rag_post_json("/index/drop/tree", {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
+                                             "path": path, "keep_exact": False})
+    MIRROR.drop_tree(path, False)
+    GRAPH_FORWARD.drop_tree(path, corpus_id, False)
+    return res
+
+
+UPLOADS = drivestore.UploadWorker(STORE, CLAMD, UPLOAD_SCAN, _store_index, _store_unindex)
+
+# Administration of a standalone box (E27 S7): only callers whose verified
+# token carries the admin role (the authentication service's ADMIN_ROLE).
+ADMIN_PRINCIPAL = "role:admin"
+_ACL_RULES_LOCK = threading.Lock()
+
+
+def _clamav_max_age_days(raw):
+    """Virus definitions older than this are flagged on the admin page."""
+    value = (raw or "").strip()
+    if not value:
+        return 7
+    try:
+        days = int(value)
+    except ValueError:
+        days = 0
+    if not 1 <= days <= 365:
+        sys.stderr.write("[adapter] ADAPTER_CLAMAV_MAX_AGE_DAYS=%r is not 1..365 -> 7\n" % raw)
+        return 7
+    return days
+
+
+CLAMAV_MAX_AGE_DAYS = _clamav_max_age_days(os.environ.get("ADAPTER_CLAMAV_MAX_AGE_DAYS"))
+
+
+def _acl_resync_now():
+    """Push a rules change to the RAG at once instead of at the next loop
+    pass; the loop retries when this fails."""
+    try:
+        _acl_resync()
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("[adapter] acl resync after a rules change failed: %s\n" % e)
+
+
+def _upload_view(record):
+    """What the uploader sees of one upload record."""
+    return {key: record.get(key) for key in (
+        "id", "path", "size", "sha256", "status", "scan", "signature", "reason",
+        "chunks", "created", "updated")}
+
+
+def _content_disposition(disposition, name):
+    """A header value every client reads, for any file name: an ASCII fallback
+    plus the exact UTF-8 name (RFC 6266/5987)."""
+    fallback = "".join(ch if 32 <= ord(ch) < 127 and ch not in '"\\' else "_" for ch in name)
+    return "%s; filename=\"%s\"; filename*=UTF-8''%s" % (
+        disposition, fallback or "document", urllib.parse.quote(name, safe=""))
+
 # Types the document viewer may render INLINE. Anything else is sent as an
 # attachment: an inline .html or .svg would execute in the UI's own origin.
 _INLINE_TYPES = {
@@ -761,6 +923,7 @@ def status_payload(trusted=True):
     # plus storage_locked; the legacy dash keys are kept for one transition
     # release so older ViVeSecBox builds / the demo UI do not break.
     return {"ok": True,
+            "integration": INTEGRATION,
             "ui_ready": ui_ready, "fs_ready": fs_ready,
             "storage_locked": locked,
             "ui-ready": ui_ready, "fs-ready": fs_ready,  # legacy (transition)
@@ -818,6 +981,7 @@ def version_payload():
     except Exception:  # noqa: BLE001
         pass
     return {"ok": True, "version": version_block(rag_build),
+            "integration": INTEGRATION,
             "paired": PROVISIONER.is_initialized(),
             "ws_fs": {"connected": WSFS.connected()},
             "storage_locked": STORAGE.is_locked() or _PRESENCE_LOST[0]}
@@ -879,6 +1043,11 @@ def factory_reset_action():
     except Exception as e:  # noqa: BLE001
         sys.stderr.write("[adapter] factory reset file purge failed: %s\n" % e)
     try:
+        n = STORE.purge()
+        sys.stderr.write("[adapter] factory reset: removed %d stored files\n" % n)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("[adapter] factory reset store purge failed: %s\n" % e)
+    try:
         LIFECYCLE.purge()
     except Exception as e:  # noqa: BLE001
         sys.stderr.write("[adapter] factory reset lifecycle purge failed: %s\n" % e)
@@ -904,6 +1073,41 @@ class RagError(Exception):
 
 class BodyTooLarge(Exception):
     pass
+
+
+class _ChunkedReader:
+    """`read(n)` over a `Transfer-Encoding: chunked` body, so a streamed
+    upload is written to quarantine piece by piece instead of held in memory.
+    Returns b"" at the end; a malformed framing raises ValueError."""
+
+    def __init__(self, rfile):
+        self.rfile = rfile
+        self.left = 0
+        self.done = False
+
+    def read(self, n):
+        if self.done:
+            return b""
+        if self.left == 0:
+            line = self.rfile.readline(_CHUNK_LINE_MAX)
+            if not line:
+                raise ValueError("chunked body ended early")
+            try:
+                self.left = int(line.split(b";", 1)[0].strip(), 16)
+            except ValueError:
+                raise ValueError("malformed chunk size")
+            if self.left == 0:
+                while self.rfile.readline(_CHUNK_LINE_MAX) not in (b"\r\n", b"\n", b""):
+                    pass
+                self.done = True
+                return b""
+        block = self.rfile.read(min(n, self.left))
+        if not block:
+            raise ValueError("chunked body ended early")
+        self.left -= len(block)
+        if self.left == 0:
+            self.rfile.read(2)
+        return block
 
 
 # Real VVS-User / VVS-Drive values only ever arrive from the ViVeSecBox tunnel,
@@ -1866,6 +2070,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(403, {"ok": False, "error": "endpoint available over mutual TLS only"})
         return True
 
+    def _integration_guard(self, path):
+        """Refuse a ViVeSecBox-only endpoint (pairing, index sync, ws-fs) in
+        standalone mode. Returns True when the request must stop."""
+        if integration.vivesecbox_surfaces(INTEGRATION) or not integration.is_vivesecbox_path(path):
+            return False
+        self._send(404, {"ok": False, "error": "not available in standalone mode"})
+        return True
+
     def _authenticate(self, drive=None):
         """The caller of this request, or None after the refusal was sent.
 
@@ -1878,6 +2090,11 @@ class Handler(BaseHTTPRequestHandler):
             sys.stderr.write("[adapter] identity rejected from %s: %s\n"
                              % (self.client_address[0], e.reason))
             self._send(e.status, {"ok": False, "error": "identity not accepted"})
+            return None
+        if not integration.drive_granted(INTEGRATION, drive, caller.drives):
+            sys.stderr.write("[adapter] identity rejected from %s: drive not granted by the token\n"
+                             % (self.client_address[0],))
+            self._send(403, {"ok": False, "error": "identity not accepted"})
             return None
         state = _user_locked(*caller.keys())
         if state == "unavailable":
@@ -1915,6 +2132,8 @@ class Handler(BaseHTTPRequestHandler):
         self._access_ctx = None
         if self._http_scope_guard("GET", path):
             return
+        if self._integration_guard(path):
+            return
         if path == "/api/v1/status":
             self._send(200, status_payload(self._trusted_channel()))
             return
@@ -1951,6 +2170,25 @@ class Handler(BaseHTTPRequestHandler):
         if path == DRIVE_FILE_PATH:
             self._drive_file(self._drive_file_path_from_query(query))
             return
+        if path in ("/api/v1/ui/store/info", "/api/v1/ui/store/uploads"):
+            try:
+                if path.endswith("/info"):
+                    self._store_info()
+                else:
+                    self._store_uploads()
+            except drivestore.StoreError as e:
+                self._store_refusal(e)
+            return
+        admin_route = {"/api/v1/ui/admin/system": self._admin_system,
+                       "/api/v1/ui/admin/rooms": self._admin_rooms,
+                       "/api/v1/ui/admin/acl": self._admin_acl_get,
+                       "/api/v1/ui/admin/events": self._admin_events}.get(path)
+        if admin_route is not None:
+            try:
+                admin_route(query)
+            except drivestore.StoreError as e:
+                self._store_refusal(e)
+            return
         if self.path in ("/", ""):
             self._send(200, {"ok": True, "service": "ViVeSec AIBox adapter"})
             return
@@ -1964,6 +2202,8 @@ class Handler(BaseHTTPRequestHandler):
         self._caller = None
         self._access_ctx = None
         if self._http_scope_guard("POST", path.rstrip("/")):
+            return
+        if self._integration_guard(path):
             return
         try:
             if path.startswith(CONTENT_PREFIX):
@@ -2016,11 +2256,21 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/reprocess/start": self._graph_reprocess_start,
                 "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
                 "/api/v1/ui/index/skipped": self._index_skipped,
+                "/api/v1/ui/store/list": self._store_list,
+                "/api/v1/ui/store/upload": self._store_upload,
+                "/api/v1/ui/store/mkdir": self._store_mkdir,
+                "/api/v1/ui/store/delete": self._store_delete,
+                "/api/v1/ui/store/uploads/dismiss": self._store_dismiss,
+                "/api/v1/ui/admin/rooms/create": self._admin_room_create,
+                "/api/v1/ui/admin/rooms/delete": self._admin_room_delete,
+                "/api/v1/ui/admin/acl": self._admin_acl_save,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
                 return
             route()
+        except drivestore.StoreError as e:
+            self._store_refusal(e)
         except RagError as e:
             self._fail_rag(e)
         except BodyTooLarge:
@@ -3465,6 +3715,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "Missing 'path'"})
             return
         path = corpus.norm(raw_path)
+        if INTEGRATION == integration.MODE_STANDALONE:
+            # The store resolves names in NFC; the scope and the ACL must judge
+            # that same spelling, or an NFD name would pass a rule set on the
+            # NFC one and still open the file.
+            try:
+                path = STORE.canonical(path)
+            except drivestore.StoreError:
+                self._send(404, {"ok": False, "error": "not-found"})
+                return
         req_scope = _resolve_scope(self.headers, user, drive, self._caller)
         if not req_scope.contains_path(path):
             self._send(403, {"ok": False,
@@ -3473,6 +3732,10 @@ class Handler(BaseHTTPRequestHandler):
         if not ACL.allows(path, self._access(), MIRROR.acl_of):
             # Same answer as a file the box does not have (E03).
             self._send(404, {"ok": False, "error": "not-found"})
+            return
+        if INTEGRATION == integration.MODE_STANDALONE:
+            # Standalone: the box holds the original itself (E27 S5).
+            self._send_stored_file(path)
             return
         try:
             header, content = WSFS.get_file(user, path, timeout=GETFILE_TIMEOUT)
@@ -3490,6 +3753,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(502, {"ok": False,
                              "error": "the box returned no file content"})
             return
+        self._send_document(path, len(content), [content])
+
+    def _send_document(self, path, size, blocks):
         name = path.rsplit("/", 1)[-1] or "document"
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         ctype = _INLINE_TYPES.get(ext)
@@ -3499,11 +3765,462 @@ class Handler(BaseHTTPRequestHandler):
         # Without nosniff the browser could still sniff an octet-stream body
         # into HTML and run it in our origin.
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Disposition",
-                         '%s; filename="%s"' % (disposition, name.replace('"', "_")))
-        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Content-Disposition", _content_disposition(disposition, name))
+        self.send_header("Content-Length", str(size))
         self.end_headers()
-        self.wfile.write(content)
+        for block in blocks:
+            self.wfile.write(block)
+
+    def _send_stored_file(self, path):
+        try:
+            opened = STORE.open_file(path) if STORE.enabled else None
+        except drivestore.StoreError:
+            opened = None
+        if opened is None:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        handle, size = opened
+        with handle:
+            self._send_document(path, size, iter(lambda: handle.read(1024 * 1024), b""))
+
+    # -- the box's own file store (E27 S5) --------------------------------------
+    def _store_refusal(self, error):
+        self._send(error.status, {"ok": False, "error": error.code, "message": str(error)})
+
+    def _store_context(self, write=False):
+        """(user, scope, access, visible, writer) of a store call, or None after
+        the refusal. The store exists only in standalone mode; there the
+        ViVeSecBox does not own the files."""
+        if INTEGRATION != integration.MODE_STANDALONE:
+            self._send(404, {"ok": False, "error": "not available in this mode"})
+            return None
+        if not STORE.enabled:
+            self._send(503, {"ok": False, "error": "store_disabled"})
+            return None
+        if write and self._locked_guard():
+            return None
+        vvs = self._read_vvs()
+        if vvs is None:
+            return None
+        user, drive = vvs
+        req_scope = _resolve_scope(self.headers, user, drive, self._caller)
+        access = self._access()
+        writer = drivestore.may_write(STORE_WRITERS, access)
+        if write and not writer:
+            self._send(403, {"ok": False, "error": "not_allowed"})
+            return None
+        return {"user": user, "scope": req_scope, "access": access,
+                "visible": _visible(access), "writer": writer}
+
+    def _store_path(self, ctx, raw):
+        """The canonical path of a store call, or None after the refusal: the
+        path must be valid, inside the request scope and visible to the caller."""
+        path = STORE.canonical(raw)
+        if not ctx["scope"].contains_path(path):
+            self._send(403, {"ok": False, "error": "path outside the request scope"})
+            return None
+        if not ctx["visible"](path):
+            self._send(404, {"ok": False, "error": "not-found"})
+            return None
+        return path
+
+    def _store_info(self):
+        ctx = self._store_context()
+        if ctx is None:
+            return
+        scanner = None
+        if ctx["writer"] and UPLOAD_SCAN != drivestore.SCAN_OFF:
+            try:
+                scanner = {"ok": CLAMD.ping()}
+            except clamd.ScanUnavailable:
+                scanner = {"ok": False}
+        extensions = STORE.extensions
+        self._send(200, {
+            "ok": True, "writable": ctx["writer"], "max_bytes": STORE.max_bytes,
+            "extensions": None if extensions is None else sorted(extensions),
+            "scan": UPLOAD_SCAN, "scanner": scanner,
+            "rooms": [root for root in ctx["scope"].drive_roots
+                      if root == ctx["scope"].active_root or ctx["visible"](root)]})
+
+    def _store_list(self):
+        ctx = self._store_context()
+        if ctx is None:
+            return
+        payload = self._read_json()
+        raw = str(payload.get("path") or "").strip() or ctx["scope"].active_root
+        path = self._store_path(ctx, raw)
+        if path is None:
+            return
+        kind = STORE.kind(path)
+        if kind == "file":
+            self._send(400, {"ok": False, "error": "not_a_folder"})
+            return
+        indexed = {entry["path"]: entry for entry in MIRROR.get_children(path)}
+        if kind is None and not STORE.is_room_root(path) and MIRROR.get(path) is None:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        visible = ctx["visible"]
+        entries = []
+        for entry in STORE.list_dir(path):
+            if not visible(entry["path"]):
+                continue
+            entry["stored"] = True
+            entry["indexed"] = entry["path"] in indexed
+            entries.append(entry)
+        on_disk = {entry["path"] for entry in entries}
+        # Indexed but not held here (a corpus synced before standalone mode):
+        # listed so it can be found and deleted, never downloaded.
+        for child, meta in sorted(indexed.items()):
+            if child in on_disk or not visible(child):
+                continue
+            try:
+                STORE.canonical(child)
+            except drivestore.StoreError:
+                continue
+            entries.append({"path": child, "name": child.rsplit("/", 1)[-1],
+                            "file": bool(meta.get("file")), "size": meta.get("size"),
+                            "modified": None, "stored": False, "indexed": True})
+        entries.sort(key=lambda entry: (bool(entry["file"]), entry["name"].casefold()))
+        self._send(200, {"ok": True, "path": path, "room": STORE.room_root(path),
+                         "writable": ctx["writer"], "entries": entries})
+
+    def _store_uploads(self):
+        ctx = self._store_context()
+        if ctx is None:
+            return
+        records = [record for record in STORE.records(user=ctx["user"])
+                   if ctx["scope"].contains_path(record["path"])
+                   and ctx["visible"](record["path"])][:200]
+        self._send(200, {"ok": True, "uploads": [_upload_view(r) for r in records]})
+
+    def _store_dismiss(self):
+        ctx = self._store_context()
+        if ctx is None:
+            return
+        payload = self._read_json()
+        if not STORE.dismiss(str(payload.get("id") or ""), ctx["user"]):
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        self._send(200, {"ok": True})
+
+    def _refuse_upload(self, status, payload):
+        """Answer an upload before reading its body: a small body is read and
+        dropped so the client sees the answer, a large one closes the
+        connection instead of being received in vain."""
+        try:
+            length = int(self.headers.get("Content-Length") or -1)
+        except ValueError:
+            length = -1
+        if 0 <= length <= _DRAIN_LIMIT:
+            self.rfile.read(length)
+        else:
+            self.close_connection = True
+        self._send(status, payload)
+
+    def _store_upload(self):
+        """One file, sent as the raw request body. The target travels in the
+        `X-Store-Path` header (percent-encoded UTF-8), never in the URL, so the
+        file name stays out of the access logs. `X-Store-Overwrite: 1`
+        replaces an existing file."""
+        ctx = self._store_context(write=True)
+        if ctx is None:
+            self.close_connection = True
+            return
+        try:
+            raw = urllib.parse.unquote(self.headers.get("X-Store-Path") or "", errors="strict")
+            path = self._store_path(ctx, raw)
+        except (UnicodeDecodeError, drivestore.StoreError):
+            self._refuse_upload(400, {"ok": False, "error": "invalid_path"})
+            return
+        if path is None:
+            self.close_connection = True
+            return
+        overwrite = (self.headers.get("X-Store-Overwrite") or "").strip() == "1"
+        problem = None
+        if STORE.is_room_root(path):
+            problem = (400, "invalid_path")
+        elif STORE.extensions is not None and \
+                drivestore.extension_of(path) not in STORE.extensions:
+            problem = (415, "type_not_allowed")
+        elif STORE.conflict(path):
+            problem = (409, STORE.conflict(path))
+        elif not overwrite and STORE.kind(path) == "file":
+            problem = (409, "exists")
+        elif not overwrite and STORE.pending_for(path):
+            problem = (409, "pending")
+        chunked = "chunked" in (self.headers.get("Transfer-Encoding") or "").lower()
+        length = None
+        if not chunked:
+            try:
+                length = int(self.headers.get("Content-Length") or "")
+            except ValueError:
+                problem = problem or (411, "length_required")
+        if problem is None and length is not None and length > STORE.max_bytes:
+            problem = (413, "too_large")
+        if problem:
+            self._refuse_upload(problem[0], {"ok": False, "error": problem[1]})
+            return
+        reader = _ChunkedReader(self.rfile) if chunked else self.rfile
+        try:
+            record = STORE.receive(reader.read, length, ctx["user"], ctx["scope"].active_root,
+                                   path, overwrite)
+        except drivestore.StoreError:
+            self.close_connection = True
+            raise
+        except (OSError, ValueError):
+            self.close_connection = True
+            self._send(400, {"ok": False, "error": "incomplete"})
+            return
+        UPLOADS.submit(record["id"])
+        self._send(202, {"ok": True, "upload": _upload_view(record)})
+
+    def _store_mkdir(self):
+        ctx = self._store_context(write=True)
+        if ctx is None:
+            return
+        payload = self._read_json()
+        path = self._store_path(ctx, str(payload.get("path") or ""))
+        if path is None:
+            return
+        if STORE.kind(path) == "file" or STORE.conflict(path) == "parent_is_file":
+            self._send(409, {"ok": False, "error": "exists"})
+            return
+        created = STORE.make_dirs(path)
+        for folder in created:
+            _store_index_dir(folder)
+        if created:
+            STORE.event("mkdir", ctx["user"], path, folders=created)
+        self._send(200, {"ok": True, "path": path, "created": created})
+
+    def _store_delete(self):
+        """Delete a file or a folder tree: from the index, the mirror and the
+        graph first (like drop/tree), then from the disk. Refused when the
+        tree holds anything the caller may not see."""
+        ctx = self._store_context(write=True)
+        if ctx is None:
+            return
+        payload = self._read_json()
+        path = self._store_path(ctx, str(payload.get("path") or ""))
+        if path is None:
+            return
+        if STORE.is_room_root(path):
+            self._send(400, {"ok": False, "error": "room_root"})
+            return
+        on_disk = STORE.walk(path)
+        in_index = MIRROR.paths_under(path)
+        if not on_disk and not in_index:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        visible = ctx["visible"]
+        if not all(visible(p) for p in set(on_disk) | set(in_index)):
+            self._send(403, {"ok": False, "error": "not_allowed"})
+            return
+        STORE.cancel_under(path, ctx["user"])
+        res = _store_unindex(path)
+        STORE.remove(path)
+        STORE.event("delete", ctx["user"], path, entries=len(on_disk) or None,
+                    indexed=res.get("deleted_documents"))
+        self._send(200, {"ok": True, "path": path, "removed": len(on_disk),
+                         "removed_from_index": res.get("deleted_documents", 0)})
+
+    # -- administration of a standalone box (E27 S7) -----------------------------
+    def _admin_caller(self):
+        """The administrator of this request, or None after the refusal.
+        Standalone only (the ViVeSecBox administers its own box); no drive is
+        needed, the verified token must carry the admin role."""
+        if INTEGRATION != integration.MODE_STANDALONE:
+            self._send(404, {"ok": False, "error": "not available in this mode"})
+            return None
+        caller = self._authenticate_optional_drive()
+        if caller is None:
+            return None
+        if ADMIN_PRINCIPAL not in self._access().principals:
+            self._send(403, {"ok": False, "error": "forbidden"})
+            return None
+        return caller
+
+    def _admin_event(self, action, caller, path, **detail):
+        sys.stderr.write("[adapter] admin: %s %s by %r\n" % (action, path, caller.user))
+        STORE.event(action, caller.user, path, **detail)
+
+    def _admin_system(self, _query=""):
+        """Virus scanner and definitions, the rules file, the box time."""
+        if self._admin_caller() is None:
+            return
+        now = time.time()
+        scanner = {"reachable": False, "engine": None, "database": None,
+                   "database_time": None, "age_days": None, "stale": False}
+        try:
+            scanner.update(clamd.parse_version(CLAMD.version()))
+            scanner["reachable"] = True
+        except clamd.ScanUnavailable:
+            pass
+        if scanner["database_time"]:
+            scanner["age_days"] = round(max(0.0, now - scanner["database_time"]) / 86400.0, 1)
+            scanner["stale"] = scanner["age_days"] > CLAMAV_MAX_AGE_DAYS
+        self._send(200, {"ok": True, "now": now, "scan": UPLOAD_SCAN, "clamd": scanner,
+                         "max_age_days": CLAMAV_MAX_AGE_DAYS, "store": STORE.enabled,
+                         "acl": dict(ACL.settings(), configured=bool(ACL.rules_path))})
+
+    def _admin_rooms(self, _query=""):
+        """Every room: on disk (the store) and/or in the index (a corpus synced
+        before standalone mode), with its number of indexed files."""
+        if self._admin_caller() is None:
+            return
+        rooms = {}
+
+        def entry(root):
+            return rooms.setdefault(root, {"path": root, "name": root.rsplit("/", 1)[-1],
+                                           "stored": False, "indexed": False, "files": 0})
+
+        if STORE.enabled:
+            for root in STORE.rooms():
+                entry(root)["stored"] = True
+        prefix = corpus.norm(corpus.DRIVE_PREFIX)
+        for path in MIRROR.paths_under(prefix):
+            root = corpus.drive_root_of_path(path)
+            if root is not None:
+                entry(root)["indexed"] = True
+        for meta in MIRROR.files():
+            root = corpus.drive_root_of_path(meta.get("path") or "")
+            if root in rooms:
+                rooms[root]["files"] += 1
+        self._send(200, {"ok": True, "prefix": prefix, "store": STORE.enabled,
+                         "rooms": [rooms[root] for root in sorted(rooms)]})
+
+    def _admin_room_create(self):
+        caller = self._admin_caller()
+        if caller is None or self._locked_guard():
+            return
+        payload = self._read_json()
+        name = payload.get("name") if isinstance(payload, dict) else None
+        if not isinstance(name, str):
+            self._send(400, {"ok": False, "error": "invalid_path"})
+            return
+        root = STORE.prefix + "/" + drivestore.check_segment(name)
+        if MIRROR.get(root) is not None or MIRROR.paths_under(root):
+            self._send(409, {"ok": False, "error": "exists"})
+            return
+        root = STORE.create_room(name)
+        indexed = True
+        try:
+            _store_index_dir(root)
+        except Exception as e:  # noqa: BLE001 - the first upload indexes the folder again
+            indexed = False
+            sys.stderr.write("[adapter] room %s not indexed yet: %s\n" % (root, e))
+        self._admin_event("room_create", caller, root)
+        self._send(200, {"ok": True, "room": {"path": root, "name": root.rsplit("/", 1)[-1],
+                                              "stored": True, "indexed": indexed, "files": 0}})
+
+    def _admin_room_delete(self):
+        """Delete an EMPTY room (folders at most): from the index, the disk and
+        the rules file. A room with files is refused; delete them first."""
+        caller = self._admin_caller()
+        if caller is None or self._locked_guard():
+            return
+        payload = self._read_json()
+        raw = payload.get("path") if isinstance(payload, dict) else None
+        root = STORE.canonical(raw if isinstance(raw, str) else "")
+        if not STORE.is_room_root(root):
+            self._send(400, {"ok": False, "error": "not_a_room"})
+            return
+        known = STORE.kind(root) is not None or MIRROR.paths_under(root)
+        if not known:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        if any((MIRROR.get(path) or {}).get("file") for path in MIRROR.paths_under(root)) \
+                or any(STORE.kind(path) == "file" for path in STORE.walk(root)):
+            self._send(409, {"ok": False, "error": "not_empty"})
+            return
+        if any(r["path"] == root or r["path"].startswith(root + "/")
+               for r in STORE.records() if r.get("status") not in drivestore.FINAL):
+            self._send(409, {"ok": False, "error": "busy"})
+            return
+        _store_unindex(root)
+        STORE.remove_room(root)
+        removed_rules = 0
+        if ACL.rules_path:
+            with _ACL_RULES_LOCK:
+                raw, version = acl_admin.read(ACL.rules_path)
+                data, error = acl_admin.decode(raw)
+                if raw is not None and error is None:
+                    kept = acl_admin.without_tree(data, root)
+                    removed_rules = len(data.get("paths") or {}) - len(kept["paths"])
+                    if removed_rules:
+                        try:
+                            acl_admin.write(ACL.rules_path, kept, version)
+                        except (acl_admin.RulesConflict, OSError) as e:
+                            removed_rules = 0
+                            sys.stderr.write("[adapter] rules of the deleted room %s kept: %s\n"
+                                             % (root, e))
+            if removed_rules:
+                ACL.reload()
+        self._admin_event("room_delete", caller, root, rules=removed_rules or None)
+        self._send(200, {"ok": True, "path": root, "rules_removed": removed_rules})
+
+    def _admin_acl_get(self, _query=""):
+        if self._admin_caller() is None:
+            return
+        info = {"ok": True, "configured": bool(ACL.rules_path), "levels": list(acl.LEVELS),
+                "settings": ACL.settings()}
+        if ACL.rules_path:
+            try:
+                raw, version = acl_admin.read(ACL.rules_path)
+            except OSError as e:
+                sys.stderr.write("[adapter] rules file unreadable: %s\n" % e)
+                self._send(503, {"ok": False, "error": "rules_unreadable"})
+                return
+            rules, error = acl_admin.decode(raw)
+            info.update(exists=raw is not None, version=version, rules=rules, error=error)
+        self._send(200, info)
+
+    def _admin_acl_save(self):
+        """Validate and write the rules file; the policy reads it at once and
+        the RAG copy follows in the background."""
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        if not ACL.rules_path:
+            self._send(409, {"ok": False, "error": "rules_not_configured"})
+            return
+        payload = self._read_json()
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        try:
+            rules = acl_admin.validate(payload.get("rules"), corpus.DRIVE_PREFIX)
+        except acl_admin.RulesInvalid as e:
+            self._send(400, {"ok": False, "error": "invalid_rules", "message": str(e)[:500]})
+            return
+        with _ACL_RULES_LOCK:
+            try:
+                version = acl_admin.write(ACL.rules_path, rules, payload.get("base"))
+            except acl_admin.RulesConflict:
+                self._send(409, {"ok": False, "error": "rules_changed"})
+                return
+            except OSError as e:
+                sys.stderr.write("[adapter] rules file not written: %s\n" % e)
+                self._send(503, {"ok": False, "error": "rules_unwritable"})
+                return
+        ACL.reload()
+        _acl_resync_needed()
+        threading.Thread(target=_acl_resync_now, name="acl-resync", daemon=True).start()
+        self._admin_event("acl_update", caller, corpus.norm(corpus.DRIVE_PREFIX),
+                          rules=len(rules["paths"]))
+        self._send(200, {"ok": True, "version": version, "rules": rules,
+                         "settings": ACL.settings()})
+
+    def _admin_events(self, query=""):
+        """The newest entries of the file store's event log (uploads, scans,
+        deletes, room and permission changes)."""
+        if self._admin_caller() is None:
+            return
+        params = urllib.parse.parse_qs(query or "")
+        try:
+            limit = int((params.get("limit") or ["200"])[0])
+        except ValueError:
+            limit = 200
+        events = STORE.tail_events(limit) if STORE.enabled else []
+        self._send(200, {"ok": True, "events": events})
 
     # -- voice I/O (on-box STT/TTS; voice.py) --------------------------------
     def _stt(self):
@@ -3667,6 +4384,9 @@ def _admin_paths(payload):
 
 
 def _ensure_tls_listener():
+    # The mutual-TLS listener serves the ViVeSecBox only.
+    if not integration.vivesecbox_surfaces(INTEGRATION):
+        return None
     with _TLS_LOCK:
         if _TLS_SERVER[0] is not None:
             return _TLS_SERVER[0]
@@ -3685,7 +4405,10 @@ def _ensure_tls_listener():
 
 def main():
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
+    vivesecbox = integration.vivesecbox_surfaces(INTEGRATION)
     print("ViVeSec AIBox adapter on http://%s:%d" % (HOST, PORT))
+    print("  Integration :", INTEGRATION if vivesecbox else
+          "%s (pairing, index sync, ws-fs, SSDP and mutual TLS off)" % INTEGRATION)
     print("  RAG backend :", RAG_URL, "(auth=%s)" % ("on" if RAG_API_KEY else "off"))
     print("  Tenant      :", TENANT_ID)
     print("  Drive prefix:", corpus.DRIVE_PREFIX)
@@ -3710,13 +4433,26 @@ def main():
         acl_settings["default_classification"], acl_settings["default_clearance"]))
     print("  Provisioning:", "%s | TLS=%s" % (
         "initialized" if PROVISIONER.is_initialized() else "not initialized",
-        "on" if TLS_ENABLED else "off"))
+        "on" if TLS_ENABLED and vivesecbox else "off"))
     print("  Generation  :", "%s via %s (mode=%s)" % (llm.GEN_MODEL, llm.OLLAMA_URL, llm.GENERATE))
-    print("  WS-fs       :", "GET /api/v1/ws/fs (put-file retries=%d, delay=%.1fs)"
-          % (PUTFILE_RETRIES, PUTFILE_RETRY_DELAY))
+    if vivesecbox:
+        print("  WS-fs       :", "GET /api/v1/ws/fs (put-file retries=%d, delay=%.1fs)"
+              % (PUTFILE_RETRIES, PUTFILE_RETRY_DELAY))
+    else:
+        print("  WS-fs       : off")
     print("  Files       :", FILES.root or "(disabled)")
+    if not vivesecbox and STORE.enabled:
+        print("  File store  :", "%s (upload scan=%s via %s, max %d MB, writers=%s)" % (
+            STORE.root, UPLOAD_SCAN, CLAMD.raw_address, STORE.max_bytes // (1024 * 1024),
+            ",".join(sorted(STORE_WRITERS)) or "nobody"))
+        if CLAMD.config_error and UPLOAD_SCAN != drivestore.SCAN_OFF:
+            print("  File store  : ADAPTER_CLAMD refused (%s); uploads wait in quarantine"
+                  % CLAMD.config_error)
+        UPLOADS.start()
+    else:
+        print("  File store  :", "off" if vivesecbox else "(disabled: ADAPTER_STORE_DIR empty)")
     # SSDP/UPnP discovery so the ViVeSecBox finds us on the LAN (spec sec 2.5).
-    responder = discovery.from_env(default_port=PORT, uuid_dir=PKI_DIR)
+    responder = discovery.from_env(default_port=PORT, uuid_dir=PKI_DIR) if vivesecbox else None
     if responder is not None:
         print("  Discovery   :", "SSDP %s -> %s" % (responder.st, responder.current_location()))
         threading.Thread(target=responder.run, daemon=True).start()
@@ -3729,7 +4465,9 @@ def main():
         threading.Thread(target=reset_mon.run, daemon=True).start()
     else:
         print("  Factory pin : off")
-    if TLS_ENABLED:
+    if TLS_ENABLED and not vivesecbox:
+        print("  TLS         : ADAPTER_TLS ignored in standalone mode (no ViVeSecBox peer)")
+    elif TLS_ENABLED:
         if PROVISIONER.is_initialized():
             try:
                 _ensure_tls_listener()
