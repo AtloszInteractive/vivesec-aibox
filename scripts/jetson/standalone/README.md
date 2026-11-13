@@ -17,8 +17,15 @@ Browser ──HTTPS :443──▶ nginx (vivesec-https) ──HTTP, loopback─�
 | `standalone_tls_test.py` | Tests of both scripts (bash + openssl; docker end-to-end optional) |
 | `auth_deploy.py` | Authentication service container and the standalone switch (S4, below) |
 | `auth_deploy_test.py` | Tests of the switch and the image recipe |
-| `clamav_deploy.py` | clamd container for the upload scan (S5, below) |
-| `clamav_deploy_test.py` | Tests of its settings, container recipe and EICAR check |
+| `clamav_deploy.py` | clamd container for the upload scan (S5), offline signature updates (S8) |
+| `clamav_deploy_test.py` | Tests of its settings, container recipe, EICAR check and update plan |
+| `vault.py` | Encrypted data volume: create, unlock, lock, migrate, keys, boot unit (S8, below) |
+| `backup.py` | Encrypted backup disk: generations, verify, restore drill, restore, timer (S8) |
+| `timesync.py` | The customer's time source for chrony / systemd-timesyncd (S8) |
+| `standalone_install.py` | The standalone phases in order, resumable (S8) |
+| `standalone.conf.example` | Settings template for `/etc/aibox/standalone.conf` |
+| `kitlib.py` | Shared helpers of the S8 tools (settings file, commands, docker) |
+| `vault_test.py`, `backup_test.py`, `timesync_test.py`, `standalone_install_test.py` | Their tests; `backup_test` runs the whole cycle on LUKS files as root with `AIBOX_STANDALONE_ROOT_TEST=1` |
 
 ## Security properties
 
@@ -112,8 +119,12 @@ Every parameter is in [`CONFIGURATION.md`](../../../CONFIGURATION.md)
 ## Tests
 
 ```powershell
-Push-Location scripts\jetson\standalone; python -m unittest standalone_tls_test auth_deploy_test clamav_deploy_test; Pop-Location
+Push-Location scripts\jetson\standalone; python -m unittest standalone_tls_test auth_deploy_test clamav_deploy_test vault_test backup_test timesync_test standalone_install_test; Pop-Location
 ```
+
+The LUKS, mount and docker steps of S8 need root on Linux:
+`sudo AIBOX_STANDALONE_ROOT_TEST=1 python3 -m unittest backup_test` (on a box;
+it formats two small LUKS files in `/var/tmp` and needs 24 GiB free there).
 
 With `AIBOX_STANDALONE_DOCKER_TEST=1` and a running docker daemon, the
 rendered configuration also runs in the real nginx image against a stub UI,
@@ -187,11 +198,24 @@ docker only (no sudo).
 clamd's `StreamMaxLength` and `MaxFileSize` are `AIBOX_CLAMAV_MAX_MB` (300 MB,
 well above the 20 MiB upload limit, so the upload limit can grow with the RAG
 limit) and `AlertExceedsMax` is on, so a file clamd
-cannot scan whole is reported as a finding, never passed as clean. freshclam is
+cannot scan whole is reported as a finding, never passed as clean. clamd writes
+each stream to a temporary file first: the container's `/tmp` is a tmpfs
+(memory), so upload contents never reach the plaintext docker disk. freshclam is
 off by default (offline box); `AIBOX_CLAMAV_FRESHCLAM=on` lets a connected
 development box update its signatures. On an offline box the image must be
 present: `docker pull --platform linux/arm64 clamav/clamav-debian:1.4 && docker save ... -o clamav-image.tar`,
 then `docker load -i clamav-image.tar` on the box.
+
+**Offline signature updates (S8).** The database lives in `AIBOX_CLAMAV_DB_DIR`
+(default `/var/lib/aibox/clamav`, seeded from the image at the first `deploy`):
+
+| Command | Where | What it does |
+| --- | --- | --- |
+| `fetch-defs DIR` | any machine with internet and docker | freshclam into an empty directory, which yields whole `main.cvd`, `daily.cvd`, `bytecode.cvd`; checks their ClamAV signatures and writes `aibox-clamav-defs.json` (versions, SHA-256). Copy `DIR` to a USB stick. |
+| `update-defs DIR [--allow-older]` | the box | Checks every `.cvd` of `DIR` with `sigtool` in a container without network (unsigned or tampered: nothing installed), ignores unsigned `.cld`/`.cdiff` files, refuses a version older than the installed one, installs only the newer files, keeps the previous ones in `.prev/`, reloads clamd, waits for the new `daily` version and checks EICAR; any failure puts the previous files back. |
+
+The administration page shows the age of the loaded definitions and warns after
+`ADAPTER_CLAMAV_MAX_AGE_DAYS` (7): that is the reminder to bring a new stick.
 
 The adapter's defaults match (`ADAPTER_CLAMD=127.0.0.1:3310`,
 `ADAPTER_UPLOAD_SCAN=required`), so no adapter setting has to change. While
@@ -210,3 +234,105 @@ tmpfs). After raising the upload limit beyond it, raise this too and run
 | `AIBOX_CLAMAV_MEMORY` | `3g` | Memory limit (clamd needs about 1-1.5 GB) |
 | `AIBOX_CLAMAV_MAX_MB` | `300` | Largest stream/file clamd scans whole |
 | `AIBOX_CLAMAV_FRESHCLAM` | `off` | `on`: signature updates from the internet |
+| `AIBOX_CLAMAV_DB_DIR` | `/var/lib/aibox/clamav` | Signature database on the host (offline updates) |
+
+## Encrypted volume, backup and time (E27 S8)
+
+The box holds the only copy of the customer's documents. Everything with
+documents, indexes, conversations, keys or secrets lies on one LUKS2 volume
+(E05), a daily encrypted backup copies it, and the clock follows the customer's
+time source (TOTP). All settings are in `/etc/aibox/standalone.conf`
+(`standalone.conf.example`; the environment overrides it).
+
+```text
+/data/aibox-vault.img (LUKS2) ──open──▶ /data/vault ◀── /data/adapter, /data/auth, /data/rag, ... (symlinks)
+        key slots: unlock (passphrase | usb | keyfile) + recovery (paper)
+/data/vault ──rsync, 2 passes, docker pause──▶ backup disk (LUKS2: backup key on the volume + recovery key)
+```
+
+### The volume (`vault.py`, `aibox-vault`)
+
+| Command | What it does |
+| --- | --- |
+| `init [--yes-erase DEV] [--recovery-out FILE]` | Creates the LUKS2 volume (AES-XTS-512, argon2id) on `AIBOX_VAULT_DEVICE` or in `AIBOX_VAULT_FILE`, with two key slots whose roles are recorded in the header: the unlock key of `AIBOX_VAULT_UNLOCK` and a 160-bit recovery key. The recovery key is shown once on the terminal (never on stdout, which install logs capture) and must be typed back; `--recovery-out` writes it to a 0600 file off the volume instead. Formats ext4 and mounts it at `AIBOX_VAULT_MOUNT`. |
+| `unlock [--recovery] [--key-stdin] [--no-start]` | Opens (the key from the terminal, the stick, the key file, or stdin), checks the file system, mounts (`nodev,nosuid`) and starts the containers that use it. |
+| `lock` | Stops those containers (in parallel), unmounts, closes, and makes the empty mount point immutable. |
+| `migrate` | Moves every `AIBOX_VAULT_LINKS` directory onto the volume (rsync, then a dry-run comparison) and leaves a relative symlink; the containers are stopped meanwhile. The plaintext originals stay as `*.pre-vault-<stamp>`; `wipe-plaintext --confirm` deletes them (and trims). |
+| `rotate unlock\|recovery [--method M] [--recovery]` | New key in a free slot, tested, recorded, then the old slot is destroyed. Also switches the unlock method. After a recovery rotation, run `aibox-backup rekey` with each backup disk. |
+| `header-backup FILE` | LUKS header copy, for the recovery-key envelope (it accepts the keys valid when it was made). |
+| `erase --confirm HOSTNAME` | Cryptographic erase: every key slot destroyed (and the key file). Backup disks are separate volumes. |
+| `install-unit` | `aibox-vault.service` (after docker: unlock at boot in `usb`/`keyfile` mode, stays locked in `passphrase` mode; locks at shutdown) and the tools in `/usr/local/lib/aibox`, `/usr/local/sbin/aibox-{vault,backup,timesync}`. |
+| `status [--json]`, `check` | State, key roles, links, containers; `check` also fails on plaintext swap and an unguarded mount point, and warns about core dumps and containers with a writable layer but no `/tmp` tmpfs. |
+
+**Fail closed.** While the volume is closed its mount point is empty and
+immutable (`chattr +i`) and the links dangle. Docker starts the containers at
+boot before the volume is open; a container whose bind source lies there fails
+to start (docker cannot create the missing directory), so no application writes
+to the plaintext disk. The unit, or `aibox-vault unlock`, starts them once the
+volume is mounted. Keys reach cryptsetup on stdin or through an inherited pipe,
+never on a command line, and are never logged.
+
+**Unlock mode (customer decision: who holds the key).** `passphrase` (default):
+nothing is stored; after every reboot an administrator runs `sudo aibox-vault
+unlock`. `usb`: a random key file on a stick labelled `AIBOX-KEY`; the box boots
+unattended while the stick is in, so the stick must be kept apart from the box
+otherwise. `keyfile`: the key is on the system disk, so it only protects a data
+disk removed on its own: development only. The recovery key is always there and
+opens the volume and the backup disks when the other key is lost; without it a
+lost key means the data is gone (that is the point). Unknown values mean
+`passphrase`.
+
+**Layouts.** Jetson: the NVMe partition at `/data` also holds docker and the
+models, so the volume is a file there (`/data/aibox-vault.img`), mounted at
+`/data/vault`, and the data directories are linked. DGX Spark (4 TB SSD): the
+factory OS uses the whole disk; a file (`/var/lib/aibox/vault.img`, e.g.
+`AIBOX_VAULT_SIZE=3000G`) mounted at `/data` before the application is
+installed needs no links.
+
+### Backup (`backup.py`, `aibox-backup`)
+
+| Command | What it does |
+| --- | --- |
+| `init-target PATH [--yes-erase DEV \| --size 500G]` | Prepares a removable disk (or a file off the volume) as LUKS2 labelled `AIBOX-BACKUP` with the backup key (created on the volume, `.aibox/backup.key`) and the box's recovery key, which is checked against the volume first. |
+| `run [--if-present]` | New generation `<host>/generations/<stamp>/`: pass 1 rsync live, pass 2 with the volume's containers paused (about a second), so databases are consistent; unchanged files are hard links to the previous generation; plus the volume's LUKS header, the container settings, `AIBOX_BACKUP_EXTRA` and a manifest with every file's SHA-256 (unchanged files reuse the previous hash). Keeps `AIBOX_BACKUP_KEEP`. |
+| `verify [GEN] [--quick]` | Re-hashes a generation on the disk against its manifest. |
+| `rekey [--recovery-stdin]` | After `aibox-vault rotate recovery`: the attached disk gets the volume's new recovery key (checked against the volume) and the old one is destroyed. Every disk records which recovery key it holds; `run` refuses a disk that still opens with a previous one. |
+| `drill [GEN]` | The measured restore test (RTO): restores into a scratch directory on the volume, verifies every file, records the times, removes the copy. |
+| `restore [GEN] --confirm HOSTNAME [--recovery] [--from-host H]` | Stops the containers, replaces the volume's content with the generation (`.aibox/` kept), checks sizes, starts them. On a new box: `vault.py init`, `migrate`, then `restore --recovery --from-host <old name>`. |
+| `list`, `status`, `install-timer` | Generations; last run, drill and restore (`status` fails beyond `AIBOX_BACKUP_MAX_AGE_HOURS`); the daily `aibox-backup.timer` at `AIBOX_BACKUP_TIME` (RPO one day). A missing disk is skipped and shows in `status`. |
+
+### Time (`timesync.py`, `aibox-timesync`)
+
+`configure` probes `AIBOX_NTP_SERVERS` over SNTP (unsynchronised, unreachable or
+spoofed answers are refused), then points chrony (when installed) or
+systemd-timesyncd at those servers only: no internet pool or fallback (on a
+Jetson the vendor's `nv-fallback-ntp.conf` is overridden), and the box serves no
+time. Which source the customer has is an open question; the domain controllers
+usually serve time; `none` leaves the clock to the operator and `check` fails as
+a reminder. `check` fails when the client is not synchronised or the clock is
+more than `AIBOX_TIME_MAX_OFFSET` (5 s) off; the administration page shows the
+same (S7).
+
+### Installation order
+
+On a fresh box, after the base installation and an application release:
+
+```bash
+sudo install -d -m 0700 /etc/aibox
+sudo install -m 0600 standalone.conf.example /etc/aibox/standalone.conf   # then edit it
+sudo python3 standalone_install.py --check
+sudo python3 standalone_install.py          # preflight time vault tls clamav auth backup audit
+```
+
+`--resume` continues after a failure, `--only PHASE` repeats one. The vault phase
+asks for the recovery key to be written down; after it, write a header backup
+next to it (`aibox-vault header-backup`). The backup phase installs the timer; a
+backup disk is prepared once with `aibox-backup init-target /dev/sdX --yes-erase
+/dev/sdX`, then `aibox-backup run` and `aibox-backup drill`.
+
+**Not covered:** the plaintext docker disk still holds the images, the
+container logs (`json-file`; they carry user names and paths, not document
+text) and the environment variables of the containers (internal service keys,
+e.g. `RAG_API_KEY`); the models are not sensitive. Core dumps (apport) must be
+switched off on a customer box (`vault.py check` warns). TPM-sealed keys are
+not used (the Jetson has no discrete TPM).

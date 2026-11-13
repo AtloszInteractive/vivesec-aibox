@@ -28,7 +28,7 @@ ViVeSecBox ──ViVeSec v2──▶ adapter ──RAG contract──▶ rag_ser
 | `POST /api/v1/ui/files/children`               | *(mirror, scope + ACL; E03)*            |
 | `GET  /api/v1/ui/insight`                      | `POST /rag/scope_stats` (E03)           |
 | `POST /api/v1/ui/graph/*`                      | graph_service `/query/*` ... (E26)      |
-| `POST /api/v1/storage/unlock`                  | *(stub until LUKS/init wired)*          |
+| `POST /api/v1/storage/unlock`                  | *(stub until LUKS/init wired; standalone: host volume, see E27 S8)* |
 
 Key translation decisions:
 
@@ -223,6 +223,21 @@ match, because the keys are compared exactly), every principal `user:`,
 spellings is refused, and nodes that set nothing are dropped. Room creation,
 deletion and rules changes are written to `events.jsonl` (`room_create`,
 `room_delete`, `acl_update`) with the administrator's name.
+
+### Encrypted storage in standalone mode (E05, E27 S8)
+
+A standalone box keeps the original documents, so its data must sit on an
+encrypted volume. The adapter's own LUKS layer (`storage.py`,
+`ADAPTER_STORAGE_MODE=luks`, `POST /api/v1/storage/unlock`) is the
+ViVeSecBox design, where the pairing delivers the key; it needs cryptsetup and
+mount rights inside the container. A standalone box does not use it
+(`ADAPTER_STORAGE_MODE` stays `off`): the host opens a LUKS2 volume before the
+containers start (`scripts/jetson/standalone/vault.py`, systemd unit
+`aibox-vault.service`), and every data directory of the adapter, the RAG
+service, the authentication service, the graph, the TLS keys and the secrets
+lies on it. While it is closed, the containers cannot start at all. Backup,
+restore and the key handling are host tools too: see the
+[standalone README](../scripts/jetson/standalone/README.md#encrypted-volume-backup-and-time-e27-s8).
 
 ## Identity, directory and lifecycle (E02)
 

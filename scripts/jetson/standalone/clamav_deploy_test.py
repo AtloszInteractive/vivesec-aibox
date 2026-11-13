@@ -44,12 +44,14 @@ class SettingsTest(unittest.TestCase):
     def test_defaults(self):
         config = clamav_deploy.settings({})
         self.assertEqual(config, {"image": "clamav/clamav-debian:1.4", "port": 3310,
-                                  "max_mb": 300, "memory": "3g", "freshclam": False})
+                                  "max_mb": 300, "memory": "3g", "freshclam": False,
+                                  "db_dir": "/var/lib/aibox/clamav"})
 
     def test_invalid_values_stop(self):
         for env in ({"AIBOX_CLAMAV_PORT": "0"}, {"AIBOX_CLAMAV_PORT": "x"},
                     {"AIBOX_CLAMAV_MAX_MB": "0"}, {"AIBOX_CLAMAV_MEMORY": "lots"},
-                    {"AIBOX_CLAMAV_FRESHCLAM": "maybe"}):
+                    {"AIBOX_CLAMAV_FRESHCLAM": "maybe"}, {"AIBOX_CLAMAV_DB_DIR": "clamav"},
+                    {"AIBOX_CLAMAV_DB_DIR": "/var/../etc"}, {"AIBOX_CLAMAV_DB_DIR": "/clamav"}):
             with self.assertRaises(SystemExit, msg=env):
                 clamav_deploy.settings(env)
 
@@ -66,9 +68,62 @@ class RecipeTest(unittest.TestCase):
                         "AlertExceedsMax=yes"):
             self.assertIn("CLAMD_CONF_" + setting, joined)
         self.assertIn("CLAMAV_NO_FRESHCLAMD=true", joined)
+        # uploads are written to clamd's temporary directory: memory only
+        self.assertIn("--tmpfs /tmp:rw,nosuid,nodev,mode=1777,size=600m", joined)
+        self.assertIn("CLAMD_CONF_TemporaryDirectory=/tmp", joined)
+        self.assertIn("-v /var/lib/aibox/clamav:/var/lib/clamav", joined)
         self.assertEqual(args[-1], "clamav/clamav-debian:1.4")
         online = clamav_deploy.run_args(clamav_deploy.settings({"AIBOX_CLAMAV_FRESHCLAM": "on"}))
         self.assertNotIn("CLAMAV_NO_FRESHCLAMD=true", " ".join(online))
+
+
+SIGTOOL = """== daily.cvd
+File: /d/daily.cvd
+Build time: 12 Nov 2026 08:21 +0000
+Version: 28182
+Signatures: 2075123
+Functionality level: 90
+Builder: raynman
+MD5: 0123
+Digital signature: abc
+Verification OK.
+== main.cvd
+File: /d/main.cvd
+Build time: 16 Dec 2025 23:18 +0000
+Version: 63
+Verification FAILED.
+== bytecode.cvd
+ERROR: Can't open file
+"""
+
+
+class DefinitionsTest(unittest.TestCase):
+    def test_parse_sigtool(self):
+        info = clamav_deploy.parse_sigtool(SIGTOOL)
+        self.assertEqual(info["daily.cvd"], {"version": 28182, "build": "12 Nov 2026 08:21 +0000",
+                                             "signed": True})
+        self.assertEqual((info["main.cvd"]["version"], info["main.cvd"]["signed"]), (63, False))
+        self.assertEqual(info["bytecode.cvd"], {"version": None, "build": None, "signed": False})
+
+    def test_plan_only_signed_and_newer(self):
+        signed = lambda v: {"version": v, "build": "x", "signed": True}  # noqa: E731
+        current = {"daily": signed(28181), "main": signed(63)}
+        self.assertEqual(clamav_deploy.plan_update({"daily.cvd": signed(28182), "main.cvd": signed(63)}, current),
+                         ["daily.cvd"])
+        self.assertEqual(clamav_deploy.plan_update({"bytecode.cvd": signed(339)}, current), ["bytecode.cvd"])
+        with self.assertRaises(SystemExit):
+            clamav_deploy.plan_update({"daily.cvd": signed(28180)}, current)
+        self.assertEqual(clamav_deploy.plan_update({"daily.cvd": signed(28180)}, current, allow_older=True),
+                         ["daily.cvd"])
+        for bad in ({"version": 28190, "build": "x", "signed": False}, {"version": None, "build": None,
+                                                                         "signed": True}):
+            with self.assertRaises(SystemExit):
+                clamav_deploy.plan_update({"daily.cvd": signed(28190), "main.cvd": bad}, current)
+
+    def test_swap_script_keeps_the_previous_files(self):
+        self.assertIn("/db/.prev", clamav_deploy.SWAP)
+        self.assertIn('rm -f "/db/$b.cld"', clamav_deploy.SWAP)
+        self.assertIn("cp -p /db/.prev/* /db/", clamav_deploy.UNDO)
 
 
 class EicarTest(unittest.TestCase):

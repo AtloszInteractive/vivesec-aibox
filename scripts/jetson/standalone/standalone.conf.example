@@ -1,0 +1,53 @@
+# ViVeSec AI Box - standalone mode settings (E27 S8).
+# Copy to /etc/aibox/standalone.conf (root, 0600). Read by vault.py, backup.py,
+# timesync.py, standalone_install.py and the systemd units; AIBOX_* variables of
+# the environment override it. Shell syntax: KEY=value, quote values with spaces.
+# Every parameter is described in CONFIGURATION.md (Installation kit section).
+
+# --- Encrypted data volume (vault.py) ---------------------------------------
+# Either a partition (erased by `vault.py init --yes-erase <dev>`) ...
+#AIBOX_VAULT_DEVICE=/dev/nvme0n1p2
+# ... or a file. DGX Spark: the factory OS fills the 4 TB SSD, so use a file:
+#   AIBOX_VAULT_FILE=/var/lib/aibox/vault.img  AIBOX_VAULT_SIZE=3000G  AIBOX_VAULT_MOUNT=/data
+# Jetson (data disk at /data holds docker and the models too):
+AIBOX_VAULT_FILE=/data/aibox-vault.img
+AIBOX_VAULT_SIZE=200G
+AIBOX_VAULT_MOUNT=/data/vault
+# Directories outside the mount point that move onto the volume (symlink back).
+# Everything with documents, indexes, conversations, keys or secrets.
+AIBOX_VAULT_LINKS="/data/adapter /data/jobs /data/auth /data/rag /data/graph /data/neo4j /data/tls /data/https /data/app /home/aibox/graph-secrets"
+# How the volume opens at boot - an OPEN QUESTION to the customer (key ownership):
+#   passphrase  nobody can read the data without the passphrase; after every
+#               reboot an administrator runs `sudo aibox-vault unlock` (default)
+#   usb         a key file on a removable stick (label AIBOX-KEY); the box starts
+#               unattended while the stick is in - keep it apart from the box otherwise
+#   keyfile     key on the system disk: protects a removed data disk only (development)
+AIBOX_VAULT_UNLOCK=passphrase
+#AIBOX_VAULT_USB=LABEL=AIBOX-KEY
+#AIBOX_VAULT_KEYFILE=/etc/aibox/vault.key
+
+# --- Time (timesync.py) -----------------------------------------------------
+# The customer's internal time source - an OPEN QUESTION. The domain controllers
+# usually serve time. `none` = no network time (the clock is set by hand).
+AIBOX_NTP_SERVERS=
+#AIBOX_TIME_CLIENT=auto
+#AIBOX_TIME_MAX_OFFSET=5
+
+# --- Backup (backup.py) -----------------------------------------------------
+# A LUKS-encrypted removable disk prepared with `backup.py init-target /dev/sdX`.
+AIBOX_BACKUP_TARGET=LABEL=AIBOX-BACKUP
+AIBOX_BACKUP_KEEP=14
+AIBOX_BACKUP_TIME=02:30
+#AIBOX_BACKUP_PAUSE=on
+#AIBOX_BACKUP_MAX_AGE_HOURS=36
+
+# --- HTTPS front (tls-pki.sh, https-front.sh) -------------------------------
+AIBOX_TLS_DNS="aibox-01,aibox-01.bv.local"
+AIBOX_TLS_IPS="192.168.10.50"
+#AIBOX_HTTPS_LISTEN=0.0.0.0
+
+# --- Installation (standalone_install.py) -----------------------------------
+# Release stage build directory (172-release-box.py) with auth_service/ and adapter/.
+AIBOX_SOURCE_DIR=
+# Optional: a directory of signed ClamAV .cvd files (clamav_deploy.py fetch-defs).
+#AIBOX_CLAMAV_DEFS_DIR=/media/usb/clamav-defs
