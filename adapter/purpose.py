@@ -7,6 +7,9 @@ log (querylog.py); neither changes what the caller may see.
 
   ADAPTER_PURPOSE            off (default) | optional | required
                              unknown values -> required (the stricter one)
+  ADAPTER_PURPOSE_FIELDS     any (default: a case reference or a legal basis) |
+                             case_ref | legal_basis (only that one is asked for) |
+                             both; unknown values -> both (the stricter one)
   ADAPTER_LEGAL_BASES        allowed legal bases, separated by ';' (empty: free text)
   ADAPTER_CASE_REF_PATTERN   regular expression a case reference must match in full
                              (empty: any); an invalid pattern matches nothing
@@ -16,10 +19,15 @@ import re
 import sys
 
 MODES = ("off", "optional", "required")
+FIELDS = ("any", "case_ref", "legal_basis", "both")
 MAX_CASE_REF = 64
 MAX_LEGAL_BASIS = 200
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _NOTHING = re.compile(r"(?!)")
+_MISSING = {"any": "a case reference or a legal basis is required for this query",
+            "case_ref": "a case reference is required for this query",
+            "legal_basis": "a legal basis is required for this query",
+            "both": "a case reference and a legal basis are required for this query"}
 
 
 class PurposeError(ValueError):
@@ -36,6 +44,10 @@ def settings(env=None):
     mode = raw if raw in MODES else "required"
     if raw not in MODES:
         sys.stderr.write("[adapter] unknown ADAPTER_PURPOSE %r -> required\n" % raw)
+    fields = (env.get("ADAPTER_PURPOSE_FIELDS", "any") or "any").strip().lower()
+    if fields not in FIELDS:
+        sys.stderr.write("[adapter] unknown ADAPTER_PURPOSE_FIELDS %r -> both\n" % fields)
+        fields = "both"
     bases = [b.strip() for b in (env.get("ADAPTER_LEGAL_BASES", "") or "").split(";") if b.strip()]
     pattern_text = (env.get("ADAPTER_CASE_REF_PATTERN", "") or "").strip()
     pattern = None
@@ -46,24 +58,36 @@ def settings(env=None):
             sys.stderr.write("[adapter] invalid ADAPTER_CASE_REF_PATTERN (%s): no case reference "
                              "is accepted\n" % error)
             pattern = _NOTHING
-    return {"mode": mode, "legal_bases": bases, "pattern": pattern,
+    return {"mode": mode, "fields": fields, "legal_bases": bases, "pattern": pattern,
             "pattern_text": pattern_text}
 
 
+def offered(config):
+    """The purpose fields a request carries: ["case_ref", "legal_basis"] or one."""
+    fields = config.get("fields", "any")
+    return [f for f in ("case_ref", "legal_basis") if fields in ("any", "both", f)]
+
+
 def public(config):
-    """What the UI needs to ask for it."""
-    return {"mode": config["mode"], "legal_bases": list(config["legal_bases"]),
+    """What the UI needs to ask for it: the fields to show and whether one of
+    them (`any`) or all of them (`all`) must be given when required."""
+    return {"mode": config["mode"], "fields": offered(config),
+            "require": "any" if config.get("fields", "any") == "any" else "all",
+            "legal_bases": list(config["legal_bases"]),
             "case_ref_pattern": config["pattern_text"] or None}
 
 
 def parse(payload, config):
     """{"case_ref"?, "legal_basis"?} of a request ({} when none is given and none
     is needed). Raises PurposeError when one is required but missing, or a given
-    one is not acceptable."""
+    one is not acceptable. A field the box does not ask for is ignored."""
     if config["mode"] == "off":
         return {}
-    case_ref = " ".join(str(payload.get("case_ref") or "").split())
-    legal_basis = " ".join(str(payload.get("legal_basis") or "").split())
+    fields = offered(config)
+    case_ref = " ".join(str(payload.get("case_ref") or "").split()) \
+        if "case_ref" in fields else ""
+    legal_basis = " ".join(str(payload.get("legal_basis") or "").split()) \
+        if "legal_basis" in fields else ""
     if _CONTROL.search(case_ref + legal_basis):
         raise PurposeError("purpose_invalid", "control characters in the purpose")
     if len(case_ref) > MAX_CASE_REF or len(legal_basis) > MAX_LEGAL_BASIS:
@@ -72,9 +96,11 @@ def parse(payload, config):
         raise PurposeError("purpose_invalid", "the case reference does not have the expected form")
     if legal_basis and config["legal_bases"] and legal_basis not in config["legal_bases"]:
         raise PurposeError("purpose_invalid", "the legal basis is not one of the allowed ones")
-    if config["mode"] == "required" and not (case_ref or legal_basis):
-        raise PurposeError("purpose_required",
-                           "a case reference or a legal basis is required for this query")
+    given = {"case_ref": case_ref, "legal_basis": legal_basis}
+    rule = config.get("fields", "any")
+    complete = any(given[f] for f in fields) if rule == "any" else all(given[f] for f in fields)
+    if config["mode"] == "required" and not complete:
+        raise PurposeError("purpose_required", _MISSING.get(rule, _MISSING["both"]))
     out = {}
     if case_ref:
         out["case_ref"] = case_ref

@@ -762,16 +762,26 @@ entity shared over `ADAPTER_INVESTIGATE_VIA` (default `INVOLVED_IN`: two people
 in the same incident). Each person appears once, at the first level that
 reaches them, with up to 5 links from the previous level (a "Y" branch). The
 planner chooses 1–4 levels (default 2). `ADAPTER_INVESTIGATE_BRANCH` caps the new
-people taken from one person (default 10, 1–50), and `ADAPTER_INVESTIGATE_MAX_ROWS`
-caps the whole table (default 80, 1–500). Both pick people in name order, so
-the same graph always gives the same table.
+people taken from one person (default 50, 1–50), and `ADAPTER_INVESTIGATE_MAX_ROWS`
+caps the whole table (default 500, 1–500; BV's decision of 2026-11-13). Both pick
+people in name order, so the same graph always gives the same table. A cut table
+says where: each row's `more` counts the linked people of the next level that
+either cap left out from it (a person reached from several rows counts at each);
+the row's fact says so ("további 3 kapcsolódó személy a tábla korlátja miatt nem
+szerepel"), the spreadsheet has a "Left out by the limit" column, and the cut is
+also shown under the answer.
 
 Every row becomes one cited fact (`Vizsgálat, 2. szint: … -- szerep; nyilvántartási
 szám; telefon; lakcím; e-mail -- kapcsolódás útja: A —[Rokona / kapcsolattartó]— B
 …`) with the document that states its last link as the source. A graph note tells
 the answer model what the table covers and whether it was cut. The rows sit
 outside the `ADAPTER_ORCHESTRATOR_MAX_FACTS` cap, because a table cut by the
-facts cap would read as complete. The model only summarises. The adapter applies
+facts cap would read as complete; instead the first `ADAPTER_INVESTIGATE_ANSWER_ROWS`
+rows (default 80, in level and name order) go to the answer model, which bounds
+its context, and when the table has more, the note and a line under the answer
+say that the answer was written from those rows and that the spreadsheet and the
+diagram hold the whole table (they, and the person summaries, take every row).
+The model only summarises. The adapter applies
 its own visibility rule too: a row whose link rests only on a document hidden
 by the adapter's policy is dropped, together with everyone reached only through
 it, and so are hidden identifiers and attributes.
@@ -822,14 +832,25 @@ Errors: 400 invalid input, 403 a drive outside the grant, 404 nothing visible,
 The workbook is written by `xlsx.py` (stdlib zip + XML, no dependency): a
 bold, frozen header row with an auto filter, text in inline-string cells (a
 value starting with `=` stays text, never a formula), and an info sheet (start,
-levels, row count, completeness, links followed, name joining, scope, case
-reference / legal basis, answer audit id, time, requester). Columns and layout
-are customer decisions (BV question 9), so they are settings:
+levels, row count, completeness, links followed, name joining, scope, birth data
+rule, case reference / legal basis, answer audit id, time, requester). Columns
+and layout are customer decisions (BV question 9), so they are settings.
+
+BV answered (2026-11-13) that an inmate is identified by name and registry
+number, and that for anyone else the date of birth and the mother's name should
+be shown where available. The export therefore adds them (`birth_date`,
+`mother_name`) for every person whose kind is not listed in
+`ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT` (default `inmate`), from the
+documents the requester may see only. They are read when the file is built
+(`orchestrator.Run.personal_data`) and are not part of the answer, its
+`graph.investigations` data, the diagram or the summaries (data minimisation:
+the answer keeps birth data to the people the message names).
 
 | Variable | Default | Meaning / fail-safe |
 | --- | --- | --- |
-| `ADAPTER_INVESTIGATION_XLSX_COLUMNS` | all, in this order: `level,name,role,registry_number,id_number,phone,address,email,other,path,also,source,page,joined` | Comma list of column ids. Unknown ids are dropped (logged); none left gives the default. `name` and `source` are always added: a row must stay checkable against its document. |
+| `ADAPTER_INVESTIGATION_XLSX_COLUMNS` | all, in this order: `level,name,role,registry_number,birth_date,mother_name,id_number,phone,address,email,other,path,also,more,source,page,joined` | Comma list of column ids. Unknown ids are dropped (logged); none left gives the default. `name` and `source` are always added: a row must stay checkable against its document; `more` is added whenever the table was cut. |
 | `ADAPTER_INVESTIGATION_XLSX_SHEETS` | `single` | `single`: one table sheet; `per_level`: one sheet per level (starting point, level 1, …). An unknown value falls back to `single`. Both add the info sheet. |
+| `ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT` | `inmate` | Person kinds (profile subtypes) shown without date of birth and mother's name. `none`: shown for everyone; `all`: for nobody. A kind the active profile does not know leaves them out for everyone (logged): a typo must not show them for inmates. |
 
 Tests: `investigation_export_test.py` (package structure, cells, sheet names,
 columns, hidden rows absent, settings; opened with openpyxl as an independent
@@ -935,6 +956,15 @@ They come from the document's own pattern mentions (`graph_store.GraphView.
 document_refs`), only for documents the caller may see. The adapter puts them
 beside each graph fact, investigation row and person-summary finding:
 `[Ügy- vagy iktatószám: J-2025/6545]`. The label is the profile pattern's.
+The `bv` profile (version 4, BV's answer of 2026-11-13) has two patterns of the
+`case_number` subtype: a letter prefix, year and number (`R-2020/10`, the ODIN
+police information; `J-2025/6545`) and the Főnix year/number[/sub-number]
+(`2026/123/4`). A document registered in both Főnix and Robotzsaru carries two
+numbers; up to three are shown. The Robotzsaru format is still to be confirmed.
+The Főnix pattern leaves out what it would otherwise mistake for a number: a
+date with two-digit month and day (`2024/03/15`), a year range (`2022/2023`)
+and an EU act after "(EU) " / "(EK) " (`2016/679`). A real number of that shape
+(`2026/11/13`) is missed too.
 
 | Variable | Default | Meaning / fail-safe |
 | --- | --- | --- |
@@ -1028,10 +1058,18 @@ With `ADAPTER_PURPOSE=required` every content query -- a question (`/ui/query`,
 review list and a dossier export -- must carry `case_ref` (ügyszám) and/or
 `legal_basis` (jogalap) in its body; without one it gets 428
 `purpose_required` (400 `purpose_invalid` for a value outside
-`ADAPTER_LEGAL_BASES` or not matching `ADAPTER_CASE_REF_PATTERN`). Status and
-processing views need none. `/status` reports `app.purpose {mode, legal_bases,
-case_ref_pattern}`; the UI asks for the purpose once per browser session (a
-chip in the chat header, a dialog) and sends it with every such call.
+`ADAPTER_LEGAL_BASES` or not matching `ADAPTER_CASE_REF_PATTERN`).
+`ADAPTER_PURPOSE_FIELDS` says which: `any` (default: either one), `case_ref` or
+`legal_basis` (only that one is asked for and required; the other is ignored),
+`both`; an unknown value means `both`. BV (2026-11-13): the case reference is
+mandatory, a legal basis is not needed, and the form is year/number[/sub-number]:
+`ADAPTER_PURPOSE_FIELDS=case_ref`,
+`ADAPTER_CASE_REF_PATTERN=(?:19|20)\d{2}/\d{1,7}(?:/\d{1,5})?`. Status and
+processing views need none. `/status` reports `app.purpose {mode, fields,
+require, legal_bases, case_ref_pattern}` (`require`: `any` or `all` of the
+fields); the UI asks for the purpose once per browser session (a chip in the chat
+header, a dialog showing only the fields asked for) and sends it with every such
+call.
 
 With `optional` or `required` each of those queries is written to the query log
 (`querylog.py`): an append-only daily JSONL under `ADAPTER_QUERY_LOG_DIR` with
@@ -1043,7 +1081,41 @@ the previous record's hash, so `querylog.verify(path)` finds an edited, inserted
 or removed line; signing and anchoring the log is E06. When the purpose is
 required and the log cannot be written, the query is refused (503) or its
 answer withheld -- an unlogged answer is never returned. A job logs its outcome
-when it finishes. Tests: `purpose_test`, `graph_integration_test`
+when it finishes.
+
+Retention: day files older than `ADAPTER_QUERY_LOG_RETENTION_DAYS` are removed
+when the first record of a day is written (default `0`: keep all; an invalid
+value keeps all too, since removal cannot be undone). Each day file is its own
+chain, so the remaining files still verify. BV (2026-11-13): five years, `1827`.
+
+**Viewing the log** (`POST /api/v1/ui/querylog` `{from?, to?, user?, case_ref?,
+offset?, limit?, before?}`; UI: Relationships › Query log): an analyst gets their
+own records, a **leader** everyone's (and may filter by `user`). A leader is a
+user named in `ADAPTER_LEADERS` or a caller holding a role of
+`ADAPTER_LEADER_ROLES` (default `leader`; `off`: none) from a directory lookup
+without error -- the identity token's `roles` claim, Entra ID app roles, or the
+standalone login's group map (E27). An unknown membership is no role. The range
+is the last 30 days by default, at most 366 days per request, newest first, 50
+per page; `before` (the first page's `as_of`, a "day file:record count" cursor)
+keeps later pages stable while new records arrive. A non-leader without a user
+name gets 403 (never everyone's records). A damaged day file (edited, undecodable
+or non-record lines) is listed with `intact: false` and never stops the view. A cited document the viewer may not see now (another drive, an
+ACL) is counted as `hidden_sources`, never named. Each record says whether its
+day file's hash chain is intact. Viewing is itself logged (`querylog:view`, with
+the filter as the question). Response: `{enabled, role, retention_days,
+keeps_text, from, to, as_of, total, records}`. BV (2026-11-13): the analyst sees
+their own, the leader everyone's; recording the time and the recorder's name is
+enough (no signature or external time stamp); the question text is logged
+(`ADAPTER_QUERY_LOG_TEXT=on`).
+
+| Variable | Default | Meaning / fail-safe |
+| --- | --- | --- |
+| `ADAPTER_PURPOSE_FIELDS` | `any` | `any` \| `case_ref` \| `legal_basis` \| `both`; unknown → `both`. |
+| `ADAPTER_QUERY_LOG_RETENTION_DAYS` | `0` | Days a day file is kept; `0` or invalid: kept for ever. |
+| `ADAPTER_LEADERS` | *(empty)* | Users who see everyone's query log. |
+| `ADAPTER_LEADER_ROLES` | `leader` | Verified roles that make a leader; `off`: none. |
+
+Tests: `purpose_test`, `graph_integration_test`
 (`test_graph_queries_and_exports_carry_their_purpose`).
 
 #### Whole-document analysis of large files (E10a)

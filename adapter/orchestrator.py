@@ -361,6 +361,24 @@ _TEXT = {
         "da": "%s (personer forbundet med samme enhed)",
         "de": "%s (Personen, die mit demselben Eintrag verbunden sind)",
     },
+    "investigate_more": {
+        "en": " (%d more linked people not listed: table limit)",
+        "hu": " (tov\u00e1bbi %d kapcsol\u00f3d\u00f3 szem\u00e9ly a t\u00e1bla korl\u00e1tja "
+              "miatt nem szerepel)",
+        "da": " (%d flere forbundne personer er ikke med: tabellens gr\u00e6nse)",
+        "de": " (%d weitere verbundene Personen nicht aufgef\u00fchrt: Tabellengrenze)",
+    },
+    "investigate_answer_rows": {
+        "en": "The answer was written from the first %d of the table's %d rows (in level and "
+              "name order); the whole table is in the spreadsheet export and the diagram.",
+        "hu": "A v\u00e1lasz a vizsg\u00e1lati t\u00e1bla %d sor\u00e1b\u00f3l k\u00e9sz\u00fclt "
+              "(\u00f6sszesen %d sor, szint \u00e9s n\u00e9v szerinti sorrendben); a teljes "
+              "t\u00e1bla az Excel-exportban \u00e9s az \u00e1br\u00e1n l\u00e1that\u00f3.",
+        "da": "Svaret er skrevet ud fra de f\u00f8rste %d af tabellens %d r\u00e6kker (efter "
+              "niveau og navn); hele tabellen findes i regnearkseksporten og diagrammet.",
+        "de": "Die Antwort beruht auf den ersten %d der %d Tabellenzeilen (nach Ebene und "
+              "Name); die ganze Tabelle steht im Tabellenexport und im Diagramm.",
+    },
     "investigate_row": {
         "en": "Investigation, level %d: %s -- %s -- path: %s%s.",
         "hu": "Vizsg\u00e1lat, %d. szint: %s -- %s -- kapcsol\u00f3d\u00e1s \u00fatja: %s%s.",
@@ -545,17 +563,19 @@ def vocabulary(prof, lang=None):
             % ("; ".join(kinds), "; ".join(relations)))
 
 
-def investigate_config(prof, relations, via, branch=10, max_rows=80):
+def investigate_config(prof, relations, via, branch=50, max_rows=500, answer_rows=80):
     """The links an investigation follows, limited to the profile's relations;
     None (no investigate tool) when none of them is there: an unknown id must
-    not turn into "follow everything"."""
+    not turn into "follow everything". `answer_rows`: the rows given to the
+    answer model (the export, the diagram and the summaries get them all)."""
     known = {r.get("id") for r in (prof or {}).get("relation_types") or []}
     relations = [r for r in relations or [] if r in known and r not in GENERIC_RELATIONS]
     via = [r for r in via or [] if r in known and r not in GENERIC_RELATIONS]
     if not relations and not via:
         return None
     return {"relations": relations, "via": via, "branch": max(1, min(int(branch), 50)),
-            "max_rows": max(1, min(int(max_rows), 500))}
+            "max_rows": max(1, min(int(max_rows), 500)),
+            "answer_rows": max(1, min(int(answer_rows), 500))}
 
 
 def investigate_tool(prof, config, lang=None):
@@ -788,6 +808,12 @@ class Run:
         # The investigation tables: their rows go to the answer outside the facts
         # cap (a cut table would read as complete), and to the response for export.
         self.table = []
+        # The nodes of the investigation rows as the graph gave them: the
+        # spreadsheet reads birth data from here (personal_data()); never part of
+        # the answer or the response.
+        self._row_nodes = {}
+        # What the answer must show about its tables (cut, rows left to the export).
+        self._table_notes = []
         self.investigations = []
         # Per investigation: its visible subgraph (investigation_graph()), kept
         # out of the answer; the subgraph view rebuilds it on request.
@@ -1491,6 +1517,22 @@ class Run:
             name = "%s: %s" % (name, through.get("label") or through.get("id"))
         return name
 
+    def personal_data(self, node_id, names=PERSONAL_ATTRS):
+        """(subtype, {attribute: [values]}) of one investigation row's person,
+        from the documents the caller may see; (None, {}) for anything else."""
+        node = self._row_nodes.get(node_id) or {}
+        if node.get("type") != "person":
+            return None, {}
+        values = {}
+        for attr in node.get("attributes") or []:
+            doc = self.documents.get(attr.get("doc_id"))
+            if attr.get("name") in names and doc is not None \
+                    and self.visible(doc.get("source_path") or ""):
+                found = values.setdefault(attr["name"], [])
+                if str(attr.get("value")) not in found:
+                    found.append(str(attr.get("value")))
+        return node.get("subtype") or "", values
+
     def _row_values(self, node, held):
         """The identifying data of one row: ID attributes and the identifiers and
         places the person holds, from visible documents only."""
@@ -1530,6 +1572,8 @@ class Run:
                   if row[k]]
         parts += ["%s: %s" % (k, ", ".join(v)) for k, v in sorted(row["other"].items())]
         also = _t("investigate_also", self.code) % ", ".join(row["also"]) if row["also"] else ""
+        if row.get("more"):
+            also += _t("investigate_more", self.code) % row["more"]
         path = row["path"] if row["level"] else _t("investigate_start", self.code)
         return _t("investigate_row", self.code) % (row["level"], row["name"], "; ".join(parts),
                                                    path, also)
@@ -1562,6 +1606,7 @@ class Run:
         res = self.query("investigate", seeds=ids[:20], relations=cfg["relations"],
                          via_relations=cfg["via"], levels=levels, branch=cfg["branch"],
                          limit=cfg["max_rows"])
+        answer_rows = cfg.get("answer_rows", cfg["max_rows"])
         kept, rows = {}, []
         sub_nodes, sub_edges = {}, {}
         for raw in res.get("rows") or []:
@@ -1595,11 +1640,12 @@ class Run:
                         "role": self._kind_label(node.get("subtype") or node.get("type"))},
                        **self._row_values(node, raw.get("held") or []))
             row.update(path=path, also=also, source=doc.get("source_path"),
-                       page=source.get("page"))
+                       page=source.get("page"), more=int(raw.get("more") or 0))
             if len(node.get("joined") or []) > 1:
                 row["joined"] = len(node["joined"])
             kept[node["id"]] = row
             rows.append(row)
+            self._row_nodes[node["id"]] = node
             self._sub_add(sub_nodes, sub_edges, node, None)
             for link in links:
                 self._sub_add(sub_nodes, sub_edges, None, link["edge"])
@@ -1608,10 +1654,12 @@ class Run:
             for item in raw.get("held") or []:
                 if item.get("node") and self._evidence(item.get("edge") or {}):
                     self._sub_add(sub_nodes, sub_edges, item["node"], item["edge"])
-            self.table.append({"text": self._row_text(row) + self.doc_ref_note(doc),
-                               "source_path": doc.get("source_path"),
-                               "corpus_id": doc.get("corpus_id"), "page_number": row["page"],
-                               "chunk_id": None, "score": 1.0, "origin": "graph"})
+            if len(rows) <= answer_rows:
+                self.table.append({"text": self._row_text(row) + self.doc_ref_note(doc),
+                                   "source_path": doc.get("source_path"),
+                                   "corpus_id": doc.get("corpus_id"),
+                                   "page_number": row["page"], "chunk_id": None, "score": 1.0,
+                                   "origin": "graph"})
             self._call_labels.add(label)
         if not rows:
             return 0
@@ -1619,8 +1667,15 @@ class Run:
         follows += [_t("investigate_shared", self.code) % self._relation_word(r)
                     for r in cfg["via"]]
         truncated = bool(res.get("truncated"))
-        tail = (_t("investigate_cut", self.code) % (cfg["branch"], cfg["max_rows"])
-                if truncated else _t("investigate_complete", self.code))
+        cut = _t("investigate_cut", self.code) % (cfg["branch"], cfg["max_rows"])
+        tail = cut if truncated else _t("investigate_complete", self.code)
+        if len(rows) > answer_rows:
+            # The rows past the answer's share would read as absent.
+            shown = _t("investigate_answer_rows", self.code) % (answer_rows, len(rows))
+            tail = "%s %s" % (tail, shown)
+            self._table_notes.append(shown)
+        if truncated:
+            self._table_notes.append(cut)
         self.notes.append(_t("investigate", self.code) % (
             ", ".join(r["name"] for r in rows if r["level"] == 0),
             sum(1 for r in rows if r["type"] == "person"), max(r["level"] for r in rows),
@@ -1816,7 +1871,7 @@ class Run:
     @property
     def caveat(self):
         """Shown under the answer as is: the model may drop these."""
-        parts = [p for p in (self._joined_note(), self._reason) if p]
+        parts = [p for p in [self._joined_note(), self._reason] + self._table_notes if p]
         return "\n\n".join(parts) or None
 
     def _pending(self):

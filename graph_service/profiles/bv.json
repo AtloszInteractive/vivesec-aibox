@@ -1,6 +1,6 @@
 {
   "id": "bv",
-  "version": 3,
+  "version": 4,
   "name": {"en": "Corrections and law enforcement", "hu": "Büntetés-végrehajtás és rendészet", "da": "Kriminalforsorg og retshåndhævelse", "de": "Justizvollzug und Strafverfolgung"},
   "description": "People, institutions, cells, visits, calls, transfers and incidents. Hungarian identifier formats. Shows connections; it never scores or predicts individuals.",
   "entity_subtypes": [
@@ -25,6 +25,7 @@
     {"id": "plate_hu", "subtype": "vehicle_plate", "label": {"en": "Hungarian licence plate", "hu": "Magyar rendszám", "da": "Ungarsk nummerplade", "de": "Ungarisches Kennzeichen"}, "regex": "\\b(?:[A-Z]{3}-\\d{3}|[A-Z]{2} ?[A-Z]{2}-\\d{3})\\b", "normalize": "nospace_upper"},
     {"id": "bank_account_hu", "subtype": "bank_account", "label": {"en": "Hungarian bank account", "hu": "Magyar bankszámlaszám", "da": "Ungarsk bankkonto", "de": "Ungarisches Bankkonto"}, "regex": "\\b\\d{8}-\\d{8}(?:-\\d{8})?\\b", "normalize": "digits"},
     {"id": "case_number", "subtype": "case_number", "label": {"en": "Case or file number", "hu": "Ügy- vagy iktatószám", "da": "Sags- eller journalnummer", "de": "Akten- oder Geschäftszeichen"}, "regex": "\\b[A-Z]{1,4}-\\d{4}/\\d{1,6}\\b", "normalize": "upper"},
+    {"id": "fonix_number", "subtype": "case_number", "label": {"en": "Főnix document number (year/number/sub-number)", "hu": "Főnix iratszám (év/ügyszám/alszám)", "da": "Főnix-dokumentnummer (år/nummer/undernummer)", "de": "Főnix-Dokumentnummer (Jahr/Nummer/Unternummer)"}, "regex": "(?<![\\w/-])(?<!\\(EU\\) )(?<!\\(EK\\) )(?!(?:19|20)\\d{2}/(?:0[1-9]|1[0-2])/(?:0[1-9]|[12]\\d|3[01])(?![\\w/]))(?!(?:19|20)\\d{2}/(?:19|20)\\d{2}(?![\\w/]))(?:19|20)\\d{2}/\\d{1,7}(?:/\\d{1,5})?(?![\\w/])", "normalize": "upper"},
     {"id": "email", "subtype": "email", "label": {"en": "E-mail address", "hu": "E-mail-cím", "da": "E-mailadresse", "de": "E-Mail-Adresse"}, "regex": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "normalize": "lower"}
   ],
   "relation_types": [

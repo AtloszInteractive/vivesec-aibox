@@ -346,11 +346,106 @@ const M: Record<string, Tri> = {
     "Sagsnummeret har ikke den forventede form.",
     "Das Aktenzeichen hat nicht die erwartete Form.",
   ],
+  "Give the case reference and the legal basis before asking.": [
+    "Kérdés előtt adja meg az ügyszámot és a jogalapot.",
+    "Angiv sagsnummeret og retsgrundlaget, før du spørger.",
+    "Geben Sie vor der Frage das Aktenzeichen und die Rechtsgrundlage an.",
+  ],
+  "Give the case reference before asking.": [
+    "Kérdés előtt adja meg az ügyszámot.",
+    "Angiv sagsnummeret, før du spørger.",
+    "Geben Sie vor der Frage das Aktenzeichen an.",
+  ],
+  "Give the legal basis before asking.": [
+    "Kérdés előtt adja meg a jogalapot.",
+    "Angiv retsgrundlaget, før du spørger.",
+    "Geben Sie vor der Frage die Rechtsgrundlage an.",
+  ],
+  "Give the case reference and the legal basis of your queries. It is logged with every question.":
+    [
+      "Adja meg a lekérdezései ügyszámát és jogalapját. Minden kérdéssel együtt naplózzuk.",
+      "Angiv sagsnummeret og retsgrundlaget for dine forespørgsler. Det logges med hvert spørgsmål.",
+      "Geben Sie das Aktenzeichen und die Rechtsgrundlage Ihrer Abfragen an. Sie werden mit jeder Frage protokolliert.",
+    ],
+  "Give the case reference of your queries. It is logged with every question.": [
+    "Adja meg a lekérdezései ügyszámát. Minden kérdéssel együtt naplózzuk.",
+    "Angiv sagsnummeret for dine forespørgsler. Det logges med hvert spørgsmål.",
+    "Geben Sie das Aktenzeichen Ihrer Abfragen an. Es wird mit jeder Frage protokolliert.",
+  ],
+  "Give the legal basis of your queries. It is logged with every question.": [
+    "Adja meg a lekérdezései jogalapját. Minden kérdéssel együtt naplózzuk.",
+    "Angiv retsgrundlaget for dine forespørgsler. Det logges med hvert spørgsmål.",
+    "Geben Sie die Rechtsgrundlage Ihrer Abfragen an. Sie wird mit jeder Frage protokolliert.",
+  ],
+  "You may give the case reference of your queries. It is logged with every question.": [
+    "Megadhatja a lekérdezései ügyszámát. Minden kérdéssel együtt naplózzuk.",
+    "Du kan angive sagsnummeret for dine forespørgsler. Det logges med hvert spørgsmål.",
+    "Sie können das Aktenzeichen Ihrer Abfragen angeben. Es wird mit jeder Frage protokolliert.",
+  ],
+  "You may give the legal basis of your queries. It is logged with every question.": [
+    "Megadhatja a lekérdezései jogalapját. Minden kérdéssel együtt naplózzuk.",
+    "Du kan angive retsgrundlaget for dine forespørgsler. Det logges med hvert spørgsmål.",
+    "Sie können die Rechtsgrundlage Ihrer Abfragen angeben. Sie wird mit jeder Frage protokolliert.",
+  ],
   "Give the case reference or the legal basis first (chat header).": [
     "Előbb adja meg az ügyszámot vagy a jogalapot (a beszélgetés fejlécében).",
     "Angiv først sagsnummeret eller retsgrundlaget (i samtalens overskrift).",
     "Geben Sie zuerst das Aktenzeichen oder die Rechtsgrundlage an (Kopfzeile des Chats).",
   ],
+  // ---- Concept 5.3: the query log view (analyst: own, leader: everyone's) ----
+  "Query log": ["Lekérdezési napló", "Forespørgselslog", "Abfrageprotokoll"],
+  "Your own queries": ["Saját lekérdezések", "Dine egne forespørgsler", "Ihre eigenen Abfragen"],
+  "Everyone's queries (leader)": [
+    "Mindenki lekérdezései (vezető)",
+    "Alles forespørgsler (leder)",
+    "Abfragen aller Benutzer (Leitung)",
+  ],
+  From: ["Ettől", "Fra", "Von"],
+  To: ["Eddig", "Til", "Bis"],
+  Search: ["Keresés", "Søg", "Suchen"],
+  "Retention (days)": ["Megőrzés (nap)", "Opbevaring (dage)", "Aufbewahrung (Tage)"],
+  "No time limit": ["időkorlát nélkül", "ingen tidsgrænse", "ohne Zeitlimit"],
+  "The query log could not be loaded.": [
+    "A lekérdezési napló nem tölthető be.",
+    "Forespørgselsloggen kunne ikke indlæses.",
+    "Das Abfrageprotokoll konnte nicht geladen werden.",
+  ],
+  "The query log is off on this AI Box.": [
+    "Ezen az AI Boxon a lekérdezési napló ki van kapcsolva.",
+    "Forespørgselsloggen er slået fra på denne AI Box.",
+    "Das Abfrageprotokoll ist auf dieser AI Box ausgeschaltet.",
+  ],
+  "No queries in this period.": [
+    "Ebben az időszakban nincs lekérdezés.",
+    "Ingen forespørgsler i denne periode.",
+    "Keine Abfragen in diesem Zeitraum.",
+  ],
+  "Question text not kept (fingerprint only)": [
+    "A kérdés szövege nincs megőrizve (csak ujjlenyomat)",
+    "Spørgsmålets tekst gemmes ikke (kun fingeraftryk)",
+    "Fragetext nicht gespeichert (nur Fingerabdruck)",
+  ],
+  "Documents outside your access": [
+    "Az Ön számára nem látható dokumentumok",
+    "Dokumenter uden for din adgang",
+    "Dokumente außerhalb Ihres Zugriffs",
+  ],
+  "This day's log was altered: its hash chain is broken.": [
+    "Ennek a napnak a naplóját módosították: a hash-lánca megszakadt.",
+    "Denne dags log er ændret: dens hashkæde er brudt.",
+    "Das Protokoll dieses Tages wurde verändert: seine Hash-Kette ist unterbrochen.",
+  ],
+  Question: ["Kérdés", "Spørgsmål", "Frage"],
+  "Relationship query": ["Kapcsolati lekérdezés", "Relationsforespørgsel", "Beziehungsabfrage"],
+  "Spreadsheet export": ["Excel-export", "Regnearkseksport", "Tabellenexport"],
+  "Dossier export": ["Dosszié-export", "Dossiereksport", "Dossierexport"],
+  "Investigation diagram": ["Vizsgálati ábra", "Undersøgelsesdiagram", "Untersuchungsdiagramm"],
+  "Person summaries": [
+    "Személyenkénti összefoglaló",
+    "Resuméer pr. person",
+    "Zusammenfassungen je Person",
+  ],
+  "Query log view": ["Napló megtekintése", "Visning af loggen", "Protokollansicht"],
   "Read and analyse this whole document (may take minutes)": [
     "A teljes dokumentum elolvasása és elemzése (percekig tarthat)",
     "Læs og analysér hele dokumentet (kan tage minutter)",

@@ -10,6 +10,7 @@ import {
   Network,
   RefreshCw,
   Route,
+  ScrollText,
   Search,
   Settings2,
   ShieldAlert,
@@ -39,8 +40,10 @@ import {
   type GraphReprocessStatus,
   type GraphInvestigationView,
   type IndexSkipped,
+  type QueryLog,
+  type QueryLogRecord,
 } from "@/lib/api/graph.functions";
-import { ACCENT, ACCENT_TEXT } from "./brand";
+import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
 
 const PANEL = "#10243A";
 const BG = "#0C1E31";
@@ -79,7 +82,7 @@ const STATUS_TEXT: Record<string, string> = {
   empty: "Empty",
 };
 
-type Tab = "explore" | "review" | "processing" | "profile";
+type Tab = "explore" | "review" | "processing" | "profile" | "querylog";
 type Graph = {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -146,6 +149,7 @@ export function GraphPanel({
     { id: "review", label: tm("Review"), icon: GitMerge },
     { id: "processing", label: tm("Processing"), icon: RefreshCw },
     { id: "profile", label: tm("Domain profile"), icon: Settings2 },
+    { id: "querylog", label: tm("Query log"), icon: ScrollText },
   ];
 
   return (
@@ -203,6 +207,7 @@ export function GraphPanel({
               onSaved={loadProfile}
             />
           )}
+          {tab === "querylog" && <QueryLogTab drive={drive} />}
         </div>
       )}
     </div>
@@ -1464,6 +1469,218 @@ function DecidedReview({ drive }: { drive: string }) {
     </>
   );
 }
+/* -------------------------------------------------------------- Query log */
+
+const QUERY_KIND: Record<string, string> = {
+  ask: "Question",
+  "export:investigation": "Spreadsheet export",
+  "export:dossier": "Dossier export",
+  "graph:investigation": "Investigation diagram",
+  "summary:investigation": "Person summaries",
+  "querylog:view": "Query log view",
+};
+
+function queryKind(kind: string): string {
+  return QUERY_KIND[kind] ?? (kind.startsWith("graph:") ? "Relationship query" : kind);
+}
+
+/** The query log (concept 5.3): an analyst sees their own queries, a leader
+ *  everyone's. Documents outside the viewer's access are only counted. */
+function QueryLogTab({ drive }: { drive: string }) {
+  const { tm } = useLang();
+  const [inputs, setInputs] = useState({ from: "", to: "", user: "", caseRef: "" });
+  const [applied, setApplied] = useState(inputs);
+  const [data, setData] = useState<QueryLog | null>(null);
+  const [items, setItems] = useState<QueryLogRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  // The first page's time: later pages leave out records written since.
+  const asOf = useRef<string | undefined>(undefined);
+
+  const load = useCallback(
+    async (offset = 0) => {
+      setLoading(true);
+      try {
+        const res = await graphApi.queryLog(drive, {
+          ...applied,
+          offset,
+          before: offset ? asOf.current : undefined,
+        });
+        if (!offset) asOf.current = res.as_of;
+        setData(res);
+        setItems((cur) => (offset ? [...cur, ...res.records] : res.records));
+        setError(false);
+      } catch {
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [drive, applied],
+  );
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const leader = data?.role === "leader";
+  const field =
+    "rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-white/30";
+  return (
+    <div className="h-full overflow-y-auto p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <div className="text-sm font-semibold">{tm("Query log")}</div>
+        {data && <span className="text-xs text-white/50">({data.total})</span>}
+        {data && (
+          <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/60">
+            {tm(leader ? "Everyone's queries (leader)" : "Your own queries")}
+          </span>
+        )}
+        <button
+          onClick={() => void load()}
+          className="ml-auto rounded-full p-1.5 hover:bg-white/10"
+          title={tm("Refresh")}
+        >
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
+      <form
+        className="mb-3 flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setApplied({ ...inputs });
+        }}
+      >
+        <label className="flex flex-col gap-1 text-[11px] text-white/50">
+          {tm("From")}
+          <input
+            type="date"
+            value={inputs.from}
+            onChange={(e) => setInputs((s) => ({ ...s, from: e.target.value }))}
+            className={field}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[11px] text-white/50">
+          {tm("To")}
+          <input
+            type="date"
+            value={inputs.to}
+            onChange={(e) => setInputs((s) => ({ ...s, to: e.target.value }))}
+            className={field}
+          />
+        </label>
+        {leader && (
+          <label className="flex flex-col gap-1 text-[11px] text-white/50">
+            {tm("User")}
+            <input
+              value={inputs.user}
+              onChange={(e) => setInputs((s) => ({ ...s, user: e.target.value }))}
+              maxLength={200}
+              className={field}
+            />
+          </label>
+        )}
+        <label className="flex flex-col gap-1 text-[11px] text-white/50">
+          {tm("Case reference")}
+          <input
+            value={inputs.caseRef}
+            onChange={(e) => setInputs((s) => ({ ...s, caseRef: e.target.value }))}
+            maxLength={64}
+            className={field}
+          />
+        </label>
+        <button
+          type="submit"
+          className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium"
+          style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+        >
+          <Search className="h-3.5 w-3.5" />
+          {tm("Search")}
+        </button>
+      </form>
+      {error && <Notice text={tm("The query log could not be loaded.")} tone="warn" />}
+      {data && !data.enabled && <Notice text={tm("The query log is off on this AI Box.")} />}
+      {data && (
+        <div className="mb-3 text-[11px] text-white/45">
+          {`${data.from} – ${data.to} · ${tm("Retention (days)")}: ${
+            data.retention_days || tm("No time limit")
+          }`}
+        </div>
+      )}
+      {data && data.enabled && items.length === 0 && (
+        <Notice text={tm("No queries in this period.")} />
+      )}
+      <div className="space-y-2">
+        {items.map((rec) => {
+          const result = rec.result ?? {};
+          const sources = result.sources ?? [];
+          return (
+            <div
+              key={`${rec.ts}-${rec.hash ?? rec.question_sha256}`}
+              className="rounded-xl border border-white/10 p-3 text-xs"
+              style={{ backgroundColor: PANEL }}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-white">{tm(queryKind(rec.kind))}</span>
+                <span className="text-white/50">{new Date(rec.ts).toLocaleString()}</span>
+                {leader && <span className="text-white/70">{rec.user}</span>}
+                {rec.case_ref && (
+                  <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/70">
+                    {`${tm("Case reference")}: ${rec.case_ref}`}
+                  </span>
+                )}
+                {rec.legal_basis && (
+                  <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/70">
+                    {`${tm("Legal basis")}: ${rec.legal_basis}`}
+                  </span>
+                )}
+              </div>
+              <div className="mt-1 break-words text-white/80">
+                {rec.question ?? (
+                  <span className="text-white/45">
+                    {`${tm("Question text not kept (fingerprint only)")}: ${rec.question_sha256.slice(0, 12)}…`}
+                  </span>
+                )}
+              </div>
+              {sources.length > 0 && (
+                <div className="mt-1 space-y-0.5 text-[11px] text-white/50">
+                  {sources.map((path) => (
+                    <div key={path} className="truncate" title={path}>
+                      {path}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(result.hidden_sources ?? 0) > 0 && (
+                <div className="mt-1 text-[11px] text-white/45">
+                  {`${tm("Documents outside your access")}: ${result.hidden_sources}`}
+                </div>
+              )}
+              {!rec.intact && (
+                <div className="mt-1 flex items-center gap-1 text-[11px] text-rose-300">
+                  <ShieldAlert className="h-3 w-3" />
+                  {tm("This day's log was altered: its hash chain is broken.")}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {data && items.length < data.total && (
+        <button
+          onClick={() => void load(items.length)}
+          className="mt-3 w-full rounded-lg border border-white/15 py-1.5 text-xs hover:bg-white/10"
+        >
+          {tm("Load more")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------- Processing */
 
 function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {

@@ -5,11 +5,16 @@
 import {
   adapterGraph,
   AdapterGraphError,
+  adapterQueryLog,
   adapterSkipped,
+  type AdapterQueryLog,
+  type AdapterQueryLogRecord,
   type AdapterSkipped,
 } from "../rag/adapter-client";
 
 export type IndexSkipped = AdapterSkipped;
+export type QueryLog = AdapterQueryLog;
+export type QueryLogRecord = AdapterQueryLogRecord;
 
 export type GraphEntityType =
   | "person"
@@ -177,6 +182,18 @@ export const graphApi = {
   status: (drive: string) => adapterGraph<GraphStatus>("status", {}, drive),
   /** E10b: what the search cannot read in this scope (not a graph call). */
   skipped: (drive: string) => adapterSkipped(drive),
+  /** The query log: the caller's own records, everyone's for a leader (not a graph call). */
+  queryLog: (
+    drive: string,
+    filter: {
+      from?: string;
+      to?: string;
+      user?: string;
+      caseRef?: string;
+      offset?: number;
+      before?: string;
+    },
+  ) => adapterQueryLog(drive, filter),
   reviewList: (drive: string, filter: { q?: string; reason?: string; offset?: number } = {}) =>
     adapterGraph<GraphReviewList>("review/list", { limit: 200, ...filter }, drive),
   reviewDecide: (drive: string, a: string, b: string, decision: "merge" | "separate") =>
