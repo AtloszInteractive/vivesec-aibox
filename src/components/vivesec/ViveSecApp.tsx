@@ -69,6 +69,7 @@ import {
   AdapterGraphError,
   setRequestPurpose,
   storeInfo,
+  purposeIncomplete,
   type AdapterPurposeConfig,
   type RequestPurpose,
 } from "@/lib/rag/adapter-client";
@@ -897,6 +898,8 @@ function ViveSecAppInner() {
   // and whether the box requires one (/status app.purpose).
   const [purposeConfig, setPurposeConfig] = useState<AdapterPurposeConfig>({
     mode: "off",
+    fields: ["case_ref", "legal_basis"],
+    require: "any",
     legalBases: [],
     caseRefPattern: null,
   });
@@ -918,9 +921,13 @@ function ViveSecAppInner() {
       // The purpose still travels with this tab's queries.
     }
   }, [purposeValue]);
-  const purposeMissing =
-    purposeConfig.mode === "required" && !purposeValue.caseRef && !purposeValue.legalBasis;
-  const purposeLabel = [purposeValue.caseRef, purposeValue.legalBasis].filter(Boolean).join(" · ");
+  const purposeMissing = purposeIncomplete(purposeConfig, purposeValue);
+  const purposeLabel = [
+    purposeConfig.fields.includes("case_ref") ? purposeValue.caseRef : "",
+    purposeConfig.fields.includes("legal_basis") ? purposeValue.legalBasis : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const probeBox = useCallback(async () => {
     setBoxState((s) => (s === "online" ? s : "probing"));
@@ -2894,9 +2901,7 @@ function ViveSecAppInner() {
                 {purposeMissing && boxState === "online" && (
                   <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-50">
                     <Scale className="h-4 w-4 shrink-0" />
-                    <span className="flex-1">
-                      {tm("Give the case reference or the legal basis before asking.")}
-                    </span>
+                    <span className="flex-1">{tm(purposeText(purposeConfig, "banner"))}</span>
                     <button
                       onClick={() => setPurposeDialog(true)}
                       className="shrink-0 rounded-lg border border-amber-300/40 px-2 py-1 text-[11px] font-semibold transition hover:bg-amber-400/20"
@@ -3552,6 +3557,39 @@ function ViveSecAppInner() {
 
 /* ---------- Subcomponents ---------- */
 
+/** The English source sentence (i18n-data.ts) that asks for the purpose the box
+ *  wants: before asking (banner) or in the dialog. */
+function purposeText(config: AdapterPurposeConfig, place: "banner" | "dialog"): string {
+  const caseRef = config.fields.includes("case_ref");
+  const basis = config.fields.includes("legal_basis");
+  const which =
+    caseRef && basis ? (config.require === "all" ? "both" : "either") : caseRef ? "case" : "basis";
+  if (place === "banner") {
+    return {
+      either: "Give the case reference or the legal basis before asking.",
+      both: "Give the case reference and the legal basis before asking.",
+      case: "Give the case reference before asking.",
+      basis: "Give the legal basis before asking.",
+    }[which];
+  }
+  if (config.mode !== "required") {
+    return {
+      either:
+        "You may give the case reference or the legal basis of your queries. It is logged with every question.",
+      both: "You may give the case reference or the legal basis of your queries. It is logged with every question.",
+      case: "You may give the case reference of your queries. It is logged with every question.",
+      basis: "You may give the legal basis of your queries. It is logged with every question.",
+    }[which];
+  }
+  return {
+    either:
+      "Give the case reference or the legal basis of your queries. It is logged with every question.",
+    both: "Give the case reference and the legal basis of your queries. It is logged with every question.",
+    case: "Give the case reference of your queries. It is logged with every question.",
+    basis: "Give the legal basis of your queries. It is logged with every question.",
+  }[which];
+}
+
 /** Concept 5.2: what the following queries are for -- a case reference and/or a
  *  legal basis. Kept for this browser session and sent with every content
  *  query; the box logs it with each query. */
@@ -3577,10 +3615,16 @@ function PurposeDialog({
       return true; // the box checks it anyway
     }
   })();
-  const missing = config.mode === "required" && !caseRef.trim() && !legalBasis.trim();
+  const askCase = config.fields.includes("case_ref");
+  const askBasis = config.fields.includes("legal_basis");
+  const missing = purposeIncomplete(config, { caseRef, legalBasis });
   const disabled = missing || !caseOk;
   const save = () => {
-    if (!disabled) onSave({ caseRef: caseRef.trim(), legalBasis: legalBasis.trim() });
+    if (!disabled)
+      onSave({
+        caseRef: askCase ? caseRef.trim() : "",
+        legalBasis: askBasis ? legalBasis.trim() : "",
+      });
   };
 
   return (
@@ -3604,30 +3648,30 @@ function PurposeDialog({
           <Scale className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           {tm("Purpose of the queries")}
         </div>
-        <p className="mb-3 text-[12px] text-white/60">
-          {tm(
-            config.mode === "required"
-              ? "Give the case reference or the legal basis of your queries. It is logged with every question."
-              : "You may give the case reference or the legal basis of your queries. It is logged with every question.",
-          )}
-        </p>
-        <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
-          {tm("Case reference")}
-        </label>
-        <input
-          autoFocus
-          value={caseRef}
-          onChange={(e) => setCaseRef(e.target.value)}
-          maxLength={64}
-          className={`mb-1 w-full rounded-lg border bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30 ${caseOk ? "border-white/15" : "border-rose-400/60"}`}
-        />
-        <div className="mb-3 min-h-4 text-[11px] text-rose-300">
-          {caseOk ? "" : tm("The case reference does not have the expected form.")}
-        </div>
-        <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
-          {tm("Legal basis")}
-        </label>
-        {config.legalBases.length ? (
+        <p className="mb-3 text-[12px] text-white/60">{tm(purposeText(config, "dialog"))}</p>
+        {askCase && (
+          <>
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+              {tm("Case reference")}
+            </label>
+            <input
+              autoFocus
+              value={caseRef}
+              onChange={(e) => setCaseRef(e.target.value)}
+              maxLength={64}
+              className={`mb-1 w-full rounded-lg border bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30 ${caseOk ? "border-white/15" : "border-rose-400/60"}`}
+            />
+            <div className="mb-3 min-h-4 text-[11px] text-rose-300">
+              {caseOk ? "" : tm("The case reference does not have the expected form.")}
+            </div>
+          </>
+        )}
+        {askBasis && (
+          <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+            {tm("Legal basis")}
+          </label>
+        )}
+        {!askBasis ? null : config.legalBases.length ? (
           <select
             value={legalBasis}
             onChange={(e) => setLegalBasis(e.target.value)}

@@ -109,8 +109,13 @@ function investigationsOf(graph: unknown): AdapterInvestigation[] | undefined {
 export type AdapterVoice = { stt: boolean; tts: boolean };
 
 /** Concept 5.2: whether queries must name a case reference or legal basis. */
+export type PurposeField = "case_ref" | "legal_basis";
 export type AdapterPurposeConfig = {
   mode: "off" | "optional" | "required";
+  /** The fields the box asks for (ADAPTER_PURPOSE_FIELDS). */
+  fields: PurposeField[];
+  /** "any": one of the fields is enough when required; "all": every one. */
+  require: "any" | "all";
   legalBases: string[];
   caseRefPattern: string | null;
 };
@@ -127,11 +132,26 @@ export type AdapterApp = {
 function readPurpose(raw: unknown): AdapterPurposeConfig {
   const v = (raw ?? {}) as Record<string, unknown>;
   const mode = v.mode === "required" || v.mode === "optional" ? v.mode : "off";
+  const fields = (Array.isArray(v.fields) ? v.fields : []).filter(
+    (f): f is PurposeField => f === "case_ref" || f === "legal_basis",
+  );
   return {
     mode,
+    // An adapter from before the setting asks for both, either one enough.
+    fields: fields.length ? fields : ["case_ref", "legal_basis"],
+    require: v.require === "all" ? "all" : "any",
     legalBases: Array.isArray(v.legal_bases) ? v.legal_bases.map(String) : [],
     caseRefPattern: typeof v.case_ref_pattern === "string" ? v.case_ref_pattern : null,
   };
+}
+
+/** Whether a required purpose is still missing from the given values. */
+export function purposeIncomplete(config: AdapterPurposeConfig, value: RequestPurpose): boolean {
+  if (config.mode !== "required") return false;
+  const given = config.fields.map((f) =>
+    Boolean((f === "case_ref" ? value.caseRef : value.legalBasis)?.trim()),
+  );
+  return config.require === "all" ? !given.every(Boolean) : !given.some(Boolean);
 }
 
 function readApp(raw: unknown): AdapterApp {
@@ -1052,6 +1072,82 @@ export async function adapterSkipped(drive: string): Promise<AdapterSkipped> {
     );
   }
   return j as AdapterSkipped;
+}
+
+/** One record of the query log (adapter/querylog.py) as its viewer may see it. */
+export type AdapterQueryLogRecord = {
+  ts: string;
+  user: string;
+  kind: string;
+  drive?: string;
+  drives?: string[];
+  case_ref?: string | null;
+  legal_basis?: string | null;
+  question?: string;
+  question_sha256: string;
+  hash?: string;
+  intact: boolean;
+  result?: {
+    ok?: boolean;
+    audit_id?: string | null;
+    citations?: number;
+    sources?: string[];
+    hidden_sources?: number;
+    graph_calls?: string[];
+    error?: string | null;
+    status?: number;
+    records?: number;
+  } | null;
+};
+
+/** The query log view: an analyst's own records, or everyone's for a leader. */
+export type AdapterQueryLog = {
+  ok: boolean;
+  enabled: boolean;
+  role: "analyst" | "leader";
+  retention_days: number;
+  keeps_text: boolean;
+  from: string;
+  to: string;
+  /** Where this view ends ("YYYYMMDD:N"): pass it back as `before` for more pages. */
+  as_of: string;
+  total: number;
+  records: AdapterQueryLogRecord[];
+};
+
+export async function adapterQueryLog(
+  drive: string,
+  filter: {
+    from?: string;
+    to?: string;
+    user?: string;
+    caseRef?: string;
+    offset?: number;
+    before?: string;
+  },
+): Promise<AdapterQueryLog> {
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/querylog`, {
+    method: "POST",
+    headers: vvsHeaders(drive, demoUser()),
+    body: JSON.stringify({
+      from: filter.from || undefined,
+      to: filter.to || undefined,
+      user: filter.user || undefined,
+      case_ref: filter.caseRef || undefined,
+      offset: filter.offset || undefined,
+      before: filter.before || undefined,
+      limit: 50,
+    }),
+    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+  });
+  const j = await safeJson(res);
+  if (!res.ok) {
+    throw new AdapterGraphError(
+      (j.error as string) ?? `ui/querylog HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return j as AdapterQueryLog;
 }
 // POST /api/v1/ui/save stores the generated file in the session store first,
 // then transfers it to the ViVeSecBox drive over the ws-fs channel. When the

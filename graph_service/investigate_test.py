@@ -124,6 +124,12 @@ class InvestigateTest(unittest.TestCase):
         out = self.run_query(ANNA, ["S"], levels=4, limit=3)
         self.assertEqual(3, len(out["rows"]))
         self.assertTrue(out["truncated"])
+        # The rows the limit left out are counted at the rows they hang on.
+        self.assertEqual({"S": 1, "K1": 2, "K2": 1},
+                         {r["node"]["id"]: r["more"] for r in out["rows"]})
+        out = self.run_query(ANNA, ["S"], levels=2, limit=5)
+        self.assertEqual({"S": 0, "K1": 1, "K2": 1, "M": 1, "I2": 0},
+                         {r["node"]["id"]: r["more"] for r in out["rows"]})
 
     def test_the_service_validates_and_joins_namesakes(self):
         store = MemoryGraphStore()

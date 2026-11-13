@@ -11,6 +11,10 @@ info sheet says when and from what it was made.
 
 Column order and the sheet layout are customer decisions (BV question 9), so
 they are settings: ADAPTER_INVESTIGATION_XLSX_COLUMNS, ADAPTER_INVESTIGATION_XLSX_SHEETS.
+BV's answer (2026-11-13): an inmate is identified by name and registry number;
+for anyone else the birth date and mother's name are shown where the visible
+documents state them (ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT names the
+kinds left without them).
 """
 import os
 import re
@@ -20,10 +24,12 @@ import time
 import orchestrator
 import xlsx
 
-COLUMNS = ("level", "name", "role", "registry_number", "id_number", "phone", "address",
-           "email", "other", "path", "also", "source", "page", "joined")
+COLUMNS = ("level", "name", "role", "registry_number", "birth_date", "mother_name",
+           "id_number", "phone", "address", "email", "other", "path", "also", "more", "source",
+           "page", "joined")
 # A row without its name or its source cannot be checked against the documents.
 REQUIRED = ("name", "source")
+PERSONAL = ("birth_date", "mother_name")
 SHEET_MODES = ("single", "per_level")
 LANGS = ("en", "hu", "da", "de")
 MAX_START = 120
@@ -35,6 +41,10 @@ TEXT = {
         "role": {"en": "Role", "hu": "Szerep", "da": "Rolle", "de": "Rolle"},
         "registry_number": {"en": "Registry number", "hu": "Nyilvántartási szám",
                             "da": "Registreringsnummer", "de": "Registernummer"},
+        "birth_date": {"en": "Date of birth", "hu": "Születési idő", "da": "Fødselsdato",
+                       "de": "Geburtsdatum"},
+        "mother_name": {"en": "Mother's name", "hu": "Anyja neve", "da": "Mors navn",
+                        "de": "Name der Mutter"},
         "id_number": {"en": "ID number", "hu": "Azonosító szám", "da": "ID-nummer",
                       "de": "Ausweisnummer"},
         "phone": {"en": "Phone", "hu": "Telefon", "da": "Telefon", "de": "Telefon"},
@@ -46,6 +56,8 @@ TEXT = {
                  "de": "Verbindungsweg"},
         "also": {"en": "Also through", "hu": "További szál", "da": "Også gennem",
                  "de": "Auch über"},
+        "more": {"en": "Left out by the limit", "hu": "Korlát miatt kimaradt",
+                 "da": "Udeladt pga. grænsen", "de": "Wegen der Grenze ausgelassen"},
         "source": {"en": "Source", "hu": "Forrás", "da": "Kilde", "de": "Quelle"},
         "page": {"en": "Page", "hu": "Oldal", "da": "Side", "de": "Seite"},
         "joined": {"en": "Joined records", "hu": "Összevont rekordok",
@@ -74,13 +86,29 @@ TEXT = {
                  "da": "Fuldstændig for disse niveauer.",
                  "de": "Für diese Ebenen vollständig."},
     "cut": {"en": "Cut: at most %d new people from one person, %d rows in all; more people "
-                  "may exist.",
+                  "may exist. The \u201cLeft out by the limit\u201d column gives, per row, how "
+                  "many linked people of the next level are not listed.",
             "hu": "Csonkolva: személyenként legfeljebb %d új személy, összesen %d sor; további "
-                  "személyek is lehetnek.",
+                  "személyek is lehetnek. A \u201eKorlát miatt kimaradt\u201d oszlop soronként "
+                  "megadja, hány kapcsolódó személy maradt ki a következő szintről.",
             "da": "Afkortet: højst %d nye personer fra én person, %d rækker i alt; der kan "
-                  "være flere personer.",
+                  "være flere personer. Kolonnen \u201dUdeladt pga. grænsen\u201d angiver for "
+                  "hver række, hvor mange forbundne personer på næste niveau der ikke er med.",
             "de": "Gekürzt: höchstens %d neue Personen je Person, insgesamt %d Zeilen; es kann "
-                  "weitere Personen geben."},
+                  "weitere Personen geben. Die Spalte \u201eWegen der Grenze ausgelassen\u201c "
+                  "nennt je Zeile, wie viele verbundene Personen der nächsten Ebene fehlen."},
+    "info_birth": {"en": "Date of birth, mother's name", "hu": "Születési idő, anyja neve",
+                   "da": "Fødselsdato, mors navn", "de": "Geburtsdatum, Name der Mutter"},
+    "birth_except": {"en": "Where the documents state them; not for: %s.",
+                     "hu": "Ahol az iratok tartalmazzák; nem szerepel: %s.",
+                     "da": "Hvor dokumenterne angiver dem; ikke for: %s.",
+                     "de": "Soweit die Dokumente sie nennen; nicht für: %s."},
+    "birth_all": {"en": "Where the documents state them.",
+                  "hu": "Ahol az iratok tartalmazzák.",
+                  "da": "Hvor dokumenterne angiver dem.",
+                  "de": "Soweit die Dokumente sie nennen."},
+    "birth_none": {"en": "Not shown.", "hu": "Nem szerepel.", "da": "Vises ikke.",
+                   "de": "Nicht angezeigt."},
     "info_follows": {"en": "Links followed", "hu": "Követett kapcsolatok",
                      "da": "Fulgte forbindelser", "de": "Verfolgte Verbindungen"},
     "shared": {"en": "%s (people linked to the same entity)",
@@ -162,7 +190,40 @@ def settings(env=None):
         sys.stderr.write("[adapter] unknown ADAPTER_INVESTIGATION_XLSX_SHEETS %r -> single\n"
                          % sheets)
         sheets = "single"
-    return {"columns": columns, "sheets": sheets}
+    raw = (env.get("ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT") or "inmate").strip().lower()
+    if raw == "all":
+        birth_except = ["*"]
+    elif raw == "none":
+        birth_except = []
+    else:
+        birth_except = list(dict.fromkeys(k.strip() for k in raw.split(",") if k.strip()))
+    return {"columns": columns, "sheets": sheets, "birth_except": birth_except}
+
+
+def with_personal_data(run, inv, conf, prof):
+    """The investigation with each person's date of birth and mother's name
+    from the documents the caller may see, except for the kinds the setting
+    names (an inmate is identified by the registry number). A kind the
+    profile does not know leaves them out for everyone: a mistyped setting
+    must not show them for inmates. The rows are copies; the run's own table
+    (the answer's) is not changed."""
+    kinds = {s.get("id") for s in (prof or {}).get("entity_subtypes") or []
+             if s.get("type") == "person"}
+    excluded = list((conf or {}).get("birth_except", ["inmate"]))
+    unknown = [k for k in excluded if k != "*" and k not in kinds]
+    if unknown:
+        sys.stderr.write("[adapter] ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT: unknown "
+                         "kind(s) %s -> no birth data in the spreadsheet\n" % ", ".join(unknown))
+        excluded = ["*"]
+    rows = []
+    for row in inv.get("rows") or []:
+        row = dict(row)
+        subtype, values = run.personal_data(row.get("id"), PERSONAL)
+        if subtype is not None and "*" not in excluded and subtype not in excluded:
+            for key in PERSONAL:
+                row[key] = values.get(key) or []
+        rows.append(row)
+    return dict(inv, rows=rows, birth_except=excluded)
 
 
 def parse_request(payload):
@@ -197,6 +258,10 @@ def cell(row, col, lang):
     if col in ("level", "page", "joined"):
         value = row.get(col)
         return value if isinstance(value, int) and not isinstance(value, bool) else None
+    if col == "more":
+        value = row.get("more")
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 \
+            else None
     if col == "path":
         return row.get("path") if row.get("level") else _t("start_path", lang)
     if col == "also":
@@ -216,13 +281,31 @@ def _follows(prof, cfg, lang):
     return ", ".join(out)
 
 
+def _kind_names(prof, kinds, lang):
+    labels = {s.get("id"): (s.get("label") or {}).get(lang) or (s.get("label") or {}).get("en")
+              or s.get("id") for s in (prof or {}).get("entity_subtypes") or []}
+    return ", ".join(labels.get(k, k) for k in kinds)
+
+
+def _birth_note(inv, prof, lang):
+    excluded = inv.get("birth_except")
+    if "*" in excluded:
+        return _t("birth_none", lang)
+    if excluded:
+        return _t("birth_except", lang) % _kind_names(prof, excluded, lang)
+    return _t("birth_all", lang)
+
+
 def build(inv, lang="en", conf=None, meta=None):
     """(xlsx bytes, file name without extension, title) of one investigation.
     meta: user, drives, case_ref, legal_basis, audit_id, prof, config, name_join, now."""
     lang = lang_code(lang)
     conf = conf or settings({})
     meta = meta or {}
-    cols = conf["columns"]
+    cols = list(conf["columns"])
+    if inv.get("truncated") and "more" not in cols:
+        # A cut table always says where it was cut.
+        cols.insert(cols.index("source") if "source" in cols else len(cols), "more")
     header = [TEXT["columns"][col].get(lang) or TEXT["columns"][col]["en"] for col in cols]
     rows = inv.get("rows") or []
     table = [[cell(row, col, lang) for col in cols] for row in rows]
@@ -247,6 +330,8 @@ def build(inv, lang="en", conf=None, meta=None):
             [_t("info_joined", lang), _t("joined_on" if meta.get("name_join") else "joined_off",
                                          lang)],
             [_t("info_scope", lang), ", ".join(meta.get("drives") or [])]]
+    if "birth_except" in inv and any(c in cols for c in PERSONAL):
+        info.append([_t("info_birth", lang), _birth_note(inv, meta.get("prof"), lang)])
     for key, field in (("case_ref", "info_case"), ("legal_basis", "info_basis"),
                        ("audit_id", "info_audit")):
         if meta.get(key):

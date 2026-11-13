@@ -9,11 +9,11 @@ from unittest.mock import patch
 import investigation_export as ie
 import orchestrator
 import xlsx
-from orchestrator_test import InvestigationGraph
+from orchestrator_test import InvestigationGraph, person
 
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
 CONFIG = {"relations": ["RELATIVE_OF"], "via": ["INVOLVED_IN"], "branch": 10, "max_rows": 80}
-DEFAULT = {"columns": list(ie.COLUMNS), "sheets": "single"}
+DEFAULT = {"columns": list(ie.COLUMNS), "sheets": "single", "birth_except": ["inmate"]}
 
 try:
     import openpyxl  # noqa: F401 -- dev-only independent reader; the adapter never imports it
@@ -46,6 +46,15 @@ def run_investigation(graph=None, **kw):
     run = orchestrator.Run(graph, {"corpus_ids": ["c"], "access": None},
                            lambda p: "/hr/" not in p, "Hungarian", investigate=CONFIG, **kw)
     return ie.investigate(run, "Sas Tibor", 2), graph
+
+
+class BirthGraph(InvestigationGraph):
+    S = person("S", "Sas Tibor", "inmate", [("registry_number", "NY-100", "d1"),
+                                            ("birth_date", "1980-01-02", "d1"),
+                                            ("mother_name", "Sas Anna", "d1")])
+    K1 = person("K1", "Kende Anna", "", [("birth_date", "1975-05-06", "d1"),
+                                         ("mother_name", "Tóth Ilona", "d1"),
+                                         ("mother_name", "Kende Mária", "d2")])
 
 
 class XlsxWriterTest(unittest.TestCase):
@@ -119,20 +128,21 @@ class InvestigationExportTest(unittest.TestCase):
         files, name, title, _ = self.build(inv, user="lars", drives=["ops"], case_ref="BV-7",
                                            legal_basis="Bv. tv. 1. §", audit_id="abc123")
         rows = sheet_rows(files["xl/worksheets/sheet1.xml"])
-        self.assertEqual(["Szint", "Név", "Szerep", "Nyilvántartási szám", "Azonosító szám",
-                          "Telefon", "Lakcím", "E-mail", "Egyéb azonosítók",
-                          "Kapcsolódás útja", "További szál", "Forrás", "Oldal",
-                          "Összevont rekordok"], rows[0])
+        self.assertEqual(["Szint", "Név", "Szerep", "Nyilvántartási szám", "Születési idő",
+                          "Anyja neve", "Azonosító szám", "Telefon", "Lakcím", "E-mail",
+                          "Egyéb azonosítók", "Kapcsolódás útja", "További szál",
+                          "Korlát miatt kimaradt", "Forrás", "Oldal", "Összevont rekordok"],
+                         rows[0])
         self.assertEqual(["Sas Tibor", "Kende Anna", "Major Ede", "Izsó Csaba"],
                          [r[1] for r in rows[1:]])
         self.assertEqual(["0", "Sas Tibor", "Fogvatartott", "NY-100"], rows[1][:4])
-        self.assertEqual("kiindulópont", rows[1][9])
+        self.assertEqual("kiindulópont", rows[1][11])
         kende = rows[2]
         self.assertEqual(("+36 30 111 1111", "Fő utca 5.", None),
-                         (kende[5], kende[6], kende[7]))
-        self.assertEqual("Sas Tibor \u2014[Rokona]\u2014 Kende Anna", kende[9])
-        self.assertEqual("/storage/drives/ops/a.txt", kende[11])
-        self.assertIn("Érintett: verekedés (2025-03-01)", rows[3][9])
+                         (kende[7], kende[8], kende[9]))
+        self.assertEqual("Sas Tibor \u2014[Rokona]\u2014 Kende Anna", kende[11])
+        self.assertEqual("/storage/drives/ops/a.txt", kende[14])
+        self.assertIn("Érintett: verekedés (2025-03-01)", rows[3][11])
         self.assertTrue(name.startswith("vizsgalat_Sas_Tibor_"))
         self.assertEqual("Vizsgálati tábla \u2013 Sas Tibor", title)
         info = dict((r + [None])[:2] for r in sheet_rows(files["xl/worksheets/sheet2.xml"]))
@@ -142,6 +152,40 @@ class InvestigationExportTest(unittest.TestCase):
                           info["A válasz audit-azonosítója"], info["Kérte"]))
         self.assertEqual("Ezekre a szintekre teljes.", info["Teljesség"])
         self.assertIn("nem a modell válaszából", info["Megjegyzés"])
+
+    def test_birth_data_for_everyone_but_inmates_from_visible_documents(self):
+        graph = BirthGraph()
+        run = orchestrator.Run(graph, {"corpus_ids": ["c"], "access": None},
+                               lambda p: "/hr/" not in p, "Hungarian", investigate=CONFIG)
+        inv = ie.investigate(run, "Sas Tibor", 2)
+        prof = graph.post("/profile/get", {})["profile"]
+
+        def table(conf):
+            full = ie.with_personal_data(run, inv, conf, prof)
+            files, _, _, _ = self.build(full, conf=dict(DEFAULT, **conf), prof=prof)
+            rows = {r[1]: r[4:6] for r in sheet_rows(files["xl/worksheets/sheet1.xml"])[1:]}
+            info = dict((r + [None])[:2] for r in sheet_rows(files["xl/worksheets/sheet2.xml"]))
+            return rows, info["Születési idő, anyja neve"]
+
+        rows, note = table(DEFAULT)
+        # An inmate: name and registry number are enough. Kende Anna's second
+        # mother's name rests on the hidden document.
+        self.assertEqual([None, None], rows["Sas Tibor"])
+        self.assertEqual(["1975-05-06", "Tóth Ilona"], rows["Kende Anna"])
+        self.assertEqual("Ahol az iratok tartalmazzák; nem szerepel: Fogvatartott.", note)
+        # The answer's own table is not changed.
+        self.assertNotIn("birth_date", run.info()["investigations"][0]["rows"][1])
+        rows, note = table({"birth_except": []})
+        self.assertEqual(["1980-01-02", "Sas Anna"], rows["Sas Tibor"])
+        with patch("sys.stderr"):
+            rows, note = table({"birth_except": ["inmates"]})
+        # A kind the profile does not know: nobody's birth data.
+        self.assertEqual([None, None], rows["Kende Anna"])
+        self.assertEqual("Nem szerepel.", note)
+        self.assertEqual(["*"], ie.settings({"ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT":
+                                             " ALL "})["birth_except"])
+        self.assertEqual([], ie.settings({"ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT":
+                                          "none"})["birth_except"])
 
     def test_what_the_adapter_hides_is_not_in_the_file(self):
         inv, _ = run_investigation()
@@ -165,14 +209,17 @@ class InvestigationExportTest(unittest.TestCase):
         names = [s.get("name") for s in ET.fromstring(files["xl/workbook.xml"]).find(
             "m:sheets", NS)]
         self.assertEqual(["Starting point", "Level 1", "Level 2", "About"], names)
-        self.assertEqual([["Name", "Level"], ["Major Ede", "1"], ["Kende Anna", "1"]],
+        # A cut table always has the column that says where it was cut.
+        self.assertEqual([["Name", "Level", "Left out by the limit"], ["Major Ede", "1"],
+                          ["Kende Anna", "1"]],
                          sorted(sheet_rows(files["xl/worksheets/sheet2.xml"]), reverse=True))
         info = dict((r + [None])[:2] for r in sheet_rows(files["xl/worksheets/sheet4.xml"]))
         self.assertIn("Cut: at most 10 new people from one person, 80 rows", info["Coverage"])
         if HAVE_OPENPYXL:
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(content))
-            self.assertEqual([("Name", "Level"), ("Izsó Csaba", 2)],
+            self.assertEqual([("Name", "Level", "Left out by the limit"),
+                              ("Izsó Csaba", 2, None)],
                              list(wb["Level 2"].iter_rows(values_only=True)))
 
     def test_settings_fall_back_to_the_safe_layout(self):
@@ -180,8 +227,8 @@ class InvestigationExportTest(unittest.TestCase):
             conf = ie.settings({"ADAPTER_INVESTIGATION_XLSX_COLUMNS": "level, phone, bogus, phone",
                                 "ADAPTER_INVESTIGATION_XLSX_SHEETS": "tabs"})
         # The name and the source of a row are always there.
-        self.assertEqual({"columns": ["level", "name", "phone", "source"], "sheets": "single"},
-                         conf)
+        self.assertEqual({"columns": ["level", "name", "phone", "source"], "sheets": "single",
+                          "birth_except": ["inmate"]}, conf)
         self.assertEqual(DEFAULT, ie.settings({}))
         with patch("sys.stderr"):
             self.assertEqual(list(ie.COLUMNS), ie.settings(

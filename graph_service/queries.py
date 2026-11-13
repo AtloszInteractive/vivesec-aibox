@@ -361,7 +361,9 @@ def investigate(view, seeds, relations=(), via_relations=(), levels: int = 2,
     Each person appears once, at the first level that reaches them, with the
     links from the previous level (at most MAX_VIA, a "Y" branch). `branch`
     caps the new people taken from one person, `limit` the rows; both pick in
-    name order, so the same graph always gives the same table. `holding`: the
+    name order, so the same graph always gives the same table. A row's `more`
+    counts the people of the next level left out from it by either cap (a
+    person reached from several rows counts at each). `holding`: the
     relations whose identifiers and places are a person's contact data.
     """
     levels = max(0, min(levels, MAX_LEVELS))
@@ -401,7 +403,9 @@ def investigate(view, seeds, relations=(), via_relations=(), levels: int = 2,
         for eid in sorted(new, key=lambda e: _label_key(view, e)):
             if len(order) >= limit:
                 truncated = True
-                break
+                for source in {link["from"] for link in new[eid]["via"]}:
+                    rows[source]["more"] += 1
+                continue
             rows[eid] = new[eid]
             order.append(eid)
         frontier = [e for e in order if rows[e]["level"] == level]

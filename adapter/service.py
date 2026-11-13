@@ -605,6 +605,21 @@ def _graph_absent(known, req_scope, visible, prefix=""):
 # nobody through the UI.
 GRAPH_ADMINS = frozenset(u.strip().casefold() for u in
                          os.environ.get("ADAPTER_GRAPH_ADMINS", "").split(",") if u.strip())
+
+
+def _leader_roles(raw):
+    """The directory/token roles of a leader; unset or empty: "leader", "off": none."""
+    raw = (raw or "leader").strip()
+    if raw.lower() == "off":
+        return frozenset()
+    return frozenset(r.strip().casefold() for r in raw.split(",") if r.strip())
+
+
+# Who sees everyone's query log (BV, 2026-11-13: a leader; an analyst sees their
+# own records): the users named here, or a verified role of the caller.
+LEADERS = frozenset(u.strip().casefold() for u in
+                    os.environ.get("ADAPTER_LEADERS", "").split(",") if u.strip())
+LEADER_ROLES = _leader_roles(os.environ.get("ADAPTER_LEADER_ROLES"))
 # Documents listed at most by one /ui/index/skipped answer (the counts cover all).
 SKIPPED_LIST_LIMIT = 500
 # Plain chat questions get the graph's relations among the named entities;
@@ -665,8 +680,11 @@ def _bounded_int(name, default, low, high):
 # both) leaves the tool out of the plan.
 INVESTIGATE_RELATIONS = _relation_list("ADAPTER_INVESTIGATE_RELATIONS", "RELATIVE_OF")
 INVESTIGATE_VIA = _relation_list("ADAPTER_INVESTIGATE_VIA", "INVOLVED_IN")
-INVESTIGATE_BRANCH = _bounded_int("ADAPTER_INVESTIGATE_BRANCH", 10, 1, 50)
-INVESTIGATE_MAX_ROWS = _bounded_int("ADAPTER_INVESTIGATE_MAX_ROWS", 80, 1, 500)
+INVESTIGATE_BRANCH = _bounded_int("ADAPTER_INVESTIGATE_BRANCH", 50, 1, 50)
+INVESTIGATE_MAX_ROWS = _bounded_int("ADAPTER_INVESTIGATE_MAX_ROWS", 500, 1, 500)
+# The rows of one table given to the answer model as facts; the export, the
+# diagram and the person summaries take every row.
+INVESTIGATE_ANSWER_ROWS = _bounded_int("ADAPTER_INVESTIGATE_ANSWER_ROWS", 80, 1, 500)
 # The identifier subtypes a source document states as its own number (a report's
 # file number): shown beside the graph facts and investigation rows it backs.
 # "off" shows none; an unknown subtype simply matches nothing.
@@ -1435,7 +1453,8 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         vocab = orchestrator.vocabulary(domain, lang)
         investigate = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS,
                                                       INVESTIGATE_VIA, INVESTIGATE_BRANCH,
-                                                      INVESTIGATE_MAX_ROWS)
+                                                      INVESTIGATE_MAX_ROWS,
+                                                      INVESTIGATE_ANSWER_ROWS)
         investigate_line = orchestrator.investigate_tool(domain, investigate, lang)
         planned = orchestrator.plan(query, history, lang, vocab, deep=DEEP_READ,
                                     investigate=investigate_line)
@@ -1782,7 +1801,8 @@ def _rebuild_investigation(req_scope, access, start, levels, lang):
     except graph.GraphError as e:
         raise RagError(e.status, e.body)
     cfg = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS, INVESTIGATE_VIA,
-                                          INVESTIGATE_BRANCH, INVESTIGATE_MAX_ROWS)
+                                          INVESTIGATE_BRANCH, INVESTIGATE_MAX_ROWS,
+                                          INVESTIGATE_ANSWER_ROWS)
     if cfg is None:
         raise RagError(409, {"ok": False, "error": "the investigation is not available with "
                                                    "the active profile"})
@@ -2264,6 +2284,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/admin/rooms/create": self._admin_room_create,
                 "/api/v1/ui/admin/rooms/delete": self._admin_room_delete,
                 "/api/v1/ui/admin/acl": self._admin_acl_save,
+                "/api/v1/ui/querylog": self._ui_querylog,
             }.get(path.rstrip("/"))
             if route is None:
                 self._send(404, {"ok": False, "error": "Not found: %s" % path})
@@ -3151,6 +3172,79 @@ class Handler(BaseHTTPRequestHandler):
             **totals})
 
     # -- unreadable documents (E10b) --------------------------------------------
+    def _is_leader(self):
+        """A leader sees everyone's query log: named in ADAPTER_LEADERS, or holding
+        a role of ADAPTER_LEADER_ROLES from a directory lookup without error
+        (an unknown membership is no role, as in acl.py)."""
+        caller = getattr(self, "_caller", None)
+        if caller is None:
+            return False
+        if (caller.user or "").casefold() in LEADERS:
+            return True
+        if not LEADER_ROLES:
+            return False
+        info = DIRECTORY.lookup(caller)
+        if info is None or info.error is not None or info.source == "off":
+            return False
+        return any(str(role).casefold() in LEADER_ROLES for role in info.roles)
+
+    def _ui_querylog(self):
+        """The query log as its viewer may see it: an analyst their own records,
+        a leader everyone's. A cited document the viewer may not see now is
+        counted, not named. Viewing is itself logged (`querylog:view`)."""
+        if self._locked_guard():
+            return
+        vvs = self._read_vvs()
+        if vvs is None:
+            return
+        user, drive = vvs
+        payload = self._read_json()
+        req_scope = self._scope_for(user, drive, payload)
+        if req_scope is None:
+            return
+        leader = self._is_leader()
+        if not leader and not (user or "").strip():
+            # Without a name an analyst's filter would be no filter: fail closed.
+            self._send(403, {"ok": False, "error": "the query log needs a known user"})
+            return
+        try:
+            since, until = querylog.view_range(payload.get("from"), payload.get("to"))
+        except ValueError as e:
+            self._send(400, {"ok": False, "error": "from/to: %s" % e})
+            return
+        wanted = " ".join(str(payload.get("user") or "").split())[:200] if leader else user
+        case_ref = " ".join(str(payload.get("case_ref") or "").split())[:purpose.MAX_CASE_REF]
+        offset, limit = _review_int(payload, "offset", 0), _review_int(payload, "limit", 50)
+        before = payload.get("before")
+        before = before if isinstance(before, str) and re.fullmatch(r"\d{8}:\d+", before) \
+            else None
+        out = {"records": [], "total": 0, "as_of": before or "00000000:0"}
+        if QUERY_LOG.enabled:
+            out = QUERY_LOG.read(since, until, wanted or None, case_ref or None, offset,
+                                 limit or 50, before=before)
+        visible = _visible(self._access())
+        for record in out["records"]:
+            result = record.get("result")
+            if isinstance(result, dict) and isinstance(result.get("sources"), list):
+                cited = result["sources"]
+                result["sources"] = [p for p in cited if isinstance(p, str)
+                                     and req_scope.contains_path(p) and visible(p)]
+                result["hidden_sources"] = len(cited) - len(result["sources"])
+        view = {"from": since.isoformat(), "to": until.isoformat(), "user": wanted or None,
+                "case_ref": case_ref or None, "offset": offset}
+        if not _log_query(user, drive, req_scope, "querylog:view", {},
+                          json.dumps(view, ensure_ascii=False, sort_keys=True),
+                          {"ok": True, "records": len(out["records"]),
+                           "total": out["total"], "leader": leader}):
+            self._send(503, {"ok": False, "error": "query log unavailable"})
+            return
+        self._send(200, {"ok": True, "enabled": PURPOSE["mode"] != "off" and QUERY_LOG.enabled,
+                         "role": "leader" if leader else "analyst",
+                         "retention_days": QUERY_LOG.retention_days,
+                         "keeps_text": QUERY_LOG.keep_text, "from": view["from"],
+                         "to": view["to"], "as_of": out["as_of"], "total": out["total"],
+                         "records": out["records"]})
+
     def _index_skipped(self):
         """The documents of the caller's own scope the search cannot read --
         scans waiting for OCR or interrupted, unsupported or empty files, pages
@@ -3629,6 +3723,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         inv, start, levels, lang = built["inv"], built["start"], built["levels"], built["lang"]
         audit_id, domain, cfg = built["audit_id"], built["prof"], built["config"]
+        inv = investigation_export.with_personal_data(built["run"], inv, INVESTIGATION_XLSX,
+                                                      domain)
         sources = list(dict.fromkeys(r["source"] for r in inv["rows"] if r.get("source")))
         if not self._log_graph(ctx, "export:investigation", json.dumps(
                 {"start": start, "levels": levels, "audit_id": audit_id or None,

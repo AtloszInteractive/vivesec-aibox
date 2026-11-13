@@ -100,6 +100,20 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual(["ABC-123", "AA BC-123"], re.findall(p["plate_hu"]["regex"], text))
         self.assertEqual(["123456AB"], re.findall(p["id_card_hu"]["regex"], text))
 
+    def test_document_numbers_of_both_bv_systems(self):
+        # BV (2026-11-13): Főnix "year/number[/sub-number]", ODIN "R-2020/10"; one
+        # document may carry two numbers (Főnix and Robotzsaru).
+        import re
+        p = {x["id"]: x for x in domain_profile.load("bv")["identifier_patterns"]}
+        self.assertEqual(["case_number", "case_number"],
+                         [p["case_number"]["subtype"], p["fonix_number"]["subtype"]])
+        text = ("Iktatószám: 2026/123/4. Előzmény: 2025/88, ODIN: R-2020/10, J-2025/6545; "
+                "nem iratszám: 2026/123/4/5, 06-20/555-1234, 1/2 adag, 12026/1, "
+                "(EU) 2016/679 rendelet, 2016/680/EU irányelv, 2024/03/15, 2022/2023-as év.")
+        self.assertEqual(["2026/123/4", "2025/88"], re.findall(p["fonix_number"]["regex"], text))
+        self.assertEqual(["R-2020/10", "J-2025/6545"],
+                         re.findall(p["case_number"]["regex"], text))
+
 
 if __name__ == "__main__":
     unittest.main()

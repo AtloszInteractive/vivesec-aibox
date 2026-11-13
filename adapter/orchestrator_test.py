@@ -828,7 +828,7 @@ class InvestigationGraph:
 
 class InvestigateTest(unittest.TestCase):
     CONFIG = {"relations": ["RELATIVE_OF"], "via": ["INVOLVED_IN"], "branch": 10,
-              "max_rows": 80}
+              "max_rows": 80, "answer_rows": 80}
 
     def run_investigation(self, graph=None, message="Sas Tibor kapcsolattartói", **kw):
         graph = graph or InvestigationGraph()
@@ -890,8 +890,37 @@ class InvestigateTest(unittest.TestCase):
         header = next(c for c in out if c["origin"] == "graph-note")
         self.assertIn("csonkolva", header["text"])
         self.assertIn("legfeljebb 10 új személy, összesen 80 sor", header["text"])
+        # Shown under the answer as well: the model may leave it out.
+        self.assertIn("legfeljebb 10 új személy", r.info()["caveat"])
         body = next(b for p, b in graph.calls if p == "/query/investigate")
         self.assertTrue(body["join_namesakes"])
+
+    def test_a_row_says_how_many_people_the_limits_left_out_from_it(self):
+        class Cut(InvestigationGraph):
+            def post(self, path, body):
+                res = super().post(path, body)
+                if path == "/query/investigate":
+                    res = dict(res, rows=[dict(res["rows"][0], more=3)] + res["rows"][1:])
+                return res
+        r, out, _ = self.run_investigation(Cut(truncated=True))
+        start = next(c for c in out if c["text"].startswith("Vizsgálat, 0."))
+        self.assertIn("további 3 kapcsolódó személy a tábla korlátja miatt nem szerepel",
+                      start["text"])
+        self.assertEqual([3, 0, 0, 0], [row["more"] for row in
+                                        r.info()["investigations"][0]["rows"]])
+
+    def test_rows_past_the_answer_share_go_to_the_table_only(self):
+        r, out, _ = self.run_investigation(config=dict(self.CONFIG, answer_rows=2))
+        rows = [c for c in out if c["text"].startswith("Vizsgálat,")]
+        self.assertEqual(["Sas Tibor", "Kende Anna"],
+                         [c["text"].split(": ", 1)[1].split(" -- ")[0] for c in rows])
+        # The export, the diagram and the summaries keep every row.
+        self.assertEqual(4, len(r.info()["investigations"][0]["rows"]))
+        self.assertEqual(4, len(r.investigation_graphs[0]["rows"]))
+        header = next(c for c in out if c["origin"] == "graph-note")
+        self.assertIn("a vizsgálati tábla 2 sorából készült (összesen 4 sor", header["text"])
+        self.assertIn("a teljes tábla az Excel-exportban", r.info()["caveat"])
+        self.assertNotIn("caveat", self.run_investigation()[0].info())
 
     def test_the_subgraph_has_the_rows_their_links_and_what_they_hold(self):
         r, _, _ = self.run_investigation()
@@ -1007,7 +1036,7 @@ class InvestigateTest(unittest.TestCase):
         cfg = orchestrator.investigate_config(prof, ["RELATIVE_OF", "CONTACT_OF", "RELATED_TO"],
                                               ["INVOLVED_IN"], 99, 9999)
         self.assertEqual({"relations": ["RELATIVE_OF"], "via": ["INVOLVED_IN"], "branch": 50,
-                          "max_rows": 500}, cfg)
+                          "max_rows": 500, "answer_rows": 80}, cfg)
         self.assertIsNone(orchestrator.investigate_config(prof, ["CONTACT_OF"], ["RELATED_TO"]))
         line = orchestrator.investigate_tool(prof, cfg, "Hungarian")
         self.assertIn("RELATIVE_OF (Rokona) and people sharing a INVOLVED_IN (Érintett)", line)
