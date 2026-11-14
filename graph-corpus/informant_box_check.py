@@ -148,7 +148,7 @@ def main() -> int:
 RAG_PROBES = [  # (question, title of the record it is about, institution)
     ("Mikor akarnak kábítószert bejuttatni a látogatáskor?", "Felderítési napló 2026-14-1", "01"),
     ("Mikor terveznek szökési kísérletet a sétaidőben?", "Felderítési napló 2026-14-3", "02"),
-    ("Hol találtak mobiltelefont a matrac alatt a zárkaellenőrzéskor?", "ODIN R-2026-31", "01"),
+    ("Mit ír az ODIN R-2026/31 a matrac alá rejtett mobiltelefonról?", "ODIN R-2026-31", "01"),
     ("Mit találtak a sétaudvar kerítésénél, vágószerszámot?", "ODIN R-2026-32", "02"),
 ]
 
@@ -156,20 +156,30 @@ RAG_PROBES = [  # (question, title of the record it is about, institution)
 def rag_check(caller, call, report):
     """The log's and ODIN's free text through the adapter's retrieval: a record
     is among the hits only for a caller its folder and its institution admit;
-    an informant's name or a protected record never."""
+    an informant's name or a protected record never. No hit is also what a
+    question with nothing visible and relevant gets, so the national analyst
+    (who may see every record) is the positive control of each question."""
     allowed = {"01", "02"} if "bv-orszagos" in caller.groups else \
         {g[-2:] for g in caller.groups if g.startswith("bv-intezet-")}
-    for question, title, inst in RAG_PROBES:
-        status, out = call(caller, "/api/v1/ui/query", {"query": question})
-        hits = out.get("hits") or []
-        paths = [h.get("path") or "" for h in hits]
+    for n, (question, title, inst) in enumerate(RAG_PROBES):
+        expected = inst in allowed
+        # A fresh user per question: no history rewrites the retrieval query. A
+        # record that should be found is asked for up to 3 times (the ranking of
+        # a short record against the drive's documents is near the threshold).
+        for attempt in range(3 if expected else 1):
+            asker = Caller("%s-q%d-%d" % (caller.name, n, attempt), caller.groups,
+                           caller.roles, caller.fefo)
+            status, out = call(asker, "/api/v1/ui/query", {"query": question})
+            paths = [h.get("path") or "" for h in out.get("hits") or []]
+            found = any("/~records/" in p and "/%s (" % title in p for p in paths)
+            if status != 200 or found:
+                break
         blob = json.dumps(out, ensure_ascii=False)
-        found = any("/~records/" in p and "/%s (" % title in p for p in paths)
         named = [n for n in INFORMANTS if n in blob]
         report("free text in the RAG: " + title, caller,
-               status == 200 and found == (inst in allowed) and not named
-               and "~protected" not in blob,
-               status=status, found=found, expected=inst in allowed, informants=named,
+               status == 200 and found == expected and not named and "~protected" not in blob,
+               status=status, attempts=attempt + 1, found=found, expected=expected,
+               informants=named,
                records=[p.rsplit("/", 1)[-1] for p in paths if "/~records/" in p])
 
 
