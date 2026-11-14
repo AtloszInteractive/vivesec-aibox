@@ -365,16 +365,22 @@ _AS_OF = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def import_sources(state: State) -> dict:
-    """The profile's structured sources, as an importer needs to know them."""
-    return {"sources": [{"id": s["id"], "label": s["label"], "title": s["title"],
-                         "mode": s["mode"], "record_id": s["record_id"],
-                         "columns": sorted({c for e in s["entities"]
-                                            for c in [e["name"], *e["attributes"].values()] if c}
-                                           | {c for r in s["relations"]
-                                              for c in [r["start"], r["end"], *r["label"]] if c}
-                                           | set(s["record_id"])),
-                         "acl": bool(s.get("acl"))}
-                        for s in state.profile.get("structured_sources") or []]}
+    """The profile's structured sources, as an importer needs to know them: every
+    column the mapping reads (the protected ones too: they are in the file), and
+    whether the records' free text also goes into the search (`rag`, E29)."""
+    out = []
+    for s in state.profile.get("structured_sources") or []:
+        columns = {c for e in s["entities"] for c in [e["name"], *e["attributes"].values()] if c}
+        columns |= {c for r in s["relations"] for c in [r["start"], r["end"], *r["label"]] if c}
+        columns |= set(s["record_id"]) | set(s.get("text_columns") or [])
+        columns |= set((s.get("protected") or {}).get("columns") or [])
+        for extra in ((s.get("acl") or {}).get("column"), (s.get("deleted") or {}).get("column")):
+            if extra:
+                columns.add(extra)
+        out.append({"id": s["id"], "label": s["label"], "title": s["title"], "mode": s["mode"],
+                    "record_id": s["record_id"], "columns": sorted(columns),
+                    "acl": bool(s.get("acl")), "rag": bool(s.get("rag"))})
+    return {"sources": out}
 
 
 def import_rag(state: State, path: str, body: dict) -> dict:

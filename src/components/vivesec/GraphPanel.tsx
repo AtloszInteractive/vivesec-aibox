@@ -15,11 +15,13 @@ import {
   Settings2,
   ShieldAlert,
   Split,
+  Upload,
   X,
 } from "lucide-react";
 import { useLang } from "./i18n";
 import { layoutGraph } from "./graph-layout";
 import { saveToDrive } from "@/lib/api/rag.functions";
+import { AdapterGraphError } from "@/lib/rag/adapter-client";
 import {
   graphApi,
   graphFailure,
@@ -28,6 +30,9 @@ import {
   type GraphEntityType,
   type GraphEvidence,
   type GraphFailure,
+  type GraphImportAnswer,
+  type GraphImportRag,
+  type GraphImportSource,
   type GraphLabel,
   type GraphNode,
   type GraphProfile,
@@ -1756,8 +1761,327 @@ function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) 
           </div>
         </>
       )}
+      <ImportSection drive={drive} canEdit={canEdit} />
       <ReprocessSection drive={drive} canEdit={canEdit} />
       <UnreadableDocuments drive={drive} />
+    </div>
+  );
+}
+
+const IMPORT_MAX_BYTES = 50 * 1024 * 1024;
+const RAG_STATE: Record<GraphImportRag["state"], string> = {
+  none: "",
+  pending: "Waiting",
+  running: "Updating…",
+  done: "Up to date",
+  failed: "Failed",
+};
+
+function toBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/** E28: a graph administrator imports one periodic export (CSV, XLSX) of a
+ *  structured source into a folder. The box reads it by the profile's rules;
+ *  the answer is the change it made, and (E29) how far the search copy of the
+ *  folder's records got. A full export that would remove too much is refused
+ *  first and can be repeated on purpose. */
+function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+  const { tm, lang } = useLang();
+  const code = lang.toLowerCase() as keyof GraphLabel;
+  const { run: call, notice } = useFailure();
+  const [sources, setSources] = useState<GraphImportSource[] | null>(null);
+  const [sourceId, setSourceId] = useState("");
+  const [folder, setFolder] = useState(drive.replace(/\/+$/, ""));
+  const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
+  const [mode, setMode] = useState<"" | "delta" | "full">("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [refused, setRefused] = useState("");
+  const [answer, setAnswer] = useState<GraphImportAnswer | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    void call(() => graphApi.importSources(drive)).then((res) => {
+      if (!res) return;
+      setSources(res.sources);
+      setSourceId((current) => current || res.sources[0]?.id || "");
+    });
+  }, [drive, canEdit, call]);
+
+  // The search copy is aligned after the import; follow it until it settles.
+  const ragFolder = answer?.import.source_path;
+  const ragState = answer?.rag?.state;
+  useEffect(() => {
+    if (!ragFolder || (ragState !== "pending" && ragState !== "running")) return;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await graphApi.importRag(drive, ragFolder);
+        setAnswer((current) => (current ? { ...current, rag: res.rag } : current));
+      } catch {
+        // The next import or a refresh shows it again.
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [drive, ragFolder, ragState]);
+
+  if (!canEdit) return null;
+  const source = sources?.find((s) => s.id === sourceId) ?? null;
+
+  async function start(force = false) {
+    if (!source || !file || !folder.trim()) {
+      setError(tm("Choose a source, a target folder and a file."));
+      return;
+    }
+    if (file.size > IMPORT_MAX_BYTES) {
+      setError(tm("The file is larger than 50 MB."));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setRefused("");
+    setAnswer(null);
+    try {
+      let res: GraphImportAnswer = await graphApi.importRecords(drive, {
+        source: source.id,
+        asOf,
+        folder: folder.trim(),
+        filename: file.name,
+        contentB64: toBase64(await file.arrayBuffer()),
+        mode: mode || undefined,
+        force,
+      });
+      while (
+        (res.import.status === "queued" || res.import.status === "running") &&
+        res.import.job
+      ) {
+        res = await graphApi.importStatus(drive, res.import.job);
+      }
+      setAnswer(res);
+    } catch (err) {
+      if (err instanceof AdapterGraphError && err.status === 409) setRefused(err.message);
+      else if (err instanceof AdapterGraphError && err.status !== 503)
+        setError(`${tm("The import failed.")} ${err.message}`);
+      else await call(() => Promise.reject(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const stats = answer?.import.stats;
+  const rag = answer?.rag;
+  const input =
+    "min-w-0 rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-white/30 disabled:opacity-50";
+  return (
+    <div className="mt-6">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/45">
+        <Upload className="h-3.5 w-3.5" />
+        {tm("Structured import")}
+      </div>
+      {notice}
+      <div className="text-xs text-white/55">
+        {tm(
+          "Periodic exports (CSV, XLSX) are read by the domain profile's rules, without the language model.",
+        )}
+      </div>
+      {sources && sources.length === 0 && (
+        <div className="mt-2 text-xs text-white/55">
+          {tm("No structured source in the profile.")}
+        </div>
+      )}
+      {sources && sources.length > 0 && (
+        <div
+          className="mt-2 space-y-2 rounded-xl border border-white/10 p-2.5 text-xs"
+          style={{ backgroundColor: PANEL }}
+        >
+          <label className="flex flex-wrap items-center gap-2">
+            <span className="w-28 shrink-0 text-white/60">{tm("Source")}</span>
+            <select
+              value={sourceId}
+              onChange={(e) => setSourceId(e.target.value)}
+              disabled={busy}
+              className={`${input} flex-1`}
+            >
+              {sources.map((s) => (
+                <option key={s.id} value={s.id} className="bg-[#0C1E31]">
+                  {s.label[code] ?? s.label.en ?? s.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          {source && (
+            <div className="pl-0 text-[11px] text-white/50 sm:pl-30">
+              <span className="text-white/60">{tm("Expected columns")}:</span>{" "}
+              {source.columns.join(", ")}
+              {source.rag && (
+                <div className="mt-0.5" style={{ color: ACCENT_TEXT }}>
+                  {tm("Its free text also goes into the search.")}
+                </div>
+              )}
+            </div>
+          )}
+          <label className="flex flex-wrap items-center gap-2">
+            <span className="w-28 shrink-0 text-white/60">{tm("Target folder")}</span>
+            <input
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              disabled={busy}
+              className={`${input} flex-1`}
+            />
+          </label>
+          <label className="flex flex-wrap items-center gap-2">
+            <span className="w-28 shrink-0 text-white/60">{tm("Export date")}</span>
+            <input
+              type="date"
+              value={asOf}
+              onChange={(e) => setAsOf(e.target.value)}
+              disabled={busy}
+              className={input}
+            />
+          </label>
+          <label className="flex flex-wrap items-center gap-2">
+            <span className="w-28 shrink-0 text-white/60">{tm("Mode")}</span>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as "" | "delta" | "full")}
+              disabled={busy}
+              className={input}
+            >
+              <option value="" className="bg-[#0C1E31]">
+                {`${tm("As in the profile")} (${source?.mode ?? "delta"})`}
+              </option>
+              <option value="delta" className="bg-[#0C1E31]">
+                {tm("Changes only (delta)")}
+              </option>
+              <option value="full" className="bg-[#0C1E31]">
+                {tm("Full state (full)")}
+              </option>
+            </select>
+          </label>
+          {(mode || source?.mode) === "full" && (
+            <div className="text-[11px] text-amber-300/90">
+              {tm(
+                "Full mode removes the source's records of this folder that the file no longer lists.",
+              )}
+            </div>
+          )}
+          <label className="flex flex-wrap items-center gap-2">
+            <span className="w-28 shrink-0 text-white/60">{tm("Export file")}</span>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,.tsv,.txt,.xlsx,.xlsm"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              disabled={busy}
+              className="min-w-0 flex-1 text-xs text-white/70 file:mr-2 file:rounded-md file:border-0 file:bg-white/10 file:px-2 file:py-1 file:text-xs file:text-white"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => void start()}
+              disabled={busy || !source || !file}
+              className="rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
+              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+            >
+              {tm("Import")}
+            </button>
+            {busy && (
+              <span className="inline-flex items-center gap-1.5 text-white/60">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {tm("Importing…")}
+              </span>
+            )}
+          </div>
+          {error && <div className="text-[11px] text-amber-300">{error}</div>}
+          {refused && (
+            <div className="space-y-1.5 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2">
+              <div className="text-[11.5px] text-amber-100">
+                {tm(
+                  "This full export would remove many records of this folder. Import it anyway only if that is right.",
+                )}
+              </div>
+              <div className="text-[11px] text-amber-100/60">{refused}</div>
+              <button
+                onClick={() => void start(true)}
+                disabled={busy}
+                className="rounded-lg border border-amber-300/40 px-3 py-1 text-xs text-amber-100 hover:bg-amber-300/10 disabled:opacity-50"
+              >
+                {tm("Import anyway")}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {stats && (
+        <div className="mt-2 space-y-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Stat label={tm("Rows")} value={stats.rows} />
+            <Stat label={tm("Records")} value={stats.records} />
+            <Stat label={tm("New")} value={stats.created} />
+            <Stat label={tm("Updated")} value={stats.updated} />
+            <Stat label={tm("Unchanged")} value={stats.unchanged} />
+            <Stat label={tm("Removed")} value={stats.removed} />
+            <Stat label={tm("Older export, skipped")} value={stats.older} />
+            <Stat label={tm("Problems")} value={stats.problems} />
+          </div>
+          <div className="space-y-0.5 text-[11px] text-white/60">
+            {stats.protected > 0 && <div>{`${tm("Protected parts")}: ${stats.protected}`}</div>}
+            {!!stats.review_new && <div>{`${tm("New review pairs")}: ${stats.review_new}`}</div>}
+            {stats.duplicates > 0 && (
+              <div>{`${tm("Repeated record ids")}: ${stats.duplicates}`}</div>
+            )}
+            {stats.acl_nobody > 0 && (
+              <div className="text-amber-300">
+                {`${tm("Records no one may see (unknown access code)")}: ${stats.acl_nobody}`}
+              </div>
+            )}
+            {stats.missing_columns.length > 0 && (
+              <div className="text-amber-300">
+                {`${tm("Missing columns")}: ${stats.missing_columns.join(", ")}`}
+              </div>
+            )}
+            {Object.entries(stats.unknown_codes).map(([list, codes]) => (
+              <div key={list} className="text-amber-300">
+                {`${tm("Unknown codes")} (${list}): ${codes.join(", ")}`}
+              </div>
+            ))}
+          </div>
+          {stats.problem_rows.length > 0 && (
+            <div className="max-h-40 space-y-0.5 overflow-y-auto pr-1 text-[11px] text-white/60">
+              {stats.problem_rows.map((p, i) => (
+                <div key={i}>{`${tm("Row")} ${p.row}: ${p.reason}`}</div>
+              ))}
+            </div>
+          )}
+          {rag && rag.state !== "none" && (
+            <div
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2.5 text-xs"
+              style={{ backgroundColor: PANEL }}
+            >
+              {(rag.state === "pending" || rag.state === "running") && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              )}
+              <span className="text-white/60">{tm("Search copy")}:</span>
+              <span className={rag.state === "failed" ? "text-amber-300" : "text-white"}>
+                {tm(RAG_STATE[rag.state])}
+              </span>
+              {rag.state === "done" && (
+                <span className="text-white/50">
+                  {`${tm("Written")}: ${rag.written ?? 0} · ${tm("Removed")}: ${rag.removed ?? 0} · ${tm("Unchanged")}: ${rag.unchanged ?? 0}`}
+                </span>
+              )}
+              {rag.error && <span className="text-[11px] text-amber-300">{rag.error}</span>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -1026,7 +1026,11 @@ export async function adapterGraph<T>(
     | "investigation/summaries"
     | "reprocess/status"
     | "reprocess/start"
-    | "reprocess/cancel",
+    | "reprocess/cancel"
+    | "import"
+    | "import/sources"
+    | "import/status"
+    | "import/rag",
   body: Record<string, unknown>,
   drive: string,
 ): Promise<T> {
