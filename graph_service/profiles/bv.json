@@ -1,8 +1,9 @@
 {
   "id": "bv",
-  "version": 5,
+  "version": 6,
   "name": {"en": "Corrections and law enforcement", "hu": "Büntetés-végrehajtás és rendészet", "da": "Kriminalforsorg og retshåndhævelse", "de": "Justizvollzug und Strafverfolgung"},
   "description": "People, institutions, cells, visits, calls, transfers and incidents. Hungarian identifier formats. Shows connections; it never scores or predicts individuals.",
+  "protected_principals": ["group:bv-fefo", "role:fefo"],
   "entity_subtypes": [
     {"id": "inmate", "type": "person", "label": {"en": "Inmate", "hu": "Fogvatartott", "da": "Indsat", "de": "Gefangener"}},
     {"id": "visitor", "type": "person", "label": {"en": "Visitor", "hu": "Látogató", "da": "Besøgende", "de": "Besucher"}},
@@ -20,7 +21,8 @@
     {"id": "case_number", "type": "identifier", "label": {"en": "Case number", "hu": "Ügyszám", "da": "Sagsnummer", "de": "Aktenzeichen"}},
     {"id": "email", "type": "identifier", "label": {"en": "E-mail address", "hu": "E-mail-cím", "da": "E-mailadresse", "de": "E-Mail-Adresse"}},
     {"id": "incident", "type": "event", "label": {"en": "Incident", "hu": "Rendkívüli esemény", "da": "Hændelse", "de": "Vorfall"}},
-    {"id": "meeting", "type": "event", "label": {"en": "Meeting", "hu": "Találkozó", "da": "Møde", "de": "Treffen"}}
+    {"id": "meeting", "type": "event", "label": {"en": "Meeting", "hu": "Találkozó", "da": "Møde", "de": "Treffen"}},
+    {"id": "intel_report", "type": "event", "label": {"en": "Intelligence log entry", "hu": "Felderítési naplóbejegyzés", "da": "Efterretningslogpost", "de": "Aufklärungsprotokolleintrag"}, "structured_only": true}
   ],
   "identifier_patterns": [
     {"id": "phone_hu", "subtype": "phone", "label": {"en": "Hungarian phone number", "hu": "Magyar telefonszám", "da": "Ungarsk telefonnummer", "de": "Ungarische Telefonnummer"}, "regex": "(?<![\\d+])(?:\\+36|06)[ /-]?(?:1|[2-9]\\d)[ /-]?\\d{3}[ /-]?\\d{3,4}(?!\\d)", "normalize": "phone_hu"},
@@ -40,6 +42,7 @@
     {"id": "WORKS_FOR", "label": {"en": "Works for", "hu": "Alkalmazottja", "da": "Ansat hos", "de": "Arbeitet für"}, "from": ["person"], "to": ["organization"], "synonyms": ["alkalmazott", "munkakör", "dolgozik"]},
     {"id": "RELATIVE_OF", "label": {"en": "Relative of", "hu": "Rokona", "da": "Slægtning til", "de": "Verwandt mit"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["testvére", "élettársa", "házastársa", "anyja", "unokatestvére", "nagybátyja", "kapcsolattartó"]},
     {"id": "CONTACT_OF", "label": {"en": "Approved contact of", "hu": "Kapcsolattartója", "da": "Godkendt kontakt for", "de": "Zugelassene Kontaktperson von"}, "from": ["person"], "to": ["person"], "from_subtypes": ["contact"], "to_subtypes": ["inmate"], "synonyms": ["kapcsolattartó", "kapcsolattartója", "engedélyezett kapcsolattartó", "kapcsolattartás"], "structured_only": true},
+    {"id": "PROVIDED_INFO", "label": {"en": "Provided information", "hu": "Információt adott", "da": "Gav oplysninger", "de": "Gab Informationen"}, "from": ["person"], "to": ["event"], "to_subtypes": ["intel_report"], "synonyms": ["információt adott", "forrás", "informátor", "bejelentő"], "structured_only": true, "protected": true},
     {"id": "MET", "label": {"en": "Met", "hu": "Találkozott", "da": "Mødtes med", "de": "Traf"}, "from": ["person"], "to": ["person"], "symmetric": true, "synonyms": ["találkozott", "egyeztetett"]},
     {"id": "USES", "holding": true, "label": {"en": "Uses", "hu": "Használja", "da": "Bruger", "de": "Nutzt"}, "from": ["person", "organization"], "to": ["identifier", "object"], "synonyms": ["használja", "üzemben tartó", "használó", "birtokában", "gépjárművel érkezett"]},
     {"id": "OWNS", "holding": true, "label": {"en": "Owns", "hu": "Tulajdonosa", "da": "Ejer", "de": "Besitzt"}, "from": ["person", "organization"], "to": ["identifier", "object", "place"], "synonyms": ["céges gépjármű", "tulajdonában"]},
@@ -95,6 +98,25 @@
        {"type": "USES", "from": "contact", "to": "email"},
        {"type": "RESIDES_AT", "from": "contact", "to": "address"}
      ],
+     "acl": {"column": "Intézet kód", "pattern": "group:bv-intezet-{value}", "always": ["group:bv-orszagos"]}},
+    {"id": "intel_log", "label": {"en": "Intelligence log", "hu": "Felderítési napló", "da": "Efterretningslog", "de": "Aufklärungsprotokoll"}, "title": "Felderítési napló",
+     "record_id": "Rekordazonosító", "mode": "delta", "deleted": {"column": "Törölve", "values": ["igen", "i", "1", "true", "x"]},
+     "codelists": {
+       "intezet": {"01": "Kőhegyi Országos Büntetés-végrehajtási Intézet", "02": "Nyírvölgyi Fegyház és Börtön", "03": "Szőlőhegyi Büntetés-végrehajtási Intézet"},
+       "jelleg": {"KAB": "kábítószer", "MOB": "mobiltelefon, tiltott tárgy", "SZOK": "szökés", "ERO": "erőszak, fenyegetés", "KORR": "korrupció", "EGY": "egyéb"},
+       "forras": {"FOGV": "fogvatartott", "KT": "kapcsolattartó", "TARS": "társ rendvédelmi szerv", "ALL": "személyi állomány"}},
+     "entities": [
+       {"ref": "entry", "type": "event", "subtype": "intel_report", "name": "Naplószám"},
+       {"ref": "institution", "type": "place", "subtype": "institution", "name": "Intézet kód", "codelist": "intezet"},
+       {"ref": "subject", "type": "person", "name": "Érintett neve", "attributes": {"registry_number": "Érintett nyilvántartási száma"}},
+       {"ref": "informant", "type": "person", "name": "Forrás neve", "attributes": {"registry_number": "Forrás nyilvántartási száma"}}
+     ],
+     "relations": [
+       {"type": "INVOLVED_IN", "from": "subject", "to": "entry", "start": "Dátum", "label": "Információ jellege", "label_codelist": "jelleg"},
+       {"type": "PROVIDED_INFO", "from": "informant", "to": "entry", "start": "Dátum", "label": "Forrás típusa", "label_codelist": "forras"}
+     ],
+     "text_columns": ["Információ"],
+     "protected": {"entities": ["informant"], "title": "Felderítési napló – forrás (védett)"},
      "acl": {"column": "Intézet kód", "pattern": "group:bv-intezet-{value}", "always": ["group:bv-orszagos"]}}
   ]
 }

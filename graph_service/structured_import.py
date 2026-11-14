@@ -34,6 +34,18 @@ Persons: a registry number links as everywhere; a source entity with
 `person_key` gets the salted key of its four natural identifiers
 (person_key.py); `key_only` (contacts) links only through such a key, never by
 name (resolution.py).
+
+Protected part (E29, the informant of an intelligence log entry): a source's
+`protected` block names entities (and extra columns) that only the profile's
+`protected_principals` may see. Each record then becomes two documents: the
+open one (everything else, with the record's own rule) and its protected twin
+under <folder>/~records/<source>/~protected/, holding the protected entities
+and every relation touching one, with a rule only a member passes
+(visibility.Scope). The profile guarantees the open text never reads a
+protected column. A protected person is never linked automatically nor
+remembered by the resolver: it gives at most a review pair a member sees.
+An event entity (the log entry) is named by its number, one per folder and
+source, so the rows of one entry share it.
 """
 from __future__ import annotations
 
@@ -47,7 +59,7 @@ import re
 from domain_profile import normalize_value
 from extraction import LocalEntity, fold
 from ingest import parse_document_payload
-from model import KEY_ONLY_ATTR, PERSON_KEY_ATTR, RECORD_KIND
+from model import KEY_ONLY_ATTR, PERSON_KEY_ATTR, PROTECTED_DIR, RECORD_KIND
 from person_key import iso_date, person_key
 
 RECORDS_DIR = "~records"
@@ -145,9 +157,17 @@ class Record:
         self.row = row
         self.deleted = False
         self.text = ""
+        self.offsets: dict[int, tuple[int, int, str]] = {}  # column -> span in text
+        # The protected part (E29): its own text, offsets, entities and relations.
+        self.ptext = ""
+        self.poffsets: dict[int, tuple[int, int, str]] = {}
         self.entities: dict[str, dict] = {}  # ref -> {type, subtype, name, attrs, id?, ...}
         self.relations: list[dict] = []
         self.acl_value = ""
+
+    def has_protected(self) -> bool:
+        return any(item.get("protected") for item in self.entities.values()) \
+            or any(r.get("protected") for r in self.relations)
 
 
 def doc_id_of(source_id: str, record_id: str, corpus_id: str = "", folder: str = "") -> str:
@@ -160,6 +180,21 @@ def doc_id_of(source_id: str, record_id: str, corpus_id: str = "", folder: str =
 def path_of(folder: str, source_id: str, record_id: str) -> str:
     return "%s/%s/%s/%s" % (folder.rstrip("/"), RECORDS_DIR, source_id,
                             hashlib.sha1(record_id.encode("utf-8")).hexdigest()[:16])
+
+
+def protected_doc_id(doc_id: str) -> str:
+    """The protected part of the record `doc_id` (E29), its own document."""
+    return "rec:" + hashlib.sha1((doc_id + "\0protected").encode("utf-8")).hexdigest()[:24]
+
+
+def protected_path(path: str) -> str:
+    """<folder>/~records/<source>/~protected/<hash> of the record at `path`."""
+    head, tail = path.rsplit("/", 1)
+    return "%s/%s/%s" % (head, PROTECTED_DIR, tail)
+
+
+def is_protected_path(path: str) -> bool:
+    return "/%s/" % RECORDS_DIR in path and "/%s/" % PROTECTED_DIR in path
 
 
 def records_root(folder: str, source_id: str = "") -> str:
@@ -208,6 +243,26 @@ def _identifier_value(value: str, subtype: str, profile: dict) -> str:
     return fold(value)
 
 
+def _render(header, cell, decoded, cols) -> tuple[str, dict]:
+    """A record's text, "Column: value" pairs of `cols` (a code with its meaning),
+    and the span of each value in it (of the meaning, for a code)."""
+    parts, offsets, pos = [], {}, 0
+    for k in cols:
+        value, h = cell(k), header[k]
+        if not value:
+            continue
+        shown = value if not decoded.get(k) else "%s (%s)" % (value, decoded[k])
+        part = "%s: %s" % (h, shown)
+        start = pos + len(h) + 2
+        offsets[k] = (start, start + len(shown), shown)
+        if decoded.get(k):
+            d0 = start + len(value) + 2
+            offsets[k] = (d0, d0 + len(decoded[k]), decoded[k])
+        parts.append(part)
+        pos += len(part) + 2
+    return "; ".join(parts), offsets
+
+
 def plan_import(profile: dict, source: dict, header: list[str], rows, salt: bytes | None) -> Plan:
     plan = Plan()
     col = {fold(h): k for k, h in enumerate(header) if h}
@@ -242,6 +297,27 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
     for r in source["relations"]:
         rels.append(dict(r, start_col=need(r["start"], False), end_col=need(r["end"], False),
                          label_cols=[need(c, False) for c in r["label"]]))
+    for c in source.get("text_columns") or []:
+        need(c, False)
+    # E29: the protected part's columns. `hidden` only its text shows; `shown` its
+    # text shows as well: the open ends of its relations and their dates.
+    protected = source.get("protected") or {}
+    prot_refs = set(protected.get("entities") or [])
+    hidden = {need(c, False) for c in protected.get("columns") or []}
+    for e in ents:
+        if e["ref"] in prot_refs:
+            hidden |= {e["name_col"], *e["attr_cols"].values()}
+    shown = set()
+    for r in rels:
+        r["protected"] = r["from"] in prot_refs or r["to"] in prot_refs
+        if r["protected"]:
+            hidden |= set(r["label_cols"])
+            shown |= {r["start_col"], r["end_col"]}
+            for ref in (r["from"], r["to"]):
+                if ref not in prot_refs:
+                    shown.add(next(e["name_col"] for e in ents if e["ref"] == ref))
+    hidden.discard(None)
+    shown = (shown - {None}) | hidden
     codelists = source["codelists"]
 
     def decode(value, name, row):
@@ -277,21 +353,12 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
             for k in r["label_cols"]:
                 if k is not None and r.get("label_codelist"):
                     decoded[k] = decode(cell(k), r["label_codelist"], n)[1]
-        parts, offsets, pos = [], {}, 0
-        for k, h in enumerate(header):
-            value = cell(k)
-            if not value or k in id_cols or k == del_col or k not in used:
-                continue
-            shown = value if not decoded.get(k) else "%s (%s)" % (value, decoded[k])
-            part = "%s: %s" % (h, shown)
-            start = pos + len(h) + 2
-            offsets[k] = (start, start + len(shown), shown)
-            if decoded.get(k):
-                d0 = start + len(value) + 2
-                offsets[k] = (d0, d0 + len(decoded[k]), decoded[k])
-            parts.append(part)
-            pos += len(part) + 2
-        rec.text = "; ".join(parts)
+        open_cols = [k for k in range(len(header))
+                     if k in used and k not in id_cols and k != del_col and k not in hidden]
+        rec.text, rec.offsets = _render(header, cell, decoded, open_cols)
+        if prot_refs or hidden:
+            rec.ptext, rec.poffsets = _render(header, cell, decoded, [
+                k for k in range(len(header)) if k in shown and k not in id_cols and k != del_col])
         if rec.deleted:
             plan.records.setdefault(rid, rec)
             if plan.records[rid] is not rec:
@@ -308,9 +375,8 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
             if not name and not attrs.get("registry_number"):
                 continue
             item = {"type": e["type"], "subtype": e["subtype"], "name": name, "attrs": attrs,
-                    "span": offsets.get(e["name_col"]) if name else
-                    offsets.get(e["attr_cols"].get("registry_number")),
-                    "key_only": e["key_only"]}
+                    "span_col": e["name_col"] if name else e["attr_cols"].get("registry_number"),
+                    "key_only": e["key_only"], "protected": e["ref"] in prot_refs}
             if e["type"] == "identifier":
                 item["value"] = _identifier_value(name, e["subtype"], profile)
                 if not item["value"] or item["value"] == "+":
@@ -347,14 +413,18 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
             labels = [decoded.get(k) or cell(k) for k in r["label_cols"]]
             rec.relations.append({"type": r["type"], "from": r["from"], "to": r["to"],
                                   "start": start or None, "end": end or None,
-                                  "label": " / ".join(x for x in labels if x)[:300]})
+                                  "label": " / ".join(x for x in labels if x)[:300],
+                                  "protected": r["protected"]})
         for ref, item in rec.entities.items():
             parent = by_ref[ref].get("within")
             if parent:
                 rec.relations.append({"type": "PART_OF", "from": ref, "to": parent,
-                                      "start": None, "end": None, "label": ""})
-        if not rec.entities:
-            plan.problem(n, "nothing to record (no name in any mapped column)")
+                                      "start": None, "end": None, "label": "",
+                                      "protected": item["protected"]
+                                      or rec.entities[parent]["protected"]})
+        if not any(not item["protected"] for item in rec.entities.values()):
+            plan.problem(n, "nothing to record (no name in any mapped column)" if not rec.entities
+                         else "only protected data (no name in any open column)")
             continue
         if rid in plan.records:
             plan.duplicates += 1
@@ -378,6 +448,15 @@ def record_acl(source: dict, value: str) -> dict | None:
             "classification": acl["classification"]}
 
 
+def protected_acl(profile: dict, source: dict) -> dict:
+    """The rule of a record's protected part (E29): the profile's protected
+    principals only, marked so the view checks the membership the profile names
+    at query time (visibility.Scope)."""
+    level = (source.get("acl") or {}).get("classification", 0)
+    return {"restricted": True, "allow": list(profile.get("protected_principals") or []),
+            "deny": [], "classification": level, "protected": True}
+
+
 # -- writing --------------------------------------------------------------------------
 
 def _place_id(item: dict, rec: Record, ref: str, by_ref: dict, ids: dict) -> str:
@@ -386,14 +465,24 @@ def _place_id(item: dict, rec: Record, ref: str, by_ref: dict, ids: dict) -> str
     return "%s@%s" % (own, ids[parent]) if parent else own
 
 
-def build_payload(profile: dict, source: dict, rec: Record, folder: str, corpus_id: str,
-                  base_acl, resolver, sticky_of, salt: bytes | None = None) -> dict:
-    """The ingest payload of one record, its people resolved (the caller holds the
-    write lock: the worker thread)."""
+def build_payloads(profile: dict, source: dict, rec: Record, folder: str, corpus_id: str,
+                   base_acl, resolver, sticky_of, salt: bytes | None = None
+                   ) -> tuple[dict, dict | None]:
+    """The ingest payloads of one record, its people resolved (the caller holds the
+    write lock: the worker thread): the open part and the protected part (E29;
+    None when the source has none or the row names nobody in it). Both name the
+    same ids for what they share (the log entry an informant reported).
+
+    A protected person is never resolved like the others: its id comes from the
+    protected record alone (or a reviewer's merge), it is never remembered, and
+    it gives at most a review pair only a protected member sees."""
     by_ref = {e["ref"]: e for e in source["entities"]}
     doc_id = doc_id_of(source["id"], rec.record_id, corpus_id, folder)
     path = path_of(folder, source["id"], rec.record_id)
+    pdoc_id, ppath = protected_doc_id(doc_id), protected_path(path)
     holding = {r["id"] for r in profile["relation_types"] if r.get("holding")}
+    events = hashlib.sha1(("%s\0%s\0%s" % (corpus_id, folder.rstrip("/"), source["id"])
+                           ).encode("utf-8")).hexdigest()[:12]
     ids: dict[str, str] = {}
     order = sorted(rec.entities, key=lambda ref: _depth(ref, by_ref))
     for ref in order:
@@ -402,13 +491,16 @@ def build_payload(profile: dict, source: dict, rec: Record, folder: str, corpus_
             ids[ref] = "id:%s:%s" % (item["subtype"] or "other", item["value"])
         elif item["type"] == "place":
             ids[ref] = _place_id(item, rec, ref, by_ref, ids)
+        elif item["type"] == "event":
+            # One log entry number in one folder of one source is one event.
+            ids[ref] = "event:rec%s:%s" % (events, fold(item["name"]))
         elif item["type"] != "person":
             ids[ref] = "%s:%s" % (item["type"], fold(item["name"]))
     resolver.sticky = sticky_of(doc_id, corpus_id, path)
     try:
         for ref in order:
             item = rec.entities[ref]
-            if item["type"] != "person":
+            if item["type"] != "person" or item["protected"]:
                 continue
             contacts = {ids[r["to"]] for r in rec.relations
                         if r["from"] == ref and r["type"] in holding and r["to"] in ids}
@@ -420,31 +512,62 @@ def build_payload(profile: dict, source: dict, rec: Record, folder: str, corpus_
             ids[ref] = _resolve_person(resolver, doc_id, ref, item, attrs, contacts, salt)
     finally:
         resolver.sticky = {}
-    entities, mentions = {}, []
     for ref in order:
+        item = rec.entities[ref]
+        if item["type"] == "person" and item["protected"]:
+            # What it is related to here: the same name on the same log entry is
+            # one informant (one row per subject), elsewhere it is not.
+            anchors = sorted({ids[r["to"] if r["from"] == ref else r["from"]]
+                              for r in rec.relations if ref in (r["from"], r["to"])
+                              and (r["to"] if r["from"] == ref else r["from"]) in ids})
+            ids[ref] = _protected_person(resolver, pdoc_id, ref, item, salt, anchors)
+    content = _payload(profile, source["title"], rec, doc_id, path, corpus_id, base_acl, ids,
+                       [ref for ref in order if not rec.entities[ref]["protected"]],
+                       [r for r in rec.relations if not r["protected"]], rec.text, rec.offsets)
+    if not rec.has_protected():
+        return content, None
+    rels = [r for r in rec.relations if r["protected"]]
+    refs = {ref for ref in order if rec.entities[ref]["protected"]} \
+        | {x for r in rels for x in (r["from"], r["to"])}
+    title = (source.get("protected") or {}).get("title") or source["title"]
+    protected = _payload(profile, title, rec, pdoc_id, ppath, corpus_id, base_acl, ids,
+                         [ref for ref in order if ref in refs], rels, rec.ptext, rec.poffsets,
+                         open_refs={ref for ref in refs if not rec.entities[ref]["protected"]})
+    return content, protected
+
+
+def _payload(profile, title, rec, doc_id, path, corpus_id, base_acl, ids, refs, rels, text,
+             offsets, open_refs=frozenset()) -> dict:
+    """One document of a record: its entities (with what it states of them; of
+    an open entity a protected part repeats only the mention), mentions and
+    relations with the text as their evidence."""
+    entities, mentions = {}, []
+    for ref in refs:
         item = rec.entities[ref]
         gid = ids[ref]
         ent = entities.setdefault(gid, {"id": gid, "type": item["type"],
                                         "subtype": item["subtype"],
                                         "label": item["name"] or item["attrs"].get(
                                             "registry_number", ""), "attributes": []})
-        for name, value in sorted(item["attrs"].items()):
-            ent["attributes"].append({"name": name, "value": value, "page": 1})
-        if item.get("person_key"):
-            ent["attributes"].append({"name": PERSON_KEY_ATTR, "value": item["person_key"],
-                                      "page": 1})
-        if item["key_only"]:
-            ent["attributes"].append({"name": KEY_ONLY_ATTR, "value": "1", "page": 1})
-        if item.get("within"):
-            ent["attributes"].append({"name": "within", "value": item["within"], "page": 1})
-        span = item.get("span")
+        if ref not in open_refs:
+            for name, value in sorted(item["attrs"].items()):
+                ent["attributes"].append({"name": name, "value": value, "page": 1})
+            if item.get("person_key"):
+                ent["attributes"].append({"name": PERSON_KEY_ATTR, "value": item["person_key"],
+                                          "page": 1})
+            if item["key_only"]:
+                ent["attributes"].append({"name": KEY_ONLY_ATTR, "value": "1", "page": 1})
+            if item.get("within"):
+                ent["attributes"].append({"name": "within", "value": item["within"],
+                                          "page": 1})
+        span = offsets.get(item.get("span_col"))
         if span:
             mentions.append({"id": "%s:m%d" % (doc_id, len(mentions)), "entity_id": gid,
                              "text": span[2], "page": 1, "start": span[0], "end": span[1],
                              "method": "structured"})
     spec = {r["id"]: r for r in profile["relation_types"]}
     relations = {}
-    for r in rec.relations:
+    for r in rels:
         a, b = ids[r["from"]], ids[r["to"]]
         if a == b:
             continue
@@ -456,10 +579,10 @@ def build_payload(profile: dict, source: dict, rec: Record, folder: str, corpus_
         rid = "%s:r%s" % (doc_id, hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:12])
         relations[key] = {"id": rid, "type": r["type"], "a": a, "b": b, "start": r["start"],
                           "end": r["end"], "raw_label": r["label"],
-                          "evidence": [{"quote": rec.text, "page": 1, "method": "structured",
+                          "evidence": [{"quote": text, "page": 1, "method": "structured",
                                         "confidence": 1.0}]}
     document = {"doc_id": doc_id, "corpus_id": corpus_id, "source_path": path,
-                "title": source["title"], "kind": RECORD_KIND, "pages": 1}
+                "title": title, "kind": RECORD_KIND, "pages": 1}
     if base_acl is not None:
         document["acl"] = base_acl
     return {"document": document, "entities": list(entities.values()), "mentions": mentions,
@@ -502,11 +625,45 @@ def _resolve_person(resolver, doc_id, ref, item, attrs, contacts, salt=None) -> 
                             new_id=new_id)
 
 
-def parse_record_payload(payload: dict, profile: dict, source: dict, as_of: str, rec: Record):
+def _protected_person(resolver, doc_id, ref, item, salt=None, anchors=()) -> str:
+    """A person of a protected record part (E29). Its id comes from the record
+    alone -- its registry number (salted, in a namespace of its own) or person
+    key, so one informant of many entries is one person to a protected member;
+    without them its name on the same entities (`anchors`: the log entry), so
+    the rows of one entry name one informant -- or from a reviewer's merge of
+    it; it is never matched or remembered, only suggested for review
+    (resolution.Resolver.suggest)."""
+    reg = item["attrs"].get("registry_number")
+    if reg and salt:
+        new_id = "person:" + hmac.new(salt, ("protected-reg\0" + fold(reg)).encode("utf-8"),
+                                      hashlib.sha256).hexdigest()[:16]
+    elif item.get("person_key"):
+        new_id = "person:" + hashlib.sha1(("protected-key\0" + item["person_key"]).encode()
+                                          ).hexdigest()[:16]
+    elif item["name"] and anchors:
+        new_id = "person:" + hashlib.sha1("\0".join(["protected-name", fold(item["name"]),
+                                                     *anchors]).encode("utf-8")).hexdigest()[:16]
+    else:
+        new_id = "person:" + hashlib.sha1(("%s\0%s" % (doc_id, ref)).encode()).hexdigest()[:16]
+    pid = resolver.survivor(new_id)
+    if pid == new_id:
+        attrs = {k: (v, 1) for k, v in item["attrs"].items()}
+        if item.get("person_key"):
+            attrs[PERSON_KEY_ATTR] = (item["person_key"], 1)
+        names = [item["name"]] if item["name"] else []
+        resolver.suggest(doc_id, LocalEntity(ref, "person", item["subtype"], names, attrs,
+                                             method="structured"), pid)
+    return pid
+
+
+def parse_record_payload(payload: dict, profile: dict, source: dict, as_of: str, rec: Record,
+                         protected: bool = False):
     doc, entities, mentions, relations = parse_document_payload(payload, profile,
                                                                 allow_hidden=True)
     doc.kind = RECORD_KIND
     doc.profile = tag_of(source["id"], as_of)
-    doc.content_sha256 = hashlib.sha256(rec.text.encode("utf-8")).hexdigest()
-    doc.record_acl = record_acl(source, rec.acl_value)
+    text = rec.ptext if protected else rec.text
+    doc.content_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    doc.record_acl = protected_acl(profile, source) if protected \
+        else record_acl(source, rec.acl_value)
     return doc, entities, mentions, relations

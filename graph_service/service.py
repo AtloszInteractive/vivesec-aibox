@@ -127,7 +127,7 @@ def documents_by_profile(state: State, body: dict) -> dict:
     with. The stale ones -- any other version, or unknown (extracted before this
     was recorded) -- are listed for reprocessing (optionally below one folder)."""
     try:
-        scope = Scope.parse(body)
+        scope = Scope.parse(body, state.profile)
     except ScopeError as e:
         raise HttpError(400, str(e))
     current = domain_profile.profile_tag(state.profile)
@@ -163,7 +163,7 @@ def documents_by_profile(state: State, body: dict) -> dict:
 
 def run_query(state: State, name: str, body: dict) -> dict:
     try:
-        scope = Scope.parse(body)
+        scope = Scope.parse(body, state.profile)
     except ScopeError as e:
         raise HttpError(400, str(e))
     view = state.store.view(scope, include_weak=bool(body.get("include_weak", False)))
@@ -459,7 +459,7 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
             raise HttpError(404, "no such import")
         return _import_answer(item)
     try:
-        scope = Scope.parse(body)
+        scope = Scope.parse(body, state.profile)
     except ScopeError as e:
         raise HttpError(400, str(e))
     view = state.store.view(scope)

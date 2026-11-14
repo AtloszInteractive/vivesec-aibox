@@ -15,7 +15,13 @@ The case it tells (the tests and the box check rely on it):
   * two contact records of Fekete Judit share a phone; the second has no birth
     data -> a review pair, no merge, and the "shared contact" step links them;
   * Sas Tibor and Major Ede share cell 102 (A objektum, B részleg, institution
-    01) for overlapping weeks.
+    01) for overlapping weeks;
+  * the intelligence log (E29): five entries on Sas Tibor, Major Ede, Sas Gábor
+    and Illés Dénes (2026/14/3 names both in two rows, one per subject), and
+    Varga Péter. Their informants -- invented like everyone -- are seen only by
+    the FEFO: Bodó Ákos (an inmate of the FŐNIX export, by his registry number:
+    a review pair for the FEFO, never a link), twice; Rigó Lajos, a contact;
+    Dr. Fehér Gábor of a partner agency; Hollós Péter of the staff.
 
   python graph-corpus/structured_samples.py <out dir> [--xlsx]
 """
@@ -37,6 +43,11 @@ CONTACTS = ["Rekordazonosító", "Fogvatartott nyilvántartási száma", "Fogvat
             "Kapcsolattartó neve", "Születési hely", "Születési idő", "Anyja neve",
             "Kapcsolat jellege", "Telefonszám", "E-mail", "Lakcím", "Engedély kezdete",
             "Engedély vége", "Intézet kód", "Törölve"]
+INTEL = ["Rekordazonosító", "Naplószám", "Dátum", "Intézet kód", "Érintett neve",
+         "Érintett nyilvántartási száma", "Információ jellege", "Információ", "Forrás neve",
+         "Forrás nyilvántartási száma", "Forrás típusa", "Törölve"]
+# The informant columns: only the protected part of a log record shows them.
+INFORMANT = ("Forrás neve", "Forrás nyilvántartási száma", "Forrás típusa")
 
 INMATES = [
     ("F-0001", "NY-1001", "Sas Tibor", "Szeged", "1988-05-12", "Kerekes Ilona", "01"),
@@ -80,6 +91,22 @@ CONTACT_ROWS = [
      "", "", "2025-09-01", "", "02"),
 ]
 
+INTEL_ROWS = [
+    ("N-0001", "2026/14/1", "2026-03-02", "01", "Sas Tibor", "NY-1001", "KAB",
+     "A következő látogatáskor kábítószert akarnak bejuttatni.", "Bodó Ákos", "NY-1005",
+     "FOGV"),
+    ("N-0002", "2026/14/2", "2026-03-20", "01", "Major Ede", "NY-1003", "MOB",
+     "A zárkában mobiltelefont rejtenek.", "Bodó Ákos", "NY-1005", "FOGV"),
+    ("N-0003", "2026/14/3", "2026-04-05", "02", "Sas Gábor", "NY-1002", "SZOK",
+     "Szökési kísérletet terveznek a sétaidőben.", "Rigó Lajos", "", "KT"),
+    ("N-0004", "2026/14/3", "2026-04-05", "02", "Illés Dénes", "NY-1004", "SZOK",
+     "Szökési kísérletet terveznek a sétaidőben.", "Rigó Lajos", "", "KT"),
+    ("N-0005", "2026/14/4", "2026-05-10", "02", "Varga Péter", "NY-1006", "KORR",
+     "Pénzért csomagot juttatnak be neki.", "Dr. Fehér Gábor", "", "TARS"),
+    ("N-0006", "2026/14/5", "2026-06-01", "01", "Sas Tibor", "NY-1001", "ERO",
+     "Zárkatársát fenyegeti.", "Hollós Péter", "", "ALL"),
+]
+
 
 def exports() -> dict[str, tuple[list[str], list[list[str]]]]:
     """{source id: (header, rows)} of the synthetic export of AS_OF."""
@@ -87,6 +114,7 @@ def exports() -> dict[str, tuple[list[str], list[list[str]]]]:
         "fonix_base": (FONIX, [list(r) + [""] for r in INMATES]),
         "placement": (PLACEMENT, [list(r) + [""] for r in PLACEMENTS]),
         "contacts": (CONTACTS, [list(r) + [""] for r in CONTACT_ROWS]),
+        "intel_log": (INTEL, [list(r) + [""] for r in INTEL_ROWS]),
     }
 
 

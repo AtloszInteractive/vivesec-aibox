@@ -385,7 +385,9 @@ class IngestWorker:
             known = {d: store.documents[d] for d in store.doc_ids_by_path(
                 corpus_id, root, tree=True, keep_exact=True) if d in store.documents}
         removed_tag = structured_import.REMOVED_SUFFIX
-        existing = {d: doc for d, doc in known.items() if not doc.profile.endswith(removed_tag)}
+        # The open record documents; a protected part (E29) follows its record.
+        existing = {d: doc for d, doc in known.items() if not doc.profile.endswith(removed_tag)
+                    and not structured_import.is_protected_path(doc.source_path)}
 
         def key(rid):
             return structured_import.doc_id_of(source["id"], rid, corpus_id, folder)
@@ -412,7 +414,7 @@ class IngestWorker:
                  "missing_columns": plan.missing_columns,
                  "unknown_codes": {k: sorted(v)[:20] for k, v in plan.unknown_codes.items()},
                  "person_key": "on" if salt else "off", "person_keys": plan.person_keys,
-                 "acl_nobody": 0}
+                 "acl_nobody": 0, "protected": 0}
         review_before = len(self.resolver.review)
         written = []
 
@@ -420,26 +422,51 @@ class IngestWorker:
             with self.cond:
                 return self.running.get("acl") if self.running and \
                     self.running.get("acl_changed") else meta.get("acl")
+
+        def marker(doc_id, path, rule=None):
+            """An empty record marks the removal: an older export cannot bring it back."""
+            doc = Document(doc_id, corpus_id, path, source["title"], parse_doc_acl(base_acl()),
+                           structured_import.RECORD_KIND, 0,
+                           structured_import.tag_of(source["id"], as_of) + removed_tag)
+            doc.record_acl = rule
+            with self.cond:
+                self.state.store.put_document(doc, [], [], [])
+            written.append(doc_id)
+
+        def gone(doc) -> bool:
+            return doc is None or doc.profile.endswith(removed_tag)
+
+        def same(old, new) -> bool:
+            if gone(old) or gone(new):
+                return gone(old) and gone(new)
+            return old.content_sha256 == new.content_sha256 and old.acl == new.acl \
+                and old.record_acl == new.record_acl
+
+        protected_rule = structured_import.protected_acl(profile, source)
         for rid, rec in plan.records.items():
             if rec.deleted:
                 continue
             doc_id = key(rid)
+            twin_id = structured_import.protected_doc_id(doc_id)
             acl = base_acl()
-            old = known.get(doc_id)
+            old, twin = known.get(doc_id), known.get(twin_id)
             if old is not None and newer(old):
                 stats["older"] += 1  # a newer export wrote or removed it
                 continue
             own_acl = structured_import.record_acl(source, rec.acl_value)
             if own_acl is not None and not own_acl["allow"]:
                 stats["acl_nobody"] += 1
-            if old is not None and old.content_sha256 == hashlib.sha256(
-                    rec.text.encode("utf-8")).hexdigest() \
-                    and old.acl == parse_doc_acl(acl) and old.record_acl == own_acl \
-                    and structured_import.as_of_of(old.profile) >= as_of \
-                    and not old.profile.endswith(removed_tag):
+
+            def current(doc, text, rule) -> bool:
+                return not gone(doc) and doc.content_sha256 == hashlib.sha256(
+                    text.encode("utf-8")).hexdigest() and doc.acl == parse_doc_acl(acl) \
+                    and doc.record_acl == rule and structured_import.as_of_of(doc.profile) >= as_of
+            twin_current = current(twin, rec.ptext, protected_rule) if rec.has_protected() \
+                else gone(twin)
+            if current(old, rec.text, own_acl) and twin_current:
                 stats["unchanged"] += 1
                 continue
-            payload = structured_import.build_payload(
+            payload, protected = structured_import.build_payloads(
                 profile, source, rec, folder, corpus_id, acl, self.resolver,
                 lambda d, c, p: self._sticky_people({"doc_id": d, "corpus_id": c,
                                                      "source_path": p}), salt)
@@ -448,11 +475,20 @@ class IngestWorker:
             with self.cond:
                 self.state.store.put_document(doc, entities, mentions, relations)
             written.append(doc_id)
-            fresh = old is None or old.profile.endswith(removed_tag)
+            new_twin = None
+            if protected is not None:
+                new_twin, *parts = structured_import.parse_record_payload(
+                    protected, profile, source, as_of, rec, protected=True)
+                with self.cond:
+                    self.state.store.put_document(new_twin, *parts)
+                written.append(twin_id)
+                stats["protected"] += 1
+            elif not gone(twin):
+                marker(twin_id, twin.source_path, protected_rule)
+            fresh = gone(old)
             # The same row of a newer export: written again only to move its date on.
-            same = not fresh and old.content_sha256 == doc.content_sha256 \
-                and old.acl == doc.acl and old.record_acl == doc.record_acl
-            stats["created" if fresh else "unchanged" if same else "updated"] += 1
+            stats["created" if fresh else "unchanged" if same(old, doc) and same(twin, new_twin)
+                  else "updated"] += 1
         removals = {key(rid): rid for rid, rec in plan.records.items() if rec.deleted}
         for doc in unlisted:
             removals.setdefault(doc, None)
@@ -462,15 +498,12 @@ class IngestWorker:
                                     and structured_import.as_of_of(old.profile) == as_of):
                 stats["older" if newer(old) else "unchanged"] += 1
                 continue
-            # An empty record marks the removal: an older export cannot bring it back.
             path = old.source_path if old is not None else structured_import.path_of(
                 folder, source["id"], removals[doc_id])
-            marker = Document(doc_id, corpus_id, path, source["title"],
-                              parse_doc_acl(base_acl()), structured_import.RECORD_KIND, 0,
-                              structured_import.tag_of(source["id"], as_of) + removed_tag)
-            with self.cond:
-                self.state.store.put_document(marker, [], [], [])
-            written.append(doc_id)
+            marker(doc_id, path)
+            twin = known.get(structured_import.protected_doc_id(doc_id))
+            if not gone(twin):
+                marker(twin.doc_id, twin.source_path, protected_rule)
             if old is not None and not old.profile.endswith(removed_tag):
                 stats["removed"] += 1
         with self.cond:

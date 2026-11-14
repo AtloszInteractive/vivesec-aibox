@@ -10,6 +10,8 @@ from __future__ import annotations
 import importlib.util
 import os
 
+from domain_profile import protected_member, protected_relations
+
 # Loaded by file path: putting rag_service on sys.path would shadow modules here.
 _ACCESS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "rag_service", "access.py")
@@ -25,12 +27,18 @@ class ScopeError(ValueError):
 
 
 class Scope:
-    def __init__(self, corpus_ids, access=None):
+    def __init__(self, corpus_ids, access=None, profile=None):
         self.corpus_ids = frozenset(corpus_ids)
         self.access = access
+        # E29: protected data (an informant's identity) only for a member of the
+        # profile's protected_principals; a non-member does not even get the
+        # protected relation types, whatever document would back them.
+        self.protected_member = protected_member(profile, access)
+        self.hidden_relations = frozenset() if self.protected_member \
+            else protected_relations(profile)
 
     @classmethod
-    def parse(cls, body: dict) -> "Scope":
+    def parse(cls, body: dict, profile: dict | None = None) -> "Scope":
         raw = body.get("corpus_ids")
         if not isinstance(raw, list) or len(raw) > MAX_CORPORA \
                 or any(not isinstance(c, str) or not c for c in raw):
@@ -39,13 +47,22 @@ class Scope:
             access = doc_access.parse_access(body.get("access"))
         except ValueError as e:
             raise ScopeError(str(e))
-        return cls(raw, access)
+        return cls(raw, access, profile)
 
     def allows(self, doc) -> bool:
         # A structured record also carries its own rule: both must admit the caller.
-        return doc.corpus_id in self.corpus_ids and doc_access.doc_allowed(doc.acl, self.access) \
-            and (getattr(doc, "record_acl", None) is None
-                 or doc_access.doc_allowed(doc.record_acl, self.access))
+        if doc.corpus_id not in self.corpus_ids or not doc_access.doc_allowed(doc.acl,
+                                                                              self.access):
+            return False
+        rule = getattr(doc, "record_acl", None)
+        if rule is None:
+            return True
+        if rule.get("protected"):
+            # Membership by the profile now (not the principals stored at import);
+            # the stored rule still counts for its classification and denies.
+            return self.protected_member and doc_access.doc_allowed(
+                dict(rule, restricted=False), self.access)
+        return doc_access.doc_allowed(rule, self.access)
 
 
 def parse_doc_acl(raw):

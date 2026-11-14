@@ -33,7 +33,7 @@ import hashlib
 import threading
 
 from extraction import LocalEntity, fold
-from model import KEY_ONLY_ATTR, PERSON_KEY_ATTR
+from model import KEY_ONLY_ATTR, PERSON_KEY_ATTR, is_protected
 
 # Numbers that name one person: a personal ID number, or the person's number in an
 # institution's own register (an inmate registry number); and the structured
@@ -182,15 +182,19 @@ class Resolver:
                 self.load_from_store(store)
 
     def load_from_store(self, store) -> None:
-        """Rebuild the person index from an existing (mirror) memory store."""
+        """Rebuild the person index from an existing (mirror) memory store. What a
+        protected record (E29) states is left out: it never links anyone."""
         strong = self.strong_key_subtypes()
+        hidden = {d for d, doc in store.documents.items() if is_protected(doc)}
         keys: dict[str, set[str]] = {}
         contacts: dict[str, dict[str, set[str]]] = {}
         for r in store.relations.values():
+            docs = {ev.doc_id for ev in r.evidence} - hidden
+            if not docs:
+                continue
             if r.type in self.holding and r.a.startswith("person:") \
                     and not r.b.startswith("person:"):
-                contacts.setdefault(r.a, {}).setdefault(r.b, set()).update(
-                    ev.doc_id for ev in r.evidence)
+                contacts.setdefault(r.a, {}).setdefault(r.b, set()).update(docs)
             if r.type in self.holding and r.a.startswith("person:") and r.b.startswith("id:"):
                 _, sub, value = r.b.split(":", 2)
                 if sub in strong:
@@ -200,19 +204,24 @@ class Resolver:
                 self.merged[e.id] = e.merged_into
             if e.type != "person" or e.status != "active":
                 continue
-            names = {store.mentions[m].text for m in store._mentions_of.get(e.id, ())}
+            mentions = [store.mentions[m] for m in store._mentions_of.get(e.id, ())]
+            names = {m.text for m in mentions if m.doc_id not in hidden}
+            attributes = [a for a in e.attributes if a.doc_id not in hidden]
+            if (mentions or e.attributes) and not names and not attributes \
+                    and e.id not in keys and e.id not in contacts:
+                continue  # known from protected records only
             attrs = {}
-            for a in e.attributes:
+            for a in attributes:
                 attrs.setdefault(a.name, a.value)
             # A person may hold the keys of several records (a merge): all count.
-            own = {"attr:%s:%s" % (PERSON_KEY_ATTR, fold(a.value)) for a in e.attributes
+            own = {"attr:%s:%s" % (PERSON_KEY_ATTR, fold(a.value)) for a in attributes
                    if a.name == PERSON_KEY_ATTR and a.value}
             held = contacts.get(e.id, {})
             self.remember_person(e.id, names, attrs, keys.get(e.id, set()) | own, held,
-                                 any(a.name == KEY_ONLY_ATTR for a in e.attributes),
+                                 any(a.name == KEY_ONLY_ATTR for a in attributes),
                                  contact_docs=held)
             p = self.people[e.id]
-            for a in e.attributes:
+            for a in attributes:
                 p["attr_docs"].setdefault((a.name, fold(a.value)), set()).add(a.doc_id)
 
     def _score(self, ent: LocalEntity, pid: str, keys=frozenset(), contacts=frozenset(),
@@ -323,10 +332,7 @@ class Resolver:
             # Review pairs go to the best-scoring earlier people, and to people that
             # are themselves waiting for review only when nobody else fits: one
             # same-name person mentioned in ten notes gives ten pairs, not 45.
-            if len(self.review) != self._pending_n:  # review may be refilled from outside
-                self._pending = {item["a"] for item in self.review}
-                self._pairs = {(item["a"], item["b"]) for item in self.review}
-                self._pending_n = len(self.review)
+            self._sync_pending()
             pending = self._pending
             candidates = [s for s in scored if s[0] >= review]
             settled = [s for s in candidates if s[2] not in pending]
@@ -345,6 +351,37 @@ class Resolver:
                     self._pending_n += 1
             self.remember_person(new_id, ent.names, attrs, keys, contacts, key_only, doc_id)
             return new_id
+
+    def _sync_pending(self) -> None:
+        if len(self.review) != self._pending_n:  # review may be refilled from outside
+            self._pending = {item["a"] for item in self.review}
+            self._pairs = {(item["a"], item["b"]) for item in self.review}
+            self._pending_n = len(self.review)
+
+    def suggest(self, doc_id: str, ent: LocalEntity, pid: str, keys=frozenset()) -> None:
+        """A person of a protected record (E29): never linked automatically and
+        never remembered, so nothing the record states (a registry number, a birth
+        date) can join two people others see. At most a review pair with the
+        best-fitting known person, shown only to whoever may read the record
+        (`basis`); merging it is a human decision of a protected member."""
+        _, review = self._thresholds("person")
+        with self.lock:
+            scored = sorted(((*self._score(ent, other, keys), other)
+                             for other in self._candidates(ent, keys) - {pid}), reverse=True)
+            candidates = [s for s in scored if s[0] >= review]
+            if not candidates:
+                return
+            self._sync_pending()
+            best = candidates[0][0]
+            for score, why, other in candidates:
+                if score == best and (pid, other) not in self._pairs \
+                        and (other, pid) not in self._pairs:
+                    self._pairs.add((pid, other))
+                    self.review.append({"a": pid, "b": other, "score": score, "reason": why,
+                                        "doc_id": doc_id, "names": sorted(ent.names),
+                                        "basis": [doc_id]})
+                    self._pending.add(pid)
+                    self._pending_n += 1
 
     def _basis(self, ent: LocalEntity, pid: str, contacts, why: str) -> list[str]:
         """The documents of `pid` that state what a key-only pair matched on: the

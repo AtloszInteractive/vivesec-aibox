@@ -459,6 +459,204 @@ class StructuredLeakageTest(SaltedTest):
                                    ["c1"]))
 
 
+FEFO = access("bv-orszagos", "bv-fefo")
+INFORMANTS = ("Rigó Lajos", "Fehér Gábor", "Hollós Péter")
+
+
+def entry_id(box, number, who=NATIONAL):
+    [entry] = box.q("/query/find", {"text": number, "types": ["event"]}, who)["entities"]
+    return entry["id"]
+
+
+@needs_samples
+class InformantProtectionTest(SaltedTest):
+    """E29: who gave a piece of intelligence is seen by the FEFO only."""
+
+    def setUp(self):
+        super().setUp()
+        self.box = Box().load_samples()
+
+    def test_only_the_fefo_sees_who_gave_the_information(self):
+        for name in INFORMANTS:
+            self.assertEqual([], self.box.find(name, NATIONAL), name)
+            self.assertEqual(1, len(self.box.find(name, FEFO)), name)
+        eid = entry_id(self.box, "2026/14/1")
+        open_ = self.box.q("/query/entity", {"id": eid}, NATIONAL)
+        self.assertEqual(["INVOLVED_IN"], [e["type"] for e in open_["edges"]])
+        quote = open_["edges"][0]["evidence"][0]["quote"]
+        self.assertIn("kábítószert", quote)
+        for hidden in ("Forrás", "FOGV", "fogvatartott", "NY-1005"):
+            self.assertNotIn(hidden, json.dumps(open_, ensure_ascii=False))
+        fefo = self.box.q("/query/entity", {"id": eid}, FEFO)
+        [provided] = [e for e in fefo["edges"] if e["type"] == "PROVIDED_INFO"]
+        self.assertEqual("fogvatartott", provided["raw_label"])
+        self.assertIn("Forrás neve: Bodó Ákos", provided["evidence"][0]["quote"])
+        # Two rows of one entry number are one entry with both subjects.
+        both = self.box.q("/query/entity", {"id": entry_id(self.box, "2026/14/3")}, NATIONAL)
+        self.assertEqual(2, len([e for e in both["edges"] if e["type"] == "INVOLVED_IN"]))
+
+    def test_membership_must_be_known_and_is_decided_by_the_profile_now(self):
+        self.assertEqual([], self.box.find("Rigó Lajos", dict(FEFO, membership_known=False)))
+        role = dict(NATIONAL, principals=["user:x", "role:fefo"])
+        self.assertEqual(1, len(self.box.find("Rigó Lajos", role)))
+        acl_off = service.handle_post(self.box.state, "/query/find", {
+            "text": "Rigó Lajos", "types": ["person"], "corpus_ids": ["c1"]})
+        self.assertEqual([], acl_off["entities"])
+        self.assertEqual(1, len(self.box.find("Sas Tibor", NATIONAL)))
+        prof = copy.deepcopy(self.box.state.profile)
+        prof["protected_principals"] = ["group:fefo-uj"]
+        self.box.state.profile = prof
+        self.assertEqual([], self.box.find("Rigó Lajos", FEFO))
+        self.assertEqual(1, len(self.box.find("Rigó Lajos", access("bv-orszagos", "fefo-uj"))))
+
+    def test_a_protected_registry_number_links_nobody_and_is_a_review_for_the_fefo(self):
+        [inmate] = self.box.find("Bodó Ákos", NATIONAL)
+        before = [answer(self.box.state, p, b, NATIONAL, ["c1"]) for p, b in (
+            ("/query/neighborhood", {"id": inmate["id"], "hops": 3}),
+            ("/query/find", {"text": "Bodó"}), ("/review/list", {}), ("/review/history", {}))]
+        self.assertEqual(2, len(self.box.find("Bodó Ákos", FEFO)))
+        pairs = [i for i in self.box.q("/review/list", {}, FEFO)["review"]
+                 if "Bodó Ákos" in (i["a_label"], i["b_label"])]
+        self.assertEqual(["same registry_number"], [i["reason"] for i in pairs])
+        self.assertEqual(inmate["id"], pairs[0]["b"])
+        self.box.q("/review/decide", {"a": pairs[0]["a"], "b": pairs[0]["b"],
+                                      "decision": "merge"}, FEFO)
+        after = [answer(self.box.state, p, b, NATIONAL, ["c1"]) for p, b in (
+            ("/query/neighborhood", {"id": inmate["id"], "hops": 3}),
+            ("/query/find", {"text": "Bodó"}), ("/review/list", {}), ("/review/history", {}))]
+        self.assertEqual(before, after)
+        [merged] = self.box.find("Bodó Ákos", FEFO)
+        edges = self.box.q("/query/entity", {"id": merged["id"]}, FEFO)["edges"]
+        self.assertEqual(2, len([e for e in edges if e["type"] == "PROVIDED_INFO"]))
+        # The next export keeps the FEFO's merge.
+        header, rows = samples.exports()["intel_log"]
+        self.box.load("intel_log", header, rows, as_of="2026-11-02")
+        self.assertEqual(1, len(self.box.find("Bodó Ákos", FEFO)))
+
+    def test_a_protected_relation_from_an_open_document_is_hidden_too(self):
+        from model import Document, Entity, Evidence, Mention, Relation
+        self.box.state.store.put_document(
+            Document("d1", "c1", FOLDER + "/jelentes.txt", "jelentés"),
+            [Entity("P1", "person", "", "Kiss Béla"),
+             Entity("E1", "event", "intel_report", "2026/1/1")],
+            [Mention("m1", "d1", "P1", "Kiss Béla"), Mention("m2", "d1", "E1", "2026/1/1")],
+            [Relation("r1", "PROVIDED_INFO", "P1", "E1",
+                      evidence=[Evidence("d1", "Kiss Béla információt adott")])])
+        self.assertEqual([], self.box.q("/query/entity", {"id": "P1"}, NATIONAL)["edges"])
+        self.assertEqual(1, len(self.box.q("/query/entity", {"id": "P1"}, FEFO)["edges"]))
+
+    def test_the_protected_part_follows_its_record(self):
+        header, rows = samples.exports()["intel_log"]
+        stats = self.box.load("intel_log", header, rows)["stats"]
+        self.assertEqual((len(rows), 0), (stats["unchanged"], stats["protected"]))
+        dele = header.index("Törölve")
+        rows = [r[:dele] + (["igen"] if r[0] == "N-0006" else [""]) for r in rows]
+        stats = self.box.load("intel_log", header, rows, as_of="2026-11-02")["stats"]
+        self.assertEqual(1, stats["removed"])
+        self.assertEqual([], self.box.find("Hollós Péter", FEFO))
+        # The informant left out of a later export: the entry stays, the informant goes.
+        first = header.index("Forrás neve")
+        rows = [r[:first] + ["", "", ""] + r[first + 3:] if r[0] == "N-0005" else r
+                for r in rows]
+        stats = self.box.load("intel_log", header, rows, as_of="2026-11-03")["stats"]
+        self.assertEqual(1, stats["updated"])
+        self.assertEqual([], self.box.find("Fehér Gábor", FEFO))
+        self.assertTrue(entry_id(self.box, "2026/14/4", FEFO))
+        # An older export brings back neither.
+        self.box.load("intel_log", *samples.exports()["intel_log"], as_of="2026-11-01")
+        self.assertEqual([], self.box.find("Hollós Péter", FEFO))
+        self.assertEqual([], self.box.find("Fehér Gábor", FEFO))
+        # The folder's rule reaches the protected part as well.
+        service.handle_post(self.box.state, "/graph/acl/update", {"corpus_id": "c1", "entries": [
+            {"path": FOLDER, "acl": {"restricted": True, "allow": ["group:mas"], "deny": [],
+                                     "classification": 0}}]})
+        self.assertEqual([], self.box.find("Rigó Lajos", FEFO))
+        self.assertEqual(1, len(self.box.find("Rigó Lajos", access("bv-fefo", "mas"))))
+
+
+@needs_samples
+class InformantLeakageTest(SaltedTest):
+    """Differential (1.3): a non-FEFO analyst gets byte for byte what a graph of
+    the same exports without any informant answers; the FEFO does not."""
+
+    # An informant's registry number is an open subject's, under a longer name: the
+    # protected record must not teach anyone that name (a later open record of it
+    # would then be paired with the subject).
+    LATER = [
+        ["N-0101", "2026/15/1", "2026-07-01", "01", "Lukács Ottó", "NY-2001", "EGY", "Hír.",
+         "Lukács Ottó Béla", "NY-2001", "FOGV", ""],
+        ["N-0102", "2026/15/2", "2026-07-02", "01", "Lukács Ottó Béla", "", "EGY", "Hír.",
+         "", "", "", ""],
+    ]
+
+    def build(self, informants):
+        box = Box()
+        exports = samples.exports()
+        for source, (header, rows) in exports.items():
+            if source == "intel_log" and not informants:
+                drop = {header.index(c) for c in samples.INFORMANT}
+                rows = [["" if k in drop else v for k, v in enumerate(r)] for r in rows]
+            box.load(source, header, rows)
+        header = exports["intel_log"][0]
+        for n, row in enumerate(self.LATER):
+            if not informants:
+                drop = {header.index(c) for c in samples.INFORMANT}
+                row = ["" if k in drop else v for k, v in enumerate(row)]
+            box.load("intel_log", header, [row], as_of="2026-11-0%d" % (n + 2))
+            if n == 0:
+                # The FEFO merges the informant into the subject; then a restart
+                # rebuilds the resolver from the store.
+                for item in box.q("/review/list", {}, FEFO)["review"]:
+                    if item["b_label"] == "Lukács Ottó":
+                        box.q("/review/decide", {"a": item["a"], "b": item["b"],
+                                                 "decision": "merge"}, FEFO)
+                worker = box.state.worker
+                worker.resolver.rebuild(worker._mirror())
+        return box
+
+    def requests(self, box):
+        ids = sorted(e.id for e in box.state.store.entities.values())
+        people = sorted(e.id for e in box.state.store.entities.values() if e.type == "person")
+        rels = ["CONTACT_OF", "INVOLVED_IN", "PROVIDED_INFO"]
+        out = [("/query/find", {"text": t}) for t in (
+            "Bodó", "Rigó", "Fehér", "Hollós", "2026/14", "Sas", "NY-1005", "Lukács", "NY-2001")]
+        for eid in ids:
+            out += [("/query/entity", {"id": eid}), ("/query/timeline", {"id": eid}),
+                    ("/query/neighborhood", {"id": eid, "hops": 3}),
+                    ("/query/copresence", {"id": eid}),
+                    ("/query/investigate", {"seeds": [eid], "levels": 3, "relations": rels})]
+        for a in people:
+            for b in people:
+                if a < b:
+                    out.append(("/query/path", {"a": a, "b": b}))
+        for group in ("focus", "other", "month", "relation", "other_kind"):
+            out += [("/query/aggregate", {"relations": [r], "group_by": group}) for r in rels]
+        out += [("/query/shared", {}), ("/query/ranking", {"types": ["person", "event"]}),
+                ("/query/communities", {}), ("/query/mentioned", {"text": "Bodó Ákos Rigó Lajos"}),
+                ("/review/list", {}), ("/review/history", {})]
+        return out
+
+    def test_a_non_member_sees_exactly_the_graph_without_informants(self):
+        full, oracle = self.build(True), self.build(False)
+        requests = self.requests(full)
+        for who in (NATIONAL, INST1, dict(FEFO, membership_known=False)):
+            leaks = []
+            for path, body in requests:
+                got = answer(full.state, path, body, who, ["c1"])
+                want = answer(oracle.state, path, body, who, ["c1"])
+                if got != want:
+                    leaks.append(path)
+                    if len(leaks) < 3:
+                        print("\nLEAK %s %s\n  got:  %s" % (path, body,
+                                                            first_difference(got, want)))
+            self.assertEqual([], leaks, who)
+        # Negative control: the FEFO sees the informants there.
+        for path, body in (("/query/find", {"text": "Rigó"}),
+                           ("/query/aggregate", {"relations": ["PROVIDED_INFO"]})):
+            self.assertNotEqual(answer(full.state, path, body, FEFO, ["c1"]),
+                                answer(oracle.state, path, body, FEFO, ["c1"]))
+
+
 class PersonKeyTest(unittest.TestCase):
     def test_the_key_folds_spelling_and_needs_all_four_fields(self):
         import person_key as pk
@@ -505,6 +703,33 @@ class ProfileValidationTest(unittest.TestCase):
         for change in bad:
             with self.assertRaises(domain_profile.ProfileError, msg=change):
                 domain_profile.validate(self.source(**change))
+
+    def test_a_protected_part_must_really_hide_its_columns(self):
+        def intel(protected=None, **top):
+            prof = copy.deepcopy(domain_profile.load("bv"))
+            src = next(s for s in prof["structured_sources"] if s["id"] == "intel_log")
+            if protected is not None:
+                src["protected"] = protected
+            prof.update(top)
+            return prof
+        domain_profile.validate(intel())
+        bad = [
+            intel(protected_principals=None),
+            intel(protected_principals=["user:fefo"]),
+            # the open INVOLVED_IN reads Dátum
+            intel({"entities": ["informant"], "columns": ["Dátum"]}),
+            # PROVIDED_INFO would be open
+            intel({"columns": ["Megjegyzés"]}),
+            intel({"entities": ["entry", "institution", "subject", "informant"]}),
+            intel({"entities": ["nobody"]}),
+        ]
+        for prof in bad:
+            if prof.get("protected_principals") is None:
+                prof.pop("protected_principals", None)
+            with self.assertRaises(domain_profile.ProfileError):
+                domain_profile.validate(prof)
+        seen = domain_profile.for_extraction(domain_profile.load("bv"))
+        self.assertNotIn("PROVIDED_INFO", [r["id"] for r in seen["relation_types"]])
 
     def test_structured_only_items_stay_out_of_extraction(self):
         prof = domain_profile.load("bv")

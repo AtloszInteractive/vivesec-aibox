@@ -11,6 +11,7 @@ import copy
 import json
 import os
 import re
+import unicodedata
 
 from model import CORE_TYPES
 
@@ -112,13 +113,21 @@ def relation_line(r: dict) -> str:
 def validate(raw: dict) -> dict:
     _keys(raw, ("id", "version", "name", "description", "entity_subtypes", "identifier_patterns",
                 "relation_types", "resolution", "cooccurrence", "table_mappings",
-                "structured_sources"), "profile")
+                "structured_sources", "protected_principals"), "profile")
     if not isinstance(raw.get("id"), str) or not _ID.match(raw["id"]):
         raise ProfileError("profile.id must be a lowercase identifier")
     if not isinstance(raw.get("version"), int) or raw["version"] < 1:
         raise ProfileError("profile.version must be a positive integer")
     out = {"id": raw["id"], "version": raw["version"], "name": _label(raw.get("name"), "profile"),
            "description": str(raw.get("description", ""))}
+    # Who sees protected data (E29: an informant's identity, only the FEFO): group
+    # or role principals, matched only against a membership the directory answered
+    # without error. A protected relation or record part needs them.
+    if raw.get("protected_principals") is not None:
+        principals = _principals(raw["protected_principals"], "protected_principals")
+        if not principals or any(not p.startswith(("group:", "role:")) for p in principals):
+            raise ProfileError("protected_principals must list group: or role: principals")
+        out["protected_principals"] = sorted(set(principals))
 
     subtypes = {}
     for i, s in enumerate(raw.get("entity_subtypes", [])):
@@ -176,7 +185,7 @@ def validate(raw: dict) -> dict:
     for i, r in enumerate(raw.get("relation_types", [])):
         where = "relation_types[%d]" % i
         _keys(r, ("id", "label", "from", "to", "symmetric", "presence", "holding", "synonyms",
-                  "from_subtypes", "to_subtypes", "structured_only"), where)
+                  "from_subtypes", "to_subtypes", "structured_only", "protected"), where)
         # A saved profile echoes the built-ins back; accept them only unchanged.
         if r.get("id") in BUILTIN_RELATIONS and r == BUILTIN_RELATIONS[r["id"]] \
                 and i == list(BUILTIN_RELATIONS).index(r["id"]):
@@ -194,6 +203,12 @@ def validate(raw: dict) -> dict:
                               "holding": bool(r.get("holding", False)), "synonyms": synonyms}
         if _flag(r, "structured_only", where):
             relations[r["id"]]["structured_only"] = True
+        if _flag(r, "protected", where):
+            # Shown only to a member of protected_principals (graph view, planner).
+            if not out.get("protected_principals"):
+                raise ProfileError("%s.protected needs the profile's protected_principals"
+                                   % where)
+            relations[r["id"]]["protected"] = True
         for side in ("from", "to"):
             # Which subtype does what: a visit goes from the visitor to the inmate.
             key = side + "_subtypes"
@@ -312,7 +327,8 @@ def _structured_sources(raw, profile: dict) -> list[dict]:
     for i, s in enumerate(raw):
         where = "structured_sources[%d]" % i
         _keys(s, ("id", "label", "title", "record_id", "mode", "deleted", "sheet", "codelists",
-                  "entities", "relations", "acl", "full_max_delete"), where)
+                  "entities", "relations", "acl", "full_max_delete", "text_columns",
+                  "protected"), where)
         if not isinstance(s.get("id"), str) or not _ID.match(s["id"]) or s["id"] in seen:
             raise ProfileError("%s.id must be a unique lowercase identifier" % where)
         seen.add(s["id"])
@@ -372,8 +388,10 @@ def _structured_sources(raw, profile: dict) -> list[dict]:
                       "key_only", "within"), at)
             if not isinstance(e.get("ref"), str) or not _ID.match(e["ref"]) or e["ref"] in ents:
                 raise ProfileError("%s.ref must be a unique lowercase identifier" % at)
-            if e.get("type") not in CORE_TYPES or e["type"] == "event":
-                raise ProfileError("%s.type must be an entity type other than event" % at)
+            # An event (an intelligence log entry) is named by its number: rows of
+            # one source that give the same number in one folder are one event.
+            if e.get("type") not in CORE_TYPES:
+                raise ProfileError("%s.type must be one of %s" % (at, CORE_TYPES))
             sub = e.get("subtype") or ""
             if sub and subtypes.get(sub, {}).get("type") != e["type"]:
                 raise ProfileError("%s.subtype must be a %s subtype of the profile"
@@ -468,20 +486,114 @@ def _structured_sources(raw, profile: dict) -> list[dict]:
                           "classification": level}
             if not src["acl"]["column"] and (src["acl"]["groups"] or src["acl"]["pattern"]):
                 raise ProfileError("%s: groups and pattern need the column they read" % at)
+        texts = s.get("text_columns") or []
+        if not isinstance(texts, list) or len(texts) > 20:
+            raise ProfileError("%s.text_columns must list at most 20 columns" % where)
+        # Columns kept in the record's text without making an entity (the
+        # information itself, its free text): readable evidence, no graph node.
+        src["text_columns"] = [_column(c, where + ".text_columns") for c in texts]
+        if s.get("protected") is not None:
+            src["protected"] = _protected_part(s["protected"], src, profile, where)
+        elif any(rels[r["type"]].get("protected") for r in src_rels):
+            raise ProfileError("%s: a protected relation needs the source's protected part"
+                               % where)
         out.append(src)
     return out
 
 
+def _fold(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", (text or "").casefold())
+                   if unicodedata.category(c) != "Mn").strip()
+
+
+def _protected_part(raw, src: dict, profile: dict, where: str) -> dict:
+    """The part of each record only protected_principals see (E29): the entities
+    named here, every relation touching one, and the extra `columns`, stored as
+    a separate record document whose rule admits only those principals. The
+    rest of the record must not read any of its columns, so the open document
+    cannot repeat what the protected one hides."""
+    at = where + ".protected"
+    _keys(raw, ("entities", "columns", "title"), at)
+    if not profile.get("protected_principals"):
+        raise ProfileError("%s needs the profile's protected_principals" % at)
+    ents = {e["ref"]: e for e in src["entities"]}
+    refs = raw.get("entities") or []
+    if not isinstance(refs, list) or len(set(map(str, refs))) != len(refs) \
+            or any(r not in ents for r in refs):
+        raise ProfileError("%s.entities must list entity refs of the source" % at)
+    columns = raw.get("columns") or []
+    if not isinstance(columns, list) or len(columns) > 20:
+        raise ProfileError("%s.columns must list at most 20 columns" % at)
+    columns = [_column(c, at + ".columns") for c in columns]
+    if not refs and not columns:
+        raise ProfileError("%s must name protected entities or columns" % at)
+    title = raw.get("title", "")
+    if not isinstance(title, str) or len(title) > 120:
+        raise ProfileError("%s.title must be a short text" % at)
+    hidden_refs = set(refs)
+    if len(hidden_refs) == len(ents):
+        raise ProfileError("%s: the open part of the record needs an entity" % at)
+    for e in src["entities"]:
+        # A place's id carries the place it lies within: never a protected one.
+        if e["ref"] not in hidden_refs and e.get("within") in hidden_refs:
+            raise ProfileError("%s: %r lies within the protected %r" % (at, e["ref"], e["within"]))
+    specs = {r["id"]: r for r in profile["relation_types"]}
+    hidden = {_fold(c) for c in columns}
+    open_cols = list(src["record_id"]) + src["text_columns"]
+    if src.get("acl") and src["acl"]["column"]:
+        open_cols.append(src["acl"]["column"])
+    if src.get("deleted"):
+        open_cols.append(src["deleted"]["column"])
+    for e in src["entities"]:
+        cols = [c for c in [e["name"], *e["attributes"].values()] if c]
+        if e["ref"] in hidden_refs:
+            hidden |= {_fold(c) for c in cols}
+        else:
+            open_cols += cols
+    for r in src["relations"]:
+        inside = r["from"] in hidden_refs or r["to"] in hidden_refs
+        if specs[r["type"]].get("protected") and not inside:
+            raise ProfileError("%s: the protected relation %s must touch a protected entity"
+                               % (at, r["type"]))
+        if inside:
+            hidden |= {_fold(c) for c in r["label"]}
+        else:
+            open_cols += [c for c in [r["start"], r["end"], *r["label"]] if c]
+    clash = sorted({c for c in open_cols if _fold(c) in hidden})
+    if clash:
+        raise ProfileError("%s: column %r is protected, but the open part of the record reads "
+                           "it too" % (at, clash[0]))
+    return {"entities": list(refs), "columns": columns,
+            "title": title.strip() or "%s (protected)" % src["title"]}
+
+
 def for_extraction(profile: dict) -> dict:
     """The profile as the extraction model and the table mapper see it: without
-    the subtypes and relations only structured imports produce."""
-    if not any(x.get("structured_only") for x in
+    the subtypes and relations only structured imports produce, and without the
+    protected relations (a model reading an open document must not state one)."""
+    if not any(x.get("structured_only") or x.get("protected") for x in
                profile["entity_subtypes"] + profile["relation_types"]):
         return profile
     out = dict(profile)
     out["entity_subtypes"] = [s for s in profile["entity_subtypes"] if not s.get("structured_only")]
-    out["relation_types"] = [r for r in profile["relation_types"] if not r.get("structured_only")]
+    out["relation_types"] = [r for r in profile["relation_types"]
+                             if not r.get("structured_only") and not r.get("protected")]
     return out
+
+
+def protected_relations(profile: dict | None) -> frozenset:
+    return frozenset(r["id"] for r in (profile or {}).get("relation_types") or []
+                     if r.get("protected"))
+
+
+def protected_member(profile: dict | None, access: dict | None) -> bool:
+    """Is the caller one of the profile's protected_principals? Only by a group or
+    role the directory answered without error (membership_known); no access
+    filter (ACL off), no principals or an unknown membership: no."""
+    principals = set((profile or {}).get("protected_principals") or ())
+    if not principals or not access or access.get("membership_known") is not True:
+        return False
+    return bool(principals & {str(p).casefold() for p in access.get("principals") or ()})
 
 
 def load(path_or_id: str) -> dict:

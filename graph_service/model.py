@@ -36,6 +36,16 @@ KEY_ONLY_ATTR = "key_only"
 HIDDEN_ATTRS = (SUBTYPE_ATTR, PERSON_KEY_ATTR, KEY_ONLY_ATTR)
 # Document.kind of one structured record (one row of a periodic export).
 RECORD_KIND = "record"
+# The protected part of a record (the informant of an intelligence log entry,
+# E29) is its own document below this directory of the record's source; its
+# record_acl carries {"protected": true}: only a member of the profile's
+# protected_principals sees it (visibility.Scope).
+PROTECTED_DIR = "~protected"
+
+
+def is_protected(doc) -> bool:
+    rule = getattr(doc, "record_acl", None)
+    return bool(rule and rule.get("protected"))
 
 ENTITY_STATUSES = ("active", "merged", "rejected")
 
