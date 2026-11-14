@@ -53,6 +53,7 @@ import csv
 import hashlib
 import hmac
 import io
+import json
 import os
 import re
 
@@ -164,6 +165,7 @@ class Record:
         self.entities: dict[str, dict] = {}  # ref -> {type, subtype, name, attrs, id?, ...}
         self.relations: list[dict] = []
         self.acl_value = ""
+        self.title_value = ""
 
     def has_protected(self) -> bool:
         return any(item.get("protected") for item in self.entities.values()) \
@@ -288,6 +290,7 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
     del_values = {fold(v) for v in deleted["values"]} if deleted else set()
     acl = source.get("acl") or {}
     acl_col = need(acl.get("column"), True) if acl.get("column") else None
+    title_col = need(source.get("title_column"), False)
     ents = []
     for e in source["entities"]:
         # A person must be there; a phone or address column may be missing (reported).
@@ -342,6 +345,7 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
         rec = Record(rid, n)
         rec.deleted = del_col is not None and fold(cell(del_col)) in del_values
         rec.acl_value = cell(acl_col)
+        rec.title_value = cell(title_col)[:80]
         # The record's text: every used column but the record id and the delete mark,
         # a code with its meaning; offsets of each value for the mentions.
         decoded: dict[int, str] = {}
@@ -521,7 +525,8 @@ def build_payloads(profile: dict, source: dict, rec: Record, folder: str, corpus
                               for r in rec.relations if ref in (r["from"], r["to"])
                               and (r["to"] if r["from"] == ref else r["from"]) in ids})
             ids[ref] = _protected_person(resolver, pdoc_id, ref, item, salt, anchors)
-    content = _payload(profile, source["title"], rec, doc_id, path, corpus_id, base_acl, ids,
+    content = _payload(profile, record_title(source, rec), rec, doc_id, path, corpus_id,
+                       base_acl, ids,
                        [ref for ref in order if not rec.entities[ref]["protected"]],
                        [r for r in rec.relations if not r["protected"]], rec.text, rec.offsets)
     if not rec.has_protected():
@@ -666,4 +671,71 @@ def parse_record_payload(payload: dict, profile: dict, source: dict, as_of: str,
     doc.content_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
     doc.record_acl = protected_acl(profile, source) if protected \
         else record_acl(source, rec.acl_value)
+    doc.text = rag_text(source, rec, protected)
     return doc, entities, mentions, relations
+
+
+def record_title(source: dict, rec: Record) -> str:
+    """The open record's title: the source's, with its `title_column` value (the
+    log entry's or ODIN number) when the profile names one."""
+    return ("%s %s" % (source["title"], rec.title_value)) if rec.title_value \
+        else source["title"]
+
+
+def protected_title(source: dict) -> str:
+    return (source.get("protected") or {}).get("title") or source["title"]
+
+
+def rag_text(source: dict, rec: Record, protected: bool = False) -> str:
+    """What of a record goes into the RAG (E29): the open text of a source the
+    profile marks `rag`; never anything of a protected part."""
+    return rec.text if source.get("rag") and not protected else ""
+
+
+# -- the RAG copy of the open records (E29) -------------------------------------------
+# The adapter keeps the RAG in line with the graph per folder (adapter/record_rag.py):
+# it lists the records here and there by path and tag, fetches the changed ones and
+# drops what the graph no longer has. A record's RAG path is its graph path with a
+# readable last segment (the title and the start of the hash): the citation shows it.
+
+def rag_path(doc) -> str:
+    head, tail = doc.source_path.rsplit("/", 1)
+    label = re.sub(r"[\x00-\x1f/\\]+", "-", doc.title or "").strip(" .-")[:120] or "record"
+    return "%s/%s (%s)" % (head, label, tail[:12])
+
+
+def rag_documents(store, profile: dict, corpus_id: str, folder: str) -> list:
+    """The open record documents of `folder` whose source goes into the RAG,
+    sorted by their RAG path; protected parts and removal marks never."""
+    sources = {s["id"] for s in profile.get("structured_sources") or [] if s.get("rag")}
+    if not sources:
+        return []
+    root = records_root(folder)
+    with store._lock:
+        docs = [store.documents.get(d) for d in store.doc_ids_by_path(corpus_id, root, True, True)]
+    out = []
+    for doc in docs:
+        if doc is None or doc.kind != RECORD_KIND or not doc.text \
+                or doc.profile.endswith(REMOVED_SUFFIX) or is_protected_path(doc.source_path) \
+                or (doc.record_acl or {}).get("protected"):
+            continue
+        rest = doc.source_path[len(root) + 1:].split("/")
+        if len(rest) == 2 and rest[0] in sources:
+            out.append(doc)
+    return sorted(out, key=rag_path)
+
+
+def rag_item(doc, with_text: bool = False) -> dict:
+    """{path, tag[, title, text, require, require_classification]} of one record:
+    `require` is its own rule (the RAG's AND gate), None without one."""
+    rule = doc.record_acl
+    require = sorted(rule.get("allow") or []) if rule is not None else None
+    level = rule.get("classification", 0) if rule is not None else None
+    path = rag_path(doc)
+    tag = hashlib.sha256(json.dumps([path, doc.title, doc.text, require, level],
+                                    ensure_ascii=False).encode("utf-8")).hexdigest()[:32]
+    out = {"path": path, "tag": tag}
+    if with_text:
+        out.update(title=doc.title, text=doc.text, require=require,
+                   require_classification=level)
+    return out

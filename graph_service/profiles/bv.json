@@ -1,6 +1,6 @@
 {
   "id": "bv",
-  "version": 6,
+  "version": 7,
   "name": {"en": "Corrections and law enforcement", "hu": "Büntetés-végrehajtás és rendészet", "da": "Kriminalforsorg og retshåndhævelse", "de": "Justizvollzug und Strafverfolgung"},
   "description": "People, institutions, cells, visits, calls, transfers and incidents. Hungarian identifier formats. Shows connections; it never scores or predicts individuals.",
   "protected_principals": ["group:bv-fefo", "role:fefo"],
@@ -22,7 +22,8 @@
     {"id": "email", "type": "identifier", "label": {"en": "E-mail address", "hu": "E-mail-cím", "da": "E-mailadresse", "de": "E-Mail-Adresse"}},
     {"id": "incident", "type": "event", "label": {"en": "Incident", "hu": "Rendkívüli esemény", "da": "Hændelse", "de": "Vorfall"}},
     {"id": "meeting", "type": "event", "label": {"en": "Meeting", "hu": "Találkozó", "da": "Møde", "de": "Treffen"}},
-    {"id": "intel_report", "type": "event", "label": {"en": "Intelligence log entry", "hu": "Felderítési naplóbejegyzés", "da": "Efterretningslogpost", "de": "Aufklärungsprotokolleintrag"}, "structured_only": true}
+    {"id": "intel_report", "type": "event", "label": {"en": "Intelligence log entry", "hu": "Felderítési naplóbejegyzés", "da": "Efterretningslogpost", "de": "Aufklärungsprotokolleintrag"}, "structured_only": true},
+    {"id": "odin_entry", "type": "event", "label": {"en": "ODIN entry", "hu": "ODIN-bejegyzés", "da": "ODIN-post", "de": "ODIN-Eintrag"}, "structured_only": true}
   ],
   "identifier_patterns": [
     {"id": "phone_hu", "subtype": "phone", "label": {"en": "Hungarian phone number", "hu": "Magyar telefonszám", "da": "Ungarsk telefonnummer", "de": "Ungarische Telefonnummer"}, "regex": "(?<![\\d+])(?:\\+36|06)[ /-]?(?:1|[2-9]\\d)[ /-]?\\d{3}[ /-]?\\d{3,4}(?!\\d)", "normalize": "phone_hu"},
@@ -115,8 +116,24 @@
        {"type": "INVOLVED_IN", "from": "subject", "to": "entry", "start": "Dátum", "label": "Információ jellege", "label_codelist": "jelleg"},
        {"type": "PROVIDED_INFO", "from": "informant", "to": "entry", "start": "Dátum", "label": "Forrás típusa", "label_codelist": "forras"}
      ],
-     "text_columns": ["Információ"],
+     "text_columns": ["Információ"], "rag": true, "title_column": "Naplószám",
      "protected": {"entities": ["informant"], "title": "Felderítési napló – forrás (védett)"},
+     "acl": {"column": "Intézet kód", "pattern": "group:bv-intezet-{value}", "always": ["group:bv-orszagos"]}},
+    {"id": "odin", "label": {"en": "ODIN (incident reports)", "hu": "ODIN (eseményjelentések)", "da": "ODIN (hændelsesrapporter)", "de": "ODIN (Ereignismeldungen)"}, "title": "ODIN",
+     "record_id": "Rekordazonosító", "mode": "delta", "deleted": {"column": "Törölve", "values": ["igen", "i", "1", "true", "x"]},
+     "codelists": {
+       "intezet": {"01": "Kőhegyi Országos Büntetés-végrehajtási Intézet", "02": "Nyírvölgyi Fegyház és Börtön", "03": "Szőlőhegyi Büntetés-végrehajtási Intézet"},
+       "kategoria": {"RE": "rendkívüli esemény", "SZOK": "szökés, szökési kísérlet", "ONS": "önsértés", "TAM": "bántalmazás, tettlegesség", "TILT": "tiltott tárgy", "KAB": "kábítószer", "EGU": "egészségügyi esemény", "EGY": "egyéb"}},
+     "entities": [
+       {"ref": "entry", "type": "event", "subtype": "odin_entry", "name": "ODIN-szám"},
+       {"ref": "odin_number", "type": "identifier", "subtype": "case_number", "name": "ODIN-szám"},
+       {"ref": "institution", "type": "place", "subtype": "institution", "name": "Intézet kód", "codelist": "intezet"},
+       {"ref": "subject", "type": "person", "name": "Érintett neve", "attributes": {"registry_number": "Érintett nyilvántartási száma"}}
+     ],
+     "relations": [
+       {"type": "INVOLVED_IN", "from": "subject", "to": "entry", "start": "Dátum", "label": "Kategória", "label_codelist": "kategoria"}
+     ],
+     "text_columns": ["Információ"], "rag": true, "title_column": "ODIN-szám",
      "acl": {"column": "Intézet kód", "pattern": "group:bv-intezet-{value}", "always": ["group:bv-orszagos"]}}
   ]
 }

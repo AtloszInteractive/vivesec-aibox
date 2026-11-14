@@ -328,7 +328,7 @@ def _structured_sources(raw, profile: dict) -> list[dict]:
         where = "structured_sources[%d]" % i
         _keys(s, ("id", "label", "title", "record_id", "mode", "deleted", "sheet", "codelists",
                   "entities", "relations", "acl", "full_max_delete", "text_columns",
-                  "protected"), where)
+                  "protected", "rag", "title_column"), where)
         if not isinstance(s.get("id"), str) or not _ID.match(s["id"]) or s["id"] in seen:
             raise ProfileError("%s.id must be a unique lowercase identifier" % where)
         seen.add(s["id"])
@@ -497,6 +497,18 @@ def _structured_sources(raw, profile: dict) -> list[dict]:
         elif any(rels[r["type"]].get("protected") for r in src_rels):
             raise ProfileError("%s: a protected relation needs the source's protected part"
                                % where)
+        # E29: the record's open text goes into the RAG as well (the free text
+        # of a log or ODIN entry, citable); `title_column` names it there.
+        src["rag"] = _flag(s, "rag", where)
+        if s.get("title_column") is not None:
+            column = _column(s["title_column"], where + ".title_column")
+            hidden = set((src.get("protected") or {}).get("entities") or [])
+            shown = set(src["text_columns"]) | {e["name"] for e in src["entities"]
+                                                if e["name"] and e["ref"] not in hidden}
+            if _fold(column) not in {_fold(c) for c in shown}:
+                raise ProfileError("%s.title_column must be a text column or the name column "
+                                   "of an open entity" % where)
+            src["title_column"] = column
         out.append(src)
     return out
 

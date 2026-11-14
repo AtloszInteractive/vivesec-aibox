@@ -440,9 +440,11 @@ class IngestWorker:
             if gone(old) or gone(new):
                 return gone(old) and gone(new)
             return old.content_sha256 == new.content_sha256 and old.acl == new.acl \
-                and old.record_acl == new.record_acl
+                and old.record_acl == new.record_acl and old.title == new.title \
+                and old.text == new.text
 
         protected_rule = structured_import.protected_acl(profile, source)
+        twin_title = structured_import.protected_title(source)
         for rid, rec in plan.records.items():
             if rec.deleted:
                 continue
@@ -457,13 +459,15 @@ class IngestWorker:
             if own_acl is not None and not own_acl["allow"]:
                 stats["acl_nobody"] += 1
 
-            def current(doc, text, rule) -> bool:
+            def current(doc, text, rule, title, rag) -> bool:
                 return not gone(doc) and doc.content_sha256 == hashlib.sha256(
                     text.encode("utf-8")).hexdigest() and doc.acl == parse_doc_acl(acl) \
-                    and doc.record_acl == rule and structured_import.as_of_of(doc.profile) >= as_of
-            twin_current = current(twin, rec.ptext, protected_rule) if rec.has_protected() \
-                else gone(twin)
-            if current(old, rec.text, own_acl) and twin_current:
+                    and doc.record_acl == rule and structured_import.as_of_of(doc.profile) >= as_of \
+                    and doc.title == title and doc.text == rag
+            twin_current = current(twin, rec.ptext, protected_rule, twin_title, "") \
+                if rec.has_protected() else gone(twin)
+            if current(old, rec.text, own_acl, structured_import.record_title(source, rec),
+                       structured_import.rag_text(source, rec)) and twin_current:
                 stats["unchanged"] += 1
                 continue
             payload, protected = structured_import.build_payloads(

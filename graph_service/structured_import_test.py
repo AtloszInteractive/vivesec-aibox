@@ -575,6 +575,79 @@ class InformantProtectionTest(SaltedTest):
 
 
 @needs_samples
+class RecordRagTest(SaltedTest):
+    """E29: the open text of the log and ODIN entries is listed for the RAG with
+    the record's own rule; a protected part or a source without `rag` never."""
+
+    def setUp(self):
+        super().setUp()
+        self.box = Box().load_samples()
+
+    def rag(self, path, **body):
+        return service.handle_post(self.box.state, path,
+                                   dict({"corpus_id": "c1", "folder": FOLDER}, **body))
+
+    def listed(self, **body):
+        return {d["path"]: d["tag"] for d in self.rag("/import/rag/list", **body)["documents"]}
+
+    def test_open_records_with_their_own_rule_and_never_the_informant(self):
+        listed = self.listed()
+        self.assertEqual(len(samples.INTEL_ROWS) + len(samples.ODIN_ROWS), len(listed))
+        got = self.rag("/import/rag/get", paths=sorted(listed))["documents"]
+        self.assertEqual(listed, {d["path"]: d["tag"] for d in got})
+        blob = json.dumps(got, ensure_ascii=False)
+        for hidden in INFORMANTS + ("Bodó Ákos", "Forrás", "~protected", "N-0001", "O-0001"):
+            self.assertNotIn(hidden, blob)
+        by_title = {}
+        for d in got:
+            by_title.setdefault(d["title"], []).append(d)
+        [first] = by_title["Felderítési napló 2026/14/1"]
+        self.assertIn("/~records/intel_log/Felderítési napló 2026-14-1 (", first["path"])
+        self.assertIn("kábítószert", first["text"])
+        self.assertIn("Sas Tibor", first["text"])
+        self.assertEqual((["group:bv-intezet-01", "group:bv-orszagos"], 0),
+                         (first["require"], first["require_classification"]))
+        both = by_title["ODIN R-2026/32"]
+        self.assertEqual(2, len(both))
+        self.assertEqual({"group:bv-intezet-02"}, {d["require"][0] for d in both})
+        self.assertIn("Kategória: SZOK (szökés, szökési kísérlet)", both[0]["text"])
+        page = self.rag("/import/rag/list", limit=4)
+        self.assertEqual(4, len(page["documents"]))
+        rest = self.listed(after=page["next"])
+        self.assertEqual(listed, dict(self.listed(limit=4), **rest))
+
+    def test_tags_follow_the_exports_and_the_profile(self):
+        before = self.listed()
+        header, rows = samples.exports()["intel_log"]
+        self.box.load("intel_log", header, rows)
+        self.assertEqual(before, self.listed())
+        info, dele = header.index("Információ"), header.index("Törölve")
+        changed = [r[:info] + ["Új információ."] + r[info + 1:] if r[0] == "N-0001" else r
+                   for r in rows]
+        changed = [r[:dele] + (["igen"] if r[0] == "N-0006" else [""]) for r in changed]
+        self.box.load("intel_log", header, changed, as_of="2026-11-02")
+        after = self.listed()
+        self.assertEqual(len(before) - 1, len(after))
+        self.assertEqual(1, len([p for p, t in after.items() if before.get(p) != t]))
+        prof = copy.deepcopy(self.box.state.profile)
+        for s in prof["structured_sources"]:
+            if s["id"] == "intel_log":
+                s["rag"] = False
+        self.box.state.profile = prof
+        self.assertTrue(all("/~records/odin/" in p for p in self.listed()))
+        self.assertEqual(len(samples.ODIN_ROWS), len(self.listed()))
+
+    def test_odin_entries_by_institution_and_by_their_number(self):
+        eid = entry_id(self.box, "R-2026/32")
+        out = self.box.q("/query/entity", {"id": eid}, NATIONAL)
+        self.assertEqual(2, len([e for e in out["edges"] if e["type"] == "INVOLVED_IN"]))
+        self.assertEqual([], self.box.q("/query/find", {"text": "R-2026/32"}, INST1)["entities"])
+        found = self.box.q("/query/find", {"text": "R-2026/32", "types": ["identifier"]},
+                           NATIONAL)["entities"]
+        self.assertEqual(["id:case_number:R-2026/32"], [e["id"] for e in found])
+
+
+@needs_samples
 class InformantLeakageTest(SaltedTest):
     """Differential (1.3): a non-FEFO analyst gets byte for byte what a graph of
     the same exports without any informant answers; the FEFO does not."""

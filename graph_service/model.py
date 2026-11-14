@@ -69,6 +69,10 @@ class Document:
     # ADDITION to `acl` (the rule of the folder it was imported into): a record
     # is visible only to a caller both admit.
     record_acl: dict | None = None
+    # A structured record's open text when its source goes into the RAG as well
+    # (E29: the free text of an intelligence log or ODIN entry); never of a
+    # protected part. The adapter copies it to the RAG (/import/rag/*).
+    text: str = ""
 
 
 @dataclass

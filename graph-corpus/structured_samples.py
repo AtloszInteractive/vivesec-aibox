@@ -21,7 +21,10 @@ The case it tells (the tests and the box check rely on it):
     Varga Péter. Their informants -- invented like everyone -- are seen only by
     the FEFO: Bodó Ákos (an inmate of the FŐNIX export, by his registry number:
     a review pair for the FEFO, never a link), twice; Rigó Lajos, a contact;
-    Dr. Fehér Gábor of a partner agency; Hollós Péter of the staff.
+    Dr. Fehér Gábor of a partner agency; Hollós Péter of the staff;
+  * ODIN (E29, assumed columns): three incident entries, R-2026/32 on Sas Gábor
+    and Illés Dénes in two rows; their free text, like the log's, goes into the
+    RAG for whom the folder and the entry's institution admit.
 
   python graph-corpus/structured_samples.py <out dir> [--xlsx]
 """
@@ -48,6 +51,11 @@ INTEL = ["Rekordazonosító", "Naplószám", "Dátum", "Intézet kód", "Érinte
          "Forrás nyilvántartási száma", "Forrás típusa", "Törölve"]
 # The informant columns: only the protected part of a log record shows them.
 INFORMANT = ("Forrás neve", "Forrás nyilvántartási száma", "Forrás típusa")
+# ODIN (E29): our assumption until the BV sends a sample -- the ODIN number
+# (R-2020/10 form), date, institution, category code, subject with registry
+# number, the information as free text.
+ODIN = ["Rekordazonosító", "ODIN-szám", "Dátum", "Intézet kód", "Kategória", "Érintett neve",
+        "Érintett nyilvántartási száma", "Információ", "Törölve"]
 
 INMATES = [
     ("F-0001", "NY-1001", "Sas Tibor", "Szeged", "1988-05-12", "Kerekes Ilona", "01"),
@@ -107,6 +115,18 @@ INTEL_ROWS = [
      "Zárkatársát fenyegeti.", "Hollós Péter", "", "ALL"),
 ]
 
+# ODIN (E29, assumed columns): one row per subject of an entry, like the log.
+ODIN_ROWS = [
+    ("O-0001", "R-2026/31", "2026-03-05", "01", "TILT", "Sas Tibor", "NY-1001",
+     "A zárkaellenőrzés során a matrac alá rejtett mobiltelefont találtak."),
+    ("O-0002", "R-2026/32", "2026-04-06", "02", "SZOK", "Sas Gábor", "NY-1002",
+     "A sétaudvar kerítésénél vágószerszámot találtak, szökési előkészület gyanúja."),
+    ("O-0003", "R-2026/32", "2026-04-06", "02", "SZOK", "Illés Dénes", "NY-1004",
+     "A sétaudvar kerítésénél vágószerszámot találtak, szökési előkészület gyanúja."),
+    ("O-0004", "R-2026/40", "2026-06-02", "01", "TAM", "Major Ede", "NY-1003",
+     "Zárkatársát bántalmazta, a sérült orvosi ellátásra szorult."),
+]
+
 
 def exports() -> dict[str, tuple[list[str], list[list[str]]]]:
     """{source id: (header, rows)} of the synthetic export of AS_OF."""
@@ -115,6 +135,7 @@ def exports() -> dict[str, tuple[list[str], list[list[str]]]]:
         "placement": (PLACEMENT, [list(r) + [""] for r in PLACEMENTS]),
         "contacts": (CONTACTS, [list(r) + [""] for r in CONTACT_ROWS]),
         "intel_log": (INTEL, [list(r) + [""] for r in INTEL_ROWS]),
+        "odin": (ODIN, [list(r) + [""] for r in ODIN_ROWS]),
     }
 
 
