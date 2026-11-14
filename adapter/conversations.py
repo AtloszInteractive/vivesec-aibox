@@ -263,11 +263,13 @@ class ConversationStore:
             record["_ts"] = self._clock()
             return copy.deepcopy(record["turns"][-self.max_turns * 2:])
 
-    def record(self, user, scope, question, answer, sources=None, conversation_id=None):
+    def record(self, user, scope, question, answer, sources=None, conversation_id=None,
+               clarify=False):
         """Append one exchange to a thread, trim the stored window, persist.
         A named thread must exist (create() first); the default thread is made
-        on demand. Returns the number of exchanges now stored, or None when the
-        thread is unknown."""
+        on demand. `clarify` marks the answer as a question back (the UI shows
+        its options as buttons again when the thread is reopened). Returns the
+        number of exchanges now stored, or None when the thread is unknown."""
         with self._lock:
             key, record = self._get(user, scope, conversation_id, create=True)
             if record is None:
@@ -277,6 +279,8 @@ class ConversationStore:
             turn = {"role": "assistant", "content": answer or "", "ts": now}
             if sources:
                 turn["sources"] = copy.deepcopy(sources[:8])
+            if clarify:
+                turn["clarify"] = True
             record["turns"].append(turn)
             cap = self.max_stored_turns * 2
             if len(record["turns"]) > cap:

@@ -1762,7 +1762,7 @@ def _clarify_result(user, drive, query, question, req_scope, session_scope, prof
     """The orchestrator asks the user back instead of answering. The question is
     stored as the assistant's turn, so the next message is read as the reply."""
     stored = SESSIONS.record(user, session_scope, query, question,
-                             conversation_id=conversation_id)
+                             conversation_id=conversation_id, clarify=True)
     if stored == 1:
         _title_thread(user, session_scope, conversation_id, query, question, lang)
     aid = confidence.audit_id(user, drive, query, question)

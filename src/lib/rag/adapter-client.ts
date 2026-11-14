@@ -251,6 +251,8 @@ export type AdapterConversationTurn = {
   content: string;
   ts?: number;
   sources?: { chunk_id?: string | null; corpus_id?: string | null; source_path?: string | null }[];
+  /** The assistant asked back (its options are chosen as the next message). */
+  clarify?: boolean;
 };
 
 export type AdapterConversation = AdapterConversationSummary & {

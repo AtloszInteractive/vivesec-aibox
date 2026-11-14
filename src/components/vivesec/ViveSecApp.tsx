@@ -1663,14 +1663,19 @@ function ViveSecAppInner() {
     (turns: ConversationTurn[]) => {
       const restored: Message[] = [];
       const profiles: Record<string, ChatProfile> = {};
-      for (const turn of turns) {
+      for (const [index, turn] of turns.entries()) {
         const id = uid();
         profiles[id] = chatProfile;
         const ts = turn.ts ? new Date(turn.ts * 1000).toISOString().slice(11, 16) : nowTs();
         restored.push(
           turn.role === "user"
             ? { id, role: "user", name: senderName, ts, text: turn.content }
-            : buildLiveMessage(id, undefined, "", conversationTurnResult(turn)),
+            : buildLiveMessage(
+                id,
+                undefined,
+                "",
+                conversationTurnResult(turn, index === turns.length - 1),
+              ),
         );
       }
       setMessageProfiles((current) => ({ ...current, ...profiles }));

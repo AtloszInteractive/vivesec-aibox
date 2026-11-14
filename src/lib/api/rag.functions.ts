@@ -405,8 +405,10 @@ export function deleteConversation(id: string, scope: ConversationScope): Promis
 
 /** A stored assistant turn rendered as an answer card. The history is kept
  *  footer-free and without the confidence block, so a restored card carries
- *  the text and the cited sources only — never a recomputed score. */
-export function conversationTurnResult(turn: ConversationTurn): RagAskResult {
+ *  the text and the cited sources only — never a recomputed score. A question
+ *  back keeps its options as buttons only while it is the thread's last turn
+ *  (`pending`): the box reads the next message as the reply to that one only. */
+export function conversationTurnResult(turn: ConversationTurn, pending = false): RagAskResult {
   const citations: RagCitation[] = (turn.sources ?? [])
     .filter((source) => source.source_path || source.chunk_id)
     .map((source, index) => ({
@@ -426,6 +428,7 @@ export function conversationTurnResult(turn: ConversationTurn): RagAskResult {
     sources: Array.from(new Set(citations.map((c) => c.label))),
     citations,
     refused: !turn.content.trim(),
+    ...(pending && turn.clarify ? { clarify: true } : {}),
   };
 }
 
