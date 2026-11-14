@@ -4,12 +4,14 @@
 # samba in the foreground. Development and test only.
 #
 #   OU=AIBox    AIBox-Admins, AIBox-Analysts, Team-A (Team-A is a member of
-#               AIBox-Analysts: nested membership)
+#               AIBox-Analysts: nested membership), BV-FEFO (E29: the BV's
+#               intelligence department, mapped to group bv-fefo / role fefo)
 #   OU=Service  svc-aibox      the read-only lookup account
 #   OU=People   alice          in Team-A -> AIBox-Analysts (nested)
 #               bob            in AIBox-Admins
 #               carol          in AIBox-Analysts, disabled
 #               dave           in no group
+#               erin           in AIBox-Analysts and BV-FEFO
 #
 # Passwords come from the environment: SAMBA_ADMIN_PASSWORD (Administrator),
 # SAMBA_SERVICE_PASSWORD (svc-aibox) and SAMBA_USER_PASSWORD (the people).
@@ -47,7 +49,7 @@ if [ ! -f "$TARGET/.seeded" ]; then
     for ou in AIBox Service People; do
         st ou add "OU=$ou" >/dev/null
     done
-    for group in AIBox-Admins AIBox-Analysts Team-A; do
+    for group in AIBox-Admins AIBox-Analysts Team-A BV-FEFO; do
         st group add "$group" --groupou="OU=AIBox" >/dev/null
     done
     st group addmembers AIBox-Analysts Team-A >/dev/null
@@ -57,9 +59,12 @@ if [ ! -f "$TARGET/.seeded" ]; then
     st user add bob "$SAMBA_USER_PASSWORD" --userou="OU=People" --given-name="Bob" --surname="Admin" >/dev/null
     st user add carol "$SAMBA_USER_PASSWORD" --userou="OU=People" --given-name="Carol" --surname="Disabled" >/dev/null
     st user add dave "$SAMBA_USER_PASSWORD" --userou="OU=People" --given-name="Dave" --surname="Nogroup" >/dev/null
+    st user add erin "$SAMBA_USER_PASSWORD" --userou="OU=People" --given-name="Erin" --surname="Fefo" >/dev/null
     st group addmembers Team-A alice >/dev/null
     st group addmembers AIBox-Admins bob >/dev/null
     st group addmembers AIBox-Analysts carol >/dev/null
+    st group addmembers AIBox-Analysts erin >/dev/null
+    st group addmembers BV-FEFO erin >/dev/null
     st user disable carol >/dev/null
     echo "$BASE" > "$TARGET/.seeded"
 fi

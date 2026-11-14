@@ -16,6 +16,7 @@ Contract summary:
             POST /ingest
             POST /index/rebuild
             POST /index/acl/update                 (E03: ACL only, no re-embedding)
+            POST /index/records                    (E29: tagged records below a folder)
   delete    POST /index/drop/tree
   retrieval POST /rag/search_context
             POST /rag/document_context
@@ -143,6 +144,9 @@ class Handler(BaseHTTPRequestHandler):
         metadata = body.get("metadata")
         metadata = dict(metadata) if isinstance(metadata, dict) else {}
         metadata["acl"] = self._doc_acl(metadata.get("acl", body.get("acl")))
+        tag = metadata.get("tag")
+        if tag is not None and (not isinstance(tag, str) or not 0 < len(tag) <= 128):
+            raise HttpError(400, "metadata.tag must be a short text")
         return metadata
 
     def log_message(self, fmt, *args):  # silence default stderr spam
@@ -198,6 +202,7 @@ class Handler(BaseHTTPRequestHandler):
             "/index/rebuild": self._rebuild,
             "/index/drop/tree": self._drop_tree,
             "/index/acl/update": self._acl_update,
+            "/index/records": self._records,
             "/rag/scope_stats": self._scope_stats,
             "/index/skipped": self._skipped,
             "/rag/search_context": self._search_context,
@@ -240,6 +245,20 @@ class Handler(BaseHTTPRequestHandler):
                 raise HttpError(400, "every entry needs a path and an acl")
             self._doc_acl(entry.get("acl"))
         self._ok(**STORE.update_acl(corpus_id, self._tenant(body), entries))
+
+    def _records(self):
+        """Tagged documents (structured records, E29) below a folder: {path, tag},
+        paged by path, so the adapter can align them with the graph."""
+        body = self._read_json()
+        corpus_id, prefix = body.get("corpus_id"), body.get("prefix")
+        if not corpus_id or not isinstance(prefix, str) or not prefix.startswith("/"):
+            raise HttpError(400, "corpus_id and an absolute prefix are required")
+        limit = body.get("limit", 1000)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 5000:
+            raise HttpError(400, "limit must be 1..5000")
+        rows = STORE.record_tags(corpus_id, prefix, str(body.get("after") or ""), limit)
+        self._ok(documents=[{"path": p, "tag": t} for p, t in rows],
+                 next=rows[-1][0] if len(rows) == limit else None)
 
     def _scope_stats(self):
         body = self._read_json()

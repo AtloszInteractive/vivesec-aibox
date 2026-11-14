@@ -146,6 +146,7 @@ import person_summary  # noqa: E402
 import purpose  # noqa: E402
 import querylog  # noqa: E402
 import reprocess  # noqa: E402
+import record_rag  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -501,7 +502,10 @@ def _acl_changed(path):
 def _visible_contexts(contexts, access):
     """Second line of defence. The RAG already filtered, but its copy of the
     ACL can lag the mirror (rules edited, push pending): a context the policy
-    hides is dropped here and logged."""
+    hides is dropped here and logged. The protected part of a structured
+    record (E29) never goes into the RAG; should one turn up, it is dropped
+    for everyone."""
+    contexts = [c for c in contexts if not _protected_record_path(c.get("source_path") or "")]
     if access is None or not access.enforced:
         return contexts
     check = _visible(access)
@@ -527,6 +531,16 @@ def _acl_loop():
 # Relationship analysis (E26): internal graph service, off unless GRAPH_URL is set.
 GRAPH = graph.GraphClient.from_env()
 GRAPH_FORWARD = graph.Forwarder.from_env(GRAPH, _flat_acl)
+# E29: the open text of structured records whose source the profile marks `rag`
+# (the intelligence log, ODIN), kept in the RAG in line with the graph.
+RECORD_RAG = record_rag.RecordRag(lambda path, body: GRAPH.post(path, body),
+                                  lambda path, body: rag_post_json(path, body), _flat_acl,
+                                  corpus.corpus_id_of_path, TENANT_ID, _acl_changed)
+_RECORD_RAG_JOBS = set()
+
+
+def _protected_record_path(path):
+    return "/%s/" % record_rag.RECORDS_DIR in path and "/~protected/" in path
 # Reprocessing after a profile change fetches each file again: from the
 # ViVeSecBox (ws-fs), or -- on a development box without that channel -- from
 # this mirror of the drives (<dir>/<drive>/... for /storage/drives/<drive>/...).
@@ -721,7 +735,7 @@ def _answer_summary(result):
             "error": result.get("error")}
 
 
-def _log_query(user, drive, req_scope, kind, bound, question, result):
+def _log_query(user, drive, req_scope, kind, bound, question, result, access=None):
     """Record one bound query (purpose on). False only when the log is required
     and could not be written -- the caller then withholds the answer."""
     if PURPOSE["mode"] == "off":
@@ -730,12 +744,41 @@ def _log_query(user, drive, req_scope, kind, bound, question, result):
              "drives": list(req_scope.drive_roots) if req_scope is not None else [],
              "kind": kind, "case_ref": bound.get("case_ref"),
              "legal_basis": bound.get("legal_basis"), "question": question, "result": result}
+    if _protected_entry(access, result):
+        entry["protected"] = True
     try:
         QUERY_LOG.record(entry)
         return True
     except OSError as e:
         sys.stderr.write("[adapter] query log: %s\n" % e)
         return PURPOSE["mode"] != "required"
+
+
+def _protected_path(path):
+    """The protected part of an imported record (E29: an informant)."""
+    return isinstance(path, str) and "/~records/" in path and "/~protected/" in path
+
+
+def _protected_member(access):
+    """E29: is the caller a member of the profile's protected_principals? None when
+    the profile cannot be read now (the graph is away)."""
+    if not GRAPH.enabled:
+        return False
+    try:
+        prof = orchestrator.profile(GRAPH)
+    except graph.GraphError:
+        return None
+    return orchestrator.protected_member(prof, access.as_rag() if access is not None else None)
+
+
+def _protected_entry(access, result):
+    """A query log record others may see only without its question and sources:
+    a protected member's (the question may name an informant), or one that read a
+    protected record. Undecidable membership counts as protected."""
+    sources = (result or {}).get("sources") if isinstance(result, dict) else None
+    if any(_protected_path(p) for p in sources or ()):
+        return True
+    return _protected_member(access) is not False
 
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
@@ -1451,7 +1494,7 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
     domain = None
     if action is None and APP_MODE == APP_ANALYST and GRAPH.enabled:
         try:
-            domain = orchestrator.profile(GRAPH)
+            domain = orchestrator.for_caller(orchestrator.profile(GRAPH), access.as_rag())
         except graph.GraphError as e:
             sys.stderr.write("[adapter] orchestrator: graph unavailable: %s\n" % e)
     if domain is not None:
@@ -1788,7 +1831,7 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
     request = job.get("request") or {}
     if not _log_query(user, drive, req_scope, action or "ask", request.get("purpose") or {},
                       query, dict(_answer_summary(payload if isinstance(payload, dict) else {}),
-                                  status=code)) and code == 200:
+                                  status=code), access=access) and code == 200:
         code, payload = 503, {"ok": False, "error": "query log unavailable"}
     JOBS.finish(user, drive, job_id, code, payload)
 
@@ -1803,7 +1846,7 @@ def _rebuild_investigation(req_scope, access, start, levels, lang, shared_contac
     it cannot be: graph down, no investigation in the profile (409), an
     ambiguous start (409), nothing visible (404)."""
     try:
-        domain = orchestrator.profile(GRAPH)
+        domain = orchestrator.for_caller(orchestrator.profile(GRAPH), access.as_rag())
     except graph.GraphError as e:
         raise RagError(e.status, e.body)
     cfg = orchestrator.investigate_config(domain, INVESTIGATE_RELATIONS, INVESTIGATE_VIA,
@@ -1907,7 +1950,8 @@ def _summary_worker(job_id, user, drive, cancel_event=None):
                            "people": len((out or {}).get("persons") or [])},
                           ensure_ascii=False, sort_keys=True)
     if not _log_query(user, drive, req_scope, "summary:investigation",
-                      request.get("purpose") or {}, question, summary) and code == 200:
+                      request.get("purpose") or {}, question, summary,
+                      access=access) and code == 200:
         code, payload = 503, {"ok": False, "error": "query log unavailable"}
     if code == 200:
         sys.stderr.write("[adapter] person summaries (%d people, %d passages) by %s\n" % (
@@ -2285,6 +2329,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/import": self._graph_import,
                 "/api/v1/ui/graph/import/sources": self._graph_import_sources,
                 "/api/v1/ui/graph/import/status": self._graph_import_status,
+                "/api/v1/ui/graph/import/rag": self._graph_import_rag,
                 "/api/v1/ui/index/skipped": self._index_skipped,
                 "/api/v1/ui/store/list": self._store_list,
                 "/api/v1/ui/store/upload": self._store_upload,
@@ -2640,7 +2685,7 @@ class Handler(BaseHTTPRequestHandler):
         result = _answer(*parsed, req_scope=req_scope, profile=profile,
                          conversation_id=conversation_id, access=self._access())
         if not _log_query(parsed[0], parsed[1], req_scope, parsed[5] or "ask", bound, parsed[2],
-                          _answer_summary(result)):
+                          _answer_summary(result), access=self._access()):
             self._send(503, {"ok": False, "error": "query log unavailable"})
             return
         self._send(200, result)
@@ -3233,19 +3278,27 @@ class Handler(BaseHTTPRequestHandler):
             out = QUERY_LOG.read(since, until, wanted or None, case_ref or None, offset,
                                  limit or 50, before=before)
         visible = _visible(self._access())
+        # E29: a protected member's records and the protected records they read are
+        # shown to anyone else only by fingerprint (question_sha256) and counts.
+        member = _protected_member(self._access()) is True
         for record in out["records"]:
             result = record.get("result")
+            sealed = bool(record.get("protected")) and not member
+            if sealed:
+                record.pop("question", None)
+                record["sealed"] = True
             if isinstance(result, dict) and isinstance(result.get("sources"), list):
                 cited = result["sources"]
-                result["sources"] = [p for p in cited if isinstance(p, str)
-                                     and req_scope.contains_path(p) and visible(p)]
+                result["sources"] = [] if sealed else [
+                    p for p in cited if isinstance(p, str) and req_scope.contains_path(p)
+                    and visible(p) and (member or not _protected_path(p))]
                 result["hidden_sources"] = len(cited) - len(result["sources"])
         view = {"from": since.isoformat(), "to": until.isoformat(), "user": wanted or None,
                 "case_ref": case_ref or None, "offset": offset}
         if not _log_query(user, drive, req_scope, "querylog:view", {},
                           json.dumps(view, ensure_ascii=False, sort_keys=True),
                           {"ok": True, "records": len(out["records"]),
-                           "total": out["total"], "leader": leader}):
+                           "total": out["total"], "leader": leader}, access=self._access()):
             self._send(503, {"ok": False, "error": "query log unavailable"})
             return
         self._send(200, {"ok": True, "enabled": PURPOSE["mode"] != "off" and QUERY_LOG.enabled,
@@ -3363,7 +3416,7 @@ class Handler(BaseHTTPRequestHandler):
         """Query log of a bound graph call; False after refusing it (log required
         and unwritable)."""
         if _log_query(ctx[0], self._bound_drive, ctx[2], kind, self._bound, question,
-                      {"ok": True, "sources": querylog.sources_of(sources)}):
+                      {"ok": True, "sources": querylog.sources_of(sources)}, access=ctx[3]):
             return True
         self._send(503, {"ok": False, "error": "query log unavailable"})
         return False
@@ -3496,10 +3549,11 @@ class Handler(BaseHTTPRequestHandler):
     def _graph_import(self):
         """A graph administrator imports a periodic export (CSV/XLSX) of a
         structured source into a folder of their scope (E28). The records live
-        in the graph only -- the file is not stored on a drive or in the RAG --
-        and each is visible to a caller who may read the folder (its rule now
-        and as it changes) AND whom the record's own rule (the profile: e.g. its
-        institution's group) admits."""
+        in the graph -- the file is not stored on a drive or in the RAG; only the
+        open text of a source the profile marks `rag` (E29) is copied to the RAG
+        (record_rag.py) -- and each is visible to a caller who may read the folder
+        (its rule now and as it changes) AND whom the record's own rule (the
+        profile: e.g. its institution's group) admits."""
         ctx = self._graph_request()
         if ctx is None:
             return
@@ -3530,16 +3584,54 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[adapter] graph: import %s (%s, %s) into %s by %s: %s\n" % (
             body.get("source"), body.get("as_of"), stats.get("mode"), folder, user,
             {k: stats.get(k) for k in ("records", "created", "updated", "removed")}))
-        self._send(200, res)
+        self._send(200, self._record_rag_after(res, body["wait"]))
+
+    def _record_rag_after(self, res, wait=0):
+        """A finished import's folder gets its RAG copy aligned (E29), once per
+        job; the answer carries how far that got (waiting up to `wait` s)."""
+        item = res.get("import") or {}
+        folder = str(item.get("source_path") or "")
+        if item.get("status") != "done" or not folder:
+            return res
+        job = item.get("job")
+        if job not in _RECORD_RAG_JOBS:
+            _RECORD_RAG_JOBS.add(job)
+            if len(_RECORD_RAG_JOBS) > 1000:
+                _RECORD_RAG_JOBS.clear()
+            RECORD_RAG.request(folder)
+        state = RECORD_RAG.wait(folder, min(wait, 120)) if wait else RECORD_RAG.status(folder)
+        return dict(res, rag=state)
 
     def _graph_import_status(self):
         ctx = self._graph_request()
         if ctx is None or not self._graph_admin(ctx[0]):
             return
+        wait = _review_int(ctx[1], "wait", 0)
         res = self._graph_post("/import/status", {"job": str(ctx[1].get("job") or ""),
-                                                  "wait": _review_int(ctx[1], "wait", 0)})
+                                                  "wait": wait})
         if res is not None:
-            self._send(200, res)
+            self._send(200, self._record_rag_after(res, wait))
+
+    def _graph_import_rag(self):
+        """A graph administrator aligns (`sync`: true) or asks about the RAG copy
+        of a folder's structured records (E29)."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, req_scope, access, _ = ctx
+        if not self._graph_admin(user):
+            return
+        raw_folder = str(payload.get("folder") or "").strip()
+        folder = corpus.norm(raw_folder).rstrip("/") if raw_folder else ""
+        if not folder or ".." in folder.split("/") or not req_scope.contains_path(folder) \
+                or not _visible(access)(folder):
+            self._send(403, {"ok": False, "error": "folder outside the request scope"})
+            return
+        if payload.get("sync") is True:
+            RECORD_RAG.request(folder)
+        wait = _review_int(payload, "wait", 0)
+        state = RECORD_RAG.wait(folder, min(wait, 300)) if wait else RECORD_RAG.status(folder)
+        self._send(200, {"ok": True, "folder": folder, "rag": state})
 
     def _graph_reprocess_cancel(self):
         ctx = self._graph_request()

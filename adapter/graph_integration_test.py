@@ -276,6 +276,153 @@ class GraphIntegrationTest(unittest.TestCase):
                                 dict(request, shared_contact="yes"), user="hanna")
         self.assertEqual(400, status, out)
 
+    def test_an_informant_is_seen_by_the_fefo_only_end_to_end(self):
+        """E29 (1.3): answer, subgraph, spreadsheet and query log of a non-FEFO
+        caller never name the informant; the FEFO sees them in the same place."""
+        import io
+        import zipfile
+
+        import purpose
+        import querylog
+
+        sys.path.append(os.path.join(REPO, "graph-corpus"))
+        import structured_samples as samples
+        service = self.service
+        for source in ("fonix_base", "intel_log"):
+            header, rows = samples.exports()[source]
+            status, out = self.call("/api/v1/ui/graph/import", {
+                "source": source, "as_of": samples.AS_OF, "folder": DRIVE + "/reports",
+                "filename": source + ".csv",
+                "content_b64": base64.b64encode(samples.to_csv(header, rows)).decode("ascii")},
+                user="hanna")
+            self.assertEqual(200, status, out)
+        self.assertEqual(6, out["import"]["stats"]["protected"])
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+        bound = {"case_ref": "BV-2026/9", "lang": "hu"}
+
+        def find(user, text):
+            status, out = self.call("/api/v1/ui/graph/query", dict(
+                bound, query="find", params={"text": text, "types": ["person"]}), user=user)
+            self.assertEqual(200, status, out)
+            return {e["label"] for e in out["entities"]}
+
+        def sheet(out):
+            book = zipfile.ZipFile(io.BytesIO(base64.b64decode(out["content_b64"])))
+            return "".join(book.read(n).decode("utf-8") for n in book.namelist())
+        request = dict(bound, start="NY-1002", levels=1)
+        with patch.dict(GROUPS, {"hanna": ["bv-orszagos", "bv-fefo"], "lars": ["bv-orszagos"]}), \
+                patch.object(service, "INVESTIGATE_RELATIONS", []), \
+                patch.object(service, "INVESTIGATE_VIA", ["INVOLVED_IN", "PROVIDED_INFO"]), \
+                patch.object(service, "PURPOSE", purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name, True)), \
+                patch.object(service, "LEADERS", frozenset({"vera"})):
+            self.assertEqual(set(), find("lars", "Rigó"))
+            self.assertEqual({"Rigó Lajos"}, find("hanna", "Rigó"))
+            for user, fefo in (("lars", False), ("hanna", True)):
+                status, sub = self.call("/api/v1/ui/graph/investigation/graph", request,
+                                        user=user)
+                self.assertEqual(200, status, sub)
+                names = [r["name"] for r in sub["rows"]]
+                self.assertIn("Illés Dénes", names)  # through the entry they share
+                self.assertEqual(fefo, "Rigó Lajos" in names, names)
+                status, xlsx = self.call("/api/v1/ui/graph/investigation/export", request,
+                                         user=user)
+                self.assertEqual(200, status, xlsx)
+                blob = sheet(xlsx) + json.dumps(sub, ensure_ascii=False)
+                self.assertEqual(fefo, "Rigó Lajos" in blob)
+                if not fefo:
+                    for hidden in ("Forrás neve", "Forrás típusa", "kapcsolattartó (",
+                                   "~protected"):
+                        self.assertNotIn(hidden, blob)
+            status, log = self.call("/api/v1/ui/querylog", {}, user="vera")
+            self.assertEqual((200, "leader"), (status, log["role"]), log)
+            by_user = {}
+            for record in log["records"]:
+                by_user.setdefault(record["user"], []).append(record)
+            self.assertTrue(all(r.get("sealed") and "question" not in r for r in by_user["hanna"]))
+            self.assertTrue(all("question" in r for r in by_user["lars"]))
+            dump = json.dumps(log, ensure_ascii=False)
+            self.assertNotIn("Rigó", dump)
+            self.assertNotIn("~protected", dump)
+
+    def test_log_and_odin_free_text_reach_the_rag_by_folder_and_record_rule(self):
+        """E29 step 2: the open text of the log and ODIN entries is retrievable
+        for a caller the folder's ACL AND the entry's institution rule admit;
+        never the informant; the folder's ACL change reaches the records."""
+        import llm
+        import record_rag
+
+        sys.path.append(os.path.join(REPO, "graph-corpus"))
+        import structured_samples as samples
+        service = self.service
+        sync = record_rag.RecordRag(lambda p, b: service.GRAPH.post(p, b),
+                                    lambda p, b: service.rag_post_json(p, b), service._flat_acl,
+                                    service.corpus.corpus_id_of_path, service.TENANT_ID,
+                                    service._acl_changed)
+        folder = DRIVE + "/reports"
+
+        def load(source, rows=None, as_of=samples.AS_OF):
+            header, sample = samples.exports()[source]
+            status, out = self.call("/api/v1/ui/graph/import", {
+                "source": source, "as_of": as_of, "folder": folder, "filename": source + ".csv",
+                "content_b64": base64.b64encode(samples.to_csv(header, rows or sample)).decode(
+                    "ascii")}, user="hanna")
+            self.assertEqual(200, status, out)
+            return out["rag"]
+
+        def echo(query, contexts, **_kw):
+            return "\n".join(c.get("source_path", "") + " " + (c.get("text") or "")
+                             for c in contexts) or "NO-CONTEXT", "echo"
+
+        def ask(user, question):
+            status, out = self.call("/api/v1/ui/query", {"query": question}, user=user)
+            self.assertEqual(200, status, out)
+            return out["answer"] + json.dumps(out["hits"], ensure_ascii=False)
+        drug, cutter = "kábítószert akarnak bejuttatni", "vágószerszámot találtak"
+        groups = {"nat": ["bv-orszagos"], "i01": ["bv-intezet-01"], "lars": [],
+                  "fefo": ["bv-orszagos", "bv-fefo"], "hanna": ["hr", "bv-orszagos"],
+                  "hrx": ["hr"]}
+        with patch.object(service, "RECORD_RAG", sync), \
+                patch.object(service, "_RECORD_RAG_JOBS", set()), \
+                patch.dict(GROUPS, groups), patch.object(llm, "GENERATE", "on"), \
+                patch.object(llm, "generate", echo), patch.object(llm, "TITLES", False):
+            load("fonix_base")
+            self.assertEqual((6, 6, "done"), (lambda r: (r["records"], r["written"],
+                                                         r["state"]))(load("intel_log")))
+            self.assertEqual(4, load("odin")["written"])
+            self.assertEqual((0, 10), (lambda r: (r["written"], r["unchanged"]))(
+                load("intel_log") and sync.sync(folder)))
+            for user, sees in (("nat", (True, True)), ("i01", (True, False)),
+                               ("lars", (False, False)), ("fefo", (True, True))):
+                got = (drug in ask(user, drug), cutter in ask(user, cutter))
+                self.assertEqual(sees, got, user)
+            for user in groups:
+                blob = ask(user, "kábítószer mobiltelefon szökés információt adott forrás")
+                for hidden in ("Rigó Lajos", "Hollós Péter", "Fehér Gábor", "Forrás neve",
+                               "~protected"):
+                    self.assertNotIn(hidden, blob, user)
+            listed = service.rag_post_json("/index/records", {
+                "corpus_id": service.corpus.corpus_id_of_path(folder),
+                "prefix": folder + "/~records"})["documents"]
+            self.assertEqual(10, len(listed))
+            self.assertTrue(all("~protected" not in d["path"] for d in listed))
+            self.assertIn("/~records/odin/ODIN R-2026-32 (", json.dumps(listed,
+                                                                       ensure_ascii=False))
+            # The folder's ACL narrows: the records follow, their own rule stays.
+            self.call("/api/v1/index/upsert/acl", {"path": folder, "acl": {"allow": ["group:hr"]}})
+            self.assertNotIn(drug, ask("nat", drug))
+            self.assertNotIn(drug, ask("hrx", drug))
+            self.assertIn(drug, ask("hanna", drug))
+            self.call("/api/v1/index/upsert/acl", {"path": folder, "acl": None})
+            self.assertIn(drug, ask("nat", drug))
+            # A deleted row leaves the RAG with the next export.
+            header, rows = samples.exports()["intel_log"]
+            dele = header.index("Törölve")
+            rows = [r[:dele] + (["igen"] if r[0] == "N-0001" else [""]) for r in rows]
+            self.assertEqual(1, load("intel_log", rows, "2026-11-02")["removed"])
+            self.assertNotIn(drug, ask("nat", drug))
+
     def test_synced_files_become_a_graph_and_hidden_ones_stay_hidden(self):
         self.assertEqual({"Kovács János"}, self.people("lars", "Kovács"))
         self.assertEqual({"Nagy Éva"}, self.people("lars", "Nagy"))

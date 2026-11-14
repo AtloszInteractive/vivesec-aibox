@@ -1000,10 +1000,15 @@ seconds (default 60). `graph-corpus/structured_import_run.py` calls it on a box
   with their start, end and label columns, code lists (code → text) and the
   record's own access rule. A new source or column is a profile change, not a
   code change; validation is strict (an unknown key, column role, relation or
-  subtype rejects the profile). The `bv` profile v5 has `fonix_base`,
+  subtype rejects the profile). The `bv` profile v7 has `fonix_base`,
   `placement` (institution → facility → unit → cell, `PLACED_IN` with start, end
-  and the in/out reasons) and `contacts` (`CONTACT_OF` with the permission dates
-  and the relationship, phone, e-mail, address). The column names are our
+  and the in/out reasons), `contacts` (`CONTACT_OF` with the permission dates
+  and the relationship, phone, e-mail, address), `intel_log` (the
+  intelligence log, see the informant protection below) and `odin` (ODIN
+  incident entries: number `R-2020/10`, date, institution, category code,
+  subject with registry number, the information as free text; the entry is an
+  `odin_entry` event and its number a `case_number` identifier, so a document
+  citing the number reaches it). The column names are our
   assumption until BV sends samples. Subtypes and relations marked
   `structured_only` (contact, facility, unit, `CONTACT_OF`) stay out of the
   extraction prompts, so the model reads documents exactly as before.
@@ -1023,8 +1028,27 @@ seconds (default 60). `graph-corpus/structured_import_run.py` calls it on a box
   admits: in `bv`, `group:bv-intezet-<institution code>` or `group:bv-orszagos`
   (D23 open: institution-level is the narrower assumption). An unknown code
   admits only the national group. The file itself is not stored on a drive or
-  in the RAG. Free-text fields go to the RAG with the intelligence log and ODIN
-  (later step, after the informant protection).
+  in the RAG.
+- **Free text in the RAG (E29).** A source marked `rag` in the profile (`bv`:
+  `intel_log`, `odin`) also has each record's open text (the `Column: value`
+  text, never anything of a protected part) searchable and citable. The graph
+  keeps it with the open record and lists it per folder (`/import/rag/list`,
+  `/import/rag/get`); the adapter (`record_rag.py`) aligns the RAG with it
+  after each finished import (and when its status is asked): new and changed
+  records are written (`/ingest` with a version tag), records the graph no
+  longer has are dropped, an unchanged folder writes nothing. Each RAG record
+  carries the folder's flattened ACL, `follows: <folder>` (a later ACL push of
+  the folder reaches it, as in the graph; a folder delete drops it) and its own
+  rule as the RAG's `require` AND gate (`require_classification` its level): a
+  caller sees it only if the folder's ACL AND the record's rule admit them, a
+  group or role only from a known membership; an empty rule (an unknown
+  institution code without `always`) admits nobody. Path:
+  `<folder>/~records/<source>/<title> (<hash>)`, the title from the profile's
+  `title_column` (`Felderítési napló 2026/14/1`, `ODIN R-2026/32`); the citation
+  shows it, but there is no file behind it to open. As a second line, the
+  adapter drops any RAG context under a `~protected` record directory.
+  `POST /api/v1/ui/graph/import/rag {folder, sync?, wait?}` (graph admin) shows
+  or starts the alignment; `rag` in the import answer reports it.
 - **Contacts without an ID.** A source entity with `person_key` gets a hidden,
   salted key (HMAC-SHA256, salt in `GRAPH_PERSON_KEY_SALT_FILE`, created by the
   install kit) of name, birth place, birth date and mother's name, normalised;
@@ -1038,6 +1062,28 @@ seconds (default 60). `graph-corpus/structured_import_run.py` calls it on a box
   rest on); the name alone gives neither, a conflicting birth date or mother's
   name never; name-based joining (`same_name`) leaves them alone. Without a salt
   no contact is linked automatically.
+- **Informant protection (E29).** The intelligence log (`bv` profile v7,
+  `intel_log`) states who gave a piece of information; per BV only the FEFO may
+  see that. A source's `protected` block names those entities (the informant)
+  and extra columns; each record then becomes two graph documents: the open one
+  (entry number, date, institution, subject, nature and text of the
+  information, under the record's institution rule) and a protected twin
+  (`.../~records/<source>/~protected/<hash>`: the informant, the
+  `PROVIDED_INFO` relation and the source type) that only a member of the
+  profile's `protected_principals` (`bv`: `group:bv-fefo`, `role:fefo`) sees,
+  by the membership the profile names at query time and only from a directory
+  answer without error (no ACL filter, an unknown membership or a directory
+  error: not a member). The profile is validated so the open text never reads a
+  protected column. Relations marked `protected` are hidden from non-members
+  whatever document backs them; the planner and the investigation of a
+  non-member are not offered them either. A protected person is never linked or
+  remembered by resolution (a protected registry number joins no one): it is at
+  most a review pair a member sees, and a member's merge stays invisible to
+  others. Assumptions until BV decides (1.4): the source type is protected too
+  (it is the protected relation's label; making it open is a profile change:
+  move the column to `text_columns`); FEFO membership is the `bv-fefo` group or
+  the `fefo` role of the directory / standalone group map; a FEFO leader is a
+  leader who is also a member. Columns of the sample are ours.
 
 #### Planner: contact chains as one investigation
 
@@ -1176,6 +1222,18 @@ keeps_text, from, to, as_of, total, records}`. BV (2026-11-13): the analyst sees
 their own, the leader everyone's; recording the time and the recorder's name is
 enough (no signature or external time stamp); the question text is logged
 (`ADAPTER_QUERY_LOG_TEXT=on`).
+
+**Protected queries (E29).** A record written for a member of the graph
+profile's `protected_principals` (the FEFO in `bv`), or one that read a
+protected record part (an informant, path `.../~records/<source>/~protected/...`),
+carries `protected: true` (inside the hash chain). Anyone who is not a member now
+-- a leader included -- sees such a record `sealed`: without its question, its
+sources only as `hidden_sources`, with its fingerprint (`question_sha256`), user,
+time, case reference and counts. A protected path is never named to a
+non-member in any record. A FEFO leader (leader role and member) and the member
+themself see it whole. Membership counts only from a directory answer without
+error; when the profile cannot be read at logging time (graph away), the record
+is marked protected (the safer side).
 
 | Variable | Default | Meaning / fail-safe |
 | --- | --- | --- |

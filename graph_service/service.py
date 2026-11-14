@@ -9,6 +9,8 @@ request and sends it with every query (corpus_ids + access).
   ingest   POST /graph/document/put  /graph/document/drop  /graph/document/acl
            POST /graph/document/drop_tree  /graph/acl/update (by path, as the RAG)
            POST /graph/entity/merge
+           POST /import/records  /import/status  /import/sources (structured exports, E28)
+           POST /import/rag/list  /import/rag/get (the RAG copy of open records, E29)
   extract  POST /ingest/document (bytes, extracted in the background)  /ingest/status
            POST /review/list  /review/decide (possible same-person pairs, one or many)
            POST /review/history  /review/undo (decisions, newest first; take one back)
@@ -127,7 +129,7 @@ def documents_by_profile(state: State, body: dict) -> dict:
     with. The stale ones -- any other version, or unknown (extracted before this
     was recorded) -- are listed for reprocessing (optionally below one folder)."""
     try:
-        scope = Scope.parse(body)
+        scope = Scope.parse(body, state.profile)
     except ScopeError as e:
         raise HttpError(400, str(e))
     current = domain_profile.profile_tag(state.profile)
@@ -163,7 +165,7 @@ def documents_by_profile(state: State, body: dict) -> dict:
 
 def run_query(state: State, name: str, body: dict) -> dict:
     try:
-        scope = Scope.parse(body)
+        scope = Scope.parse(body, state.profile)
     except ScopeError as e:
         raise HttpError(400, str(e))
     view = state.store.view(scope, include_weak=bool(body.get("include_weak", False)))
@@ -375,6 +377,33 @@ def import_sources(state: State) -> dict:
                         for s in state.profile.get("structured_sources") or []]}
 
 
+def import_rag(state: State, path: str, body: dict) -> dict:
+    """The RAG copy of a folder's open records (E29): /import/rag/list gives
+    {path, tag} paged by path, /import/rag/get the text and own rule of up to
+    200 of those paths. Only for the adapter (the service key); it adds the
+    folder's ACL and writes them to the RAG (adapter/record_rag.py)."""
+    import structured_import
+
+    folder = _id(body, "folder").rstrip("/")
+    if not folder.startswith("/") or any(p in ("..", RECORDS_DIR) for p in folder.split("/")):
+        raise HttpError(400, "folder must be an absolute path without '..' or %s" % RECORDS_DIR)
+    store = getattr(state.store, "mirror", state.store)
+    docs = structured_import.rag_documents(store, state.profile, _id(body, "corpus_id"), folder)
+    if path == "/import/rag/list":
+        after, limit = str(body.get("after") or ""), _int(body, "limit", 1000, 1, 5000)
+        items = [structured_import.rag_item(d) for d in docs]
+        items = [i for i in items if i["path"] > after][:limit]
+        return {"documents": items,
+                "next": items[-1]["path"] if len(items) == limit else None}
+    paths = body.get("paths")
+    if not isinstance(paths, list) or len(paths) > 200 or any(not isinstance(p, str)
+                                                              for p in paths):
+        raise HttpError(400, "paths must be a list of at most 200 record paths")
+    wanted = set(paths)
+    return {"documents": [structured_import.rag_item(d, with_text=True) for d in docs
+                          if structured_import.rag_path(d) in wanted]}
+
+
 def _import_records(state: State, worker, body: dict) -> dict:
     """A periodic export into the record documents of one structured source. The
     adapter decides where they go (corpus, folder) and the folder's access rule;
@@ -459,7 +488,7 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
             raise HttpError(404, "no such import")
         return _import_answer(item)
     try:
-        scope = Scope.parse(body)
+        scope = Scope.parse(body, state.profile)
     except ScopeError as e:
         raise HttpError(400, str(e))
     view = state.store.view(scope)
@@ -551,6 +580,8 @@ def handle_post(state: State, path: str, body: dict) -> dict:
         return handle_extract(state, path, body)
     if path == "/import/sources":
         return import_sources(state)
+    if path in ("/import/rag/list", "/import/rag/get"):
+        return import_rag(state, path, body)
     if path == "/documents/profile":
         return documents_by_profile(state, body)
     if path == "/profile/get":

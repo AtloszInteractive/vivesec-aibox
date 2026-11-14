@@ -12,7 +12,9 @@ check of the contact linking).
 
 The user must be in ADAPTER_GRAPH_ADMINS; the records are visible to callers who
 may read the folder and whom each record's own rule admits (bv: the group of
-its institution, group:bv-intezet-<code>, or group:bv-orszagos).
+its institution, group:bv-intezet-<code>, or group:bv-orszagos). A source the
+profile marks `rag` (bv: intel_log, odin) also gets its records' open text into
+the RAG; the `rag` field of each line says how far that got (E29).
 
 In standalone mode (E27) the adapter accepts only a signed identity token, so
 --identity auto (the default) reads the running adapter container's settings
@@ -58,9 +60,10 @@ def _b64url(raw):
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def headers_for(user, drive, env=None, container="vivesec-adapter", ttl=120):
+def headers_for(user, drive, env=None, container="vivesec-adapter", ttl=120, groups=(), roles=()):
     """Request headers for `user` on `drive`; with a standalone adapter's env, a
-    short-lived token signed with its key and naming only that drive."""
+    short-lived token signed with its key and naming only that drive (and the
+    `groups` / `roles` claims given: the box checks of the record rules)."""
     drive = drive.rstrip("/") + "/"
     headers = {"Content-Type": "application/json", "VVS-User": user, "VVS-Drive": b64(drive)}
     if not env or (env.get("ADAPTER_INTEGRATION") or "").strip().lower() != "standalone":
@@ -69,6 +72,10 @@ def headers_for(user, drive, env=None, container="vivesec-adapter", ttl=120):
     now = int(time.time())
     claims = {"sub": user, "upn": user, "drives": [drive], "iat": now, "nbf": now, "exp": now + ttl,
               "jti": _b64url(os.urandom(9))}
+    if groups:
+        claims["groups"] = list(groups)
+    if roles:
+        claims["roles"] = list(roles)
     for claim, name in (("iss", "ADAPTER_IDENTITY_ISSUER"), ("aud", "ADAPTER_IDENTITY_AUDIENCE")):
         if env.get(name):
             claims[claim] = env[name]
@@ -125,7 +132,8 @@ def main():
         status, out = post(args.adapter, "/api/v1/ui/graph/import",
                            headers_for(args.user, args.drive, env, args.container), body)
         print(json.dumps({"source": source, "file": name, "status": status,
-                          "result": out.get("import") or out}, ensure_ascii=False))
+                          "result": out.get("import") or out, "rag": out.get("rag")},
+                         ensure_ascii=False))
         failed = failed or status != 200
     sys.exit(1 if failed else 0)
 

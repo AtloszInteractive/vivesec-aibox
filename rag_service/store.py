@@ -326,19 +326,41 @@ class RagStore:
         return (self._docs.get(doc_id) or {}).get("acl")
 
     def update_acl(self, corpus_id, tenant_id, entries):
+        """Replace the ACL of known documents: the document at each path and
+        the records that follow that folder's ACL (acl.follows), whose own
+        rule (acl.require) stays."""
         parsed = [(norm_path(entry["path"]), access_filter.parse_doc_acl(entry["acl"]))
                   for entry in entries]
         updated = missing = 0
         with self._lock:
+            followers = {}
+            for doc in self._docs.values():
+                follows = (doc.get("acl") or {}).get("follows")
+                if follows and doc.get("corpus_id") == corpus_id:
+                    followers.setdefault(follows, []).append(doc)
             for path, acl in parsed:
                 doc = self._docs.get(_doc_id(tenant_id, corpus_id, path))
                 if doc is None:
                     missing += 1
-                    continue
-                doc["acl"] = acl
-                updated += 1
+                else:
+                    doc["acl"] = access_filter.updated_acl(acl, doc.get("acl"))
+                    updated += 1
+                for record in followers.get(path, ()):
+                    record["acl"] = access_filter.updated_acl(acl, record.get("acl"), True)
+                    updated += 1
             self._persist()
         return {"updated": updated, "missing": missing}
+
+    def record_tags(self, corpus_id, prefix, after="", limit=1000):
+        """[(path, tag)] of the documents below `prefix` that carry a tag (records
+        written with /ingest metadata.tag), in path order after `after`."""
+        with self._lock:
+            rows = sorted((d["source_path"], d["tag"]) for d in self._docs.values()
+                          if d.get("corpus_id") == corpus_id and d.get("tag")
+                          and under(d.get("source_path", ""), prefix)
+                          and d["source_path"] != norm_path(prefix)
+                          and d["source_path"] > (after or ""))
+        return rows[:limit]
 
     def scope_stats(self, corpus_ids, access=None):
         scope = set(corpus_ids or [])
@@ -481,6 +503,7 @@ class RagStore:
             mtime=metadata.get("mtime"),
             size=metadata.get("size"),
             acl=metadata.get("acl"),
+            tag=metadata.get("tag"),
         )
 
     def ingest_content(self, corpus_id, tenant_id, path, title, raw, metadata):
@@ -499,7 +522,7 @@ class RagStore:
 
     # ----- core indexing -----------------------------------------------------
     def _index_document(self, corpus_id, tenant_id, source_path, title, pages, mtime, size,
-                        acl=None):
+                        acl=None, tag=None):
         doc_id = _doc_id(tenant_id, corpus_id, source_path)
         page_records = []
         chunk_records = []
@@ -554,6 +577,8 @@ class RagStore:
                 "indexed": bool(chunk_records),
                 "skip_reason": None if chunk_records else EMPTY_EXTRACTION_WARNING,
                 "acl": self._acl_for(doc_id, acl),
+                # The caller's version of a record (E29), for /index/records.
+                "tag": tag,
             }
             self._pages[doc_id] = page_records
             self._chunks[doc_id] = chunk_records

@@ -67,6 +67,28 @@ class AccessParsingTest(unittest.TestCase):
         self.assertTrue(access.doc_allowed(STRICT, caller(clearance=3)))
         self.assertFalse(access.doc_allowed(None, dict(caller(), default_classification=2)))
 
+    def test_require_is_an_and_gate_that_fails_closed(self):
+        record = access.parse_doc_acl(dict(HR_ONLY, require=["group:inst-01", "Group:National"],
+                                           follows="/storage/drives/finance/log/"))
+        self.assertEqual(record["require"], ["group:inst-01", "group:national"])
+        self.assertEqual((record["require_classification"], record["follows"]),
+                         (0, "/storage/drives/finance/log"))
+        self.assertTrue(access.doc_allowed(record, caller("group:hr", "group:inst-01")))
+        # The folder alone or the record's rule alone is not enough.
+        self.assertFalse(access.doc_allowed(record, caller("group:hr")))
+        self.assertFalse(access.doc_allowed(record, caller("group:inst-01")))
+        # A group of an unknown membership never meets the gate.
+        self.assertFalse(access.doc_allowed(dict(record, restricted=False),
+                                            caller("group:inst-01", known=False)))
+        self.assertFalse(access.doc_allowed(dict(record, require=[]), caller("group:hr")))
+        self.assertFalse(access.doc_allowed(dict(record, require_classification=3),
+                                            caller("group:hr", "group:inst-01")))
+        for bad in (dict(HR_ONLY, require="group:x"), dict(HR_ONLY, require_classification=1),
+                    dict(HR_ONLY, require=[], require_classification=9),
+                    dict(HR_ONLY, follows="relative"), dict(HR_ONLY, follows="/a/../b")):
+            with self.assertRaises(ValueError):
+                access.parse_doc_acl(bad)
+
 
 class JsonStoreAccessTest(unittest.TestCase):
     def make_store(self):
@@ -149,6 +171,105 @@ class JsonStoreAccessTest(unittest.TestCase):
         contexts, debug = self.store.search_context(FINANCE, "layoff Zebulon", top_k=10)
         self.assertIn(ROOT + "/hr/layoffs.txt", self.paths(contexts))
 
+    def test_record_follows_its_folder_and_keeps_its_own_rule(self):
+        folder = ROOT + "/log"
+        record = folder + "/~records/intel_log/abc"
+        self.store.update_acl(FINANCE, "default", [{"path": folder, "acl": HR_ONLY}])
+        self.store.upsert_directory(FINANCE, "default", folder, acl=HR_ONLY)
+        self.store.ingest_text(FINANCE, "default", record, "Log 2026/14/1",
+                               "Information: contraband Yarrowmint at the next visit.",
+                               {"tag": "t1", "acl": dict(HR_ONLY, require=["group:inst-01"],
+                                                         follows=folder)})
+        question = "contraband Yarrowmint visit"
+
+        def sees(*who):
+            return record in self.paths(self.search(question, caller(*who))[0])
+        self.assertTrue(sees("group:hr", "group:inst-01"))
+        self.assertFalse(sees("group:hr"))
+        self.assertFalse(sees("group:inst-01"))
+        self.assertEqual(self.store.scope_stats([FINANCE], caller("group:hr"))["documents"], 2)
+        self.assertEqual(self.store.scope_stats(
+            [FINANCE], caller("group:hr", "group:inst-01"))["documents"], 3)
+        # The folder's ACL changes: the record follows, its own rule stays.
+        out = self.store.update_acl(FINANCE, "default",
+                                    [{"path": folder, "acl": dict(HR_ONLY, allow=["group:ops"])}])
+        self.assertEqual(out, {"updated": 2, "missing": 0})
+        self.assertFalse(sees("group:hr", "group:inst-01"))
+        self.assertTrue(sees("group:ops", "group:inst-01"))
+        self.assertFalse(sees("group:ops"))
+        # Another folder's push never reaches it.
+        self.store.update_acl(FINANCE, "default", [{"path": ROOT, "acl": STRICT}])
+        self.assertTrue(sees("group:ops", "group:inst-01"))
+        self.assertEqual(self.store.record_tags(FINANCE, folder), [(record, "t1")])
+        self.assertEqual(self.store.record_tags(FINANCE, folder, after=record), [])
+        self.assertEqual(self.store.record_tags(FINANCE, ROOT + "/hr"), [])
+        self.store.drop_tree(FINANCE, folder, False)
+        self.assertEqual(self.store.record_tags(FINANCE, ROOT), [])
+
+
+LOG = ROOT + "/log"
+RECORDS = [  # (institution group, text) of intelligence log / ODIN entries
+    ("group:inst-01", "Information: contraband Yarrowmint is smuggled at the next visit."),
+    ("group:inst-01", "Information: a phone is hidden in cell 102 behind the Yarrowmint tin."),
+    ("group:inst-02", "Information: an escape over the Brindlewick fence at walking time."),
+    ("group:inst-02", "Information: Yarrowmint parcels paid for by Brindlewick relatives."),
+]
+
+
+class RecordLeakageTest(unittest.TestCase):
+    """Differential (E29): a caller whom the record rule does not admit gets
+    exactly what an index without those records answers -- hits, texts,
+    counts, whole-document reads -- in both stores."""
+
+    def make(self, sqlite):
+        if not sqlite:
+            return store.RagStore()
+        import sqlite_store
+        lite = sqlite_store.SqliteVecStore()
+        self.addCleanup(lite._conn.close)
+        return lite
+
+    def build(self, sqlite, keep):
+        s = self.make(sqlite)
+        s.upsert_directory(FINANCE, "default", LOG, acl=HR_ONLY)
+        s.ingest_text(FINANCE, "default", ROOT + "/travel.txt", "travel", PUBLIC, {})
+        for n, (group, text) in enumerate(RECORDS):
+            if keep(group):
+                s.ingest_text(FINANCE, "default", "%s/~records/intel_log/r%d" % (LOG, n),
+                              "Log %d" % n, text,
+                              {"tag": "t%d" % n, "acl": dict(HR_ONLY, require=[group],
+                                                            follows=LOG)})
+        return s
+
+    def answers(self, s, who):
+        out = []
+        for q in ("Yarrowmint contraband visit", "Brindlewick escape fence", "travel policy"):
+            contexts, debug = s.search_context(FINANCE, q, top_k=10, access=who)
+            out.append(sorted((c["source_path"], c["text"]) for c in contexts))
+            out.append(debug.get("chunk_hits_count"))
+        out.append(s.scope_stats([FINANCE], who))
+        for n in range(len(RECORDS)):
+            path = "%s/~records/intel_log/r%d" % (LOG, n)
+            contexts, debug = s.document_context(FINANCE, path, access=who)
+            out.append(([c["text"] for c in contexts], debug))
+        hits, counts = s.match_chunks([FINANCE], ["Yarrowmint", "Brindlewick"], access=who)
+        out.append((sorted(c["text"] for c in hits), counts))
+        return out
+
+    def test_a_caller_outside_the_record_rule_sees_an_index_without_those_records(self):
+        inst1 = caller("group:hr", "group:inst-01")
+        both = caller("group:hr", "group:inst-01", "group:inst-02")
+        unknown = caller("group:hr", "group:inst-01", "group:inst-02", known=False)
+        for sqlite in (False, True):
+            full = self.build(sqlite, lambda g: True)
+            control = self.build(sqlite, lambda g: g == "group:inst-01")
+            self.assertEqual(self.answers(control, inst1), self.answers(full, inst1), sqlite)
+            # Negative control: a caller both institutions admit gets more.
+            self.assertNotEqual(self.answers(control, both), self.answers(full, both))
+            # A group of an unknown membership: as if there were no record at all.
+            empty = self.build(sqlite, lambda g: False)
+            self.assertEqual(self.answers(empty, unknown), self.answers(full, unknown), sqlite)
+
 
 class SqliteStoreAccessTest(JsonStoreAccessTest):
     def make_store(self):
@@ -186,7 +307,8 @@ class SqliteStoreAccessTest(JsonStoreAccessTest):
             upgraded = sqlite_store.SqliteVecStore(persist_path=path)
             columns = {row[1] for row in upgraded._conn.execute("PRAGMA table_info(documents)")}
             upgraded._conn.close()
-        self.assertTrue({"acl_restricted", "classification", "skip_reason"} <= columns)
+        self.assertTrue({"acl_restricted", "classification", "skip_reason", "acl_require",
+                         "acl_follows", "content_tag"} <= columns)
 
 
 if __name__ == "__main__":

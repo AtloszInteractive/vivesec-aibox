@@ -427,6 +427,8 @@ class GraphView:
         return None
 
     def _edge(self, r: Relation) -> dict | None:
+        if r.type in getattr(self.scope, "hidden_relations", ()):
+            return None
         evidence = [ev for ev in r.evidence if self._doc_ok.get(ev.doc_id)]
         if not evidence:
             return None

@@ -364,6 +364,68 @@ class PurposeHttpTest(unittest.TestCase):
         self.assertEqual(frozenset({"vezeto", "leader"}),
                          self.service._leader_roles("Vezeto, leader"))
 
+    def test_a_protected_members_records_are_sealed_for_everyone_else(self):
+        """E29: a FEFO member's queries, and any that read an informant's record, show
+        a non-member leader only their fingerprint and source count."""
+        import directory
+        import graph
+        import orchestrator
+
+        class Directory:
+            def lookup(self, caller):
+                groups = ("bv-fefo",) if caller.user in ("lars", "fanni") else ()
+                roles = ("leader",) if caller.user in ("vera", "fanni") else ()
+                return directory.DirectoryInfo("token", groups, roles)
+
+        class Graph:
+            enabled = True
+
+            def post(self, path, body, timeout=None):
+                raise graph.GraphError(503, {"ok": False, "error": "away"})
+        prof = {"protected_principals": ["group:bv-fefo"], "relation_types": []}
+        secret = "/storage/drives/finance/~records/intel_log/~protected/ab12"
+        bound = {"case_ref": "BV-1", "legal_basis": "Bv. tv. 21. §"}
+        with patch.object(self.service, "DIRECTORY", Directory()), \
+                patch.object(self.service, "GRAPH", Graph()), \
+                patch.object(self.service, "QUERY_LOG", querylog.QueryLog(self.logdir.name, True)), \
+                patch.object(orchestrator, "profile", lambda client: prof):
+            for user, question in (("lars", "Mit mondott Rigó Lajos?"), ("anna", "Ki az a Sas?")):
+                status, out = self.request("ui/query", dict(bound, query=question), user=user)
+                self.assertEqual(200, status, out)
+            self.assertTrue(self.service._log_query(
+                "anna", "/storage/drives/finance", None, "graph:find", bound, '{"text": "x"}',
+                {"ok": True, "sources": [secret]}))
+            self.assertEqual([True, None, True], [r.get("protected") for r in self.records()])
+
+            def view(user):
+                status, out = self.request("ui/querylog", {}, user=user)
+                self.assertEqual(200, status, out)
+                return {r["question_sha256"]: r for r in out["records"] if r["kind"] != "querylog:view"}
+            lars = querylog.question_hash("Mit mondott Rigó Lajos?")
+            anna = querylog.question_hash("Ki az a Sas?")
+            sealed = view("vera")
+            self.assertTrue(sealed[lars]["sealed"])
+            self.assertNotIn("question", sealed[lars])
+            self.assertEqual(([], 1), (sealed[lars]["result"]["sources"],
+                                       sealed[lars]["result"]["hidden_sources"]))
+            self.assertEqual("Ki az a Sas?", sealed[anna]["question"])
+            self.assertNotIn("Rigó", json.dumps(sealed, ensure_ascii=False))
+            self.assertNotIn("~protected", json.dumps(sealed))
+            # A FEFO leader and the member themself see it whole.
+            for user in ("fanni", "lars"):
+                whole = view(user)
+                self.assertEqual("Mit mondott Rigó Lajos?", whole[lars]["question"])
+                self.assertEqual(["/storage/drives/finance/visits.txt"],
+                                 whole[lars]["result"]["sources"])
+            self.assertIn(secret, json.dumps(view("fanni")))
+        # Membership undecidable (the graph's profile cannot be read): sealed.
+        def away(client):
+            raise graph.GraphError(503, {"ok": False, "error": "away"})
+        with patch.object(self.service, "GRAPH", Graph()), \
+                patch.object(orchestrator, "profile", away):
+            self.request("ui/query", dict(bound, query="Ki?"), user="anna")
+        self.assertTrue(self.records()[-1]["protected"])
+
 
 if __name__ == "__main__":
     unittest.main()

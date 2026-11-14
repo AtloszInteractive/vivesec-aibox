@@ -546,6 +546,27 @@ def profile(client):
     return _PROFILE["profile"]
 
 
+def protected_member(prof, access):
+    """E29: is the caller one of the profile's protected_principals (the FEFO)?
+    `access` is the flattened filter (acl.Access.as_rag()); only a membership
+    the directory answered without error counts, as in the graph."""
+    principals = {str(p).casefold() for p in (prof or {}).get("protected_principals") or ()}
+    if not principals or not isinstance(access, dict) or access.get("membership_known") is not True:
+        return False
+    return bool(principals & {str(p).casefold() for p in access.get("principals") or ()})
+
+
+def for_caller(prof, access):
+    """The profile as this caller's planner and investigation may use it: without
+    the protected relations (an informant's link) unless the caller is a member.
+    The graph hides them anyway; the planner must not even suggest them."""
+    if not prof or protected_member(prof, access) or not any(
+            r.get("protected") for r in prof.get("relation_types") or []):
+        return prof
+    return dict(prof, relation_types=[r for r in prof.get("relation_types") or []
+                                      if not r.get("protected")])
+
+
 def _label_of(labels, code, fallback):
     labels = labels or {}
     return labels.get(code) or labels.get("en") or fallback
