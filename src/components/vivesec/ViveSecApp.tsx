@@ -676,10 +676,9 @@ function splitCommand(v: string): { cmd: string | null; rest: string } {
 }
 
 /* ---------- Helpers ---------- */
-const nowTs = () => {
-  const d = new Date();
-  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-};
+const hhmm = (d: Date) =>
+  `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+const nowTs = () => hhmm(new Date());
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 const fileIcon = (t: DriveFile["type"]) => {
@@ -1666,17 +1665,19 @@ function ViveSecAppInner() {
       for (const [index, turn] of turns.entries()) {
         const id = uid();
         profiles[id] = chatProfile;
-        const ts = turn.ts ? new Date(turn.ts * 1000).toISOString().slice(11, 16) : nowTs();
-        restored.push(
-          turn.role === "user"
-            ? { id, role: "user", name: senderName, ts, text: turn.content }
-            : buildLiveMessage(
-                id,
-                undefined,
-                "",
-                conversationTurnResult(turn, index === turns.length - 1),
-              ),
+        // The stored time, in the reader's local time (as live messages show it).
+        const ts = turn.ts ? hhmm(new Date(turn.ts * 1000)) : nowTs();
+        if (turn.role === "user") {
+          restored.push({ id, role: "user", name: senderName, ts, text: turn.content });
+          continue;
+        }
+        const card = buildLiveMessage(
+          id,
+          undefined,
+          "",
+          conversationTurnResult(turn, index === turns.length - 1),
         );
+        restored.push(card.role === "system" ? card : { ...card, ts });
       }
       setMessageProfiles((current) => ({ ...current, ...profiles }));
       setMessages((current) => [
