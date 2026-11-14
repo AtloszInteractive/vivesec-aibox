@@ -6,6 +6,7 @@
     python3 samba_ad.py env             AUTH_LDAP_* settings for the test domain (shell exports)
     python3 samba_ad.py map ROLE=DRIVE  the group map for the test domain (JSON), e.g.
                                         admin=/storage/drives/a/ analyst=/storage/drives/b/
+                                        fefo=/storage/drives/b/ (BV-FEFO -> group bv-fefo)
     python3 samba_ad.py status | remove
 
 Development and test only: the test domain AIBOX.TEST (see entrypoint.sh)
@@ -35,7 +36,11 @@ LDAPS_PORT, LDAP_PORT = 1636, 1389
 BASE_DN = "DC=aibox,DC=test"
 SERVICE_DN = "CN=svc-aibox,OU=Service," + BASE_DN
 GROUPS = {"admin": "CN=AIBox-Admins,OU=AIBox," + BASE_DN,
-          "analyst": "CN=AIBox-Analysts,OU=AIBox," + BASE_DN}
+          "analyst": "CN=AIBox-Analysts,OU=AIBox," + BASE_DN,
+          "fefo": "CN=BV-FEFO,OU=AIBox," + BASE_DN}
+# The token's group name where it is not the CN: the BV profile's protected
+# principal (E29: only the FEFO sees an informant) is group:bv-fefo.
+NAMES = {"fefo": "bv-fefo"}
 
 
 def state_dir():
@@ -123,7 +128,9 @@ def group_map(pairs):
         if role not in roles or not drive.startswith("/"):
             raise SystemExit("ROLE=DRIVE with ROLE in %s" % ", ".join(GROUPS))
         roles[role].append(drive)
-    print(json.dumps({"groups": [{"dn": dn, "roles": [role]} for role, dn in GROUPS.items()],
+    print(json.dumps({"groups": [dict({"dn": dn, "roles": [role]},
+                                      **({"name": NAMES[role]} if role in NAMES else {}))
+                                 for role, dn in GROUPS.items()],
                       "roles": roles}, indent=2))
 
 
