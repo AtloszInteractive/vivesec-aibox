@@ -96,6 +96,13 @@ function baseName(path?: string | null): string {
   return idx >= 0 ? trimmed.slice(idx + 1) || trimmed : trimmed;
 }
 
+/** A citation's label: the file name; a structured record (E29: a log or ODIN
+ *  entry, `<folder>/~records/<source>/<title> (<hash>)`) shows its title only. */
+function sourceLabel(path?: string | null): string {
+  const name = baseName(path);
+  return path?.includes("/~records/") ? name.replace(/ \([0-9a-f]{12}\)$/, "") : name;
+}
+
 export type RagCitation = {
   rank: number;
   source: string;
@@ -273,7 +280,7 @@ function ragResultFromAdapter(result: AdapterAnswer): RagAskResult {
       fileId: c.path ?? undefined,
       chunk: typeof c.page_number === "number" ? c.page_number : 0,
       score: Math.round((c.score ?? 0) * 100),
-      label: baseName(c.path),
+      label: sourceLabel(c.path),
       snippet: c.snippet,
       ...(typeof c.ocr_quality === "number" ? { ocrQuality: c.ocr_quality } : {}),
     }));
@@ -408,7 +415,7 @@ export function conversationTurnResult(turn: ConversationTurn): RagAskResult {
       fileId: source.source_path ?? undefined,
       chunk: 0,
       score: 0,
-      label: baseName(source.source_path),
+      label: sourceLabel(source.source_path),
       snippet: "",
     }));
   return {

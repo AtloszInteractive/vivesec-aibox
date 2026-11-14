@@ -1978,10 +1978,10 @@ function ViveSecAppInner() {
     const known = fileIndexRef.current.get(path);
     if (known) return known;
     const rootSlash = (drive || "").replace(/\/+$/, "") + "/";
-    return toDriveFile(
-      { path, name: path.split("/").pop() ?? path, size: null, mtime: null },
-      rootSlash,
-    );
+    const base = path.split("/").pop() ?? path;
+    // A structured record (E29) is named "<title> (<hash>)": show the title.
+    const name = path.includes("/~records/") ? base.replace(/ \([0-9a-f]{12}\)$/, "") : base;
+    return toDriveFile({ path, name, size: null, mtime: null }, rootSlash);
   }
 
   function openFile(id: string) {
