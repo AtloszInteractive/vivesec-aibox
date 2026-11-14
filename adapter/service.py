@@ -146,6 +146,7 @@ import person_summary  # noqa: E402
 import purpose  # noqa: E402
 import querylog  # noqa: E402
 import reprocess  # noqa: E402
+import record_rag  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
 import scope  # noqa: E402
@@ -501,7 +502,10 @@ def _acl_changed(path):
 def _visible_contexts(contexts, access):
     """Second line of defence. The RAG already filtered, but its copy of the
     ACL can lag the mirror (rules edited, push pending): a context the policy
-    hides is dropped here and logged."""
+    hides is dropped here and logged. The protected part of a structured
+    record (E29) never goes into the RAG; should one turn up, it is dropped
+    for everyone."""
+    contexts = [c for c in contexts if not _protected_record_path(c.get("source_path") or "")]
     if access is None or not access.enforced:
         return contexts
     check = _visible(access)
@@ -527,6 +531,16 @@ def _acl_loop():
 # Relationship analysis (E26): internal graph service, off unless GRAPH_URL is set.
 GRAPH = graph.GraphClient.from_env()
 GRAPH_FORWARD = graph.Forwarder.from_env(GRAPH, _flat_acl)
+# E29: the open text of structured records whose source the profile marks `rag`
+# (the intelligence log, ODIN), kept in the RAG in line with the graph.
+RECORD_RAG = record_rag.RecordRag(lambda path, body: GRAPH.post(path, body),
+                                  lambda path, body: rag_post_json(path, body), _flat_acl,
+                                  corpus.corpus_id_of_path, TENANT_ID, _acl_changed)
+_RECORD_RAG_JOBS = set()
+
+
+def _protected_record_path(path):
+    return "/%s/" % record_rag.RECORDS_DIR in path and "/~protected/" in path
 # Reprocessing after a profile change fetches each file again: from the
 # ViVeSecBox (ws-fs), or -- on a development box without that channel -- from
 # this mirror of the drives (<dir>/<drive>/... for /storage/drives/<drive>/...).
@@ -2315,6 +2329,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/import": self._graph_import,
                 "/api/v1/ui/graph/import/sources": self._graph_import_sources,
                 "/api/v1/ui/graph/import/status": self._graph_import_status,
+                "/api/v1/ui/graph/import/rag": self._graph_import_rag,
                 "/api/v1/ui/index/skipped": self._index_skipped,
                 "/api/v1/ui/store/list": self._store_list,
                 "/api/v1/ui/store/upload": self._store_upload,
@@ -3534,10 +3549,11 @@ class Handler(BaseHTTPRequestHandler):
     def _graph_import(self):
         """A graph administrator imports a periodic export (CSV/XLSX) of a
         structured source into a folder of their scope (E28). The records live
-        in the graph only -- the file is not stored on a drive or in the RAG --
-        and each is visible to a caller who may read the folder (its rule now
-        and as it changes) AND whom the record's own rule (the profile: e.g. its
-        institution's group) admits."""
+        in the graph -- the file is not stored on a drive or in the RAG; only the
+        open text of a source the profile marks `rag` (E29) is copied to the RAG
+        (record_rag.py) -- and each is visible to a caller who may read the folder
+        (its rule now and as it changes) AND whom the record's own rule (the
+        profile: e.g. its institution's group) admits."""
         ctx = self._graph_request()
         if ctx is None:
             return
@@ -3568,16 +3584,54 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[adapter] graph: import %s (%s, %s) into %s by %s: %s\n" % (
             body.get("source"), body.get("as_of"), stats.get("mode"), folder, user,
             {k: stats.get(k) for k in ("records", "created", "updated", "removed")}))
-        self._send(200, res)
+        self._send(200, self._record_rag_after(res, body["wait"]))
+
+    def _record_rag_after(self, res, wait=0):
+        """A finished import's folder gets its RAG copy aligned (E29), once per
+        job; the answer carries how far that got (waiting up to `wait` s)."""
+        item = res.get("import") or {}
+        folder = str(item.get("source_path") or "")
+        if item.get("status") != "done" or not folder:
+            return res
+        job = item.get("job")
+        if job not in _RECORD_RAG_JOBS:
+            _RECORD_RAG_JOBS.add(job)
+            if len(_RECORD_RAG_JOBS) > 1000:
+                _RECORD_RAG_JOBS.clear()
+            RECORD_RAG.request(folder)
+        state = RECORD_RAG.wait(folder, min(wait, 120)) if wait else RECORD_RAG.status(folder)
+        return dict(res, rag=state)
 
     def _graph_import_status(self):
         ctx = self._graph_request()
         if ctx is None or not self._graph_admin(ctx[0]):
             return
+        wait = _review_int(ctx[1], "wait", 0)
         res = self._graph_post("/import/status", {"job": str(ctx[1].get("job") or ""),
-                                                  "wait": _review_int(ctx[1], "wait", 0)})
+                                                  "wait": wait})
         if res is not None:
-            self._send(200, res)
+            self._send(200, self._record_rag_after(res, wait))
+
+    def _graph_import_rag(self):
+        """A graph administrator aligns (`sync`: true) or asks about the RAG copy
+        of a folder's structured records (E29)."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, req_scope, access, _ = ctx
+        if not self._graph_admin(user):
+            return
+        raw_folder = str(payload.get("folder") or "").strip()
+        folder = corpus.norm(raw_folder).rstrip("/") if raw_folder else ""
+        if not folder or ".." in folder.split("/") or not req_scope.contains_path(folder) \
+                or not _visible(access)(folder):
+            self._send(403, {"ok": False, "error": "folder outside the request scope"})
+            return
+        if payload.get("sync") is True:
+            RECORD_RAG.request(folder)
+        wait = _review_int(payload, "wait", 0)
+        state = RECORD_RAG.wait(folder, min(wait, 300)) if wait else RECORD_RAG.status(folder)
+        self._send(200, {"ok": True, "folder": folder, "rag": state})
 
     def _graph_reprocess_cancel(self):
         ctx = self._graph_request()
