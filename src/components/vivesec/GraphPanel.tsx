@@ -1641,7 +1641,11 @@ function QueryLogTab({ drive }: { drive: string }) {
               <div className="mt-1 break-words text-white/80">
                 {rec.question ?? (
                   <span className="text-white/45">
-                    {`${tm("Question text not kept (fingerprint only)")}: ${rec.question_sha256.slice(0, 12)}…`}
+                    {`${tm(
+                      rec.sealed
+                        ? "Protected query: only authorised members see its text and sources (fingerprint)"
+                        : "Question text not kept (fingerprint only)",
+                    )}: ${rec.question_sha256.slice(0, 12)}…`}
                   </span>
                 )}
               </div>

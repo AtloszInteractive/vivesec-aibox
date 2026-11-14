@@ -297,6 +297,23 @@ class StatedRelationTest(unittest.TestCase):
         self.assertIn("-- generic:", text)
         self.assertIn("[also: testvére, kapcsolattartó]", text)
 
+    def test_only_a_protected_member_is_offered_a_protected_relation(self):
+        prof = dict(self.PROFILE, protected_principals=["group:bv-fefo"],
+                    relation_types=self.PROFILE["relation_types"] + [
+                        {"id": "PROVIDED_INFO", "label": {"en": "Provided information"},
+                         "from": ["person"], "to": ["event"], "protected": True}])
+        member = {"principals": ["everyone", "user:x", "group:bv-fefo"], "clearance": 1,
+                  "membership_known": True, "default_classification": 1}
+        for access in (None, dict(member, membership_known=False),
+                       dict(member, principals=["everyone", "user:x"])):
+            mine = orchestrator.for_caller(prof, access)
+            self.assertNotIn("PROVIDED_INFO", orchestrator.vocabulary(mine))
+            self.assertIsNone(orchestrator.investigate_config(mine, ["PROVIDED_INFO"], []))
+        mine = orchestrator.for_caller(prof, member)
+        self.assertIn("PROVIDED_INFO", orchestrator.vocabulary(mine))
+        self.assertTrue(orchestrator.investigate_config(mine, ["PROVIDED_INFO"], []))
+        self.assertIs(self.PROFILE, orchestrator.for_caller(self.PROFILE, None))
+
 
 class RunTest(unittest.TestCase):
     def test_namesakes_are_kept_together_and_hidden_evidence_dropped(self):

@@ -425,6 +425,11 @@ const M: Record<string, Tri> = {
     "Spørgsmålets tekst gemmes ikke (kun fingeraftryk)",
     "Fragetext nicht gespeichert (nur Fingerabdruck)",
   ],
+  "Protected query: only authorised members see its text and sources (fingerprint)": [
+    "Védett lekérdezés: a szövegét és a forrásait csak a jogosult tagok látják (ujjlenyomat)",
+    "Beskyttet forespørgsel: kun autoriserede medlemmer ser tekst og kilder (fingeraftryk)",
+    "Geschützte Abfrage: Text und Quellen sehen nur berechtigte Mitglieder (Fingerabdruck)",
+  ],
   "Documents outside your access": [
     "Az Ön számára nem látható dokumentumok",
     "Dokumenter uden for din adgang",

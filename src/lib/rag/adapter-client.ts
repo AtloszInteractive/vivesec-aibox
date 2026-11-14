@@ -1088,6 +1088,8 @@ export type AdapterQueryLogRecord = {
   legal_basis?: string | null;
   question?: string;
   question_sha256: string;
+  /** E29: a protected member's record, shown to this viewer without text and sources. */
+  sealed?: boolean;
   hash?: string;
   intact: boolean;
   result?: {
