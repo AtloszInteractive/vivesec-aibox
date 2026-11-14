@@ -165,6 +165,17 @@ class SqliteVecStore:
             c.execute("ALTER TABLE documents ADD COLUMN acl_restricted INTEGER")
         if "classification" not in columns:
             c.execute("ALTER TABLE documents ADD COLUMN classification INTEGER")
+        # E29: a record's own rule (acl.require: NULL = no gate, else its level;
+        # the principals are doc_acl rows with effect 'require'), the folder whose
+        # ACL it follows, and the caller's version tag (/index/records).
+        if "acl_require" not in columns:
+            c.execute("ALTER TABLE documents ADD COLUMN acl_require INTEGER")
+        if "acl_follows" not in columns:
+            c.execute("ALTER TABLE documents ADD COLUMN acl_follows TEXT")
+        if "content_tag" not in columns:
+            c.execute("ALTER TABLE documents ADD COLUMN content_tag TEXT")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_documents_follows "
+                  "ON documents(corpus_id, acl_follows)")
         # E10b: where a document's text came from. pages.kind is NULL for a text
         # layer, 'ocr' for a recognised page, 'skipped' for one OCR could not read.
         if "ocr_state" not in columns:
@@ -296,8 +307,24 @@ class SqliteVecStore:
     # ----- access control (E03) ----------------------------------------------
     def _acl_snapshot(self, doc_id):
         return self._conn.execute(
-            "SELECT acl_restricted, classification FROM documents WHERE doc_id=?",
-            (doc_id,)).fetchone()
+            "SELECT acl_restricted, classification, acl_require, acl_follows "
+            "FROM documents WHERE doc_id=?", (doc_id,)).fetchone()
+
+    def _stored_acl(self, doc_id, snapshot):
+        """The ACL as stored (for the own rule an update keeps)."""
+        if snapshot is None:
+            return None
+        rows = self._conn.execute("SELECT effect, principal FROM doc_acl WHERE doc_id=?",
+                                  (doc_id,)).fetchall()
+        out = {"restricted": bool(snapshot[0]), "classification": snapshot[1],
+               "allow": [p for e, p in rows if e == "allow"],
+               "deny": [p for e, p in rows if e == "deny"]}
+        if snapshot[2] is not None:
+            out["require"] = [p for e, p in rows if e == "require"]
+            out["require_classification"] = snapshot[2]
+        if snapshot[3] is not None:
+            out["follows"] = snapshot[3]
+        return out
 
     def _write_acl(self, doc_id, acl, previous=None):
         """Store a document's flattened ACL. Without a new one the row keeps
@@ -306,35 +333,62 @@ class SqliteVecStore:
         if acl is None:
             if previous is not None:
                 self._conn.execute(
-                    "UPDATE documents SET acl_restricted=?, classification=? WHERE doc_id=?",
-                    (previous[0], previous[1], doc_id))
+                    "UPDATE documents SET acl_restricted=?, classification=?, acl_require=?, "
+                    "acl_follows=? WHERE doc_id=?", tuple(previous) + (doc_id,))
             return
         self._conn.execute("DELETE FROM doc_acl WHERE doc_id=?", (doc_id,))
+        require = acl.get("require")
         rows = ([(doc_id, "allow", p) for p in acl["allow"]]
-                + [(doc_id, "deny", p) for p in acl["deny"]])
+                + [(doc_id, "deny", p) for p in acl["deny"]]
+                + [(doc_id, "require", p) for p in require or ()])
         if rows:
             self._conn.executemany(
                 "INSERT INTO doc_acl(doc_id, effect, principal) VALUES(?,?,?)", rows)
         self._conn.execute(
-            "UPDATE documents SET acl_restricted=?, classification=? WHERE doc_id=?",
-            (1 if acl["restricted"] else 0, acl["classification"], doc_id))
+            "UPDATE documents SET acl_restricted=?, classification=?, acl_require=?, "
+            "acl_follows=? WHERE doc_id=?",
+            (1 if acl["restricted"] else 0, acl["classification"],
+             None if require is None else acl.get("require_classification", 0),
+             acl.get("follows"), doc_id))
 
     def update_acl(self, corpus_id, tenant_id, entries):
         """Replace the ACL of already known documents (metadata only, nothing
-        is re-embedded). Unknown paths are counted, not created."""
+        is re-embedded): the document at each path and the records that follow
+        that folder's ACL (acl.follows), whose own rule (acl.require) stays.
+        Unknown paths are counted, not created."""
         parsed = [(norm_path(entry["path"]), access_filter.parse_doc_acl(entry["acl"]))
                   for entry in entries]
         updated = missing = 0
         with self._lock:
             for path, acl in parsed:
                 doc_id = _doc_id(tenant_id, corpus_id, path)
-                if self._acl_snapshot(doc_id) is None:
+                snapshot = self._acl_snapshot(doc_id)
+                if snapshot is None:
                     missing += 1
-                    continue
-                self._write_acl(doc_id, acl)
-                updated += 1
+                else:
+                    self._write_acl(doc_id, access_filter.updated_acl(
+                        acl, self._stored_acl(doc_id, snapshot)))
+                    updated += 1
+                for (record,) in self._conn.execute(
+                        "SELECT doc_id FROM documents WHERE corpus_id=? AND acl_follows=?",
+                        (corpus_id, path)).fetchall():
+                    old = self._stored_acl(record, self._acl_snapshot(record))
+                    self._write_acl(record, access_filter.updated_acl(acl, old, True))
+                    updated += 1
             self._conn.commit()
         return {"updated": updated, "missing": missing}
+
+    def record_tags(self, corpus_id, prefix, after="", limit=1000):
+        """[(path, tag)] of the documents below `prefix` that carry a tag (records
+        written with /ingest metadata.tag), in path order after `after`."""
+        base = norm_path(prefix).rstrip("/") + "/"
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT source_path, content_tag FROM documents WHERE corpus_id=? "
+                "AND content_tag IS NOT NULL AND substr(source_path, 1, ?)=? AND source_path>? "
+                "ORDER BY source_path LIMIT ?",
+                (corpus_id, len(base), base, after or "", limit)).fetchall()
+        return [(p, t) for p, t in rows]
 
     def _excluded(self, corpus_id, acl_sql, acl_params):
         """Does the access filter hide any searchable chunk of this corpus?"""
@@ -464,6 +518,7 @@ class SqliteVecStore:
             mtime=metadata.get("mtime"),
             size=metadata.get("size"),
             acl=metadata.get("acl"),
+            tag=metadata.get("tag"),
         )
 
     def ingest_content(self, corpus_id, tenant_id, path, title, raw, metadata):
@@ -608,7 +663,7 @@ class SqliteVecStore:
         self._conn.execute("DELETE FROM pages WHERE doc_id=?", (doc_id,))
 
     def _index_document(self, corpus_id, tenant_id, source_path, title, pages, mtime, size,
-                        acl=None, ocr_state=None, page_meta=None, still_current=None):
+                        acl=None, ocr_state=None, page_meta=None, still_current=None, tag=None):
         """(Re)index one document. `page_meta` {page: {status, quality, lang,
         rotation}} marks recognised pages ('ocr') and unreadable ones ('skipped',
         recorded without text); `still_current()` is checked under the write lock
@@ -687,10 +742,11 @@ class SqliteVecStore:
             self._conn.execute(
                 "INSERT OR REPLACE INTO documents("
                 "doc_id, corpus_id, tenant_id, source_path, title, file, mtime, size, "
-                "pages, chunks, indexed, skip_reason, ocr_state) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "pages, chunks, indexed, skip_reason, ocr_state, content_tag) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (doc_id, corpus_id, tenant_id, source_path, title, 1, mtime, size,
                  len(page_records), len(chunk_records), 1 if chunk_records else 0,
-                 skip_reason, ocr_state),
+                 skip_reason, ocr_state, tag),
             )
             # Same transaction as the chunks: a search never sees the new
             # chunks without the ACL that guards them.
