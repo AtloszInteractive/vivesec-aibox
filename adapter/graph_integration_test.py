@@ -276,6 +276,76 @@ class GraphIntegrationTest(unittest.TestCase):
                                 dict(request, shared_contact="yes"), user="hanna")
         self.assertEqual(400, status, out)
 
+    def test_an_informant_is_seen_by_the_fefo_only_end_to_end(self):
+        """E29 (1.3): answer, subgraph, spreadsheet and query log of a non-FEFO
+        caller never name the informant; the FEFO sees them in the same place."""
+        import io
+        import zipfile
+
+        import purpose
+        import querylog
+
+        sys.path.append(os.path.join(REPO, "graph-corpus"))
+        import structured_samples as samples
+        service = self.service
+        for source in ("fonix_base", "intel_log"):
+            header, rows = samples.exports()[source]
+            status, out = self.call("/api/v1/ui/graph/import", {
+                "source": source, "as_of": samples.AS_OF, "folder": DRIVE + "/reports",
+                "filename": source + ".csv",
+                "content_b64": base64.b64encode(samples.to_csv(header, rows)).decode("ascii")},
+                user="hanna")
+            self.assertEqual(200, status, out)
+        self.assertEqual(6, out["import"]["stats"]["protected"])
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+        bound = {"case_ref": "BV-2026/9", "lang": "hu"}
+
+        def find(user, text):
+            status, out = self.call("/api/v1/ui/graph/query", dict(
+                bound, query="find", params={"text": text, "types": ["person"]}), user=user)
+            self.assertEqual(200, status, out)
+            return {e["label"] for e in out["entities"]}
+
+        def sheet(out):
+            book = zipfile.ZipFile(io.BytesIO(base64.b64decode(out["content_b64"])))
+            return "".join(book.read(n).decode("utf-8") for n in book.namelist())
+        request = dict(bound, start="NY-1002", levels=1)
+        with patch.dict(GROUPS, {"hanna": ["bv-orszagos", "bv-fefo"], "lars": ["bv-orszagos"]}), \
+                patch.object(service, "INVESTIGATE_RELATIONS", []), \
+                patch.object(service, "INVESTIGATE_VIA", ["INVOLVED_IN", "PROVIDED_INFO"]), \
+                patch.object(service, "PURPOSE", purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name, True)), \
+                patch.object(service, "LEADERS", frozenset({"vera"})):
+            self.assertEqual(set(), find("lars", "Rigó"))
+            self.assertEqual({"Rigó Lajos"}, find("hanna", "Rigó"))
+            for user, fefo in (("lars", False), ("hanna", True)):
+                status, sub = self.call("/api/v1/ui/graph/investigation/graph", request,
+                                        user=user)
+                self.assertEqual(200, status, sub)
+                names = [r["name"] for r in sub["rows"]]
+                self.assertIn("Illés Dénes", names)  # through the entry they share
+                self.assertEqual(fefo, "Rigó Lajos" in names, names)
+                status, xlsx = self.call("/api/v1/ui/graph/investigation/export", request,
+                                         user=user)
+                self.assertEqual(200, status, xlsx)
+                blob = sheet(xlsx) + json.dumps(sub, ensure_ascii=False)
+                self.assertEqual(fefo, "Rigó Lajos" in blob)
+                if not fefo:
+                    for hidden in ("Forrás neve", "Forrás típusa", "kapcsolattartó (",
+                                   "~protected"):
+                        self.assertNotIn(hidden, blob)
+            status, log = self.call("/api/v1/ui/querylog", {}, user="vera")
+            self.assertEqual((200, "leader"), (status, log["role"]), log)
+            by_user = {}
+            for record in log["records"]:
+                by_user.setdefault(record["user"], []).append(record)
+            self.assertTrue(all(r.get("sealed") and "question" not in r for r in by_user["hanna"]))
+            self.assertTrue(all("question" in r for r in by_user["lars"]))
+            dump = json.dumps(log, ensure_ascii=False)
+            self.assertNotIn("Rigó", dump)
+            self.assertNotIn("~protected", dump)
+
     def test_synced_files_become_a_graph_and_hidden_ones_stay_hidden(self):
         self.assertEqual({"Kovács János"}, self.people("lars", "Kovács"))
         self.assertEqual({"Nagy Éva"}, self.people("lars", "Nagy"))
