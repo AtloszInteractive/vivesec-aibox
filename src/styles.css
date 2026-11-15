@@ -303,3 +303,20 @@
     color: color-mix(in srgb, var(--ink) 60%, transparent);
   }
 }
+
+/* Administration > handover sheet: printed on its own, hidden otherwise. */
+.vvs-print-sheet {
+  display: none;
+}
+
+@media print {
+  body.vvs-printing > *:not(.vvs-print-sheet) {
+    display: none !important;
+  }
+  body.vvs-printing .vvs-print-sheet {
+    display: block;
+  }
+  body.vvs-printing {
+    background: #fff;
+  }
+}

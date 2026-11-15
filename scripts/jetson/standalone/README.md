@@ -97,6 +97,23 @@ second on the handover sheet; the first is what people type).
   only, `connect-src https://$host`, no inline code. `/cert` also answers over
   HTTPS, where it simply reports that the device trusts the box.
 
+### Handover sheet
+
+Administration › Overview › *Certificate for the client devices* shows the
+installation addresses, a QR code of `http://<address>/cert`, the CA name and
+expiry and its SHA-256 fingerprint in both forms, and prints a one-page
+handover sheet with the same data and three steps for the users.
+
+- The fingerprint is computed in the browser (Web Crypto) from `/aibox-ca.cer`
+  fetched over the HTTPS connection of the administration page, so it is only
+  as trustworthy as that browser's trust in the box: for the very first sheet
+  compare it with `tls-pki.sh show` on the box.
+- The names and addresses come from `/aibox-handover.json`, rendered by
+  `https-front.sh` from `AIBOX_TLS_DNS` / `AIBOX_TLS_IPS` and served on HTTPS
+  only (plain HTTP redirects it).
+- The QR code carries the first address when there is one: phones rarely
+  resolve the box name.
+
 The web UI behind the front must listen on loopback only: run it with
 `HOST=127.0.0.1 NITRO_HOST=127.0.0.1` (the `loopback` exposure of
 `40-app-deploy-jp6.sh`). In `vivesecbox` mode the adapter owns :80 and :443,

@@ -139,6 +139,24 @@ probe_location() {
   echo "${indent}}"
 }
 
+json_list() {  # validated names/addresses -> ["a","b"]; they hold no quotes
+  local out="" item
+  for item in "$@"; do out+="\"$item\","; done
+  printf '[%s]' "${out%,}"
+}
+
+# The configured names and addresses for the administration page's handover
+# sheet. HTTPS only: what the sheet prints must come over the trusted channel.
+handover_location() {
+  local indent=$1
+  echo "${indent}location = /aibox-handover.json {"
+  security_headers "${indent}    "
+  echo "${indent}    add_header Cache-Control \"no-store\" always;"
+  echo "${indent}    default_type application/json;"
+  echo "${indent}    return 200 '{\"names\":$(json_list "${dns_names[@]}"),\"addresses\":$(json_list "${ip_names[@]}")}';"
+  echo "${indent}}"
+}
+
 render() {
   local names header
   read_front_config
@@ -220,6 +238,7 @@ $(security_headers "        ")
 $(ca_download_location "        " yes)
 $(cert_page_locations "        " https)
 $(probe_location "        ")
+$(handover_location "        ")
         location / {
             proxy_pass http://$upstream;
             proxy_http_version 1.1;
@@ -427,6 +446,12 @@ cmd_verify() {
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 --cacert "$tls_dir/ca/ca.crt" \
       --resolve "${dns_names[0]}:443:$probe" "https://${dns_names[0]}/aibox-probe" 2>/dev/null || true)
     run_check "https://${dns_names[0]}/aibox-probe answers for the certificate page ($code)" test "$code" = 204
+    run_check "https://${dns_names[0]}/aibox-handover.json lists the box names" bash -c "curl -fsS --max-time 15 \
+      --cacert '$tls_dir/ca/ca.crt' --resolve '${dns_names[0]}:443:$probe' 'https://${dns_names[0]}/aibox-handover.json' |
+      grep -qF '\"${dns_names[0]}\"'"
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "Host: ${dns_names[0]}" \
+      "http://$probe/aibox-handover.json" 2>/dev/null || true)
+    run_check "http://$probe/aibox-handover.json is not served over plain HTTP ($code)" test "$code" = 301
     served=$(curl -sS --max-time 10 -H "Host: ${dns_names[0]}" "http://$probe/aibox-ca.cer" 2>/dev/null |
       openssl dgst -sha256 -r | cut -d' ' -f1)
     run_check "http://$probe/aibox-ca.cer is the box CA" test "$served" = "$fp"

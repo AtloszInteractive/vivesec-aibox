@@ -1351,6 +1351,82 @@ const M: Record<string, Tri> = {
   "Active Directory": ["Active Directory", "Active Directory", "Active Directory"],
   "Permission rules": ["Jogosultsági szabályok", "Rettighedsregler", "Berechtigungsregeln"],
   "Rules file": ["Szabályfájl", "Regelfil", "Regeldatei"],
+  // ---- Administration: client certificate and handover sheet ----
+  "Certificate for the client devices": [
+    "Tanúsítvány a kliensgépekhez",
+    "Certifikat til klientenhederne",
+    "Zertifikat für die Client-Geräte",
+  ],
+  "Print handover sheet": [
+    "Átadás-átvételi lap nyomtatása",
+    "Udskriv overdragelsesark",
+    "Übergabeprotokoll drucken",
+  ],
+  "Installation page": ["Telepítő oldal", "Installationsside", "Installationsseite"],
+  "CA certificate": ["CA-tanúsítvány", "CA-certifikat", "CA-Zertifikat"],
+  "Valid until": ["Érvényes eddig", "Gyldigt til", "Gültig bis"],
+  "SHA-256 fingerprint (Windows form)": [
+    "SHA-256 ujjlenyomat (Windows-alak)",
+    "SHA-256-fingeraftryk (Windows-form)",
+    "SHA-256-Fingerabdruck (Windows-Form)",
+  ],
+  "SHA-256 fingerprint (Firefox form)": [
+    "SHA-256 ujjlenyomat (Firefox-alak)",
+    "SHA-256-fingeraftryk (Firefox-form)",
+    "SHA-256-Fingerabdruck (Firefox-Form)",
+  ],
+  "QR code of the installation page": [
+    "A telepítő oldal QR-kódja",
+    "QR-kode til installationssiden",
+    "QR-Code der Installationsseite",
+  ],
+  "The certificate cannot be read here: the page is not open through the HTTPS front of the AI Box.":
+    [
+      "A tanúsítvány itt nem olvasható: az oldal nem az AI Box HTTPS-előtétjén keresztül van megnyitva.",
+      "Certifikatet kan ikke læses her: siden er ikke åbnet gennem AI Boxens HTTPS-front.",
+      "Das Zertifikat ist hier nicht lesbar: Die Seite ist nicht über das HTTPS-Frontend der AI Box geöffnet.",
+    ],
+  "The fingerprint is computed in this browser from the certificate received over the encrypted connection. For the very first sheet, compare it with the output of tls-pki.sh show on the AI Box.":
+    [
+      "Az ujjlenyomatot ez a böngésző számolja a titkosított kapcsolaton kapott tanúsítványból. A legelső lapnál vesse össze az AI Boxon futtatott tls-pki.sh show kimenetével.",
+      "Fingeraftrykket beregnes i denne browser ud fra det certifikat, der modtages over den krypterede forbindelse. Sammenlign det allerførste ark med outputtet af tls-pki.sh show på AI Boxen.",
+      "Der Fingerabdruck wird in diesem Browser aus dem über die verschlüsselte Verbindung empfangenen Zertifikat berechnet. Vergleichen Sie das allererste Protokoll mit der Ausgabe von tls-pki.sh show auf der AI Box.",
+    ],
+  "Handover sheet: AI Box certificate for the client devices": [
+    "Átadás-átvételi lap: az AI Box tanúsítványa a kliensgépekhez",
+    "Overdragelsesark: AI Boxens certifikat til klientenhederne",
+    "Übergabeprotokoll: Zertifikat der AI Box für die Client-Geräte",
+  ],
+  "AI Box names": ["Az AI Box nevei", "AI Boxens navne", "Namen der AI Box"],
+  "AI Box addresses": ["Az AI Box címei", "AI Boxens adresser", "Adressen der AI Box"],
+  "Scan with a phone on the AI Box network": [
+    "Olvassa be telefonnal az AI Box hálózatán",
+    "Scan med en telefon på AI Boxens netværk",
+    "Mit einem Telefon im Netz der AI Box scannen",
+  ],
+  "Open the installation page with http:// (not https://), on the device to be set up.": [
+    "A beállítandó eszközön nyissa meg a telepítő oldalt http:// előtaggal (nem https://).",
+    "Åbn installationssiden med http:// (ikke https://) på den enhed, der skal sættes op.",
+    "Öffnen Sie die Installationsseite auf dem einzurichtenden Gerät mit http:// (nicht https://).",
+  ],
+  "Download the certificate and compare its SHA-256 fingerprint with this sheet character by character. Install it only if they match.":
+    [
+      "Töltse le a tanúsítványt, és vesse össze az SHA-256 ujjlenyomatát karakterre pontosan ezzel a lappal. Csak egyezés esetén telepítse.",
+      "Hent certifikatet, og sammenlign dets SHA-256-fingeraftryk tegn for tegn med dette ark. Installer det kun, hvis de stemmer overens.",
+      "Laden Sie das Zertifikat herunter und vergleichen Sie seinen SHA-256-Fingerabdruck Zeichen für Zeichen mit diesem Protokoll. Installieren Sie es nur bei Übereinstimmung.",
+    ],
+  "Follow the steps shown for the device. In a Windows domain the administrator can deploy the certificate with Group Policy instead.":
+    [
+      "Kövesse az eszközhöz megjelenő lépéseket. Windows-tartományban a rendszergazda csoportházirenddel is kioszthatja a tanúsítványt.",
+      "Følg de trin, der vises for enheden. I et Windows-domæne kan administratoren i stedet fordele certifikatet med gruppepolitik.",
+      "Folgen Sie den für das Gerät angezeigten Schritten. In einer Windows-Domäne kann der Administrator das Zertifikat stattdessen per Gruppenrichtlinie verteilen.",
+    ],
+  "Keep this sheet: every device checks the downloaded certificate against it.": [
+    "Őrizze meg ezt a lapot: minden eszköz ehhez veti össze a letöltött tanúsítványt.",
+    "Gem dette ark: hver enhed kontrollerer det hentede certifikat op imod det.",
+    "Bewahren Sie dieses Protokoll auf: Jedes Gerät prüft das heruntergeladene Zertifikat daran.",
+  ],
+  Printed: ["Nyomtatva", "Udskrevet", "Gedruckt"],
   "unusable: every document is hidden": ["használhatatlan: minden dokumentum rejtett", "ubrugelig: alle dokumenter er skjult", "unbrauchbar: alle Dokumente sind verborgen"],
   "{n} rule(s)": ["{n} szabály", "{n} regel/regler", "{n} Regel(n)"],
   "not configured": ["nincs beállítva", "ikke konfigureret", "nicht eingerichtet"],

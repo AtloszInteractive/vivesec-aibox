@@ -11,6 +11,7 @@ import {
   type Level,
 } from "./status";
 import { Badge, Button, Card, fill, formatTime, levelLabel } from "./ui";
+import { ClientCertificateCard } from "./ClientCertificateCard";
 
 const TONE: Record<Level, "ok" | "warn" | "bad" | "neutral"> = {
   ok: "ok",
@@ -196,6 +197,10 @@ export function OverviewTab({
             {levelLabel(adapter?.acl.default_classification, tm)}
           </Row>
         </Card>
+
+        <div className="md:col-span-2">
+          <ClientCertificateCard />
+        </div>
       </div>
     </div>
   );

@@ -174,8 +174,16 @@ function ErrorLine({ text }: { text: string }) {
   );
 }
 
-/** The otpauth:// QR code as SVG squares, with the standard 4-module quiet zone. */
-function QrCode({ rows, label }: { rows: string[]; label: string }) {
+/** A QR code as SVG squares, with the standard 4-module quiet zone. */
+export function QrCode({
+  rows,
+  label,
+  size: pixels = 216,
+}: {
+  rows: string[];
+  label: string;
+  size?: number;
+}) {
   const quiet = 4;
   const size = rows.length + quiet * 2;
   const path = useMemo(() => {
@@ -192,8 +200,8 @@ function QrCode({ rows, label }: { rows: string[]; label: string }) {
       role="img"
       aria-label={label}
       viewBox={`0 0 ${size} ${size}`}
-      width={216}
-      height={216}
+      width={pixels}
+      height={pixels}
       shapeRendering="crispEdges"
       className="rounded-lg"
     >

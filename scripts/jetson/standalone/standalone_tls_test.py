@@ -254,7 +254,7 @@ class FrontRenderTest(ScriptTestCase):
         hsts = 'add_header Strict-Transport-Security "max-age=31536000" always;'
         # Every HTTPS location carries HSTS (a location's own add_header drops the
         # server-level ones); plain HTTP never does.
-        self.assertEqual(conf.count(hsts), 5)
+        self.assertEqual(conf.count(hsts), 6)
         self.assertNotIn(hsts, self.server_block(conf, "listen 0.0.0.0:80;"))
         self.assertIn("frame-ancestors 'none'", conf)
         self.assertIn("server_tokens off;", conf)
@@ -287,6 +287,16 @@ class FrontRenderTest(ScriptTestCase):
         self.assertIn("return 204;", probe)
         self.assertIn('add_header Cache-Control "no-store" always;', probe)
         self.assertNotIn("aibox-probe", http)
+
+    def test_handover_names_only_over_https(self):
+        conf = self.render().stdout
+        http = self.server_block(conf, "listen 0.0.0.0:80;")
+        https = self.server_block(conf, "listen 0.0.0.0:443 ssl;")
+        self.assertIn("return 200 '{\"names\":[\"aibox-01\",\"aibox-01.lan\"],"
+                      "\"addresses\":[\"192.168.10.50\"]}';", https)
+        self.assertIn("default_type application/json;", https)
+        self.assertNotIn("aibox-handover", http)
+        self.assertIn("\"addresses\":[]}';", self.render(AIBOX_TLS_IPS="").stdout)
 
     def test_certificate_page_files_are_complete(self):
         page = os.path.join(HERE, "cert-page")
@@ -434,7 +444,9 @@ curl -sS -o /dev/null -D - --cacert /work/tls/ca/ca.crt https://aibox-01/ --reso
                       "PASS a known server name with a foreign Host header is not served",
                       "PASS http://aibox-01/ serves the certificate page",
                       "PASS http://127.0.0.1/cert serves the certificate page and its script",
-                      "PASS https://aibox-01/aibox-probe answers for the certificate page (204)"):
+                      "PASS https://aibox-01/aibox-probe answers for the certificate page (204)",
+                      "PASS https://aibox-01/aibox-handover.json lists the box names",
+                      "PASS http://127.0.0.1/aibox-handover.json is not served over plain HTTP (301)"):
             self.assertIn(check, result.stdout)
 
     def test_hardened_container_starts(self):
