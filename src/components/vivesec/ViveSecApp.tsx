@@ -139,15 +139,8 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { GraphPanel, type GraphSource } from "./GraphPanel";
-import {
-  ACCENT,
-  ACCENT_TEXT,
-  LOGO_ASPECT,
-  LOGO_FILE_RATIO,
-  LOGO_ON_DARK,
-  NAVY,
-  ON_ACCENT,
-} from "./brand";
+import { ACCENT, ACCENT_TEXT, DANGER_TEXT, inkA, inkText, ON_ACCENT } from "./brand";
+import { ThemeLogo, ThemeMenuItems, ThemeToggle } from "./ThemeControls";
 
 /* ---------- Types ---------- */
 // One command per function specification v2 quick action (F1-F7), plus /data.
@@ -440,9 +433,9 @@ const SLASH_COMMANDS: { cmd: SlashCmd; label: string; desc: string; icon: typeof
   },
 ];
 
-const PANEL = "#152B44";
-const PANEL_HI = "#1C3550";
-const BG = "#0C1E31";
+const PANEL = "var(--surface-4)";
+const PANEL_HI = "var(--surface-5)";
+const BG = "var(--surface-2)";
 
 /** Staging delay before an assistant message appears (the "typing" beat). */
 const AI_REPLY_DELAY_MS = 350;
@@ -700,17 +693,17 @@ const fileIcon = (t: DriveFile["type"]) => {
 const fileTint = (t: DriveFile["type"]) => {
   switch (t) {
     case "pdf":
-      return "text-rose-400 bg-rose-400/10";
+      return "text-rose-700 dark:text-rose-400 bg-rose-400/10";
     case "xlsx":
-      return "text-emerald-400 bg-emerald-400/10";
+      return "text-emerald-700 dark:text-emerald-400 bg-emerald-400/10";
     case "csv":
-      return "text-emerald-400 bg-emerald-400/10";
+      return "text-emerald-700 dark:text-emerald-400 bg-emerald-400/10";
     case "docx":
-      return "text-sky-400 bg-sky-400/10";
+      return "text-sky-700 dark:text-sky-400 bg-sky-400/10";
     case "md":
-      return "text-violet-400 bg-violet-400/10";
+      return "text-violet-700 dark:text-violet-400 bg-violet-400/10";
     default:
-      return "text-amber-400 bg-amber-400/10";
+      return "text-amber-700 dark:text-amber-400 bg-amber-400/10";
   }
 };
 
@@ -1830,7 +1823,7 @@ function ViveSecAppInner() {
 
   function jobGroupHeading(label: string, count: number) {
     return (
-      <div className="px-1 py-2 text-[10px] font-semibold uppercase tracking-wide text-white/30">
+      <div className="px-1 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink/30">
         {label} · {count}
       </div>
     );
@@ -1865,7 +1858,7 @@ function ViveSecAppInner() {
           disabled={job.status !== "done"}
           onClick={() => openJob(job.job_id)}
           className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left transition disabled:cursor-default ${
-            job.status === "done" ? "hover:bg-white/5" : ""
+            job.status === "done" ? "hover:bg-ink/5" : ""
           }`}
         >
           <div className="grid h-7 w-7 shrink-0 place-items-center">
@@ -1874,12 +1867,12 @@ function ViveSecAppInner() {
             ) : job.status === "done" ? (
               <Check className="h-3.5 w-3.5 text-brand-soft" />
             ) : (
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-300" />
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-700 dark:text-amber-300" />
             )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <div className={`truncate text-[12px] ${unseen ? "text-white" : "text-white/80"}`}>
+              <div className={`truncate text-[12px] ${unseen ? "text-ink" : "text-ink/80"}`}>
                 {job.query || tm("Background task")}
               </div>
               {unseen && (
@@ -1890,7 +1883,7 @@ function ViveSecAppInner() {
                 />
               )}
             </div>
-            <div className="text-[10.5px] text-white/40">{status}</div>
+            <div className="text-[10.5px] text-ink/40">{status}</div>
             {job.status === "running" && jobStage && (
               <div className="text-[10px] text-brand-soft/60">{jobStage}</div>
             )}
@@ -1901,7 +1894,7 @@ function ViveSecAppInner() {
             )}
           </div>
           {job.status === "done" && (
-            <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-white/35">
+            <span className="flex shrink-0 items-center gap-1 text-[10.5px] text-ink/35">
               {tm("Open")}
               <ChevronRight className="h-3.5 w-3.5" />
             </span>
@@ -1910,7 +1903,7 @@ function ViveSecAppInner() {
         {running && !job.cancel_requested && (
           <button
             onClick={() => void cancelBackgroundJob(job.job_id)}
-            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink/45 hover:bg-ink/10 hover:text-ink"
             title={tm("Cancel job")}
           >
             <X className="h-3.5 w-3.5" />
@@ -1924,7 +1917,7 @@ function ViveSecAppInner() {
             <button
               onClick={() => resumeAnalysis(job)}
               disabled={liveBusy || boxState !== "online"}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/45 hover:bg-white/10 hover:text-white disabled:opacity-40"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink/45 hover:bg-ink/10 hover:text-ink disabled:opacity-40"
               title={`${tm("Resume analysis")} — ${tm("Continues the analysis; the parts already read are not read again")}`}
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -1935,13 +1928,13 @@ function ViveSecAppInner() {
             <span className="flex shrink-0 items-center gap-1">
               <button
                 onClick={() => void deleteJob(job.job_id)}
-                className="rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-[10.5px] font-semibold text-rose-100 transition hover:bg-rose-500/25"
+                className="rounded-md border border-rose-400/40 bg-rose-500/15 px-2 py-1 text-[10.5px] font-semibold text-rose-800 dark:text-rose-100 transition hover:bg-rose-500/25"
               >
                 {tm("Delete")}
               </button>
               <button
                 onClick={() => setConfirmDeleteJobId(null)}
-                className="rounded-md px-1.5 py-1 text-[10.5px] text-white/50 transition hover:bg-white/10 hover:text-white"
+                className="rounded-md px-1.5 py-1 text-[10.5px] text-ink/50 transition hover:bg-ink/10 hover:text-ink"
               >
                 {tm("Cancel")}
               </button>
@@ -1949,7 +1942,7 @@ function ViveSecAppInner() {
           ) : (
             <button
               onClick={() => setConfirmDeleteJobId(job.job_id)}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/35 transition hover:bg-white/10 hover:text-rose-200"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink/35 transition hover:bg-ink/10 hover:text-rose-800 dark:hover:text-rose-200"
               title={tm("Delete task")}
               aria-label={tm("Delete task")}
             >
@@ -2455,7 +2448,7 @@ function ViveSecAppInner() {
         composer and the quick actions stay put. dvh so the mobile URL bar
         cannot push the composer off-screen. */}
       <div
-        className="flex w-full flex-col overflow-hidden text-[#E6EAEE]"
+        className="flex w-full flex-col overflow-hidden text-foreground"
         style={{
           height: "100dvh",
           backgroundColor: BG,
@@ -2463,13 +2456,16 @@ function ViveSecAppInner() {
         }}
       >
         {/* Header */}
-        <header className="z-30 shrink-0 border-b border-white/5" style={{ backgroundColor: NAVY }}>
+        <header
+          className="z-30 shrink-0 border-b border-ink/5"
+          style={{ backgroundColor: "var(--header)" }}
+        >
           <div className="flex items-center gap-3 px-4 py-2">
             <BrandLogo />
             {/* Kept apart from the logo: the guide forbids any text (or a "BOX"
                 suffix) set against it. */}
-            <div className="hidden min-w-0 border-l border-white/10 pl-3 sm:block">
-              <div className="flex items-center gap-1.5 text-[11px] text-white/60">
+            <div className="hidden min-w-0 border-l border-ink/10 pl-3 sm:block">
+              <div className="flex items-center gap-1.5 text-[11px] text-ink/60">
                 <Lock className="h-3 w-3" />
                 <span className="truncate">{t.localSecure}</span>
                 <CircleDot className="ml-1 h-2.5 w-2.5" style={{ color: ACCENT_TEXT }} />
@@ -2478,7 +2474,7 @@ function ViveSecAppInner() {
             <div className="ml-auto flex items-center gap-2">
               <button
                 onClick={() => setGraphOpen((v) => !v)}
-                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 hover:bg-ink/10 transition"
                 style={graphOpen ? { borderColor: `${ACCENT}88` } : undefined}
               >
                 <Network className="h-3.5 w-3.5" />
@@ -2487,7 +2483,7 @@ function ViveSecAppInner() {
               {storeAvailable && (
                 <button
                   onClick={() => setStoreOpen(true)}
-                  className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                  className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 hover:bg-ink/10 transition"
                   style={storeOpen ? { borderColor: `${ACCENT}88` } : undefined}
                 >
                   <FolderOpen className="h-3.5 w-3.5" />
@@ -2497,7 +2493,7 @@ function ViveSecAppInner() {
               {!analyst && (
                 <button
                   onClick={() => setDriveOpen((v) => !v)}
-                  className="hidden md:inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 transition"
+                  className="hidden md:inline-flex items-center gap-2 rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 hover:bg-ink/10 transition"
                 >
                   <Laptop className="h-3.5 w-3.5" /> {driveOpen ? t.hideDrive : t.browseDrive}
                 </button>
@@ -2513,7 +2509,7 @@ function ViveSecAppInner() {
                     ? `${tm("Connected to the AI Box")}${boxDetail ? ` · ${boxDetail}` : ""}`
                     : `${tm("AI Box unreachable — click to retry")}${boxDetail ? ` · ${boxDetail}` : ""}`
                 }
-                className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition disabled:opacity-60 ${boxState === "online" ? "text-white" : "text-rose-200/90 hover:bg-rose-400/15"}`}
+                className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs transition disabled:opacity-60 ${boxState === "online" ? "text-ink" : "text-rose-800/90 dark:text-rose-200/90 hover:bg-rose-400/15"}`}
                 style={
                   boxState === "online"
                     ? { backgroundColor: `${ACCENT}15`, borderColor: `${ACCENT}55` }
@@ -2525,7 +2521,7 @@ function ViveSecAppInner() {
               >
                 <Sparkles
                   className="h-3.5 w-3.5"
-                  style={{ color: boxState === "online" ? ACCENT_TEXT : "#FB7185" }}
+                  style={{ color: boxState === "online" ? ACCENT_TEXT : DANGER_TEXT }}
                 />
                 <span className="hidden sm:inline">
                   {boxState === "online"
@@ -2536,10 +2532,11 @@ function ViveSecAppInner() {
                 </span>
                 <CircleDot
                   className="h-2.5 w-2.5"
-                  style={{ color: boxState === "online" ? ACCENT_TEXT : "#FB7185" }}
+                  style={{ color: boxState === "online" ? ACCENT_TEXT : DANGER_TEXT }}
                 />
               </button>
               <AccountMenu />
+              <ThemeToggle className="hidden sm:inline-flex" />
               <LanguageSelector />
             </div>
           </div>
@@ -2553,18 +2550,18 @@ function ViveSecAppInner() {
             <main
               className={`h-full min-w-0 flex-1 basis-0 flex-col transition-all duration-500 ${
                 mobilePane === "chat" ? "flex" : "hidden"
-              } ${previewFile && viewerMode === "split" ? "lg:hidden" : "lg:order-3 lg:flex lg:border-l lg:border-white/5"}`}
+              } ${previewFile && viewerMode === "split" ? "lg:hidden" : "lg:order-3 lg:flex lg:border-l lg:border-ink/5"}`}
             >
               {/* Pinned chat header strip */}
-              <div className="relative flex flex-wrap items-center gap-2 border-b border-white/5 px-4 py-2.5">
-                <div className="hidden xl:block text-xs text-white/55">
+              <div className="relative flex flex-wrap items-center gap-2 border-b border-ink/5 px-4 py-2.5">
+                <div className="hidden xl:block text-xs text-ink/55">
                   Encrypted channel · Edge inference only
                 </div>
                 {purposeConfig.mode !== "off" && (
                   <button
                     type="button"
                     onClick={() => setPurposeDialog(true)}
-                    className={`inline-flex min-h-8 max-w-[16rem] shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition hover:bg-white/10 ${purposeMissing ? "border-amber-300/50 text-amber-100" : "border-white/10 text-white/70"}`}
+                    className={`inline-flex min-h-8 max-w-[16rem] shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition hover:bg-ink/10 ${purposeMissing ? "border-amber-300/50 text-amber-800 dark:text-amber-100" : "border-ink/10 text-ink/70"}`}
                     title={tm("Purpose of the queries")}
                   >
                     <Scale className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
@@ -2578,7 +2575,7 @@ function ViveSecAppInner() {
                       onClick={() => setThreadsOpen((v) => !v)}
                       disabled={threadBusy || boxState !== "online"}
                       aria-expanded={threadsOpen}
-                      className="inline-flex min-h-8 max-w-[15rem] items-center gap-1.5 rounded-md border border-white/10 px-2 text-[11px] text-white/70 transition hover:bg-white/10 disabled:opacity-50"
+                      className="inline-flex min-h-8 max-w-[15rem] items-center gap-1.5 rounded-md border border-ink/10 px-2 text-[11px] text-ink/70 transition hover:bg-ink/10 disabled:opacity-50"
                       title={tm("Conversations")}
                     >
                       <List className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
@@ -2587,14 +2584,14 @@ function ViveSecAppInner() {
                           tm(conversationId ? "Untitled conversation" : "Current conversation")}
                       </span>
                       <ChevronDown
-                        className={`h-3 w-3 shrink-0 text-white/45 transition-transform ${threadsOpen ? "rotate-180" : ""}`}
+                        className={`h-3 w-3 shrink-0 text-ink/45 transition-transform ${threadsOpen ? "rotate-180" : ""}`}
                       />
                     </button>
                     <button
                       type="button"
                       onClick={() => void newConversation()}
                       disabled={threadBusy || boxState !== "online"}
-                      className="inline-flex min-h-8 items-center gap-1 rounded-md border border-white/10 px-2 text-[11px] text-white/70 transition hover:bg-white/10 disabled:opacity-50"
+                      className="inline-flex min-h-8 items-center gap-1 rounded-md border border-ink/10 px-2 text-[11px] text-ink/70 transition hover:bg-ink/10 disabled:opacity-50"
                       title={tm("New conversation")}
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -2606,12 +2603,12 @@ function ViveSecAppInner() {
                         <div
                           role="dialog"
                           aria-label={tm("Conversations")}
-                          className="absolute left-0 top-full z-50 mt-2 max-h-80 w-80 overflow-y-auto rounded-xl border border-white/10 bg-[#10243A] py-1 shadow-2xl shadow-black/60"
+                          className="absolute left-0 top-full z-50 mt-2 max-h-80 w-80 overflow-y-auto rounded-xl border border-ink/10 bg-surface-3 py-1 shadow-2xl shadow-shade/60"
                         >
                           <button
                             type="button"
                             onClick={() => void openConversation(null)}
-                            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition hover:bg-white/5 ${conversationId === null ? "bg-white/[0.06] text-white" : "text-white/70"}`}
+                            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition hover:bg-ink/5 ${conversationId === null ? "bg-ink/[0.06] text-ink" : "text-ink/70"}`}
                           >
                             {tm("Current conversation")}
                           </button>
@@ -2620,17 +2617,17 @@ function ViveSecAppInner() {
                             .map((c) => (
                               <div
                                 key={c.id}
-                                className={`group flex items-center gap-1 px-1 ${c.id === conversationId ? "bg-white/[0.06]" : ""}`}
+                                className={`group flex items-center gap-1 px-1 ${c.id === conversationId ? "bg-ink/[0.06]" : ""}`}
                               >
                                 <button
                                   type="button"
                                   onClick={() => void openConversation(c.id)}
                                   className="min-w-0 flex-1 px-2 py-2 text-left"
                                 >
-                                  <div className="truncate text-[12px] text-white">
+                                  <div className="truncate text-[12px] text-ink">
                                     {c.title || tm("Untitled conversation")}
                                   </div>
-                                  <div className="text-[10.5px] text-white/45">
+                                  <div className="text-[10.5px] text-ink/45">
                                     {c.turn_count} {tm("turns")}
                                   </div>
                                 </button>
@@ -2640,7 +2637,7 @@ function ViveSecAppInner() {
                                     setThreadsOpen(false);
                                     setThreadDialog({ mode: "rename", id: c.id, title: c.title });
                                   }}
-                                  className="rounded p-1 text-white/45 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                                  className="rounded p-1 text-ink/45 opacity-0 transition hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
                                   title={tm("Rename conversation")}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
@@ -2651,7 +2648,7 @@ function ViveSecAppInner() {
                                     setThreadsOpen(false);
                                     setThreadDialog({ mode: "delete", id: c.id, title: c.title });
                                   }}
-                                  className="rounded p-1 text-white/45 opacity-0 transition hover:bg-white/10 hover:text-white group-hover:opacity-100"
+                                  className="rounded p-1 text-ink/45 opacity-0 transition hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
                                   title={tm("Delete conversation")}
                                 >
                                   <X className="h-3.5 w-3.5" />
@@ -2659,7 +2656,7 @@ function ViveSecAppInner() {
                               </div>
                             ))}
                           {conversations.filter((c) => c.id !== "default").length === 0 && (
-                            <div className="px-3 py-2 text-[11px] text-white/45">
+                            <div className="px-3 py-2 text-[11px] text-ink/45">
                               {tm("No saved conversations yet.")}
                             </div>
                           )}
@@ -2668,7 +2665,7 @@ function ViveSecAppInner() {
                     )}
                   </div>
                 )}
-                {chatPolicy.allow_switch && <div role="group" aria-label={tm("Chat profile")} className="flex shrink-0 items-center rounded-md border border-white/10 p-0.5">
+                {chatPolicy.allow_switch && <div role="group" aria-label={tm("Chat profile")} className="flex shrink-0 items-center rounded-md border border-ink/10 p-0.5">
                   {(["grounded", "hybrid"] as const).map((profile) => (
                     <button
                       key={profile}
@@ -2676,7 +2673,7 @@ function ViveSecAppInner() {
                       aria-pressed={chatProfile === profile}
                       disabled={!chatPolicy.allow_switch || boxState !== "online" || liveBusy || !!wizard}
                       onClick={() => { voice.stopSpeaking(); setChosenProfile(profile); setPreviewFile(null); setPreviewCitation(null); }}
-                      className={`inline-flex min-h-8 items-center gap-1 rounded px-2 text-[11px] disabled:cursor-default ${chatProfile === profile ? "bg-white/15 text-white" : "text-white/55 hover:bg-white/5"}`}
+                      className={`inline-flex min-h-8 items-center gap-1 rounded px-2 text-[11px] disabled:cursor-default ${chatProfile === profile ? "bg-ink/15 text-ink" : "text-ink/55 hover:bg-ink/5"}`}
                       title={tm(profile === "grounded" ? "Grounded" : "Hybrid")}
                     >
                       {profile === "grounded" ? <Lock className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
@@ -2687,7 +2684,7 @@ function ViveSecAppInner() {
                 {!analyst && (
                 <button
                   onClick={() => setMobilePane("results")}
-                  className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10 lg:hidden"
+                  className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/[0.04] px-2.5 py-1 text-[11px] text-ink/70 transition hover:bg-ink/10 lg:hidden"
                 >
                   <LayoutTemplate className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                   {tm("Results")}
@@ -2704,15 +2701,15 @@ function ViveSecAppInner() {
                 <div className="relative ml-auto">
                   <button
                     onClick={() => setAgentMenuOpen((v) => !v)}
-                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/70 transition hover:bg-white/10"
+                    className="flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/[0.04] px-2.5 py-1 text-[11px] text-ink/70 transition hover:bg-ink/10"
                     aria-label="AI agents"
                   >
                     <Bot className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
-                    <span className="text-white/80">
+                    <span className="text-ink/80">
                       {tm(AGENTS.find((a) => a.id === activeAgent)?.name ?? "")}
                     </span>
                     <ChevronDown
-                      className={`h-3 w-3 text-white/45 transition-transform ${agentMenuOpen ? "rotate-180" : ""}`}
+                      className={`h-3 w-3 text-ink/45 transition-transform ${agentMenuOpen ? "rotate-180" : ""}`}
                     />
                   </button>
                   {agentMenuOpen && (
@@ -2721,9 +2718,9 @@ function ViveSecAppInner() {
                       <div
                         role="dialog"
                         aria-label="AI agents"
-                        className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-white/10 bg-[#10243A] shadow-2xl shadow-black/60"
+                        className="absolute right-0 z-50 mt-2 w-72 overflow-hidden rounded-xl border border-ink/10 bg-surface-3 shadow-2xl shadow-shade/60"
                       >
-                        <div className="px-3 py-2 text-[11px] uppercase tracking-wider text-white/40">
+                        <div className="px-3 py-2 text-[11px] uppercase tracking-wider text-ink/40">
                           {t.activeAgents}
                         </div>
                         {AGENTS.map((a) => {
@@ -2737,21 +2734,19 @@ function ViveSecAppInner() {
                                 setActiveAgent(a.id);
                                 setAgentMenuOpen(false);
                               }}
-                              className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${a.available ? "hover:bg-white/5" : "cursor-not-allowed opacity-40"} ${active ? "bg-white/[0.06]" : ""}`}
+                              className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${a.available ? "hover:bg-ink/5" : "cursor-not-allowed opacity-40"} ${active ? "bg-ink/[0.06]" : ""}`}
                             >
-                              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/5">
+                              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-ink/5">
                                 <Icon
                                   className="h-4 w-4"
-                                  style={{ color: active ? ACCENT_TEXT : "rgba(255,255,255,0.7)" }}
+                                  style={{ color: active ? ACCENT_TEXT : inkText(0.7) }}
                                 />
                               </div>
                               <div className="min-w-0 flex-1">
-                                <div className="truncate text-[13px] font-medium text-white">
+                                <div className="truncate text-[13px] font-medium text-ink">
                                   {tm(a.name)}
                                 </div>
-                                <div className="truncate text-[11px] text-white/50">
-                                  {tm(a.desc)}
-                                </div>
+                                <div className="truncate text-[11px] text-ink/50">{tm(a.desc)}</div>
                               </div>
                               {active ? (
                                 <span
@@ -2760,7 +2755,7 @@ function ViveSecAppInner() {
                                 />
                               ) : (
                                 !a.available && (
-                                  <span className="shrink-0 rounded-md border border-white/10 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-white/40">
+                                  <span className="shrink-0 rounded-md border border-ink/10 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-ink/40">
                                     {tm("Soon")}
                                   </span>
                                 )
@@ -2802,13 +2797,13 @@ function ViveSecAppInner() {
               </div>
 
               {/* Composer */}
-              <div className="relative border-t border-white/5 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+              <div className="relative border-t border-ink/5 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
                 {/* Floating browse drive (matches screenshot) */}
                 {!driveOpen && !analyst && (
                   <div className="pointer-events-none absolute -top-12 right-4 sm:right-8">
                     <button
                       onClick={() => setDriveOpen(true)}
-                      className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#0F2236]/90 px-3 py-1.5 text-xs text-white/80 shadow-lg backdrop-blur hover:bg-white/10 transition"
+                      className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-ink/10 bg-surface-3/90 px-3 py-1.5 text-xs text-ink/80 shadow-lg backdrop-blur hover:bg-ink/10 transition"
                     >
                       <Laptop className="h-3.5 w-3.5" /> {t.browseDriveFloating}
                     </button>
@@ -2822,7 +2817,7 @@ function ViveSecAppInner() {
                   <button
                     onClick={() => setMobilePane("results")}
                     disabled={!!wizard}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-white/75 transition hover:bg-white/10 disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/[0.04] px-2.5 py-1.5 text-[11px] text-ink/75 transition hover:bg-ink/10 disabled:opacity-40"
                   >
                     <Zap className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
                     {tm("Quick actions")}
@@ -2849,7 +2844,7 @@ function ViveSecAppInner() {
                   sub-prompts here would land in the retrieval query and
                   dilute it. */}
                 {showSlash && !wizard && !analyst && (
-                  <div className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border border-white/10 bg-[#10243A] shadow-xl max-h-[55vh] overflow-y-auto">
+                  <div className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border border-ink/10 bg-surface-3 shadow-xl max-h-[55vh] overflow-y-auto">
                     {SLASH_COMMANDS.filter((s) => s.cmd.startsWith(input.split(" ")[0] || "/")).map(
                       (s) => {
                         const Icon = s.icon;
@@ -2861,20 +2856,20 @@ function ViveSecAppInner() {
                               setShowSlash(false);
                               setTimeout(() => textareaRef.current?.focus(), 0);
                             }}
-                            className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-white/5 transition"
+                            className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-ink/5 transition"
                           >
-                            <div className="grid h-7 w-7 place-items-center rounded-md bg-white/5">
+                            <div className="grid h-7 w-7 place-items-center rounded-md bg-ink/5">
                               <Icon className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                             </div>
                             <div className="min-w-0">
                               <div className="text-sm font-medium" style={{ color: ACCENT_TEXT }}>
                                 {tm(s.label)}
                               </div>
-                              <div className="truncate text-xs text-white/55">
+                              <div className="truncate text-xs text-ink/55">
                                 {t.slashDesc[s.cmd] ?? s.desc}
                               </div>
                             </div>
-                            <ChevronRight className="ml-auto h-4 w-4 text-white/30" />
+                            <ChevronRight className="ml-auto h-4 w-4 text-ink/30" />
                           </button>
                         );
                       },
@@ -2885,7 +2880,7 @@ function ViveSecAppInner() {
                 {/* No answer can be produced without the box: say so and block
                   the composer rather than degrade to something fabricated. */}
                 {boxState !== "online" && (
-                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-100">
+                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-800 dark:text-rose-100">
                     <AlertTriangle className="h-4 w-4 shrink-0" />
                     <span className="flex-1">
                       {boxState === "probing"
@@ -2905,7 +2900,7 @@ function ViveSecAppInner() {
                 )}
 
                 {purposeMissing && boxState === "online" && (
-                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-50">
+                  <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-50">
                     <Scale className="h-4 w-4 shrink-0" />
                     <span className="flex-1">{tm(purposeText(purposeConfig, "banner"))}</span>
                     <button
@@ -2935,7 +2930,7 @@ function ViveSecAppInner() {
                   </div>
                 )}
 
-                <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-white/10 bg-[#10243A] px-2 py-1.5 focus-within:border-white/20 transition">
+                <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-2xl border border-ink/10 bg-surface-3 px-2 py-1.5 focus-within:border-ink/20 transition">
                   <textarea
                     ref={textareaRef}
                     rows={1}
@@ -2965,7 +2960,7 @@ function ViveSecAppInner() {
                                 ? tm("The local model is thinking…")
                                 : t.inputPlaceholder
                     }
-                    className="max-h-40 flex-1 resize-none bg-transparent py-2 text-sm text-white placeholder:text-white/40 outline-none disabled:cursor-not-allowed"
+                    className="max-h-40 flex-1 resize-none bg-transparent py-2 text-sm text-ink placeholder:text-ink/40 outline-none disabled:cursor-not-allowed"
                   />
                   {/* Voice mode: dictate a question, and read the last answer
                       back. Both engines run on the box. */}
@@ -2976,9 +2971,9 @@ function ViveSecAppInner() {
                           ? voice.stopRecording()
                           : void voice.startRecording()
                       }
-                      className="grid h-9 w-9 place-items-center rounded-lg transition hover:bg-white/10 disabled:opacity-40"
+                      className="grid h-9 w-9 place-items-center rounded-lg transition hover:bg-ink/10 disabled:opacity-40"
                       style={{
-                        color: voice.micState === "recording" ? "#FB7185" : "rgba(255,255,255,0.6)",
+                        color: voice.micState === "recording" ? DANGER_TEXT : inkText(0.6),
                       }}
                       disabled={
                         !voice.micSupported ||
@@ -3008,7 +3003,7 @@ function ViveSecAppInner() {
                       onClick={() =>
                         voice.speaking ? voice.stopSpeaking() : void voice.speak(lastSpeakable)
                       }
-                      className="grid h-9 w-9 place-items-center rounded-lg text-white/60 transition hover:bg-white/10"
+                      className="grid h-9 w-9 place-items-center rounded-lg text-ink/60 transition hover:bg-ink/10"
                       title={voice.speaking ? tm("Stop reading") : tm("Read the last answer")}
                     >
                       {voice.speaking ? (
@@ -3023,7 +3018,7 @@ function ViveSecAppInner() {
                     className="grid h-9 w-9 place-items-center rounded-lg transition disabled:opacity-40"
                     style={{
                       backgroundColor: input.trim() ? ACCENT : "transparent",
-                      color: input.trim() ? ON_ACCENT : "rgba(255,255,255,0.6)",
+                      color: input.trim() ? ON_ACCENT : inkText(0.6),
                     }}
                     disabled={!input.trim() || boxState !== "online" || liveBusy || !!wizard}
                     title="Send"
@@ -3031,7 +3026,7 @@ function ViveSecAppInner() {
                     <Send className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="mx-auto mt-1.5 flex max-w-3xl items-center justify-center gap-1.5 text-[10px] text-white/35">
+                <div className="mx-auto mt-1.5 flex max-w-3xl items-center justify-center gap-1.5 text-[10px] text-ink/35">
                   <Lock className="h-3 w-3" /> {t.encryptedFooter}
                   {/* Release identity (E01): hover shows the UI and AI Box versions. */}
                   {(() => {
@@ -3055,7 +3050,7 @@ function ViveSecAppInner() {
                         aria-label={details}
                       >
                         · v{UI_BUILD.label}
-                        {differs && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-300/80" />}
+                        {differs && <AlertTriangle className="h-3 w-3 shrink-0 text-amber-700/80 dark:text-amber-300/80" />}
                       </span>
                     );
                   })()}
@@ -3065,43 +3060,43 @@ function ViveSecAppInner() {
 
             {/* Results column — quick actions and the cards they produce */}
             <section
-              className={`h-full min-w-0 flex-1 basis-0 flex-col border-white/5 transition-all duration-500 lg:order-2 lg:border-l ${
+              className={`h-full min-w-0 flex-1 basis-0 flex-col border-ink/5 transition-all duration-500 lg:order-2 lg:border-l ${
                 analyst ? "hidden" : `lg:flex ${mobilePane === "results" ? "flex" : "hidden"}`
               }`}
             >
-              <div className="flex items-center gap-2 border-b border-white/5 px-4 py-2.5">
+              <div className="flex items-center gap-2 border-b border-ink/5 px-4 py-2.5">
                 {selectedJobId ? (
                   <>
                     <button
                       onClick={() => setSelectedJobId(null)}
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-white/10"
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-ink/10"
                       aria-label={tm("Back to tasks")}
                       title={tm("Back to tasks")}
                     >
-                      <ArrowLeft className="h-4 w-4 text-white/60" />
+                      <ArrowLeft className="h-4 w-4 text-ink/60" />
                     </button>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">
                         {selectedJob?.query || tm("Background result")}
                       </div>
-                      <div className="text-[10.5px] text-white/40">{tm("Completed")}</div>
+                      <div className="text-[10.5px] text-ink/40">{tm("Completed")}</div>
                     </div>
                     <button
                       onClick={() => setSelectedJobId(null)}
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-white/10"
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-md hover:bg-ink/10"
                       aria-label={tm("Close")}
                     >
-                      <X className="h-4 w-4 text-white/50" />
+                      <X className="h-4 w-4 text-ink/50" />
                     </button>
                   </>
                 ) : (
                   <>
                     <button
                       onClick={() => setMobilePane("chat")}
-                      className="grid h-7 w-7 place-items-center rounded-md hover:bg-white/10 lg:hidden"
+                      className="grid h-7 w-7 place-items-center rounded-md hover:bg-ink/10 lg:hidden"
                       aria-label={tm("Conversation")}
                     >
-                      <ArrowLeft className="h-4 w-4 text-white/60" />
+                      <ArrowLeft className="h-4 w-4 text-ink/60" />
                     </button>
                     <Zap className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
                     <div className="text-sm font-medium">{tm("Quick actions")}</div>
@@ -3111,14 +3106,14 @@ function ViveSecAppInner() {
                           setJobFilter(unseenBackgroundJobs > 0 ? "new" : "active");
                           resultScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
                         }}
-                        className="ml-auto rounded-full border border-white/10 bg-white/[0.06] px-2 py-0.5 text-[11px] text-white/70 transition hover:bg-white/10"
+                        className="ml-auto rounded-full border border-ink/10 bg-ink/[0.06] px-2 py-0.5 text-[11px] text-ink/70 transition hover:bg-ink/10"
                       >
                         {unseenBackgroundJobs > 0
                           ? `${unseenBackgroundJobs} ${tm("new")}`
                           : `${activeBackgroundJobs} ${tm("active")}`}
                       </button>
                     ) : (
-                      <div className="ml-auto text-[11px] text-white/40">
+                      <div className="ml-auto text-[11px] text-ink/40">
                         {resultMessages.length > 0 ? resultMessages.length : ""}
                       </div>
                     )}
@@ -3130,7 +3125,7 @@ function ViveSecAppInner() {
                 Hidden while a result is open so reading gets the whole column;
                 the back arrow in the header brings it right back. */}
               {!selectedJobId && (
-              <div className="shrink-0 border-b border-white/5 p-3">
+              <div className="shrink-0 border-b border-ink/5 p-3">
                 <div className="grid grid-cols-2 gap-1.5 xl:grid-cols-3">
                   {(() => {
                     const agent = AGENTS.find((a) => a.id === activeAgent);
@@ -3145,16 +3140,16 @@ function ViveSecAppInner() {
                         disabled={!!wizard || boxState !== "online" || liveBusy}
                         onClick={() => launchAction(s.cmd)}
                         title={t.slashDesc[s.cmd] ?? s.desc}
-                        className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition hover:bg-white/10 disabled:opacity-40 ${
+                        className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition hover:bg-ink/10 disabled:opacity-40 ${
                           active
-                            ? "border-white/30 bg-white/[0.08]"
-                            : "border-white/10 bg-white/[0.04] hover:border-white/25"
+                            ? "border-ink/30 bg-ink/[0.08]"
+                            : "border-ink/10 bg-ink/[0.04] hover:border-ink/25"
                         }`}
                       >
                         <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[12px] text-white/85">{s.cmd}</span>
-                          <span className="block truncate text-[10.5px] text-white/40">
+                          <span className="block truncate text-[12px] text-ink/85">{s.cmd}</span>
+                          <span className="block truncate text-[10.5px] text-ink/40">
                             {t.slashDesc[s.cmd] ?? s.desc}
                           </span>
                         </span>
@@ -3178,7 +3173,7 @@ function ViveSecAppInner() {
                           ? tm("What are you looking for?")
                           : tm("What should it cover? (optional)")
                       }
-                      className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[12.5px] text-white placeholder:text-white/35 outline-none focus:border-white/25"
+                      className="min-w-0 flex-1 rounded-lg border border-ink/10 bg-shade/25 px-3 py-2 text-[12.5px] text-ink placeholder:text-ink/35 outline-none focus:border-ink/25"
                     />
                     <button
                       onClick={submitAction}
@@ -3190,10 +3185,10 @@ function ViveSecAppInner() {
                     </button>
                     <button
                       onClick={() => setPendingAction(null)}
-                      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg hover:bg-white/10"
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg hover:bg-ink/10"
                       aria-label={tm("Cancel")}
                     >
-                      <X className="h-4 w-4 text-white/50" />
+                      <X className="h-4 w-4 text-ink/50" />
                     </button>
                   </div>
                 )}
@@ -3234,14 +3229,14 @@ function ViveSecAppInner() {
                         />
                       </div>
                     ) : (
-                      <div className="mt-10 flex flex-col items-center gap-2 text-[12px] text-white/40">
+                      <div className="mt-10 flex flex-col items-center gap-2 text-[12px] text-ink/40">
                         <Loader2 className="h-4 w-4 animate-spin" />
                         {tm("Loading the result…")}
                       </div>
                     )}
                     <button
                       onClick={() => setSelectedJobId(null)}
-                      className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] text-white/70 transition hover:bg-white/10"
+                      className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-ink/10 bg-ink/[0.04] px-3 py-2 text-[12px] text-ink/70 transition hover:bg-ink/10"
                     >
                       <ArrowLeft className="h-3.5 w-3.5" /> {tm("Back to tasks")}
                     </button>
@@ -3249,19 +3244,19 @@ function ViveSecAppInner() {
                 ) : (
                 <div className="mx-auto flex max-w-2xl flex-col gap-5">
                   {(backgroundJobs.length > 0 || jobsError || jobsSupported === false) && (
-                    <div className="border-b border-white/10 pb-3">
-                      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase text-white/45">
+                    <div className="border-b border-ink/10 pb-3">
+                      <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase text-ink/45">
                         <Loader2
                           className={`h-3.5 w-3.5 ${activeBackgroundJobs ? "animate-spin" : ""}`}
                         />
                         {tm("Background jobs")}
-                        <span className="ml-auto font-normal normal-case text-white/30">
+                        <span className="ml-auto font-normal normal-case text-ink/30">
                           {jobGroups.total}
                         </span>
                       </div>
-                      {jobsError && <div className="mb-2 text-[11px] text-rose-300">{jobsError}</div>}
+                      {jobsError && <div className="mb-2 text-[11px] text-rose-700 dark:text-rose-300">{jobsError}</div>}
                       {jobsSupported === false && (
-                        <div className="mb-2 text-[11px] leading-relaxed text-amber-200/80">
+                        <div className="mb-2 text-[11px] leading-relaxed text-amber-800/80 dark:text-amber-200/80">
                           {tm(
                             "Background recovery will be available after the AI Box adapter is updated.",
                           )}
@@ -3284,8 +3279,8 @@ function ViveSecAppInner() {
                               disabled={key !== "all" && count === 0 && jobFilter !== key}
                               className={`rounded-full border px-2 py-0.5 text-[10.5px] transition disabled:opacity-30 ${
                                 jobFilter === key
-                                  ? "border-white/30 bg-white/[0.1] text-white/85"
-                                  : "border-white/10 bg-white/[0.03] text-white/55 hover:bg-white/10"
+                                  ? "border-ink/30 bg-ink/[0.1] text-ink/85"
+                                  : "border-ink/10 bg-ink/[0.03] text-ink/55 hover:bg-ink/10"
                               }`}
                             >
                               {tm(label)} {count > 0 ? count : ""}
@@ -3294,18 +3289,18 @@ function ViveSecAppInner() {
                         </div>
                       )}
                       {backgroundJobs.length > 8 && (
-                        <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/10 bg-black/25 px-2 py-1.5">
-                          <Search className="h-3.5 w-3.5 shrink-0 text-white/35" />
+                        <div className="mb-2 flex items-center gap-2 rounded-lg border border-ink/10 bg-shade/25 px-2 py-1.5">
+                          <Search className="h-3.5 w-3.5 shrink-0 text-ink/35" />
                           <input
                             value={jobSearch}
                             onChange={(e) => setJobSearch(e.target.value)}
                             placeholder={tm("Filter tasks")}
-                            className="min-w-0 flex-1 bg-transparent text-[12px] text-white placeholder:text-white/35 outline-none"
+                            className="min-w-0 flex-1 bg-transparent text-[12px] text-ink placeholder:text-ink/35 outline-none"
                           />
                           {jobSearch && (
                             <button
                               onClick={() => setJobSearch("")}
-                              className="shrink-0 text-white/40 hover:text-white"
+                              className="shrink-0 text-ink/40 hover:text-ink"
                               aria-label={tm("Cancel")}
                             >
                               <X className="h-3.5 w-3.5" />
@@ -3314,28 +3309,28 @@ function ViveSecAppInner() {
                         </div>
                       )}
                       {jobGroups.total === 0 ? (
-                        <div className="py-3 text-center text-[11.5px] text-white/35">
+                        <div className="py-3 text-center text-[11.5px] text-ink/35">
                           {tm("No task matches the filter.")}
                         </div>
                       ) : (
-                        <div className="border-y border-white/5">
+                        <div className="border-y border-ink/5">
                           {jobGroups.active.length > 0 && (
-                            <div className="divide-y divide-white/5">
+                            <div className="divide-y divide-ink/5">
                               {jobGroupHeadings && jobGroupHeading(tm("In progress"), jobGroups.active.length)}
                               {jobGroups.active.map(renderJobRow)}
                             </div>
                           )}
                           {jobGroups.today.length > 0 && (
-                            <div className="divide-y divide-white/5">
+                            <div className="divide-y divide-ink/5">
                               {jobGroupHeadings && jobGroupHeading(tm("Today"), jobGroups.today.length)}
                               {jobGroups.today.map(renderJobRow)}
                             </div>
                           )}
                           {jobGroups.earlier.length > 0 && (
-                            <div className="divide-y divide-white/5">
+                            <div className="divide-y divide-ink/5">
                               <button
                                 onClick={() => setEarlierJobsOpen((v) => !v)}
-                                className="flex w-full items-center gap-1.5 px-1 py-2 text-[10px] font-semibold uppercase tracking-wide text-white/30 transition hover:text-white/60"
+                                className="flex w-full items-center gap-1.5 px-1 py-2 text-[10px] font-semibold uppercase tracking-wide text-ink/30 transition hover:text-ink/60"
                               >
                                 {earlierJobsVisible ? (
                                   <ChevronDown className="h-3 w-3" />
@@ -3352,7 +3347,7 @@ function ViveSecAppInner() {
                     </div>
                   )}
                   {inlineResultMessages.length === 0 && backgroundJobs.length === 0 ? (
-                    <div className="mx-auto mt-10 max-w-xs text-center text-[12px] leading-relaxed text-white/40">
+                    <div className="mx-auto mt-10 max-w-xs text-center text-[12px] leading-relaxed text-ink/40">
                       {tm(
                         "Pick a quick action above — the generated documents, decks and search results appear here.",
                       )}
@@ -3396,7 +3391,7 @@ function ViveSecAppInner() {
                 onClearCitation={() => setPreviewCitation(null)}
               >
                 {!analyst && (
-                <div className="border-t border-white/5 p-3">
+                <div className="border-t border-ink/5 p-3">
                   <button
                     className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-medium disabled:opacity-40"
                     style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
@@ -3643,8 +3638,8 @@ function PurposeDialog({
       }}
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
-        style={{ backgroundColor: "#0A1B2D" }}
+        className="w-full max-w-sm rounded-2xl border border-ink/10 p-4 shadow-2xl shadow-shade/60"
+        style={{ backgroundColor: "var(--surface-1)" }}
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
           if (e.key === "Enter") save();
@@ -3654,10 +3649,10 @@ function PurposeDialog({
           <Scale className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           {tm("Purpose of the queries")}
         </div>
-        <p className="mb-3 text-[12px] text-white/60">{tm(purposeText(config, "dialog"))}</p>
+        <p className="mb-3 text-[12px] text-ink/60">{tm(purposeText(config, "dialog"))}</p>
         {askCase && (
           <>
-            <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-ink/45">
               {tm("Case reference")}
             </label>
             <input
@@ -3665,15 +3660,15 @@ function PurposeDialog({
               value={caseRef}
               onChange={(e) => setCaseRef(e.target.value)}
               maxLength={64}
-              className={`mb-1 w-full rounded-lg border bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30 ${caseOk ? "border-white/15" : "border-rose-400/60"}`}
+              className={`mb-1 w-full rounded-lg border bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-ink/30 ${caseOk ? "border-ink/15" : "border-rose-400/60"}`}
             />
-            <div className="mb-3 min-h-4 text-[11px] text-rose-300">
+            <div className="mb-3 min-h-4 text-[11px] text-rose-700 dark:text-rose-300">
               {caseOk ? "" : tm("The case reference does not have the expected form.")}
             </div>
           </>
         )}
         {askBasis && (
-          <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+          <label className="mb-1 block text-[11px] uppercase tracking-wider text-ink/45">
             {tm("Legal basis")}
           </label>
         )}
@@ -3681,7 +3676,7 @@ function PurposeDialog({
           <select
             value={legalBasis}
             onChange={(e) => setLegalBasis(e.target.value)}
-            className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+            className="mb-4 w-full rounded-lg border border-ink/15 bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-ink/30"
           >
             <option value="">—</option>
             {config.legalBases.map((basis) => (
@@ -3695,13 +3690,13 @@ function PurposeDialog({
             value={legalBasis}
             onChange={(e) => setLegalBasis(e.target.value)}
             maxLength={200}
-            className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+            className="mb-4 w-full rounded-lg border border-ink/15 bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-ink/30"
           />
         )}
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/5"
+            className="rounded-lg border border-ink/10 px-3 py-1.5 text-xs text-ink/70 transition hover:bg-ink/5"
           >
             {tm("Cancel")}
           </button>
@@ -3748,8 +3743,8 @@ function ThreadDialog({
       }}
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
-        style={{ backgroundColor: "#0A1B2D" }}
+        className="w-full max-w-sm rounded-2xl border border-ink/10 p-4 shadow-2xl shadow-shade/60"
+        style={{ backgroundColor: "var(--surface-1)" }}
         onKeyDown={(e) => {
           if (e.key === "Escape") onCancel();
           if (e.key === "Enter" && !disabled) onConfirm(value);
@@ -3759,27 +3754,27 @@ function ThreadDialog({
           {renaming ? (
             <Pencil className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           ) : (
-            <AlertTriangle className="h-4 w-4 text-rose-300" />
+            <AlertTriangle className="h-4 w-4 text-rose-700 dark:text-rose-300" />
           )}
           {tm(renaming ? "Rename conversation" : "Delete conversation")}
         </div>
 
         {renaming ? (
           <>
-            <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+            <label className="mb-1 block text-[11px] uppercase tracking-wider text-ink/45">
               {tm("Conversation name")}
             </label>
             <input
               autoFocus
               value={value}
               onChange={(e) => setValue(e.target.value)}
-              className="mb-4 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+              className="mb-4 w-full rounded-lg border border-ink/15 bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-ink/30"
             />
           </>
         ) : (
-          <p className="mb-4 text-[13px] text-white/75">
+          <p className="mb-4 text-[13px] text-ink/75">
             {tm("Delete this conversation? This cannot be undone.")}
-            <span className="mt-2 block truncate text-white/50">
+            <span className="mt-2 block truncate text-ink/50">
               {title || tm("Untitled conversation")}
             </span>
           </p>
@@ -3788,7 +3783,7 @@ function ThreadDialog({
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/5"
+            className="rounded-lg border border-ink/10 px-3 py-1.5 text-xs text-ink/70 transition hover:bg-ink/5"
           >
             {tm("Cancel")}
           </button>
@@ -3825,12 +3820,12 @@ function LanguageSelector() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-white/85 hover:bg-white/10 transition"
+        className="inline-flex items-center gap-1 rounded-full border border-ink/10 bg-ink/5 px-2.5 py-1.5 text-xs font-medium text-ink/85 hover:bg-ink/10 transition"
         title="Language"
       >
         {lang}
         <ChevronDown
-          className={`h-3.5 w-3.5 text-white/50 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`h-3.5 w-3.5 text-ink/50 transition-transform ${open ? "rotate-180" : ""}`}
         />
       </button>
       <AnimatePresence>
@@ -3842,7 +3837,7 @@ function LanguageSelector() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -6, scale: 0.97 }}
               transition={{ type: "spring", stiffness: 320, damping: 26 }}
-              className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-xl border border-white/10 bg-[#10243A] shadow-2xl shadow-black/60"
+              className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-xl border border-ink/10 bg-surface-3 shadow-2xl shadow-shade/60"
             >
               {LANGS.map((l) => {
                 const active = l.code === lang;
@@ -3853,7 +3848,7 @@ function LanguageSelector() {
                       setLang(l.code as Lang);
                       setOpen(false);
                     }}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:text-brand-soft hover:bg-white/5"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:text-brand-soft hover:bg-ink/5"
                   >
                     <span
                       className="w-7 shrink-0 font-semibold"
@@ -3861,11 +3856,12 @@ function LanguageSelector() {
                     >
                       {l.code}
                     </span>
-                    <span className="flex-1 truncate text-white/60">{l.native}</span>
+                    <span className="flex-1 truncate text-ink/60">{l.native}</span>
                     {active && <Check className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />}
                   </button>
                 );
               })}
+              <ThemeMenuItems className="sm:hidden" />
             </motion.div>
           </>
         )}
@@ -3941,7 +3937,7 @@ function DocumentView({
 
   if (state.kind === "loading") {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-white/50">
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-[12.5px] text-ink/50">
         <Loader2 className="h-5 w-5 animate-spin" style={{ color: ACCENT_TEXT }} />
         {tm("Fetching the document from the ViVeSecBox…")}
       </div>
@@ -3951,11 +3947,11 @@ function DocumentView({
   if (state.kind === "error") {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-        <AlertTriangle className="h-5 w-5 text-amber-300" />
-        <div className="text-[12.5px] text-white/70">
+        <AlertTriangle className="h-5 w-5 text-amber-700 dark:text-amber-300" />
+        <div className="text-[12.5px] text-ink/70">
           {tm("The ViVeSecBox did not hand over this document.")}
         </div>
-        <div className="max-w-xs text-[11.5px] text-white/40">{state.message}</div>
+        <div className="max-w-xs text-[11.5px] text-ink/40">{state.message}</div>
       </div>
     );
   }
@@ -3967,14 +3963,14 @@ function DocumentView({
         key={`${state.url}#${page ?? 1}`}
         src={`${state.url}#page=${page ?? 1}&view=FitH`}
         title={name}
-        className="flex-1 border-0 bg-[#10243A]"
+        className="flex-1 border-0 bg-surface-3"
       />
     );
   }
 
   if (state.kind === "image") {
     return (
-      <div className="vvs-scroll flex-1 overflow-auto bg-[#071625] p-3">
+      <div className="vvs-scroll flex-1 overflow-auto bg-surface-0 p-3">
         <img src={state.url} alt={name} className="mx-auto max-w-full" />
       </div>
     );
@@ -3999,8 +3995,8 @@ function DocumentView({
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <FileText className="h-6 w-6 text-white/40" />
-      <div className="text-[12.5px] text-white/70">
+      <FileText className="h-6 w-6 text-ink/40" />
+      <div className="text-[12.5px] text-ink/70">
         {tm("This format cannot be shown in the browser.")}
       </div>
       <a
@@ -4105,53 +4101,53 @@ function PdfPreviewPane({
       className={`fixed inset-0 z-[60] flex h-[100dvh] flex-col lg:static lg:order-1 lg:z-auto lg:h-full animate-[fadeSlide_320ms_ease-out] ${
         isSplit ? "lg:w-3/5 lg:shrink-0" : "lg:min-w-0 lg:flex-1 lg:basis-0"
       }`}
-      style={{ backgroundColor: "#0A1B2D" }}
+      style={{ backgroundColor: "var(--surface-1)" }}
     >
       {/* Mobile drag handle — affordance for sheet-style dismissal */}
       <div className="flex justify-center pt-2 pb-1 lg:hidden">
         <button
           onClick={onClose}
           aria-label="Close document viewer"
-          className="h-1.5 w-12 rounded-full bg-white/20 active:bg-white/40"
+          className="h-1.5 w-12 rounded-full bg-ink/20 active:bg-ink/40"
         />
       </div>
-      <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2.5">
-        <FileText className="h-4 w-4 text-rose-400" />
+      <div className="flex items-center gap-2 border-b border-ink/5 px-3 py-2.5">
+        <FileText className="h-4 w-4 text-rose-700 dark:text-rose-400" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{file.name}</div>
-          <div className="text-[10.5px] text-white/45">
+          <div className="text-[10.5px] text-ink/45">
             {isSplit ? "Split-screen viewer · linked to chat" : "Side preview · linked to chat"}
           </div>
         </div>
         {onToggleMode && (
           <button
             onClick={onToggleMode}
-            className="hidden lg:grid h-7 w-7 place-items-center rounded-md hover:bg-white/10"
+            className="hidden lg:grid h-7 w-7 place-items-center rounded-md hover:bg-ink/10"
             title={isSplit ? "Shrink to side preview" : "Expand to split view"}
           >
-            <LayoutTemplate className="h-4 w-4 text-white/60" />
+            <LayoutTemplate className="h-4 w-4 text-ink/60" />
           </button>
         )}
         <button
           onClick={onClose}
-          className="grid h-7 w-7 place-items-center rounded-md hover:bg-white/10"
+          className="grid h-7 w-7 place-items-center rounded-md hover:bg-ink/10"
         >
-          <X className="h-4 w-4 text-white/60" />
+          <X className="h-4 w-4 text-ink/60" />
         </button>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-white/5 px-3 py-1.5 text-[11.5px]">
+      <div className="flex items-center gap-1 border-b border-ink/5 px-3 py-1.5 text-[11.5px]">
         {(["document", "passages"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`rounded-md px-2.5 py-1 transition ${
-              tab === t ? "bg-white/[0.08] text-white" : "text-white/55 hover:text-white"
+              tab === t ? "bg-ink/[0.08] text-ink" : "text-ink/55 hover:text-ink"
             }`}
           >
             {t === "document" ? tm("Document") : tm("Retrieved passages")}
             {t === "passages" && paras.length > 0 && (
-              <span className="ml-1 text-white/40">{paras.length}</span>
+              <span className="ml-1 text-ink/40">{paras.length}</span>
             )}
           </button>
         ))}
@@ -4159,25 +4155,25 @@ function PdfPreviewPane({
 
       {citation && (
         <div
-          className="flex items-center gap-2 border-b border-white/5 px-3 py-2 text-[11.5px]"
+          className="flex items-center gap-2 border-b border-ink/5 px-3 py-2 text-[11.5px]"
           style={{ backgroundColor: "rgba(204,255,0,0.06)" }}
         >
           <Link2 className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
-          <span className="text-white/70">Jumped to</span>
+          <span className="text-ink/70">Jumped to</span>
           <span className="truncate font-medium" style={{ color: ACCENT_TEXT }}>
             {citation.label}
           </span>
           {typeof citation.score === "number" && (
-            <span className="rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/70">
+            <span className="rounded-full border border-ink/10 bg-shade/30 px-1.5 py-0.5 text-[10px] text-ink/70">
               {citation.score}% match
             </span>
           )}
-          <span className="ml-auto whitespace-nowrap text-white/45">p. {citation.page}</span>
+          <span className="ml-auto whitespace-nowrap text-ink/45">p. {citation.page}</span>
           <button
             onClick={onClearCitation}
-            className="ml-1 grid h-5 w-5 place-items-center rounded hover:bg-white/10"
+            className="ml-1 grid h-5 w-5 place-items-center rounded hover:bg-ink/10"
           >
-            <X className="h-3 w-3 text-white/60" />
+            <X className="h-3 w-3 text-ink/60" />
           </button>
         </div>
       )}
@@ -4243,30 +4239,30 @@ function PdfPreviewPane({
           className="pointer-events-none sticky mt-4 flex justify-center"
           style={{ bottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
         >
-          <div className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-white/10 bg-[#071625]/95 px-1.5 py-1 shadow-2xl shadow-black/50 backdrop-blur">
+          <div className="pointer-events-auto inline-flex items-center gap-1 rounded-full border border-ink/10 bg-surface-0/95 px-1.5 py-1 shadow-2xl shadow-shade/50 backdrop-blur">
             <button
               onClick={onPrevMatch}
               disabled={!matchCount || matchCount < 2}
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11.5px] text-white/80 hover:bg-white/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11.5px] text-ink/80 hover:bg-ink/10 disabled:opacity-40"
               title="Previous match"
             >
               <ChevronLeft className="h-3.5 w-3.5" /> Prev
             </button>
-            <span className="px-1.5 text-[11px] text-white/45">
+            <span className="px-1.5 text-[11px] text-ink/45">
               {matchCount > 0 ? `${matchIndex + 1} / ${matchCount}` : "—"}
             </span>
             <button
               onClick={onNextMatch}
               disabled={!matchCount || matchCount < 2}
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11.5px] text-white/80 hover:bg-white/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11.5px] text-ink/80 hover:bg-ink/10 disabled:opacity-40"
               title="Next match"
             >
               Next <ChevronRight className="h-3.5 w-3.5" />
             </button>
-            <div className="mx-1 h-4 w-px bg-white/10" />
+            <div className="mx-1 h-4 w-px bg-ink/10" />
             <button
               onClick={onClose}
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11.5px] text-white/80 hover:bg-white/10"
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11.5px] text-ink/80 hover:bg-ink/10"
               title="Close viewer"
             >
               <X className="h-3.5 w-3.5" /> Close
@@ -4277,10 +4273,10 @@ function PdfPreviewPane({
       )}
 
       {tab === "passages" && (
-      <div className="flex items-center justify-between gap-2 border-t border-white/5 px-3 py-2 text-[11.5px] text-white/60">
+      <div className="flex items-center justify-between gap-2 border-t border-ink/5 px-3 py-2 text-[11.5px] text-ink/60">
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
-          className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 hover:bg-white/10 disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-md border border-ink/10 bg-ink/[0.04] px-2 py-1 hover:bg-ink/10 disabled:opacity-40"
           disabled={safePage <= 1}
         >
           <ArrowLeft className="h-3 w-3" /> Prev
@@ -4291,7 +4287,7 @@ function PdfPreviewPane({
         </span>
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 hover:bg-white/10 disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-md border border-ink/10 bg-ink/[0.04] px-2 py-1 hover:bg-ink/10 disabled:opacity-40"
           disabled={safePage >= totalPages}
         >
           Next <ArrowRight className="h-3 w-3" />
@@ -4330,22 +4326,9 @@ function HighlightedText({ text, terms }: { text: string; terms: string[] }) {
   );
 }
 
-/** The full ViVeSec logo as delivered (clear space included in the PNG):
- *  177 px file width = 160 px visible, the guide's digital minimum. */
+/** The full ViVeSec logo at the guide's digital minimum (160 px visible). */
 function BrandLogo() {
-  const width = Math.round(160 * LOGO_FILE_RATIO);
-  const height = Math.round(width * LOGO_ASPECT);
-  return (
-    <img
-      src={LOGO_ON_DARK}
-      alt="ViVeSec"
-      width={width}
-      height={height}
-      draggable={false}
-      className="shrink-0 select-none"
-      style={{ width, height }}
-    />
-  );
+  return <ThemeLogo visibleWidth={160} />;
 }
 
 function Avatar({ name }: { name: string }) {
@@ -4395,9 +4378,9 @@ function MessageView({
   const { t, tm } = useLang();
   if (msg.role === "system") {
     return (
-      <div className="mx-auto max-w-md text-center text-[11px] leading-relaxed text-white/45">
+      <div className="mx-auto max-w-md text-center text-[11px] leading-relaxed text-ink/45">
         {t.bannerLine1.split(`'${t.headerTitle}'`)[0]}
-        <span className="text-white/70">'{t.headerTitle}'</span>
+        <span className="text-ink/70">'{t.headerTitle}'</span>
         {t.bannerLine1.split(`'${t.headerTitle}'`)[1] ?? ""}
         <br />
         {t.bannerLine2}
@@ -4415,7 +4398,7 @@ function MessageView({
             <span className="text-[12px] font-semibold" style={{ color: ACCENT_TEXT }}>
               {msg.name}
             </span>
-            <span className="text-[11px] text-white/40">{msg.ts}</span>
+            <span className="text-[11px] text-ink/40">{msg.ts}</span>
           </div>
           <div className="rounded-2xl px-3.5 py-2 text-[14px]" style={{ backgroundColor: PANEL }}>
             {msg.text}
@@ -4433,12 +4416,12 @@ function MessageView({
         <span className="text-[12px] font-semibold" style={{ color: ACCENT_TEXT }}>
           {msg.name}
         </span>
-        <span className="text-[11px] text-white/40">{msg.ts}</span>
+        <span className="text-[11px] text-ink/40">{msg.ts}</span>
       </div>
 
       {msg.kind === "text" && (
         <div
-          className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-[14px] ${msg.tone === "error" ? "border border-rose-400/40 text-rose-100" : ""}`}
+          className={`max-w-[80%] rounded-2xl px-3.5 py-2 text-[14px] ${msg.tone === "error" ? "border border-rose-400/40 text-rose-800 dark:text-rose-100" : ""}`}
           style={{ backgroundColor: msg.tone === "error" ? "rgba(244,63,94,0.12)" : PANEL }}
         >
           {renderInline(msg.text)}
@@ -4446,7 +4429,7 @@ function MessageView({
             <button
               onClick={() => onAnalyze(msg.retryAnalyze as string)}
               title={tm("Continues the analysis; the parts already read are not read again")}
-              className="mt-2 flex items-center gap-1.5 rounded-md border border-white/15 bg-white/[0.04] px-2.5 py-1 text-[12px] text-white/80 transition hover:border-white/25 hover:bg-white/[0.08] hover:text-white"
+              className="mt-2 flex items-center gap-1.5 rounded-md border border-ink/15 bg-ink/[0.04] px-2.5 py-1 text-[12px] text-ink/80 transition hover:border-ink/25 hover:bg-ink/[0.08] hover:text-ink"
             >
               <RotateCcw className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
               {tm("Resume analysis")}
@@ -4544,7 +4527,7 @@ function ThinkingBubble({ startedAt, stage }: { startedAt: number; stage?: Adapt
       <span className="vvs-think-label text-[13.5px]">
         {stageLabel(tm, stage) ?? tm("The local model is thinking…")}
       </span>
-      {elapsed >= 3 && <span className="text-[11px] tabular-nums text-white/35">{elapsed}s</span>}
+      {elapsed >= 3 && <span className="text-[11px] tabular-nums text-ink/35">{elapsed}s</span>}
     </div>
   );
 }
@@ -4554,7 +4537,7 @@ function renderInline(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((p, i) =>
     p.startsWith("**") && p.endsWith("**") ? (
-      <strong key={i} className="font-semibold text-white">
+      <strong key={i} className="font-semibold text-ink">
         {p.slice(2, -2)}
       </strong>
     ) : (
@@ -4570,7 +4553,7 @@ function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string
   const blocks = answerBlocks(text);
   const choices = onChoose ? blocks.findIndex((b) => b.kind === "list") : -1;
   return (
-    <div className="space-y-2 text-[13.5px] leading-relaxed text-white/85">
+    <div className="space-y-2 text-[13.5px] leading-relaxed text-ink/85">
       {blocks.map((b, i) => {
         if (b.kind === "list" && i === choices && onChoose) {
           return (
@@ -4579,7 +4562,7 @@ function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string
                 <button
                   key={j}
                   onClick={() => onChoose(optionValue(item.text))}
-                  className="rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-left text-[13px] text-white/85 transition hover:border-brand-soft/50 hover:bg-white/10"
+                  className="rounded-lg border border-ink/15 bg-ink/[0.04] px-3 py-1.5 text-left text-[13px] text-ink/85 transition hover:border-brand-soft/50 hover:bg-ink/10"
                 >
                   {renderInline(item.text)}
                 </button>
@@ -4592,7 +4575,7 @@ function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string
             <ul key={i} className="space-y-1">
               {b.items.map((item, j) => (
                 <li key={j} className={`flex gap-2 ${item.depth ? "pl-5" : ""}`}>
-                  <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-white/50" />
+                  <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-ink/50" />
                   <span className="min-w-0">{renderInline(item.text)}</span>
                 </li>
               ))}
@@ -4603,8 +4586,8 @@ function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string
           return (
             <div
               key={i}
-              className="whitespace-pre-wrap rounded-lg border-l-2 px-3 py-2 text-[12.5px] text-white/70"
-              style={{ borderColor: ACCENT, backgroundColor: "rgba(255,255,255,0.03)" }}
+              className="whitespace-pre-wrap rounded-lg border-l-2 px-3 py-2 text-[12.5px] text-ink/70"
+              style={{ borderColor: ACCENT, backgroundColor: inkA(0.03) }}
             >
               {renderInline(b.text)}
             </div>
@@ -4612,7 +4595,7 @@ function AnswerBody({ text, onChoose }: { text: string; onChoose?: (text: string
         }
         if (b.kind === "heading") {
           return (
-            <p key={i} className="font-semibold text-white">
+            <p key={i} className="font-semibold text-ink">
               {renderInline(b.text.replace(/\*\*/g, ""))}
             </p>
           );
@@ -4679,25 +4662,25 @@ function WizardPanel({
 
   return (
     <div
-      className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border bg-[#10243A] shadow-xl"
+      className="mx-auto mb-2 max-w-3xl overflow-hidden rounded-xl border bg-surface-3 shadow-xl"
       style={{ borderColor: `${ACCENT}44` }}
     >
-      <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-ink/5 px-3 py-2">
         <Sparkles className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
-        <span className="text-[11px] uppercase tracking-wider text-white/45">
+        <span className="text-[11px] uppercase tracking-wider text-ink/45">
           {tm(WIZARD_NOUN[kind])} · {tm("Step")} {stepIndex + 1}/{stepCount}
         </span>
         <button
           onClick={onCancel}
-          className="ml-auto grid h-7 w-7 place-items-center rounded-full hover:bg-white/10"
+          className="ml-auto grid h-7 w-7 place-items-center rounded-full hover:bg-ink/10"
           aria-label="Cancel"
         >
-          <X className="h-3.5 w-3.5 text-white/50" />
+          <X className="h-3.5 w-3.5 text-ink/50" />
         </button>
       </div>
 
       <div className="p-3">
-        <div className="mb-2.5 text-[13px] text-white/85">{tm(wizardQuestion(kind, step))}</div>
+        <div className="mb-2.5 text-[13px] text-ink/85">{tm(wizardQuestion(kind, step))}</div>
 
         {(step === "audience" ||
           step === "situation" ||
@@ -4713,7 +4696,7 @@ function WizardPanel({
                 if (e.key === "Enter") submitText(step);
               }}
               placeholder={tm(TEXT_PLACEHOLDER[step] ?? "")}
-              className="flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[13px] text-white placeholder:text-white/35 outline-none focus:border-white/25"
+              className="flex-1 rounded-lg border border-ink/10 bg-shade/25 px-3 py-2 text-[13px] text-ink placeholder:text-ink/35 outline-none focus:border-ink/25"
             />
             <button
               onClick={() => submitText(step)}
@@ -4732,7 +4715,7 @@ function WizardPanel({
               <button
                 key={o}
                 onClick={() => onAnswer({ [step]: o } as Partial<WizardState>, tm(o))}
-                className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-[13px] text-white/85 transition hover:border-white/25 hover:bg-white/[0.07]"
+                className="flex w-full items-center gap-2 rounded-lg border border-ink/10 bg-ink/[0.03] px-3 py-2 text-left text-[13px] text-ink/85 transition hover:border-ink/25 hover:bg-ink/[0.07]"
               >
                 <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                 {tm(o)}
@@ -4748,7 +4731,7 @@ function WizardPanel({
                 <button
                   key={p}
                   onClick={() => onAnswer({ purpose: p }, tm(p))}
-                  className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-left text-[13px] text-white/85 transition hover:border-white/25 hover:bg-white/[0.07]"
+                  className="flex w-full items-center gap-2 rounded-lg border border-ink/10 bg-ink/[0.03] px-3 py-2 text-left text-[13px] text-ink/85 transition hover:border-ink/25 hover:bg-ink/[0.07]"
                 >
                   <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                   {tm(p)}
@@ -4757,7 +4740,7 @@ function WizardPanel({
             {!elseMode && purposeOptions.length > 0 ? (
               <button
                 onClick={() => setElseMode(true)}
-                className="w-full rounded-lg border border-dashed border-white/15 px-3 py-2 text-left text-[13px] text-white/55 transition hover:text-white/80"
+                className="w-full rounded-lg border border-dashed border-ink/15 px-3 py-2 text-left text-[13px] text-ink/55 transition hover:text-ink/80"
               >
                 {tm("Else — describe it yourself")}
               </button>
@@ -4771,7 +4754,7 @@ function WizardPanel({
                     if (e.key === "Enter") submitText("purpose");
                   }}
                   placeholder={tm("Add the purpose to find the right context")}
-                  className="flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[13px] text-white placeholder:text-white/35 outline-none focus:border-white/25"
+                  className="flex-1 rounded-lg border border-ink/10 bg-shade/25 px-3 py-2 text-[13px] text-ink placeholder:text-ink/35 outline-none focus:border-ink/25"
                 />
                 <button
                   onClick={() => submitText("purpose")}
@@ -4788,18 +4771,18 @@ function WizardPanel({
 
         {step === "sources" && (
           <div>
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/10 bg-black/25 px-2.5 py-1.5">
-              <Search className="h-3.5 w-3.5 text-white/40" />
+            <div className="mb-2 flex items-center gap-2 rounded-lg border border-ink/10 bg-shade/25 px-2.5 py-1.5">
+              <Search className="h-3.5 w-3.5 text-ink/40" />
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={tm("Search the drive")}
-                className="flex-1 bg-transparent text-[12.5px] text-white placeholder:text-white/35 outline-none"
+                className="flex-1 bg-transparent text-[12.5px] text-ink placeholder:text-ink/35 outline-none"
               />
             </div>
-            <div className="max-h-52 overflow-y-auto rounded-lg border border-white/5">
+            <div className="max-h-52 overflow-y-auto rounded-lg border border-ink/5">
               {shown.length === 0 && (
-                <div className="px-3 py-3 text-[12px] text-white/40">
+                <div className="px-3 py-3 text-[12px] text-ink/40">
                   {tm("No files on this drive.")}
                 </div>
               )}
@@ -4812,19 +4795,19 @@ function WizardPanel({
                     onClick={() =>
                       onPick(on ? picked.filter((x) => x !== f.id) : [...picked, f.id])
                     }
-                    className="flex w-full items-center gap-2.5 border-b border-white/5 px-2.5 py-2 text-left transition last:border-0 hover:bg-white/5"
+                    className="flex w-full items-center gap-2.5 border-b border-ink/5 px-2.5 py-2 text-left transition last:border-0 hover:bg-ink/5"
                   >
                     <span
-                      className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "" : "border-white/20"}`}
+                      className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? "" : "border-ink/20"}`}
                       style={on ? { backgroundColor: ACCENT, borderColor: ACCENT } : {}}
                     >
                       {on && <Check className="h-3 w-3 text-white" />}
                     </span>
                     <Icon className={`h-3.5 w-3.5 shrink-0 ${fileTint(f.type).split(" ")[0]}`} />
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-white/85">
+                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink/85">
                       {f.name}
                     </span>
-                    <span className="shrink-0 text-[10.5px] text-white/35">{f.folder}</span>
+                    <span className="shrink-0 text-[10.5px] text-ink/35">{f.folder}</span>
                   </button>
                 );
               })}
@@ -4832,7 +4815,7 @@ function WizardPanel({
             <div className="mt-2 flex items-center gap-2">
               <button
                 onClick={() => onAnswer({ files: [] }, tm("Use the whole drive"))}
-                className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/65 transition hover:bg-white/10"
+                className="rounded-lg border border-ink/10 px-3 py-1.5 text-xs text-ink/65 transition hover:bg-ink/10"
               >
                 {tm("Use the whole drive")}
               </button>
@@ -4856,12 +4839,12 @@ function WizardPanel({
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder={tm("Anything else the model should know (optional)")}
-              className="w-full resize-none rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-[13px] text-white placeholder:text-white/35 outline-none focus:border-white/25"
+              className="w-full resize-none rounded-lg border border-ink/10 bg-shade/25 px-3 py-2 text-[13px] text-ink placeholder:text-ink/35 outline-none focus:border-ink/25"
             />
             <div className="mt-2 flex items-center gap-2">
               <button
                 onClick={() => onAnswer({ extra: "" }, tm("No, nothing else"))}
-                className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/65 transition hover:bg-white/10"
+                className="rounded-lg border border-ink/10 px-3 py-1.5 text-xs text-ink/65 transition hover:bg-ink/10"
               >
                 {tm("No, nothing else")}
               </button>
@@ -4888,16 +4871,21 @@ function WizardPanel({
 function LiveFooter({ meta }: { meta: LiveMeta }) {
   const { tm } = useLang();
   const conf = meta.confidence;
-  const color = conf?.band === "green" ? "#a3e635" : conf?.band === "amber" ? "#fbbf24" : "#f87171";
+  const tone =
+    conf?.band === "green"
+      ? { fill: "#a3e635", text: "text-lime-700 dark:text-lime-400" }
+      : conf?.band === "amber"
+        ? { fill: "#fbbf24", text: "text-amber-700 dark:text-amber-400" }
+        : { fill: "#f87171", text: "text-red-700 dark:text-red-400" };
   if (!conf && !meta.audit?.length && !meta.auditId && !meta.profile) return null;
   return (
-    <div className="mt-3 border-t border-white/10 pt-2">
+    <div className="mt-3 border-t border-ink/10 pt-2">
       <div className="flex flex-wrap items-center gap-2">
-        {meta.profile && <span className="text-[11px] text-white/60">{tm(meta.profile === "hybrid" ? "Hybrid" : "Grounded")}</span>}
+        {meta.profile && <span className="text-[11px] text-ink/60">{tm(meta.profile === "hybrid" ? "Hybrid" : "Grounded")}</span>}
         {conf && (
           <span
-            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold"
-            style={{ borderColor: `${color}55`, color, backgroundColor: `${color}15` }}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold ${tone.text}`}
+            style={{ borderColor: `${tone.fill}55`, backgroundColor: `${tone.fill}15` }}
             title={tm("Confidence score (retrieval + generation)")}
           >
             <CircleDot className="h-2.5 w-2.5" /> {tm("Confidence")}: {conf.score}%
@@ -4906,7 +4894,7 @@ function LiveFooter({ meta }: { meta: LiveMeta }) {
         {meta.auditId && <FeedbackButtons meta={meta} />}
       </div>
       {!!meta.audit?.length && (
-        <ul className="mt-2 space-y-0.5 text-[11px] leading-relaxed text-white/55">
+        <ul className="mt-2 space-y-0.5 text-[11px] leading-relaxed text-ink/55">
           {meta.audit.map((line, i) => (
             <li key={i}>{renderInline(line)}</li>
           ))}
@@ -4976,8 +4964,8 @@ function FeedbackButtons({ meta }: { meta: LiveMeta }) {
       aria-label={tm(label)}
       className={`inline-flex items-center rounded-full border px-1.5 py-0.5 transition ${
         rating === value
-          ? "border-white/30 text-white"
-          : "border-white/10 text-white/45 hover:text-white/80 disabled:opacity-40"
+          ? "border-ink/30 text-ink"
+          : "border-ink/10 text-ink/45 hover:text-ink/80 disabled:opacity-40"
       }`}
     >
       <Icon className="h-3 w-3" />
@@ -4990,12 +4978,12 @@ function FeedbackButtons({ meta }: { meta: LiveMeta }) {
       {voteBtn("down", ThumbsDown, "Bad answer")}
       {rating === "down" && !reasonSent && (
         <>
-          <span className="text-[10.5px] text-white/45">{tm("What was wrong?")}</span>
+          <span className="text-[10.5px] text-ink/45">{tm("What was wrong?")}</span>
           {FEEDBACK_REASONS.map((r) => (
             <button
               key={r.key}
               onClick={() => onReason(r.key)}
-              className="rounded-full border border-white/10 px-2 py-0.5 text-[10.5px] text-white/55 transition hover:bg-white/10 hover:text-white/85"
+              className="rounded-full border border-ink/10 px-2 py-0.5 text-[10.5px] text-ink/55 transition hover:bg-ink/10 hover:text-ink/85"
             >
               {tm(r.label)}
             </button>
@@ -5023,11 +5011,11 @@ function CardShell({
   const { tm } = useLang();
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-white/[0.07]"
+      className="overflow-hidden rounded-2xl border border-ink/[0.07]"
       style={{ backgroundColor: PANEL }}
     >
       {(title !== null || onToggleEdit) && (
-        <div className="flex items-center gap-2 border-b border-white/[0.07] px-4 py-2.5">
+        <div className="flex items-center gap-2 border-b border-ink/[0.07] px-4 py-2.5">
           <Icon className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           <div className="min-w-0 flex-1 truncate text-[13px] font-semibold">
             {title === null ? "" : tm(title)}
@@ -5039,7 +5027,7 @@ function CardShell({
               style={
                 editing
                   ? { borderColor: ACCENT, color: ON_ACCENT, backgroundColor: ACCENT }
-                  : { borderColor: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.7)" }
+                  : { borderColor: inkA(0.15), color: inkText(0.7) }
               }
               title={tm("Edit this output before saving")}
             >
@@ -5074,12 +5062,12 @@ function SummaryCard({
       editing={editing}
       onToggleEdit={() => setEditing((v) => !v)}
     >
-      <div className="mb-3 flex gap-1 rounded-lg bg-black/30 p-1 text-[12px]">
+      <div className="mb-3 flex gap-1 rounded-lg bg-shade/30 p-1 text-[12px]">
         {(["summary", "actions", "email"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`flex-1 rounded-md px-2 py-1.5 transition ${tab === t ? "bg-white/[0.08] text-white" : "text-white/55 hover:text-white"}`}
+            className={`flex-1 rounded-md px-2 py-1.5 transition ${tab === t ? "bg-ink/[0.08] text-ink" : "text-ink/55 hover:text-ink"}`}
           >
             {t === "summary"
               ? tm("Summary")
@@ -5091,7 +5079,7 @@ function SummaryCard({
       </div>
 
       {tab === "summary" && (
-        <ul className="space-y-2 text-[13.5px] text-white/85">
+        <ul className="space-y-2 text-[13.5px] text-ink/85">
           {msg.bullets.map((b, i) => (
             <li key={i} className="flex gap-2">
               <span
@@ -5115,17 +5103,17 @@ function SummaryCard({
         <ul className="space-y-1.5">
           {msg.actions.map((a) => (
             <li key={a.id}>
-              <div className="group flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-white/[0.04]">
+              <div className="group flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-ink/[0.04]">
                 <button
                   onClick={() => onToggle(a.id)}
-                  className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border transition ${a.done ? "" : "border-white/20"}`}
+                  className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border transition ${a.done ? "" : "border-ink/20"}`}
                   style={a.done ? { backgroundColor: ACCENT, borderColor: ACCENT } : {}}
                   aria-label="Toggle"
                 >
                   {a.done && <Check className="h-3.5 w-3.5 text-white" />}
                 </button>
                 <span
-                  className={`flex-1 text-[13.5px] ${a.done ? "text-white/40 line-through" : "text-white/90"}`}
+                  className={`flex-1 text-[13.5px] ${a.done ? "text-ink/40 line-through" : "text-ink/90"}`}
                 >
                   <EditableText
                     editing={editing}
@@ -5137,7 +5125,7 @@ function SummaryCard({
                     }
                   />
                 </span>
-                <span className="text-[11px] text-white/50">
+                <span className="text-[11px] text-ink/50">
                   <EditableText
                     editing={editing}
                     value={a.assignee}
@@ -5163,10 +5151,10 @@ function SummaryCard({
               value={msg.email}
               onChange={(e) => onEdit({ email: e.target.value })}
               rows={Math.min(18, Math.max(6, msg.email.split("\n").length))}
-              className="w-full resize-y rounded-lg border border-white/15 bg-black/30 p-3 font-sans text-[12.5px] leading-relaxed text-white outline-none focus:border-white/30"
+              className="w-full resize-y rounded-lg border border-ink/15 bg-shade/30 p-3 font-sans text-[12.5px] leading-relaxed text-ink outline-none focus:border-ink/30"
             />
           ) : (
-            <pre className="whitespace-pre-wrap rounded-lg bg-black/30 p-3 font-sans text-[12.5px] leading-relaxed text-white/85">
+            <pre className="whitespace-pre-wrap rounded-lg bg-shade/30 p-3 font-sans text-[12.5px] leading-relaxed text-ink/85">
               {tm(msg.email)}
             </pre>
           )}
@@ -5177,7 +5165,7 @@ function SummaryCard({
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs hover:bg-white/10 transition"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-ink/10 bg-ink/[0.04] px-3 py-1.5 text-xs hover:bg-ink/10 transition"
             >
               <Copy className="h-3.5 w-3.5" /> {copied ? tm("Copied!") : tm("Copy to clipboard")}
             </button>
@@ -5216,13 +5204,17 @@ function summaryMarkdown(msg: Extract<Message, { kind: "summary" }>): string {
 function ReportCard({ msg }: { msg: Extract<Message, { kind: "report" }> }) {
   const { tm } = useLang();
   const toneCls = (t: "good" | "warn" | "bad") =>
-    t === "good" ? "text-emerald-400" : t === "warn" ? "text-amber-400" : "text-rose-400";
+    t === "good"
+      ? "text-emerald-700 dark:text-emerald-400"
+      : t === "warn"
+        ? "text-amber-700 dark:text-amber-400"
+        : "text-rose-700 dark:text-rose-400";
   const statusChip = (s: ReportTask["status"]) => {
     const map = {
-      "On Track": "bg-emerald-400/15 text-emerald-300",
-      Delayed: "bg-rose-400/15 text-rose-300",
-      "At Risk": "bg-amber-400/15 text-amber-300",
-      Done: "bg-white/10 text-white/60",
+      "On Track": "bg-emerald-400/15 text-emerald-700 dark:text-emerald-300",
+      Delayed: "bg-rose-400/15 text-rose-700 dark:text-rose-300",
+      "At Risk": "bg-amber-400/15 text-amber-700 dark:text-amber-300",
+      Done: "bg-ink/10 text-ink/60",
     } as const;
     return (
       <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${map[s]}`}>{tm(s)}</span>
@@ -5233,8 +5225,8 @@ function ReportCard({ msg }: { msg: Extract<Message, { kind: "report" }> }) {
       {msg.metrics.length > 0 && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {msg.metrics.map((m) => (
-            <div key={m.label} className="rounded-lg bg-black/25 p-3">
-              <div className="text-[10.5px] uppercase tracking-wider text-white/45">
+            <div key={m.label} className="rounded-lg bg-shade/25 p-3">
+              <div className="text-[10.5px] uppercase tracking-wider text-ink/45">
                 {tm(m.label)}
               </div>
               <div className={`mt-1 text-lg font-semibold ${toneCls(m.tone)}`}>{m.value}</div>
@@ -5243,16 +5235,16 @@ function ReportCard({ msg }: { msg: Extract<Message, { kind: "report" }> }) {
         </div>
       )}
       {!!msg.narrative?.length && (
-        <div className="mt-3 space-y-1.5 text-[13px] leading-relaxed text-white/75">
+        <div className="mt-3 space-y-1.5 text-[13px] leading-relaxed text-ink/75">
           {msg.narrative.map((n, i) => (
             <p key={i}>{renderInline(n)}</p>
           ))}
         </div>
       )}
-      <div className="mt-3 divide-y divide-white/5 rounded-lg border border-white/5">
+      <div className="mt-3 divide-y divide-ink/5 rounded-lg border border-ink/5">
         {msg.tasks.map((t) => (
           <div key={t.id} className="flex items-center gap-3 px-3 py-2.5">
-            <div className="grid h-7 w-7 place-items-center rounded-full bg-white/10 text-[10px] font-bold">
+            <div className="grid h-7 w-7 place-items-center rounded-full bg-ink/10 text-[10px] font-bold">
               {t.owner}
             </div>
             <div className="flex-1 text-[13.5px]">{tm(t.title)}</div>
@@ -5295,17 +5287,17 @@ function MemoCard({
           <input
             value={msg.title}
             onChange={(e) => onEdit({ title: e.target.value })}
-            className="mb-2 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] font-semibold text-white outline-none focus:border-white/30"
+            className="mb-2 w-full rounded-lg border border-ink/15 bg-shade/30 px-3 py-2 text-[13px] font-semibold text-ink outline-none focus:border-ink/30"
           />
           <textarea
             value={msg.body}
             onChange={(e) => onEdit({ body: e.target.value })}
             rows={Math.min(28, Math.max(8, msg.body.split("\n").length))}
-            className="w-full resize-y rounded-lg border border-white/15 bg-black/30 p-3 font-sans text-[13px] leading-relaxed text-white outline-none focus:border-white/30"
+            className="w-full resize-y rounded-lg border border-ink/15 bg-shade/30 p-3 font-sans text-[13px] leading-relaxed text-ink outline-none focus:border-ink/30"
           />
         </>
       ) : (
-        <pre className="whitespace-pre-wrap rounded-lg bg-black/25 p-3 font-sans text-[13px] leading-relaxed text-white/85">
+        <pre className="whitespace-pre-wrap rounded-lg bg-shade/25 p-3 font-sans text-[13px] leading-relaxed text-ink/85">
           {tm(msg.body)}
         </pre>
       )}
@@ -5395,8 +5387,8 @@ function SaveToDriveButton({
 
   const cls =
     variant === "chip"
-      ? "inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs transition hover:bg-white/10 disabled:opacity-50"
-      : "ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1 text-[10.5px] font-semibold text-white/75 transition hover:border-white/30 hover:text-white disabled:opacity-50";
+      ? "inline-flex items-center gap-1.5 rounded-lg border border-ink/10 bg-ink/[0.04] px-3 py-1.5 text-xs transition hover:bg-ink/10 disabled:opacity-50"
+      : "ml-auto inline-flex items-center gap-1.5 rounded-full border border-ink/15 px-2.5 py-1 text-[10.5px] font-semibold text-ink/75 transition hover:border-ink/30 hover:text-ink disabled:opacity-50";
 
   return (
     <>
@@ -5420,7 +5412,7 @@ function SaveToDriveButton({
 
       {/* Confirmation stays on the card: the user can see the save happened. */}
       {result && (
-        <div className="mt-2 flex w-full items-center gap-1.5 text-[11px] text-white/60">
+        <div className="mt-2 flex w-full items-center gap-1.5 text-[11px] text-ink/60">
           <Check className="h-3 w-3 shrink-0" style={{ color: ACCENT_TEXT }} />
           <span className="truncate">
             {result.downloaded
@@ -5505,15 +5497,15 @@ function SaveDialog({
       aria-modal="true"
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-white/10 p-4 shadow-2xl shadow-black/60"
-        style={{ backgroundColor: "#0A1B2D" }}
+        className="w-full max-w-sm rounded-2xl border border-ink/10 p-4 shadow-2xl shadow-shade/60"
+        style={{ backgroundColor: "var(--surface-1)" }}
       >
         <div className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
           <Save className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           {tm("Save to drive")}
         </div>
 
-        <label className="mb-1 block text-[11px] uppercase tracking-wider text-white/45">
+        <label className="mb-1 block text-[11px] uppercase tracking-wider text-ink/45">
           {tm("File name")}
         </label>
         <input
@@ -5524,12 +5516,10 @@ function SaveDialog({
             if (e.key === "Enter" && name.trim() && !saving) onSave();
             if (e.key === "Escape") onCancel();
           }}
-          className="mb-3 w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-[13px] text-white outline-none focus:border-white/30"
+          className="mb-3 w-full rounded-lg border border-ink/15 bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-ink/30"
         />
 
-        <div className="mb-1 text-[11px] uppercase tracking-wider text-white/45">
-          {tm("Format")}
-        </div>
+        <div className="mb-1 text-[11px] uppercase tracking-wider text-ink/45">{tm("Format")}</div>
         <div className="mb-4 flex flex-wrap gap-1.5">
           {formats.map((f) => (
             <button
@@ -5537,8 +5527,8 @@ function SaveDialog({
               onClick={() => setFmt(f)}
               className={`rounded-lg border px-2.5 py-1.5 text-[12px] transition ${
                 f === fmt
-                  ? "border-white/30 bg-white/[0.10] text-white"
-                  : "border-white/10 text-white/60 hover:bg-white/5"
+                  ? "border-ink/30 bg-ink/[0.10] text-ink"
+                  : "border-ink/10 text-ink/60 hover:bg-ink/5"
               }`}
             >
               {FORMAT_LABEL[f]}
@@ -5549,7 +5539,7 @@ function SaveDialog({
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/70 transition hover:bg-white/5"
+            className="rounded-lg border border-ink/10 px-3 py-1.5 text-xs text-ink/70 transition hover:bg-ink/5"
           >
             {tm("Cancel")}
           </button>
@@ -5630,8 +5620,8 @@ function SearchCard({
       icon={SearchIcon}
     >
       {!!msg.fileHits?.length && (
-        <div className="mb-3 rounded-xl border border-white/10 bg-black/20 p-2.5">
-          <div className="mb-1.5 flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-white/45">
+        <div className="mb-3 rounded-xl border border-ink/10 bg-shade/20 p-2.5">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-ink/45">
             <FileText className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             {tm("Matching file names")} ({msg.fileHits.length})
           </div>
@@ -5643,7 +5633,7 @@ function SearchCard({
                   key={f.id}
                   onClick={() => onOpenFile(f.id)}
                   title={f.folder ? `${f.folder}/${f.name}` : f.name}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11.5px] text-white/80 transition hover:border-white/25 hover:bg-white/10"
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-ink/10 bg-ink/[0.04] px-2 py-1 text-[11.5px] text-ink/80 transition hover:border-ink/25 hover:bg-ink/10"
                 >
                   <Icon className={`h-3 w-3 shrink-0 ${fileTint(f.type).split(" ")[0]}`} />
                   <span className="truncate">{f.name}</span>
@@ -5663,28 +5653,28 @@ function SearchCard({
               <div key={i} className="flex items-stretch gap-1.5">
                 <button
                   onClick={() => onCitation(c, msg.citations)}
-                  className="group min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.03] p-2.5 text-left transition hover:border-white/20 hover:bg-white/[0.06]"
+                  className="group min-w-0 flex-1 rounded-xl border border-ink/10 bg-ink/[0.03] p-2.5 text-left transition hover:border-ink/20 hover:bg-ink/[0.06]"
                 >
                   <div className="flex items-center gap-1.5 text-[11.5px]">
-                    <FileText className="h-3 w-3 text-rose-400" />
-                    {c.rank && <span className="shrink-0 text-white/55">[#{c.rank}]</span>}
-                    <span className="truncate font-medium text-white/85">{c.label}</span>
+                    <FileText className="h-3 w-3 text-rose-700 dark:text-rose-400" />
+                    {c.rank && <span className="shrink-0 text-ink/55">[#{c.rank}]</span>}
+                    <span className="truncate font-medium text-ink/85">{c.label}</span>
                     {typeof c.ocrQuality === "number" && (
                       <span
                         title={tm("Recognised text (OCR) — may contain recognition errors")}
-                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${c.ocrQuality < 70 ? "border-amber-300/40 text-amber-200/90" : "border-white/15 text-white/60"}`}
+                        className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${c.ocrQuality < 70 ? "border-amber-300/40 text-amber-800/90 dark:text-amber-200/90" : "border-ink/15 text-ink/60"}`}
                       >
                         OCR {c.ocrQuality}%
                       </span>
                     )}
                     {crossDrive && driveNameOf(c.fileId) && (
-                      <span className="ml-auto shrink-0 rounded-full border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-white/60">
+                      <span className="ml-auto shrink-0 rounded-full border border-ink/10 bg-shade/30 px-1.5 py-0.5 text-[10px] text-ink/60">
                         {driveNameOf(c.fileId)}
                       </span>
                     )}
                   </div>
                   {c.snippet && (
-                    <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-white/65">
+                    <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-ink/65">
                       <HighlightedText text={c.snippet} terms={c.terms ?? []} />
                     </div>
                   )}
@@ -5693,7 +5683,7 @@ function SearchCard({
                   <button
                     onClick={() => onAnalyze(c.fileId)}
                     title={tm("Read and analyse this whole document (may take minutes)")}
-                    className="flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] px-1.5 text-center text-[10.5px] leading-tight text-white/65 transition hover:border-white/20 hover:bg-white/[0.06] hover:text-white/90"
+                    className="flex w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-ink/10 bg-ink/[0.03] px-1.5 text-center text-[10.5px] leading-tight text-ink/65 transition hover:border-ink/20 hover:bg-ink/[0.06] hover:text-ink/90"
                   >
                     <FileSearch className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
                     {tm("Full analysis")}
@@ -5705,7 +5695,7 @@ function SearchCard({
           {msg.citations.length > 1 && (
             <button
               onClick={() => setShowAllSources((v) => !v)}
-              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2 py-1 text-[11px] text-white/60 transition hover:border-white/20 hover:text-white/85"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-ink/10 px-2 py-1 text-[11px] text-ink/60 transition hover:border-ink/20 hover:text-ink/85"
             >
               <ChevronDown
                 className={`h-3 w-3 transition-transform ${showAllSources ? "rotate-180" : ""}`}
@@ -5718,7 +5708,7 @@ function SearchCard({
         </div>
       )}
       <div className="mt-3 flex items-center gap-3">
-        <span className="inline-flex items-center gap-1.5 text-[10.5px] text-white/45">
+        <span className="inline-flex items-center gap-1.5 text-[10.5px] text-ink/45">
           <ShieldCheck className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
           {tm("Searched 100% locally on ViVeSecBox")}
         </span>
@@ -5856,7 +5846,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
   }
 
   const button =
-    "inline-flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1 text-[10.5px] font-semibold text-white/75 transition hover:border-white/30 hover:text-white disabled:opacity-50";
+    "inline-flex items-center gap-1.5 rounded-full border border-ink/15 px-2.5 py-1 text-[10.5px] font-semibold text-ink/75 transition hover:border-ink/30 hover:text-ink disabled:opacity-50";
   return (
     <div className="mt-2 space-y-1.5">
       {list.map((inv) => (
@@ -5920,7 +5910,7 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
           </button>
         </div>
       ))}
-      {note && <div className="text-[11px] text-white/60">{note}</div>}
+      {note && <div className="text-[11px] text-ink/60">{note}</div>}
     </div>
   );
 }
@@ -5928,14 +5918,14 @@ function InvestigationExport({ meta }: { meta: LiveMeta }) {
 function FileInlineCard({ msg }: { msg: Extract<Message, { kind: "file" }> }) {
   return (
     <div
-      className="inline-flex items-center gap-3 rounded-xl border border-white/10 px-3 py-2.5"
+      className="inline-flex items-center gap-3 rounded-xl border border-ink/10 px-3 py-2.5"
       style={{ backgroundColor: PANEL }}
     >
       <div className="grid h-9 w-9 place-items-center rounded-md bg-rose-400/10">
-        <FileText className="h-4 w-4 text-rose-400" />
+        <FileText className="h-4 w-4 text-rose-700 dark:text-rose-400" />
       </div>
       <div className="text-[13px]">
-        Inserted from Drive · <span className="text-white/55">{msg.fileId}</span>
+        Inserted from Drive · <span className="text-ink/55">{msg.fileId}</span>
       </div>
     </div>
   );
@@ -5989,28 +5979,28 @@ function DeckCard({
 
   return (
     <div
-      className="overflow-hidden rounded-2xl border border-white/[0.07]"
+      className="overflow-hidden rounded-2xl border border-ink/[0.07]"
       style={{ backgroundColor: PANEL }}
     >
       {/* Header */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.07] px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink/[0.07] px-4 py-2.5">
         <Presentation className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
         <div className="text-[13px] font-semibold">{tm(msg.title)}</div>
-        <span className="ml-1 rounded-full border border-white/10 bg-black/30 px-2 py-0.5 text-[10.5px] uppercase tracking-wider text-white/55">
+        <span className="ml-1 rounded-full border border-ink/10 bg-shade/30 px-2 py-0.5 text-[10.5px] uppercase tracking-wider text-ink/55">
           Slide {idx + 1} of {msg.slides.length}
         </span>
         <div className="ml-auto flex items-center gap-1">
           <button
             onClick={() => go(-1)}
             disabled={idx === 0}
-            className="grid h-7 w-7 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-white/70 transition hover:bg-white/10 disabled:opacity-40"
+            className="grid h-7 w-7 place-items-center rounded-md border border-ink/10 bg-ink/[0.04] text-ink/70 transition hover:bg-ink/10 disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
           <button
             onClick={() => go(1)}
             disabled={idx === msg.slides.length - 1}
-            className="grid h-7 w-7 place-items-center rounded-md border border-white/10 bg-white/[0.04] text-white/70 transition hover:bg-white/10 disabled:opacity-40"
+            className="grid h-7 w-7 place-items-center rounded-md border border-ink/10 bg-ink/[0.04] text-ink/70 transition hover:bg-ink/10 disabled:opacity-40"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -6020,7 +6010,7 @@ function DeckCard({
       {/* Slide canvas */}
       <div className="p-3 sm:p-4">
         <div
-          className="relative w-full overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-[#071625] to-[#0A1B2D] shadow-inner"
+          className="relative w-full overflow-hidden rounded-xl border border-ink/10 bg-gradient-to-br from-surface-0 to-surface-1 shadow-inner"
           style={{ aspectRatio: "16 / 9" }}
         >
           <div key={slide.id} className="absolute inset-0 animate-[fadeSlide_320ms_ease-out]">
@@ -6033,7 +6023,7 @@ function DeckCard({
           {slide.source && (
             <button
               onClick={() => slide.source && onCitation(slide.source)}
-              className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full border border-white/10 bg-black/50 px-2 py-1 text-[10.5px] text-white/75 backdrop-blur hover:bg-black/70 hover:text-white"
+              className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full border border-ink/10 bg-shade/50 px-2 py-1 text-[10.5px] text-ink/75 backdrop-blur hover:bg-shade/70 hover:text-ink"
               title="Open source in Drive"
             >
               <Link2 className="h-3 w-3" style={{ color: ACCENT_TEXT }} /> {tm("Source")}
@@ -6053,14 +6043,14 @@ function DeckCard({
               className={`group relative h-12 w-20 shrink-0 overflow-hidden rounded-md border text-[9px] transition ${
                 i === idx
                   ? "border-[color:var(--vvs-accent)]"
-                  : "border-white/10 opacity-70 hover:opacity-100"
+                  : "border-ink/10 opacity-70 hover:opacity-100"
               }`}
-              style={{ ["--vvs-accent" as any]: ACCENT_TEXT, backgroundColor: "#071625" }}
+              style={{ ["--vvs-accent" as any]: ACCENT_TEXT, backgroundColor: "var(--surface-0)" }}
             >
-              <div className="absolute left-1 top-1 rounded bg-black/40 px-1 text-white/70">
+              <div className="absolute left-1 top-1 rounded bg-shade/40 px-1 text-ink/70">
                 {i + 1}
               </div>
-              <div className="flex h-full items-center justify-center px-1 text-center text-[8.5px] leading-tight text-white/70">
+              <div className="flex h-full items-center justify-center px-1 text-center text-[8.5px] leading-tight text-ink/70">
                 {tm(s.title)}
               </div>
             </button>
@@ -6069,30 +6059,28 @@ function DeckCard({
       </div>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.07] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 border-t border-ink/[0.07] px-4 py-3">
         <button
           onClick={() => setEditing((v) => !v)}
           className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11.5px] transition ${
             editing
               ? "border-[color:var(--vvs-accent)] text-[color:var(--vvs-accent)]"
-              : "border-white/10 bg-white/[0.04] text-white/80 hover:bg-white/10"
+              : "border-ink/10 bg-ink/[0.04] text-ink/80 hover:bg-ink/10"
           }`}
           style={{ ["--vvs-accent" as any]: ACCENT_TEXT }}
         >
           <Pencil className="h-3.5 w-3.5" /> {editing ? tm("Done editing") : tm("Edit Content")}
         </button>
 
-        <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-black/30 p-1">
-          <LayoutTemplate className="ml-1 h-3.5 w-3.5 text-white/50" />
+        <div className="inline-flex items-center gap-1 rounded-lg border border-ink/10 bg-shade/30 p-1">
+          <LayoutTemplate className="ml-1 h-3.5 w-3.5 text-ink/50" />
           {/* Chart is offered only where the answer actually carried figures. */}
           {LAYOUT_OPTIONS.filter((l) => l.id !== "chart" || slide.chart).map((l) => (
             <button
               key={l.id}
               onClick={() => switchLayout(l.id)}
               className={`rounded-md px-2 py-1 text-[11px] transition ${
-                slide.layout === l.id
-                  ? "bg-white/[0.10] text-white"
-                  : "text-white/55 hover:text-white"
+                slide.layout === l.id ? "bg-ink/[0.10] text-ink" : "text-ink/55 hover:text-ink"
               }`}
             >
               {tm(l.label)}
@@ -6159,7 +6147,7 @@ function EditableText({
   if (!editing)
     return (
       <span className={className}>
-        {value || <span className="text-white/30">{placeholder}</span>}
+        {value || <span className="text-ink/30">{placeholder}</span>}
       </span>
     );
   if (multiline) {
@@ -6167,7 +6155,7 @@ function EditableText({
       <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`${className ?? ""} w-full resize-none rounded-md border border-white/20 bg-black/40 px-1.5 py-1 outline-none focus:border-white/40`}
+        className={`${className ?? ""} w-full resize-none rounded-md border border-ink/20 bg-shade/40 px-1.5 py-1 outline-none focus:border-ink/40`}
         rows={2}
       />
     );
@@ -6176,7 +6164,7 @@ function EditableText({
     <input
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`${className ?? ""} w-full rounded-md border border-white/20 bg-black/40 px-1.5 py-1 outline-none focus:border-white/40`}
+      className={`${className ?? ""} w-full rounded-md border border-ink/20 bg-shade/40 px-1.5 py-1 outline-none focus:border-ink/40`}
     />
   );
 }
@@ -6220,7 +6208,7 @@ function BarChart({ chart }: { chart: SlideChart }) {
             <div key={i} className="flex min-w-0 flex-1 flex-col">
               <div className="relative flex-1">
                 <div
-                  className="absolute inset-x-0 border-t border-dashed border-white/12"
+                  className="absolute inset-x-0 border-t border-dashed border-ink/12"
                   style={{ top: `${100 - basePct}%` }}
                 />
                 <div
@@ -6241,20 +6229,20 @@ function BarChart({ chart }: { chart: SlideChart }) {
                     }}
                   />
                   <div
-                    className={`absolute inset-x-0 text-center text-[9.5px] font-semibold text-white/85 ${up ? "-top-4" : "-bottom-4"}`}
+                    className={`absolute inset-x-0 text-center text-[9.5px] font-semibold text-ink/85 ${up ? "-top-4" : "-bottom-4"}`}
                   >
                     {p.display}
                   </div>
                 </div>
               </div>
-              <div className="mt-1.5 truncate text-center text-[9px] text-white/55" title={p.label}>
+              <div className="mt-1.5 truncate text-center text-[9px] text-ink/55" title={p.label}>
                 {p.label}
               </div>
             </div>
           );
         })}
       </div>
-      {axisNote && <div className="mt-1 text-right text-[8.5px] text-white/40">{axisNote}</div>}
+      {axisNote && <div className="mt-1 text-right text-[8.5px] text-ink/40">{axisNote}</div>}
     </>
   );
 }
@@ -6269,17 +6257,17 @@ function SlideCanvas({
   onPatch: (p: Partial<Slide>) => void;
 }) {
   const { tm } = useLang();
-  const base = "absolute inset-0 flex flex-col p-5 sm:p-7 text-white";
+  const base = "absolute inset-0 flex flex-col p-5 sm:p-7 text-ink";
 
   if (slide.layout === "title") {
     return (
       <div
         className={`${base} justify-center`}
         style={{
-          background: `radial-gradient(ellipse at 20% 10%, ${ACCENT}22, transparent 60%), #071625`,
+          background: `radial-gradient(ellipse at 20% 10%, ${ACCENT}22, transparent 60%), var(--surface-0)`,
         }}
       >
-        <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-white/45">
+        <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-ink/45">
           ViVeSec · Board Briefing
         </div>
         <EditableText
@@ -6288,7 +6276,7 @@ function SlideCanvas({
           onChange={(v) => onPatch({ title: v })}
           className="text-2xl font-semibold tracking-tight sm:text-3xl"
         />
-        <div className="mt-2 max-w-md text-[12px] text-white/65">
+        <div className="mt-2 max-w-md text-[12px] text-ink/65">
           <EditableText
             editing={editing}
             value={tm(slide.subtitle ?? "")}
@@ -6310,7 +6298,7 @@ function SlideCanvas({
           className="text-base font-semibold tracking-tight sm:text-lg"
         />
         {(editing || slide.subtitle) && (
-          <div className="mb-3 text-[11px] text-white/55">
+          <div className="mb-3 text-[11px] text-ink/55">
             <EditableText
               editing={editing}
               value={tm(slide.subtitle ?? "")}
@@ -6323,7 +6311,7 @@ function SlideCanvas({
           {(slide.bullets ?? []).map((b, i) => (
             <li
               key={i}
-              className="flex items-start gap-2 text-[11px] leading-relaxed text-white/85 sm:text-[12.5px]"
+              className="flex items-start gap-2 text-[11px] leading-relaxed text-ink/85 sm:text-[12.5px]"
             >
               <span
                 className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full"
@@ -6353,7 +6341,7 @@ function SlideCanvas({
           className="text-base font-semibold tracking-tight sm:text-lg"
         />
         {slide.chart.unit && (
-          <div className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-white/45">
+          <div className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-ink/45">
             {slide.chart.unit}
           </div>
         )}
@@ -6362,7 +6350,7 @@ function SlideCanvas({
           {(slide.bullets ?? []).slice(0, 2).map((b, i) => (
             <li
               key={i}
-              className="flex items-start gap-2 text-[10.5px] leading-snug text-white/75 sm:text-[11.5px]"
+              className="flex items-start gap-2 text-[10.5px] leading-snug text-ink/75 sm:text-[11.5px]"
             >
               <span
                 className="mt-1.5 h-1 w-1 shrink-0 rounded-full"
@@ -6386,13 +6374,15 @@ function SlideCanvas({
     return (
       <div
         className={`${base} justify-center`}
-        style={{ background: `linear-gradient(135deg, ${ACCENT}18, transparent 55%), #071625` }}
+        style={{
+          background: `linear-gradient(135deg, ${ACCENT}18, transparent 55%), var(--surface-0)`,
+        }}
       >
         <EditableText
           editing={editing}
           value={tm(slide.title)}
           onChange={(v) => onPatch({ title: v })}
-          className="mb-2 text-[11px] uppercase tracking-[0.18em] text-white/55"
+          className="mb-2 text-[11px] uppercase tracking-[0.18em] text-ink/55"
         />
         <div
           className="text-5xl font-bold leading-none tracking-tight sm:text-6xl"
@@ -6404,7 +6394,7 @@ function SlideCanvas({
             onChange={(v) => onPatch({ bigNumber: v })}
           />
         </div>
-        <div className="mt-3 max-w-md text-[11.5px] leading-relaxed text-white/75 sm:text-[12.5px]">
+        <div className="mt-3 max-w-md text-[11.5px] leading-relaxed text-ink/75 sm:text-[12.5px]">
           <EditableText
             editing={editing}
             multiline
@@ -6429,14 +6419,14 @@ function SlideCanvas({
           {(["left", "right"] as const).map((side) => {
             const col = slide[side] ?? { title: "", body: "" };
             return (
-              <div key={side} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+              <div key={side} className="rounded-lg border border-ink/10 bg-ink/[0.03] p-3">
                 <EditableText
                   editing={editing}
                   value={tm(col.title)}
                   onChange={(v) => onPatch({ [side]: { ...col, title: v } } as any)}
                   className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider"
                 />
-                <div className="text-[11px] leading-relaxed text-white/75 sm:text-[12px]">
+                <div className="text-[11px] leading-relaxed text-ink/75 sm:text-[12px]">
                   <EditableText
                     editing={editing}
                     multiline
@@ -6471,10 +6461,10 @@ function SlideCanvas({
                 {i + 1}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[12px] font-semibold text-white">
-                  {tm(m.phase)} <span className="text-white/55">· {tm(m.label)}</span>
+                <div className="text-[12px] font-semibold text-ink">
+                  {tm(m.phase)} <span className="text-ink/55">· {tm(m.label)}</span>
                 </div>
-                <div className="text-[11px] leading-relaxed text-white/70">{tm(m.detail)}</div>
+                <div className="text-[11px] leading-relaxed text-ink/70">{tm(m.detail)}</div>
               </div>
             </div>
           ))}
@@ -6487,7 +6477,7 @@ function SlideCanvas({
   return (
     <div
       className={base}
-      style={{ background: `linear-gradient(180deg, transparent, ${ACCENT}10), #071625` }}
+      style={{ background: `linear-gradient(180deg, transparent, ${ACCENT}10), var(--surface-0)` }}
     >
       <EditableText
         editing={editing}
@@ -6499,7 +6489,7 @@ function SlideCanvas({
         {(slide.cta ?? []).map((c, i) => (
           <li
             key={i}
-            className="flex items-start gap-2 text-[11.5px] leading-relaxed text-white/85 sm:text-[12.5px]"
+            className="flex items-start gap-2 text-[11.5px] leading-relaxed text-ink/85 sm:text-[12.5px]"
           >
             <span
               className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md text-[10px] font-bold"
@@ -6517,7 +6507,7 @@ function SlideCanvas({
           </li>
         ))}
       </ol>
-      <div className="mt-auto pt-3 text-[10px] uppercase tracking-[0.18em] text-white/45">
+      <div className="mt-auto pt-3 text-[10px] uppercase tracking-[0.18em] text-ink/45">
         Prepared by ViVeSec AI · Confidential
       </div>
     </div>
@@ -6550,7 +6540,7 @@ function GeneratedFilesSection({ drive }: { drive: string }) {
 
   return (
     <div className="mb-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.04] p-2">
-      <div className="mb-1 flex items-center gap-1.5 px-1 text-[10px] uppercase tracking-wider text-amber-200/70">
+      <div className="mb-1 flex items-center gap-1.5 px-1 text-[10px] uppercase tracking-wider text-amber-800/70 dark:text-amber-200/70">
         <AlertTriangle className="h-3 w-3" />
         {tm("Generated, kept on the AI Box")}
       </div>
@@ -6558,12 +6548,12 @@ function GeneratedFilesSection({ drive }: { drive: string }) {
         <button
           key={f.name}
           onClick={() => void downloadStoredFile(f.name, drive)}
-          className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition hover:bg-white/[0.05]"
+          className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition hover:bg-ink/[0.05]"
           title={tm("Download to this device")}
         >
-          <FileText className="h-3.5 w-3.5 shrink-0 text-white/60" />
+          <FileText className="h-3.5 w-3.5 shrink-0 text-ink/60" />
           <span className="truncate text-[12.5px]">{f.name}</span>
-          <span className="ml-auto shrink-0 text-[11px] text-white/40">{formatBytes(f.size)}</span>
+          <span className="ml-auto shrink-0 text-[11px] text-ink/40">{formatBytes(f.size)}</span>
         </button>
       ))}
     </div>
@@ -6650,20 +6640,20 @@ function DrivePanel(props: {
       />
       <aside
         data-tour="drive"
-        className={`fixed inset-y-0 right-0 z-50 flex min-h-0 w-[88vw] max-w-[400px] flex-col border-l border-white/5 transition-transform duration-500 ease-out lg:static lg:order-1 lg:max-w-none lg:translate-x-0 lg:border-l-0 ${
+        className={`fixed inset-y-0 right-0 z-50 flex min-h-0 w-[88vw] max-w-[400px] flex-col border-l border-ink/5 transition-transform duration-500 ease-out lg:static lg:order-1 lg:max-w-none lg:translate-x-0 lg:border-l-0 ${
           open ? "translate-x-0" : "translate-x-full lg:hidden"
         } ${open ? "lg:flex lg:min-w-0 lg:flex-1 lg:basis-0" : ""}`}
-        style={{ backgroundColor: "#0A1B2D" }}
+        style={{ backgroundColor: "var(--surface-1)" }}
       >
         {/* Header — matches screenshot */}
-        <div className="shrink-0 border-b border-white/5">
+        <div className="shrink-0 border-b border-ink/5">
           <div
             className="flex items-center gap-3 px-4 py-3 lg:hidden"
-            style={{ backgroundColor: "#071625" }}
+            style={{ backgroundColor: "var(--surface-0)" }}
           >
             <button
               onClick={onClose}
-              className="grid h-9 w-9 place-items-center rounded-full bg-white/5"
+              className="grid h-9 w-9 place-items-center rounded-full bg-ink/5"
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
@@ -6677,19 +6667,19 @@ function DrivePanel(props: {
               <div className="relative ml-2 min-w-0">
                 <button
                   onClick={() => setDriveMenu((v) => !v)}
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[12px] text-white/85 hover:bg-white/10"
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-ink/10 bg-ink/[0.04] px-2 py-1 text-[12px] text-ink/85 hover:bg-ink/10"
                   title={tm("Demo only: switch drive")}
                 >
                   <Laptop className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                   <span className="truncate">{driveName || t.driveRoot}</span>
-                  <ChevronDown className="h-3 w-3 shrink-0 text-white/50" />
+                  <ChevronDown className="h-3 w-3 shrink-0 text-ink/50" />
                 </button>
                 {driveMenu && (
                   <div
-                    className="absolute left-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-white/10 shadow-xl"
-                    style={{ backgroundColor: "#10243A" }}
+                    className="absolute left-0 top-full z-50 mt-1 w-56 overflow-hidden rounded-lg border border-ink/10 shadow-xl"
+                    style={{ backgroundColor: "var(--surface-3)" }}
                   >
-                    <div className="border-b border-white/5 px-3 py-1.5 text-[10px] uppercase tracking-wider text-white/40">
+                    <div className="border-b border-ink/5 px-3 py-1.5 text-[10px] uppercase tracking-wider text-ink/40">
                       {tm("Demo only: switch drive")}
                     </div>
                     {props.drives.map((d) => (
@@ -6699,12 +6689,12 @@ function DrivePanel(props: {
                           setDriveMenu(false);
                           onSelectDrive(d.path);
                         }}
-                        className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] transition hover:bg-white/10 ${d.path === props.drive ? "text-white" : "text-white/70"}`}
+                        className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] transition hover:bg-ink/10 ${d.path === props.drive ? "text-ink" : "text-ink/70"}`}
                       >
                         <Laptop
                           className="h-3.5 w-3.5"
                           style={{
-                            color: d.path === props.drive ? ACCENT_TEXT : "rgba(255,255,255,0.4)",
+                            color: d.path === props.drive ? ACCENT_TEXT : inkText(0.4),
                           }}
                         />
                         <span className="flex-1 truncate">{d.name}</span>
@@ -6714,7 +6704,7 @@ function DrivePanel(props: {
                       </button>
                     ))}
                     {!props.drives.length && (
-                      <div className="px-3 py-2 text-[12px] text-white/50">
+                      <div className="px-3 py-2 text-[12px] text-ink/50">
                         {tm("No drives found on the box.")}
                       </div>
                     )}
@@ -6723,10 +6713,10 @@ function DrivePanel(props: {
               </div>
             ) : (
               <>
-                <div className="ml-2 hidden sm:block text-[12px] uppercase tracking-wider text-white/45">
+                <div className="ml-2 hidden sm:block text-[12px] uppercase tracking-wider text-ink/45">
                   {t.driveRootFull}
                 </div>
-                <div className="ml-2 sm:hidden text-[11px] uppercase tracking-wider text-white/45">
+                <div className="ml-2 sm:hidden text-[11px] uppercase tracking-wider text-ink/45">
                   {t.driveRoot}
                 </div>
               </>
@@ -6734,7 +6724,7 @@ function DrivePanel(props: {
             <div className="ml-auto flex items-center gap-1">
               <button
                 onClick={props.onOpenExplorer}
-                className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10"
+                className="grid h-8 w-8 place-items-center rounded-md hover:bg-ink/10"
                 title={tm("Open File Explorer")}
                 aria-label={tm("Open File Explorer")}
               >
@@ -6746,30 +6736,30 @@ function DrivePanel(props: {
                   notifyGeneratedFilesChanged();
                 }}
                 disabled={loading}
-                className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10 disabled:opacity-40"
+                className="grid h-8 w-8 place-items-center rounded-md hover:bg-ink/10 disabled:opacity-40"
                 title={t.refresh}
               >
-                <RefreshCw className={`h-4 w-4 text-white/70 ${loading ? "animate-spin" : ""}`} />
+                <RefreshCw className={`h-4 w-4 text-ink/70 ${loading ? "animate-spin" : ""}`} />
               </button>
               <button
                 onClick={() => setView(view === "list" ? "grid" : "list")}
-                className="grid h-8 w-8 place-items-center rounded-md hover:bg-white/10"
+                className="grid h-8 w-8 place-items-center rounded-md hover:bg-ink/10"
                 title="Toggle view"
               >
-                <List className="h-4 w-4 text-white/70" />
+                <List className="h-4 w-4 text-ink/70" />
               </button>
               <button
                 onClick={onClose}
-                className="ml-1 hidden lg:grid h-8 w-8 place-items-center rounded-md hover:bg-white/10"
+                className="ml-1 hidden lg:grid h-8 w-8 place-items-center rounded-md hover:bg-ink/10"
               >
-                <X className="h-4 w-4 text-white/70" />
+                <X className="h-4 w-4 text-ink/70" />
               </button>
             </div>
           </div>
 
           <div className="flex items-center gap-2 px-3 pb-3">
             <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
               <input
                 value={search}
                 onChange={(e) => {
@@ -6779,15 +6769,15 @@ function DrivePanel(props: {
                 onFocus={() => setAutoOpen(true)}
                 onBlur={() => setTimeout(() => setAutoOpen(false), 180)}
                 placeholder={t.searchInDriveRoot}
-                className="w-full rounded-md border border-white/10 bg-[#10243A] py-2 pl-7 pr-2 text-[12.5px] text-white placeholder:text-white/40 outline-none focus:border-white/20"
+                className="w-full rounded-md border border-ink/10 bg-surface-3 py-2 pl-7 pr-2 text-[12.5px] text-ink placeholder:text-ink/40 outline-none focus:border-ink/20"
               />
               {autoOpen &&
                 search.trim().length >= 2 &&
                 (files.length > 0 || searchSnippets.length > 0) && (
-                  <div className="vvs-scroll absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-white/10 bg-[#0C1E31] shadow-2xl shadow-black/60">
+                  <div className="vvs-scroll absolute left-0 right-0 top-full z-30 mt-1 max-h-72 overflow-y-auto rounded-md border border-ink/10 bg-surface-2 shadow-2xl shadow-shade/60">
                     {files.length > 0 && (
                       <>
-                        <div className="px-2.5 pt-2 pb-1 text-[10px] uppercase tracking-wider text-white/40">
+                        <div className="px-2.5 pt-2 pb-1 text-[10px] uppercase tracking-wider text-ink/40">
                           {tm("Files")}
                         </div>
                         {files.slice(0, 4).map((f) => {
@@ -6799,9 +6789,9 @@ function DrivePanel(props: {
                                 onSelectFile(f);
                                 setAutoOpen(false);
                               }}
-                              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px] hover:bg-white/5"
+                              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px] hover:bg-ink/5"
                             >
-                              <Icon className="h-3.5 w-3.5 text-white/60" />
+                              <Icon className="h-3.5 w-3.5 text-ink/60" />
                               <span className="truncate">{f.name}</span>
                             </button>
                           );
@@ -6810,7 +6800,7 @@ function DrivePanel(props: {
                     )}
                     {searchSnippets.length > 0 && (
                       <>
-                        <div className="border-t border-white/5 px-2.5 pt-2 pb-1 text-[10px] uppercase tracking-wider text-white/40">
+                        <div className="border-t border-ink/5 px-2.5 pt-2 pb-1 text-[10px] uppercase tracking-wider text-ink/40">
                           {tm("In-document matches")}
                         </div>
                         {searchSnippets.map((c, i) => (
@@ -6820,15 +6810,16 @@ function DrivePanel(props: {
                               onSnippetSelect?.(c);
                               setAutoOpen(false);
                             }}
-                            className="flex w-full flex-col gap-0.5 px-2.5 py-2 text-left hover:bg-white/5"
+                            className="flex w-full flex-col gap-0.5 px-2.5 py-2 text-left hover:bg-ink/5"
                           >
-                            <div className="flex items-center gap-1.5 text-[11px] text-white/55">
-                              <FileText className="h-3 w-3 text-rose-400" /> {c.label}
-                              <span className="ml-auto rounded-full border border-white/10 bg-black/30 px-1.5 text-[10px] text-white/70">
+                            <div className="flex items-center gap-1.5 text-[11px] text-ink/55">
+                              <FileText className="h-3 w-3 text-rose-700 dark:text-rose-400" />{" "}
+                              {c.label}
+                              <span className="ml-auto rounded-full border border-ink/10 bg-shade/30 px-1.5 text-[10px] text-ink/70">
                                 {c.score}%
                               </span>
                             </div>
-                            <div className="line-clamp-2 text-[11.5px] text-white/80">
+                            <div className="line-clamp-2 text-[11.5px] text-ink/80">
                               <HighlightedText text={c.snippet ?? ""} terms={c.terms ?? []} />
                             </div>
                           </button>
@@ -6839,7 +6830,7 @@ function DrivePanel(props: {
                 )}
             </div>
           </div>
-          <div className="flex items-center justify-center gap-1.5 px-3 pb-2 text-[10px] text-white/45">
+          <div className="flex items-center justify-center gap-1.5 px-3 pb-2 text-[10px] text-ink/45">
             <ShieldCheck className="h-3 w-3" style={{ color: ACCENT_TEXT }} />
             {tm("Searched 100% locally on ViVeSecBox")}
           </div>
@@ -6847,8 +6838,8 @@ function DrivePanel(props: {
           {/* Search scope. Only shown when the box granted more than one
               drive, so the single-drive deployment looks exactly as before. */}
           {props.scopeDrives.length > 1 && (
-            <div className="border-t border-white/5 px-3 py-2">
-              <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">
+            <div className="border-t border-ink/5 px-3 py-2">
+              <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink/40">
                 {tm("Search in")}
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -6857,7 +6848,7 @@ function DrivePanel(props: {
                   className={`rounded-full border px-2 py-1 text-[11px] transition ${
                     props.selectedDrives.length === 0
                       ? "border-transparent text-white"
-                      : "border-white/10 text-white/70 hover:bg-white/10"
+                      : "border-ink/10 text-ink/70 hover:bg-ink/10"
                   }`}
                   style={
                     props.selectedDrives.length === 0 ? { backgroundColor: ACCENT } : undefined
@@ -6875,7 +6866,7 @@ function DrivePanel(props: {
                       className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition ${
                         on
                           ? "border-transparent text-white"
-                          : "border-white/10 text-white/70 hover:bg-white/10"
+                          : "border-ink/10 text-ink/70 hover:bg-ink/10"
                       }`}
                       style={on ? { backgroundColor: ACCENT } : undefined}
                     >
@@ -6896,19 +6887,19 @@ function DrivePanel(props: {
 
         {/* Breadcrumb — hidden while searching, which spans the whole drive */}
         {!searching && (
-          <div className="flex items-center gap-1 border-b border-white/5 px-3 py-1.5 text-[11.5px] text-white/55">
+          <div className="flex items-center gap-1 border-b border-ink/5 px-3 py-1.5 text-[11.5px] text-ink/55">
             <button
               onClick={() => onOpenFolder(driveRoot)}
-              className={`rounded px-1.5 py-0.5 transition hover:bg-white/10 ${crumbs.length ? "text-white/70" : "text-white"}`}
+              className={`rounded px-1.5 py-0.5 transition hover:bg-ink/10 ${crumbs.length ? "text-ink/70" : "text-ink"}`}
             >
               {props.driveName || t.driveRoot}
             </button>
             {crumbs.map((seg, i) => (
               <span key={seg + i} className="flex min-w-0 items-center gap-1">
-                <ChevronRight className="h-3 w-3 shrink-0 text-white/30" />
+                <ChevronRight className="h-3 w-3 shrink-0 text-ink/30" />
                 <button
                   onClick={() => onOpenFolder(`${driveRoot}/${crumbs.slice(0, i + 1).join("/")}`)}
-                  className={`truncate rounded px-1.5 py-0.5 transition hover:bg-white/10 ${i === crumbs.length - 1 ? "text-white" : "text-white/70"}`}
+                  className={`truncate rounded px-1.5 py-0.5 transition hover:bg-ink/10 ${i === crumbs.length - 1 ? "text-ink" : "text-ink/70"}`}
                 >
                   {seg}
                 </button>
@@ -6918,12 +6909,14 @@ function DrivePanel(props: {
         )}
 
         {searching && (
-          <div className="border-b border-white/5 px-3 py-1.5 text-[11.5px] text-white/55">
+          <div className="border-b border-ink/5 px-3 py-1.5 text-[11.5px] text-ink/55">
             {files.length === 1
               ? tm("1 matching file in this drive")
               : `${files.length} ${tm("matching files in this drive")}`}
             {searchTruncated && (
-              <span className="ml-1 text-amber-300/80">({tm("first results only")})</span>
+              <span className="ml-1 text-amber-700/80 dark:text-amber-300/80">
+                ({tm("first results only")})
+              </span>
             )}
           </div>
         )}
@@ -6935,12 +6928,12 @@ function DrivePanel(props: {
           {!searching && parent && !loading && (
             <button
               onClick={() => onOpenFolder(parent)}
-              className="mb-1 flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-white/[0.04]"
+              className="mb-1 flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-ink/[0.04]"
             >
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-white/5">
-                <CornerLeftUp className="h-4 w-4 text-white/60" />
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-ink/5">
+                <CornerLeftUp className="h-4 w-4 text-ink/60" />
               </div>
-              <div className="text-[13px] text-white/70">..</div>
+              <div className="text-[13px] text-ink/70">..</div>
             </button>
           )}
 
@@ -6949,18 +6942,18 @@ function DrivePanel(props: {
               <button
                 key={d.path}
                 onClick={() => onOpenFolder(d.path)}
-                className="mb-1 flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-white/[0.04]"
+                className="mb-1 flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-ink/[0.04]"
               >
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-sky-400/10">
-                  <Folder className="h-4 w-4 text-sky-300" />
+                  <Folder className="h-4 w-4 text-sky-700 dark:text-sky-300" />
                 </div>
                 <div className="min-w-0 flex-1 truncate text-[13px] font-medium">{d.name}</div>
-                <ChevronRight className="h-4 w-4 shrink-0 text-white/30" />
+                <ChevronRight className="h-4 w-4 shrink-0 text-ink/30" />
               </button>
             ))}
 
           {loading && files.length === 0 && (
-            <div className="grid h-full place-items-center text-center text-xs text-white/40">
+            <div className="grid h-full place-items-center text-center text-xs text-ink/40">
               <div>
                 <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin" />
                 {tm("Loading files from the box…")}
@@ -6969,14 +6962,14 @@ function DrivePanel(props: {
           )}
 
           {!loading && error && (
-            <div className="grid h-full place-items-center px-4 text-center text-xs text-rose-200/80">
+            <div className="grid h-full place-items-center px-4 text-center text-xs text-rose-800/80 dark:text-rose-200/80">
               <div>
                 <AlertTriangle className="mx-auto mb-2 h-6 w-6" />
                 {tm("Could not read the drive from the box.")}
-                <div className="mt-1 text-[11px] text-white/40">{error}</div>
+                <div className="mt-1 text-[11px] text-ink/40">{error}</div>
                 <button
                   onClick={onRefresh}
-                  className="mt-3 rounded-lg border border-white/15 px-2.5 py-1 text-[11px] font-semibold text-white/80 hover:bg-white/10"
+                  className="mt-3 rounded-lg border border-ink/15 px-2.5 py-1 text-[11px] font-semibold text-ink/80 hover:bg-ink/10"
                 >
                   {tm("Retry")}
                 </button>
@@ -6985,7 +6978,7 @@ function DrivePanel(props: {
           )}
 
           {!loading && !error && files.length === 0 && folders.length === 0 && (
-            <div className="grid h-full place-items-center text-center text-xs text-white/40">
+            <div className="grid h-full place-items-center text-center text-xs text-ink/40">
               <div>
                 <Database className="mx-auto mb-2 h-6 w-6" />
                 {searching ? tm("No files match your search.") : tm("This folder is empty.")}
@@ -7001,7 +6994,7 @@ function DrivePanel(props: {
                 return (
                   <li key={f.id}>
                     <div
-                      className={`group rounded-xl border transition ${hi ? "border-[color:var(--vvs-accent)] bg-[color:var(--vvs-accent)]/10" : "border-transparent hover:bg-white/[0.04]"}`}
+                      className={`group rounded-xl border transition ${hi ? "border-[color:var(--vvs-accent)] bg-[color:var(--vvs-accent)]/10" : "border-transparent hover:bg-ink/[0.04]"}`}
                       style={{ ["--vvs-accent" as any]: ACCENT_TEXT }}
                     >
                       <div className="flex w-full items-center gap-3 px-2.5 py-2.5">
@@ -7016,7 +7009,7 @@ function DrivePanel(props: {
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-[13px] font-medium">{f.name}</div>
-                            <div className="truncate text-[11px] text-white/45">
+                            <div className="truncate text-[11px] text-ink/45">
                               {f.folder ? `${f.folder} · ` : ""}
                               {f.size} · {f.modified}
                             </div>
@@ -7025,13 +7018,13 @@ function DrivePanel(props: {
                         <button
                           onClick={() => setActionFor(actionFor === f.id ? null : f.id)}
                           aria-label="File actions"
-                          className="grid h-9 w-9 shrink-0 place-items-center rounded-md transition hover:bg-white/10 lg:h-7 lg:w-7 lg:opacity-0 lg:group-hover:opacity-100"
+                          className="grid h-9 w-9 shrink-0 place-items-center rounded-md transition hover:bg-ink/10 lg:h-7 lg:w-7 lg:opacity-0 lg:group-hover:opacity-100"
                         >
-                          <MoreVertical className="h-4 w-4 text-white/60 lg:h-3.5 lg:w-3.5" />
+                          <MoreVertical className="h-4 w-4 text-ink/60 lg:h-3.5 lg:w-3.5" />
                         </button>
                       </div>
                       {actionFor === f.id && (
-                        <div className="border-t border-white/5 px-2.5 py-2">
+                        <div className="border-t border-ink/5 px-2.5 py-2">
                           <div className="flex flex-wrap gap-2">
                             <button
                               onClick={() => {
@@ -7048,7 +7041,7 @@ function DrivePanel(props: {
                                 onInsertFile(f);
                                 setActionFor(null);
                               }}
-                              className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] hover:bg-white/10"
+                              className="inline-flex flex-1 sm:flex-none items-center justify-center gap-1.5 rounded-md border border-ink/10 bg-ink/[0.04] px-3 py-2 text-[12px] hover:bg-ink/10"
                             >
                               <Send className="h-3.5 w-3.5" /> {tm("Insert into chat")}
                             </button>
@@ -7069,7 +7062,7 @@ function DrivePanel(props: {
                   <button
                     key={f.id}
                     onClick={() => onSelectFile(f)}
-                    className={`rounded-xl border p-3 text-left transition ${hi ? "border-[color:var(--vvs-accent)] bg-[color:var(--vvs-accent)]/10" : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"}`}
+                    className={`rounded-xl border p-3 text-left transition ${hi ? "border-[color:var(--vvs-accent)] bg-[color:var(--vvs-accent)]/10" : "border-ink/10 bg-ink/[0.03] hover:bg-ink/[0.06]"}`}
                     style={{ ["--vvs-accent" as any]: ACCENT_TEXT }}
                   >
                     <div
@@ -7078,7 +7071,7 @@ function DrivePanel(props: {
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="truncate text-[12.5px] font-medium">{f.name}</div>
-                    <div className="mt-0.5 text-[10.5px] text-white/45">{f.size}</div>
+                    <div className="mt-0.5 text-[10.5px] text-ink/45">{f.size}</div>
                   </button>
                 );
               })}

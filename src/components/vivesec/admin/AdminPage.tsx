@@ -21,8 +21,9 @@ import {
 import { fetchGateSession, gatePath } from "@/lib/auth/client";
 import { ADMIN_ROLE, LOGIN_PATH } from "@/lib/auth/protocol";
 import { GateLogo, LanguagePicker } from "../AuthPages";
-import { ACCENT_TEXT, NAVY } from "../brand";
+import { ACCENT_TEXT } from "../brand";
 import { LanguageProvider, useLang } from "../i18n";
+import { ThemeToggle } from "../ThemeControls";
 import { DirectoryTab } from "./DirectoryTab";
 import { EventsTab } from "./EventsTab";
 import { OverviewTab } from "./OverviewTab";
@@ -124,9 +125,9 @@ function AdminScreen() {
     return (
       <div
         className="flex min-h-screen items-center justify-center"
-        style={{ backgroundColor: NAVY }}
+        style={{ backgroundColor: "var(--surface-0)" }}
       >
-        <Loader2 className="h-6 w-6 animate-spin text-white/60" />
+        <Loader2 className="h-6 w-6 animate-spin text-ink/60" />
       </div>
     );
   }
@@ -142,30 +143,31 @@ function AdminScreen() {
 
   return (
     <div
-      className="min-h-screen text-white"
+      className="min-h-screen text-ink"
       style={{
-        backgroundColor: NAVY,
+        backgroundColor: "var(--surface-0)",
         fontFamily: "Arial, 'Liberation Sans', 'Nimbus Sans', Helvetica, sans-serif",
       }}
     >
-      <header className="border-b border-white/10">
+      <header className="border-b border-ink/10">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
           <GateLogo />
           <h1 className="text-base font-semibold">{tm("Administration")}</h1>
           <div className="ml-auto flex items-center gap-3">
             <a
               href={gatePath("/")}
-              className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 transition hover:bg-white/10"
+              className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 transition hover:bg-ink/10"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               {tm("Back to the AI Box")}
             </a>
+            <ThemeToggle />
             <LanguagePicker />
           </div>
         </div>
       </header>
       {gate.state === "not_standalone" ? (
-        <main className="mx-auto max-w-6xl px-4 py-10 text-sm text-white/70">
+        <main className="mx-auto max-w-6xl px-4 py-10 text-sm text-ink/70">
           {tm(
             "This AI Box is administered by the ViVeSecBox; the administration page is only used in standalone mode.",
           )}
@@ -181,8 +183,8 @@ function AdminScreen() {
                 aria-current={tab === t.id ? "page" : undefined}
                 className={`relative inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition ${
                   tab === t.id
-                    ? "border-[#8C49E9] bg-[#8C49E9]/15 text-white"
-                    : "border-white/10 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]"
+                    ? "border-[#8C49E9] bg-[#8C49E9]/15 text-ink"
+                    : "border-ink/10 bg-ink/[0.03] text-ink/70 hover:bg-ink/[0.06]"
                 }`}
               >
                 <span style={{ color: ACCENT_TEXT }}>{t.icon}</span>

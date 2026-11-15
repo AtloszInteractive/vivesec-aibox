@@ -64,14 +64,41 @@
   --color-brand: var(--brand);
   --color-brand-soft: var(--brand-soft);
   --color-brand-pale: var(--brand-pale);
+  /* Theme tokens of the ViVeSec screens. `ink` is the foreground every tint is
+     derived from (ink/70 text, ink/10 borders and fills); `shade` darkens wells
+     and casts shadows; `surface-0..5` are the background layers from the
+     deepest to the most raised; `header` is the top bar. The dark values are
+     the original navy palette, so `.dark` keeps the interface pixel-identical. */
+  --color-ink: var(--ink);
+  --color-shade: var(--shade);
+  --color-header: var(--header);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-surface-5: var(--surface-5);
+  --color-danger-text: var(--danger-text);
   --font-sans: Arial, "Liberation Sans", "Nimbus Sans", Helvetica, sans-serif;
 }
 
 :root {
+  color-scheme: light;
+  --ink-lift: 1;
   --radius: 0.625rem;
   --brand: #8C49E9;
   --brand-soft: #7A3AD6;
   --brand-pale: #F3ECFD;
+  --ink: #071625;
+  --shade: #A7B2C0;
+  --header: #FFFFFF;
+  --surface-0: #E6EBF1;
+  --surface-1: #EDF0F4;
+  --surface-2: #F2F5F8;
+  --surface-3: #FFFFFF;
+  --surface-4: #FFFFFF;
+  --surface-5: #EAEFF5;
+  --danger-text: #BE123C;
   --background: #FFFFFF;
   --foreground: #071625;
   --card: #FFFFFF;
@@ -107,9 +134,21 @@
 }
 
 .dark {
+  color-scheme: dark;
+  --ink-lift: 0;
   --brand: #8C49E9;
   --brand-soft: #B48CF5;
   --brand-pale: #F3ECFD;
+  --ink: #FFFFFF;
+  --shade: #000000;
+  --header: #071625;
+  --surface-0: #071625;
+  --surface-1: #0A1B2D;
+  --surface-2: #0C1E31;
+  --surface-3: #10243A;
+  --surface-4: #152B44;
+  --surface-5: #1C3550;
+  --danger-text: #FB7185;
   --background: #0C1E31;
   --foreground: #E6EAEE;
   --card: #152B44;
@@ -156,21 +195,46 @@
   }
 }
 
+/* Readable secondary text in the light theme. The screens grade text by ink
+   opacity (ink/35 hint ... ink/85 body); navy at those opacities on white falls
+   below 4.5:1 under ~60 %, so the light theme lifts the scale to 60-95 % while
+   keeping its order. --ink-lift is 0 in the dark theme: the colours there are
+   exactly Tailwind's own. Hover/focus variants are more specific and still win. */
+@layer utilities {
+  .text-ink\/25 { color: color-mix(in oklab, var(--color-ink) calc(25% + var(--ink-lift) * 35%), transparent); }
+  .text-ink\/30 { color: color-mix(in oklab, var(--color-ink) calc(30% + var(--ink-lift) * 33%), transparent); }
+  .text-ink\/35 { color: color-mix(in oklab, var(--color-ink) calc(35% + var(--ink-lift) * 30%), transparent); }
+  .text-ink\/40 { color: color-mix(in oklab, var(--color-ink) calc(40% + var(--ink-lift) * 28%), transparent); }
+  .text-ink\/45 { color: color-mix(in oklab, var(--color-ink) calc(45% + var(--ink-lift) * 26%), transparent); }
+  .text-ink\/50 { color: color-mix(in oklab, var(--color-ink) calc(50% + var(--ink-lift) * 23%), transparent); }
+  .text-ink\/55 { color: color-mix(in oklab, var(--color-ink) calc(55% + var(--ink-lift) * 21%), transparent); }
+  .text-ink\/60 { color: color-mix(in oklab, var(--color-ink) calc(60% + var(--ink-lift) * 19%), transparent); }
+  .text-ink\/65 { color: color-mix(in oklab, var(--color-ink) calc(65% + var(--ink-lift) * 16%), transparent); }
+  .text-ink\/70 { color: color-mix(in oklab, var(--color-ink) calc(70% + var(--ink-lift) * 14%), transparent); }
+  .text-ink\/75 { color: color-mix(in oklab, var(--color-ink) calc(75% + var(--ink-lift) * 12%), transparent); }
+  .text-ink\/80 { color: color-mix(in oklab, var(--color-ink) calc(80% + var(--ink-lift) * 9%), transparent); }
+  .text-ink\/85 { color: color-mix(in oklab, var(--color-ink) calc(85% + var(--ink-lift) * 7%), transparent); }
+  .text-ink\/90 { color: color-mix(in oklab, var(--color-ink) calc(90% + var(--ink-lift) * 5%), transparent); }
+  .placeholder\:text-ink\/30::placeholder { color: color-mix(in oklab, var(--color-ink) calc(30% + var(--ink-lift) * 33%), transparent); }
+  .placeholder\:text-ink\/35::placeholder { color: color-mix(in oklab, var(--color-ink) calc(35% + var(--ink-lift) * 30%), transparent); }
+  .placeholder\:text-ink\/40::placeholder { color: color-mix(in oklab, var(--color-ink) calc(40% + var(--ink-lift) * 28%), transparent); }
+}
+
 @keyframes fadeSlide {
   from { opacity: 0; transform: translateX(14px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
-/* Slim scrollbar for the dark panels. Chromium 121+ honours scrollbar-width and
+/* Slim scrollbar for the panels. Chromium 121+ honours scrollbar-width and
    then ignores the ::-webkit-scrollbar rules, so the hover accent lives on the
    container to stay consistent across engines. */
 .vvs-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  scrollbar-color: color-mix(in srgb, var(--ink) 16%, transparent) transparent;
 }
 
 .vvs-scroll:hover {
-  scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+  scrollbar-color: color-mix(in srgb, var(--ink) 30%, transparent) transparent;
 }
 
 .vvs-scroll::-webkit-scrollbar {
@@ -183,14 +247,14 @@
 }
 
 .vvs-scroll::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.16);
+  background-color: color-mix(in srgb, var(--ink) 16%, transparent);
   background-clip: content-box;
   border: 3px solid transparent;
   border-radius: 9999px;
 }
 
 .vvs-scroll:hover::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.3);
+  background-color: color-mix(in srgb, var(--ink) 30%, transparent);
 }
 
 .vvs-scroll::-webkit-scrollbar-corner {
@@ -216,11 +280,11 @@
 .vvs-think-label {
   background-image: linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.5) 0%,
-    rgba(255, 255, 255, 0.5) 42%,
-    #b48cf5 50%,
-    rgba(255, 255, 255, 0.5) 58%,
-    rgba(255, 255, 255, 0.5) 100%
+    color-mix(in srgb, var(--ink) 50%, transparent) 0%,
+    color-mix(in srgb, var(--ink) 50%, transparent) 42%,
+    var(--brand-soft) 50%,
+    color-mix(in srgb, var(--ink) 50%, transparent) 58%,
+    color-mix(in srgb, var(--ink) 50%, transparent) 100%
   );
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -236,6 +300,6 @@
   }
   .vvs-think-label {
     background-image: none;
-    color: rgba(255, 255, 255, 0.6);
+    color: color-mix(in srgb, var(--ink) 60%, transparent);
   }
 }

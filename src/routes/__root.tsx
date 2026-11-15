@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 
 import appCss from "../styles.css?url";
+import { THEME_INIT_SCRIPT } from "@/components/vivesec/theme";
 
 // Vite bakes the deploy prefix in at build time; keeps the PWA assets resolvable
 // when ViVeSec mounts the embed bundle under a sub-path.
@@ -114,10 +115,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootShell({ children }: { children: React.ReactNode }) {
+  // The server renders the dark theme; the head script switches to the stored or
+  // system theme before the first paint, hence the expected class mismatch.
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         <HeadContent />
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body>
         {children}

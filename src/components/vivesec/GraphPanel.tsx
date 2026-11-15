@@ -48,10 +48,10 @@ import {
   type QueryLog,
   type QueryLogRecord,
 } from "@/lib/api/graph.functions";
-import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
+import { ACCENT, ACCENT_TEXT, inkA, inkText, ON_ACCENT } from "./brand";
 
-const PANEL = "#10243A";
-const BG = "#0C1E31";
+const PANEL = "var(--surface-3)";
+const BG = "var(--surface-2)";
 
 const TYPE_COLOR: Record<GraphEntityType, string> = {
   person: "#B48CF5",
@@ -159,10 +159,10 @@ export function GraphPanel({
 
   return (
     <div
-      className="absolute inset-0 z-[60] flex flex-col text-[#E6EAEE]"
+      className="absolute inset-0 z-[60] flex flex-col text-foreground"
       style={{ backgroundColor: BG }}
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-white/5 px-4 py-2">
+      <div className="flex shrink-0 items-center gap-2 border-b border-ink/5 px-4 py-2">
         <Network className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
         <div className="text-sm font-semibold">{tm("Relationships")}</div>
         <div className="ml-4 flex gap-1">
@@ -171,7 +171,7 @@ export function GraphPanel({
               key={id}
               onClick={() => setTab(id)}
               className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition ${
-                tab === id ? "text-white" : "text-white/70 hover:bg-white/10"
+                tab === id ? "text-white" : "text-ink/70 hover:bg-ink/10"
               }`}
               style={tab === id ? { backgroundColor: ACCENT } : undefined}
             >
@@ -182,7 +182,7 @@ export function GraphPanel({
         </div>
         <button
           onClick={onClose}
-          className="ml-auto rounded-full p-1.5 text-white/60 hover:bg-white/10"
+          className="ml-auto rounded-full p-1.5 text-ink/60 hover:bg-ink/10"
           title={tm("Close")}
         >
           <X className="h-4 w-4" />
@@ -224,8 +224,8 @@ function Notice({ text, tone = "muted" }: { text: string; tone?: "muted" | "warn
     <div
       className={`m-4 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
         tone === "warn"
-          ? "border-rose-400/40 bg-rose-400/10 text-rose-100"
-          : "border-white/10 bg-white/5 text-white/60"
+          ? "border-rose-400/40 bg-rose-400/10 text-rose-800 dark:text-rose-100"
+          : "border-ink/10 bg-ink/5 text-ink/60"
       }`}
     >
       {tone === "warn" && <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
@@ -353,17 +353,17 @@ function ExploreTab({
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-2 border-b border-white/5 px-4 py-2">
-          <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-            <Search className="h-3.5 w-3.5 text-white/50" />
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink/5 px-4 py-2">
+          <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5">
+            <Search className="h-3.5 w-3.5 text-ink/50" />
             <input
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void search(pathMode ? "path" : "focus")}
               placeholder={tm("Search people, organisations, places, numbers…")}
-              className="w-full bg-transparent text-xs outline-none placeholder:text-white/40"
+              className="w-full bg-transparent text-xs outline-none placeholder:text-ink/40"
             />
-            {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/50" />}
+            {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-ink/50" />}
           </div>
           <select
             value={hops}
@@ -372,7 +372,7 @@ function ExploreTab({
               setHops(depth);
               if (focus) void showNeighbourhood(focus, depth);
             }}
-            className="rounded-full border border-white/10 bg-[#10243A] px-2 py-1.5 text-xs"
+            className="rounded-full border border-ink/10 bg-surface-3 px-2 py-1.5 text-xs"
           >
             <option value={1}>{tm("Direct relations")}</option>
             <option value={2}>{tm("Two steps")}</option>
@@ -381,7 +381,7 @@ function ExploreTab({
             disabled={!focus || !text.trim()}
             onClick={() => void search("path")}
             title={tm("Find the shortest chain of relations to another entity")}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-white/80 hover:bg-white/10 disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1.5 text-xs text-ink/80 hover:bg-ink/10 disabled:opacity-40"
           >
             <Route className="h-3.5 w-3.5" /> {tm("Connection to…")}
           </button>
@@ -396,10 +396,10 @@ function ExploreTab({
               onPick={(id) => showInvestigation(id)}
             />
           ) : (
-            <div className="border-b border-white/5 px-4 py-1.5">
+            <div className="border-b border-ink/5 px-4 py-1.5">
               <button
                 onClick={() => showInvestigation()}
-                className="inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white"
+                className="inline-flex items-center gap-1 text-[11px] text-ink/60 hover:text-ink"
               >
                 <ArrowLeft className="h-3 w-3" /> {tm("Back to the investigation")}
               </button>
@@ -432,7 +432,7 @@ function ExploreTab({
             !results && <Notice text={tm("Search for a name to start.")} />
           )}
           {graph?.truncated && (
-            <div className="absolute bottom-2 left-3 text-[11px] text-white/45">
+            <div className="absolute bottom-2 left-3 text-[11px] text-ink/45">
               {investigating
                 ? tm("The investigation was cut; more people may exist.")
                 : tm("Showing the first 150 entities.")}
@@ -441,7 +441,7 @@ function ExploreTab({
         </div>
       </div>
       <aside
-        className="hidden w-[360px] shrink-0 flex-col overflow-y-auto border-l border-white/5 md:flex"
+        className="hidden w-[360px] shrink-0 flex-col overflow-y-auto border-l border-ink/5 md:flex"
         style={{ backgroundColor: PANEL }}
       >
         {pairEdges.length > 0 && graph ? (
@@ -487,13 +487,13 @@ function InvestigationLevels({
   const levels = [...new Set(view.rows.map((r) => r.level))].sort((a, b) => a - b);
   const row = view.rows.find((r) => r.id === focus);
   return (
-    <div className="max-h-[30%] overflow-y-auto border-b border-white/5 px-4 py-2 text-[11px]">
-      <div className="mb-1 text-white/50">
-        {tm("Investigation")}: <span className="text-white/85">{view.start}</span>
+    <div className="max-h-[30%] overflow-y-auto border-b border-ink/5 px-4 py-2 text-[11px]">
+      <div className="mb-1 text-ink/50">
+        {tm("Investigation")}: <span className="text-ink/85">{view.start}</span>
       </div>
       {levels.map((level) => (
         <div key={level} className="flex flex-wrap items-center gap-1 py-0.5">
-          <span className="w-24 shrink-0 text-white/45">
+          <span className="w-24 shrink-0 text-ink/45">
             {tm(LEVEL_LABEL[level] ?? LEVEL_LABEL[LEVEL_LABEL.length - 1])}
           </span>
           {view.rows
@@ -505,7 +505,7 @@ function InvestigationLevels({
                 className={`rounded-full border px-2 py-0.5 transition ${
                   r.id === focus
                     ? "border-transparent text-white"
-                    : "border-white/10 text-white/75 hover:bg-white/10"
+                    : "border-ink/10 text-ink/75 hover:bg-ink/10"
                 }`}
                 style={r.id === focus ? { backgroundColor: ACCENT } : undefined}
               >
@@ -515,8 +515,8 @@ function InvestigationLevels({
         </div>
       ))}
       {row && row.level > 0 && (
-        <div className="mt-1 text-white/60">
-          {tm("Path of the link")}: <span className="text-white/85">{row.path}</span>
+        <div className="mt-1 text-ink/60">
+          {tm("Path of the link")}: <span className="text-ink/85">{row.path}</span>
           {row.also.length > 0 && (
             <span>
               {" · "}
@@ -543,19 +543,19 @@ function ResultList({
   const { tm } = useLang();
   return (
     <div
-      className="absolute left-4 top-3 z-10 max-h-[70%] w-[min(420px,90%)] overflow-y-auto rounded-xl border border-white/10 shadow-xl"
+      className="absolute left-4 top-3 z-10 max-h-[70%] w-[min(420px,90%)] overflow-y-auto rounded-xl border border-ink/10 shadow-xl"
       style={{ backgroundColor: PANEL }}
     >
-      <div className="flex items-center justify-between px-3 py-2 text-[11px] text-white/50">
+      <div className="flex items-center justify-between px-3 py-2 text-[11px] text-ink/50">
         <span>
           {results.length} {tm("results")}
         </span>
-        <button onClick={onClose} className="rounded p-0.5 hover:bg-white/10">
+        <button onClick={onClose} className="rounded p-0.5 hover:bg-ink/10">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
       {results.length === 0 && (
-        <div className="px-3 pb-3 text-xs text-white/60">
+        <div className="px-3 pb-3 text-xs text-ink/60">
           {tm("No match in the documents you may see.")}
         </div>
       )}
@@ -563,14 +563,14 @@ function ResultList({
         <button
           key={n.id}
           onClick={() => onPick(n)}
-          className="flex w-full items-center gap-2 border-t border-white/5 px-3 py-2 text-left text-xs hover:bg-white/5"
+          className="flex w-full items-center gap-2 border-t border-ink/5 px-3 py-2 text-left text-xs hover:bg-ink/5"
         >
           <span
             className="h-2.5 w-2.5 shrink-0 rounded-full"
             style={{ backgroundColor: TYPE_COLOR[n.type] }}
           />
           <span className="min-w-0 flex-1 truncate">{n.label}</span>
-          <span className="shrink-0 text-[10px] text-white/45">
+          <span className="shrink-0 text-[10px] text-ink/45">
             {subtypeLabel(n.subtype) || tm(TYPE_NAME[n.type])} · {n.documents.length}{" "}
             {tm("documents")}
           </span>
@@ -681,7 +681,7 @@ function GraphCanvas({
                 y1={a.y}
                 x2={b.x}
                 y2={b.y}
-                stroke={active ? ACCENT_TEXT : "rgba(255,255,255,0.28)"}
+                style={{ stroke: active ? ACCENT_TEXT : inkA(0.28) }}
                 strokeWidth={(active ? 2.4 : 1.2) + Math.min(edges.length - 1, 4) * 0.5}
                 strokeDasharray={edges.every((x) => x.weak) ? "4 4" : undefined}
               />
@@ -691,7 +691,7 @@ function GraphCanvas({
                   y={ly - 3}
                   textAnchor="middle"
                   fontSize={9}
-                  fill={active ? ACCENT_TEXT : "rgba(255,255,255,0.55)"}
+                  style={{ fill: active ? ACCENT_TEXT : inkText(0.55) }}
                 >
                   {label}
                   {edges.length === 1 && e.start ? ` · ${e.start}` : ""}
@@ -713,10 +713,17 @@ function GraphCanvas({
                 r={r}
                 fill={TYPE_COLOR[n.type]}
                 fillOpacity={isFocus || pathIds.has(n.id) ? 1 : 0.8}
-                stroke={isFocus ? "#fff" : "rgba(0,0,0,0.4)"}
+                stroke="rgba(0,0,0,0.4)"
+                style={isFocus ? { stroke: "var(--ink)" } : undefined}
                 strokeWidth={isFocus ? 2.5 : 1}
               />
-              <text x={p.x} y={p.y + r + 11} textAnchor="middle" fontSize={10} fill="#E6EAEE">
+              <text
+                x={p.x}
+                y={p.y + r + 11}
+                textAnchor="middle"
+                fontSize={10}
+                style={{ fill: "var(--foreground)" }}
+              >
                 {n.label.length > 28 ? `${n.label.slice(0, 27)}…` : n.label}
               </text>
             </g>
@@ -744,8 +751,8 @@ function EvidenceList({
       {evidence.map((ev, i) => {
         const doc = documents[ev.doc_id];
         return (
-          <div key={i} className="rounded-lg border border-white/10 bg-black/20 p-2 text-xs">
-            {ev.quote && <div className="italic text-white/80">„{ev.quote}”</div>}
+          <div key={i} className="rounded-lg border border-ink/10 bg-shade/20 p-2 text-xs">
+            {ev.quote && <div className="italic text-ink/80">„{ev.quote}”</div>}
             {doc && (
               <button
                 onClick={() =>
@@ -790,7 +797,7 @@ function EdgeSheet({
     <div className="p-4">
       <button
         onClick={onBack}
-        className="mb-3 inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white"
+        className="mb-3 inline-flex items-center gap-1 text-[11px] text-ink/60 hover:text-ink"
       >
         <ArrowLeft className="h-3 w-3" /> {tm("Back")}
       </button>
@@ -803,13 +810,13 @@ function EdgeSheet({
           <div key={edge.id} className="mt-4">
             <div className="text-xs font-medium" style={{ color: ACCENT_TEXT }}>
               {relLabel(edge.type)}
-              <span className="ml-2 text-[11px] font-normal text-white/50">
+              <span className="ml-2 text-[11px] font-normal text-ink/50">
                 {edge.start ?? ""}
                 {edge.end && edge.end !== edge.start ? ` – ${edge.end}` : ""}
                 {edge.raw_label && edge.raw_label !== edge.type ? ` · ${edge.raw_label}` : ""}
               </span>
             </div>
-            <div className="mb-1.5 mt-1 text-[11px] uppercase tracking-wide text-white/45">
+            <div className="mb-1.5 mt-1 text-[11px] uppercase tracking-wide text-ink/45">
               {tm("Evidence")}
             </div>
             <EvidenceList
@@ -859,20 +866,20 @@ function EntitySheet({
         <span className="h-3 w-3 rounded-full" style={{ backgroundColor: TYPE_COLOR[node.type] }} />
         <div className="text-sm font-semibold">{node.label}</div>
       </div>
-      <div className="mt-0.5 text-[11px] text-white/50">
+      <div className="mt-0.5 text-[11px] text-ink/50">
         {subtypeLabel(node.subtype) || tm(TYPE_NAME[node.type])} · {node.mentions} {tm("mentions")}{" "}
         · {node.documents.length} {tm("documents")}
       </div>
       {node.aliases.length > 1 && (
         <Section title={tm("Also known as")}>
-          <div className="text-xs text-white/75">{node.aliases.join(" · ")}</div>
+          <div className="text-xs text-ink/75">{node.aliases.join(" · ")}</div>
         </Section>
       )}
       {node.attributes.length > 0 && (
         <Section title={tm("Attributes")}>
           {node.attributes.map((a, i) => (
             <div key={i} className="flex justify-between gap-2 text-xs">
-              <span className="text-white/55">{tm(a.name)}</span>
+              <span className="text-ink/55">{tm(a.name)}</span>
               <span>{a.value}</span>
             </div>
           ))}
@@ -884,11 +891,11 @@ function EntitySheet({
           <button
             key={e.id}
             onClick={() => onEdge(pairKey(e))}
-            className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-white/5"
+            className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-ink/5"
           >
-            <span className="shrink-0 text-white/55">{relLabel(e.type)}</span>
+            <span className="shrink-0 text-ink/55">{relLabel(e.type)}</span>
             <span className="min-w-0 flex-1 truncate">{other(e)?.label ?? ""}</span>
-            {e.start && <span className="shrink-0 text-[10px] text-white/45">{e.start}</span>}
+            {e.start && <span className="shrink-0 text-[10px] text-ink/45">{e.start}</span>}
           </button>
         ))}
       </Section>
@@ -900,17 +907,17 @@ function EntitySheet({
               const res = await run(() => graphApi.timeline(drive, node.id));
               if (res) setTimeline({ items: res.timeline, documents: res.documents });
             }}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1 text-xs hover:bg-white/10"
+            className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1 text-xs hover:bg-ink/10"
           >
             <CalendarDays className="h-3.5 w-3.5" /> {tm("Timeline")}
           </button>
         ) : timeline.items.length === 0 ? (
-          <div className="text-xs text-white/55">{tm("No dated relations.")}</div>
+          <div className="text-xs text-ink/55">{tm("No dated relations.")}</div>
         ) : (
           <div className="space-y-2">
             {timeline.items.map((item, i) => (
               <div key={i} className="border-l-2 pl-2" style={{ borderColor: `${ACCENT}88` }}>
-                <div className="text-[11px] text-white/50">
+                <div className="text-[11px] text-ink/50">
                   {item.date}
                   {item.end && item.end !== item.date ? ` – ${item.end}` : ""}
                 </div>
@@ -980,7 +987,7 @@ function DossierActions({ drive, node }: { drive: string; node: GraphNode }) {
   }
 
   const button =
-    "inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1 text-xs hover:bg-white/10 disabled:opacity-40";
+    "inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1 text-xs hover:bg-ink/10 disabled:opacity-40";
   return (
     <Section title={tm("Dossier")}>
       {notice}
@@ -1006,7 +1013,7 @@ function DossierActions({ drive, node }: { drive: string; node: GraphNode }) {
           {tm("Save to drive")}
         </button>
       </div>
-      {note && <div className="mt-1.5 text-[11px] text-white/60">{note}</div>}
+      {note && <div className="mt-1.5 text-[11px] text-ink/60">{note}</div>}
     </Section>
   );
 }
@@ -1014,7 +1021,7 @@ function DossierActions({ drive, node }: { drive: string; node: GraphNode }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mt-4">
-      <div className="mb-1.5 text-[11px] uppercase tracking-wide text-white/45">{title}</div>
+      <div className="mb-1.5 text-[11px] uppercase tracking-wide text-ink/45">{title}</div>
       {children}
     </div>
   );
@@ -1057,7 +1064,7 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
             key={v}
             onClick={() => setView(v)}
             className={`rounded-full px-3 py-1 transition ${
-              view === v ? "text-white" : "text-white/70 hover:bg-white/10"
+              view === v ? "text-white" : "text-ink/70 hover:bg-ink/10"
             }`}
             style={view === v ? { backgroundColor: ACCENT } : undefined}
           >
@@ -1180,10 +1187,10 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
     <>
       <div className="mb-3 flex items-center gap-2">
         <div className="text-sm font-semibold">{tm("Possible same person")}</div>
-        <span className="text-xs text-white/50">({list?.open_total ?? 0})</span>
+        <span className="text-xs text-ink/50">({list?.open_total ?? 0})</span>
         <button
           onClick={() => void load()}
-          className="ml-auto rounded-full p-1.5 hover:bg-white/10"
+          className="ml-auto rounded-full p-1.5 hover:bg-ink/10"
           title={tm("Refresh")}
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -1193,18 +1200,18 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
       {!canEdit && <Notice text={tm("Only graph administrators may do this.")} />}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink/40" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={tm("Filter by name…")}
-            className="w-full rounded-lg border border-white/15 bg-black/30 py-1 pl-7 pr-2 text-xs text-white outline-none focus:border-white/30"
+            className="w-full rounded-lg border border-ink/15 bg-shade/30 py-1 pl-7 pr-2 text-xs text-ink outline-none focus:border-ink/30"
           />
         </div>
         <select
           value={why}
           onChange={(e) => setWhy(e.target.value)}
-          className="rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none"
+          className="rounded-lg border border-ink/15 bg-shade/30 px-2 py-1 text-xs text-ink outline-none"
         >
           <option value="">{`${tm("All reasons")} (${list?.open_total ?? 0})`}</option>
           {reasons.map(([r, n]) => (
@@ -1214,7 +1221,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
       </div>
       {canEdit && pending.length > 0 && (
         <div
-          className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs"
+          className="mb-2 flex flex-wrap items-center gap-2 rounded-xl border border-ink/10 px-3 py-2 text-xs"
           style={{ backgroundColor: PANEL }}
         >
           <label className="flex cursor-pointer items-center gap-2">
@@ -1225,7 +1232,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
             />
             {`${tm("Select all shown")} (${pending.length})`}
           </label>
-          <span className="text-white/50">{`${tm("Selected")}: ${selected.size}`}</span>
+          <span className="text-ink/50">{`${tm("Selected")}: ${selected.size}`}</span>
           {confirm ? (
             <span className="ml-auto flex flex-wrap items-center gap-2">
               <span>
@@ -1244,7 +1251,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
               </button>
               <button
                 onClick={() => setConfirm(null)}
-                className="rounded-full border border-white/15 px-3 py-1 hover:bg-white/10"
+                className="rounded-full border border-ink/15 px-3 py-1 hover:bg-ink/10"
               >
                 {tm("Cancel")}
               </button>
@@ -1267,7 +1274,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
               <button
                 onClick={() => setConfirm("separate")}
                 disabled={!selected.size || busy}
-                className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1 hover:bg-white/10 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-full border border-ink/15 px-3 py-1 hover:bg-ink/10 disabled:opacity-50"
               >
                 <Split className="h-3.5 w-3.5" /> {tm("Keep apart")}
               </button>
@@ -1294,7 +1301,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
           return (
             <div
               key={key}
-              className="rounded-xl border border-white/10 p-3"
+              className="rounded-xl border border-ink/10 p-3"
               style={{ backgroundColor: PANEL }}
             >
               <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -1307,9 +1314,9 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                   />
                 )}
                 <span className="font-medium">{item.a_label}</span>
-                <span className="text-white/40">↔</span>
+                <span className="text-ink/40">↔</span>
                 <span className="font-medium">{item.b_label}</span>
-                <span className="ml-auto text-[11px] text-white/50">
+                <span className="ml-auto text-[11px] text-ink/50">
                   {reason(item.reason)} · {Math.round(item.score * 100)}%
                 </span>
               </div>
@@ -1322,7 +1329,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                   {canEdit && (
                     <button
                       onClick={() => void undo(item)}
-                      className="text-white/70 underline hover:text-white"
+                      className="text-ink/70 underline hover:text-ink"
                     >
                       {tm("Undo")}
                     </button>
@@ -1340,7 +1347,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                     </button>
                     <button
                       onClick={() => void decide(item, "separate")}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-white/15 px-3 py-1 text-xs hover:bg-white/10"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10"
                     >
                       <Split className="h-3.5 w-3.5" /> {tm("Keep apart")}
                     </button>
@@ -1354,7 +1361,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
       {more && (
         <button
           onClick={() => void load(pending.length)}
-          className="mt-3 w-full rounded-lg border border-white/15 py-1.5 text-xs hover:bg-white/10"
+          className="mt-3 w-full rounded-lg border border-ink/15 py-1.5 text-xs hover:bg-ink/10"
         >
           {tm("Load more")}
         </button>
@@ -1397,10 +1404,10 @@ function DecidedReview({ drive }: { drive: string }) {
     <>
       <div className="mb-3 flex items-center gap-2">
         <div className="text-sm font-semibold">{tm("Decisions")}</div>
-        <span className="text-xs text-white/50">({total})</span>
+        <span className="text-xs text-ink/50">({total})</span>
         <button
           onClick={() => void load()}
-          className="ml-auto rounded-full p-1.5 hover:bg-white/10"
+          className="ml-auto rounded-full p-1.5 hover:bg-ink/10"
           title={tm("Refresh")}
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -1415,23 +1422,23 @@ function DecidedReview({ drive }: { drive: string }) {
           return (
             <div
               key={key}
-              className="rounded-xl border border-white/10 p-3"
+              className="rounded-xl border border-ink/10 p-3"
               style={{ backgroundColor: PANEL }}
             >
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 {merge ? (
-                  <GitMerge className="h-3.5 w-3.5 text-white/60" />
+                  <GitMerge className="h-3.5 w-3.5 text-ink/60" />
                 ) : (
-                  <Split className="h-3.5 w-3.5 text-white/60" />
+                  <Split className="h-3.5 w-3.5 text-ink/60" />
                 )}
                 <span className="font-medium">{item.a_label}</span>
-                <span className="text-white/40">{merge ? "→" : "↔"}</span>
+                <span className="text-ink/40">{merge ? "→" : "↔"}</span>
                 <span className="font-medium">{item.b_label}</span>
-                <span className="ml-auto text-[11px] text-white/60">
+                <span className="ml-auto text-[11px] text-ink/60">
                   {tm(merge ? "Merged." : "Kept apart.")}
                 </span>
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-white/50">
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ink/50">
                 <span>
                   {[
                     item.by,
@@ -1450,7 +1457,7 @@ function DecidedReview({ drive }: { drive: string }) {
                   (item.undoable ? (
                     <button
                       onClick={() => void undo(item)}
-                      className="ml-auto rounded-full border border-white/15 px-3 py-0.5 text-white/80 hover:bg-white/10"
+                      className="ml-auto rounded-full border border-ink/15 px-3 py-0.5 text-ink/80 hover:bg-ink/10"
                     >
                       {tm("Undo")}
                     </button>
@@ -1466,7 +1473,7 @@ function DecidedReview({ drive }: { drive: string }) {
       {loaded < total && (
         <button
           onClick={() => void load(loaded - undone.size)}
-          className="mt-3 w-full rounded-lg border border-white/15 py-1.5 text-xs hover:bg-white/10"
+          className="mt-3 w-full rounded-lg border border-ink/15 py-1.5 text-xs hover:bg-ink/10"
         >
           {tm("Load more")}
         </button>
@@ -1529,20 +1536,20 @@ function QueryLogTab({ drive }: { drive: string }) {
 
   const leader = data?.role === "leader";
   const field =
-    "rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-white/30";
+    "rounded-lg border border-ink/15 bg-shade/30 px-2 py-1 text-xs text-ink outline-none focus:border-ink/30";
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-2">
         <div className="text-sm font-semibold">{tm("Query log")}</div>
-        {data && <span className="text-xs text-white/50">({data.total})</span>}
+        {data && <span className="text-xs text-ink/50">({data.total})</span>}
         {data && (
-          <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/60">
+          <span className="rounded-full border border-ink/15 px-2 py-0.5 text-[11px] text-ink/60">
             {tm(leader ? "Everyone's queries (leader)" : "Your own queries")}
           </span>
         )}
         <button
           onClick={() => void load()}
-          className="ml-auto rounded-full p-1.5 hover:bg-white/10"
+          className="ml-auto rounded-full p-1.5 hover:bg-ink/10"
           title={tm("Refresh")}
         >
           {loading ? (
@@ -1559,7 +1566,7 @@ function QueryLogTab({ drive }: { drive: string }) {
           setApplied({ ...inputs });
         }}
       >
-        <label className="flex flex-col gap-1 text-[11px] text-white/50">
+        <label className="flex flex-col gap-1 text-[11px] text-ink/50">
           {tm("From")}
           <input
             type="date"
@@ -1568,7 +1575,7 @@ function QueryLogTab({ drive }: { drive: string }) {
             className={field}
           />
         </label>
-        <label className="flex flex-col gap-1 text-[11px] text-white/50">
+        <label className="flex flex-col gap-1 text-[11px] text-ink/50">
           {tm("To")}
           <input
             type="date"
@@ -1578,7 +1585,7 @@ function QueryLogTab({ drive }: { drive: string }) {
           />
         </label>
         {leader && (
-          <label className="flex flex-col gap-1 text-[11px] text-white/50">
+          <label className="flex flex-col gap-1 text-[11px] text-ink/50">
             {tm("User")}
             <input
               value={inputs.user}
@@ -1588,7 +1595,7 @@ function QueryLogTab({ drive }: { drive: string }) {
             />
           </label>
         )}
-        <label className="flex flex-col gap-1 text-[11px] text-white/50">
+        <label className="flex flex-col gap-1 text-[11px] text-ink/50">
           {tm("Case reference")}
           <input
             value={inputs.caseRef}
@@ -1609,7 +1616,7 @@ function QueryLogTab({ drive }: { drive: string }) {
       {error && <Notice text={tm("The query log could not be loaded.")} tone="warn" />}
       {data && !data.enabled && <Notice text={tm("The query log is off on this AI Box.")} />}
       {data && (
-        <div className="mb-3 text-[11px] text-white/45">
+        <div className="mb-3 text-[11px] text-ink/45">
           {`${data.from} – ${data.to} · ${tm("Retention (days)")}: ${
             data.retention_days || tm("No time limit")
           }`}
@@ -1625,27 +1632,27 @@ function QueryLogTab({ drive }: { drive: string }) {
           return (
             <div
               key={`${rec.ts}-${rec.hash ?? rec.question_sha256}`}
-              className="rounded-xl border border-white/10 p-3 text-xs"
+              className="rounded-xl border border-ink/10 p-3 text-xs"
               style={{ backgroundColor: PANEL }}
             >
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-white">{tm(queryKind(rec.kind))}</span>
-                <span className="text-white/50">{new Date(rec.ts).toLocaleString()}</span>
-                {leader && <span className="text-white/70">{rec.user}</span>}
+                <span className="font-medium text-ink">{tm(queryKind(rec.kind))}</span>
+                <span className="text-ink/50">{new Date(rec.ts).toLocaleString()}</span>
+                {leader && <span className="text-ink/70">{rec.user}</span>}
                 {rec.case_ref && (
-                  <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/70">
+                  <span className="rounded-full border border-ink/15 px-2 py-0.5 text-[11px] text-ink/70">
                     {`${tm("Case reference")}: ${rec.case_ref}`}
                   </span>
                 )}
                 {rec.legal_basis && (
-                  <span className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] text-white/70">
+                  <span className="rounded-full border border-ink/15 px-2 py-0.5 text-[11px] text-ink/70">
                     {`${tm("Legal basis")}: ${rec.legal_basis}`}
                   </span>
                 )}
               </div>
-              <div className="mt-1 break-words text-white/80">
+              <div className="mt-1 break-words text-ink/80">
                 {rec.question ?? (
-                  <span className="text-white/45">
+                  <span className="text-ink/45">
                     {`${tm(
                       rec.sealed
                         ? "Protected query: only authorised members see its text and sources (fingerprint)"
@@ -1655,7 +1662,7 @@ function QueryLogTab({ drive }: { drive: string }) {
                 )}
               </div>
               {sources.length > 0 && (
-                <div className="mt-1 space-y-0.5 text-[11px] text-white/50">
+                <div className="mt-1 space-y-0.5 text-[11px] text-ink/50">
                   {sources.map((path) => (
                     <div key={path} className="truncate" title={path}>
                       {path}
@@ -1664,12 +1671,12 @@ function QueryLogTab({ drive }: { drive: string }) {
                 </div>
               )}
               {(result.hidden_sources ?? 0) > 0 && (
-                <div className="mt-1 text-[11px] text-white/45">
+                <div className="mt-1 text-[11px] text-ink/45">
                   {`${tm("Documents outside your access")}: ${result.hidden_sources}`}
                 </div>
               )}
               {!rec.intact && (
-                <div className="mt-1 flex items-center gap-1 text-[11px] text-rose-300">
+                <div className="mt-1 flex items-center gap-1 text-[11px] text-rose-700 dark:text-rose-300">
                   <ShieldAlert className="h-3 w-3" />
                   {tm("This day's log was altered: its hash chain is broken.")}
                 </div>
@@ -1681,7 +1688,7 @@ function QueryLogTab({ drive }: { drive: string }) {
       {data && items.length < data.total && (
         <button
           onClick={() => void load(items.length)}
-          className="mt-3 w-full rounded-lg border border-white/15 py-1.5 text-xs hover:bg-white/10"
+          className="mt-3 w-full rounded-lg border border-ink/15 py-1.5 text-xs hover:bg-ink/10"
         >
           {tm("Load more")}
         </button>
@@ -1714,7 +1721,7 @@ function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) 
         <div className="text-sm font-semibold">{tm("Processing")}</div>
         <button
           onClick={() => void load()}
-          className="ml-auto rounded-full p-1.5 hover:bg-white/10"
+          className="ml-auto rounded-full p-1.5 hover:bg-ink/10"
           title={tm("Refresh")}
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -1730,18 +1737,18 @@ function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) 
             <Stat label={tm("Failed")} value={totals.failed ?? 0} />
           </div>
           {status.busy && (
-            <div className="mt-3 flex items-center gap-2 text-xs text-white/70">
+            <div className="mt-3 flex items-center gap-2 text-xs text-ink/70">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               {tm("Processing now")}
               {status.running ? `: ${status.running.source_path.split("/").pop()}` : ""}
             </div>
           )}
           {status.gpu?.foreground_active ? (
-            <div className="mt-2 text-xs text-white/55">
+            <div className="mt-2 text-xs text-ink/55">
               {tm("The AI Box is answering a question; extraction waits.")}
             </div>
           ) : null}
-          <div className="mb-1.5 mt-5 text-[11px] uppercase tracking-wide text-white/45">
+          <div className="mb-1.5 mt-5 text-[11px] uppercase tracking-wide text-ink/45">
             {tm("Recently processed")}
           </div>
           <div className="space-y-1">
@@ -1753,7 +1760,11 @@ function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) 
                   <span className="min-w-0 flex-1 truncate" title={r.source_path}>
                     {r.source_path.split("/").pop()}
                   </span>
-                  <span className={r.status === "done" ? "text-white/60" : "text-amber-300"}>
+                  <span
+                    className={
+                      r.status === "done" ? "text-ink/60" : "text-amber-700 dark:text-amber-300"
+                    }
+                  >
                     {tm(STATUS_TEXT[r.status] ?? r.status)}
                   </span>
                 </div>
@@ -1878,31 +1889,29 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
   const stats = answer?.import.stats;
   const rag = answer?.rag;
   const input =
-    "min-w-0 rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-white/30 disabled:opacity-50";
+    "min-w-0 rounded-lg border border-ink/15 bg-shade/30 px-2 py-1 text-xs text-ink outline-none focus:border-ink/30 disabled:opacity-50";
   return (
     <div className="mt-6">
-      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/45">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink/45">
         <Upload className="h-3.5 w-3.5" />
         {tm("Structured import")}
       </div>
       {notice}
-      <div className="text-xs text-white/55">
+      <div className="text-xs text-ink/55">
         {tm(
           "Periodic exports (CSV, XLSX) are read by the domain profile's rules, without the language model.",
         )}
       </div>
       {sources && sources.length === 0 && (
-        <div className="mt-2 text-xs text-white/55">
-          {tm("No structured source in the profile.")}
-        </div>
+        <div className="mt-2 text-xs text-ink/55">{tm("No structured source in the profile.")}</div>
       )}
       {sources && sources.length > 0 && (
         <div
-          className="mt-2 space-y-2 rounded-xl border border-white/10 p-2.5 text-xs"
+          className="mt-2 space-y-2 rounded-xl border border-ink/10 p-2.5 text-xs"
           style={{ backgroundColor: PANEL }}
         >
           <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-white/60">{tm("Source")}</span>
+            <span className="w-28 shrink-0 text-ink/60">{tm("Source")}</span>
             <select
               value={sourceId}
               onChange={(e) => setSourceId(e.target.value)}
@@ -1910,15 +1919,15 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
               className={`${input} flex-1`}
             >
               {sources.map((s) => (
-                <option key={s.id} value={s.id} className="bg-[#0C1E31]">
+                <option key={s.id} value={s.id} className="bg-surface-2">
                   {s.label[code] ?? s.label.en ?? s.title}
                 </option>
               ))}
             </select>
           </label>
           {source && (
-            <div className="pl-0 text-[11px] text-white/50 sm:pl-30">
-              <span className="text-white/60">{tm("Expected columns")}:</span>{" "}
+            <div className="pl-0 text-[11px] text-ink/50 sm:pl-30">
+              <span className="text-ink/60">{tm("Expected columns")}:</span>{" "}
               {source.columns.join(", ")}
               {source.rag && (
                 <div className="mt-0.5" style={{ color: ACCENT_TEXT }}>
@@ -1928,7 +1937,7 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
             </div>
           )}
           <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-white/60">{tm("Target folder")}</span>
+            <span className="w-28 shrink-0 text-ink/60">{tm("Target folder")}</span>
             <input
               value={folder}
               onChange={(e) => setFolder(e.target.value)}
@@ -1937,7 +1946,7 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
             />
           </label>
           <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-white/60">{tm("Export date")}</span>
+            <span className="w-28 shrink-0 text-ink/60">{tm("Export date")}</span>
             <input
               type="date"
               value={asOf}
@@ -1947,40 +1956,40 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
             />
           </label>
           <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-white/60">{tm("Mode")}</span>
+            <span className="w-28 shrink-0 text-ink/60">{tm("Mode")}</span>
             <select
               value={mode}
               onChange={(e) => setMode(e.target.value as "" | "delta" | "full")}
               disabled={busy}
               className={input}
             >
-              <option value="" className="bg-[#0C1E31]">
+              <option value="" className="bg-surface-2">
                 {`${tm("As in the profile")} (${source?.mode ?? "delta"})`}
               </option>
-              <option value="delta" className="bg-[#0C1E31]">
+              <option value="delta" className="bg-surface-2">
                 {tm("Changes only (delta)")}
               </option>
-              <option value="full" className="bg-[#0C1E31]">
+              <option value="full" className="bg-surface-2">
                 {tm("Full state (full)")}
               </option>
             </select>
           </label>
           {(mode || source?.mode) === "full" && (
-            <div className="text-[11px] text-amber-300/90">
+            <div className="text-[11px] text-amber-700/90 dark:text-amber-300/90">
               {tm(
                 "Full mode removes the source's records of this folder that the file no longer lists.",
               )}
             </div>
           )}
           <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-white/60">{tm("Export file")}</span>
+            <span className="w-28 shrink-0 text-ink/60">{tm("Export file")}</span>
             <input
               ref={fileRef}
               type="file"
               accept=".csv,.tsv,.txt,.xlsx,.xlsm"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               disabled={busy}
-              className="min-w-0 flex-1 text-xs text-white/70 file:mr-2 file:rounded-md file:border-0 file:bg-white/10 file:px-2 file:py-1 file:text-xs file:text-white"
+              className="min-w-0 flex-1 text-xs text-ink/70 file:mr-2 file:rounded-md file:border-0 file:bg-ink/10 file:px-2 file:py-1 file:text-xs file:text-ink"
             />
           </label>
           <div className="flex flex-wrap items-center gap-2">
@@ -1993,25 +2002,25 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
               {tm("Import")}
             </button>
             {busy && (
-              <span className="inline-flex items-center gap-1.5 text-white/60">
+              <span className="inline-flex items-center gap-1.5 text-ink/60">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 {tm("Importing…")}
               </span>
             )}
           </div>
-          {error && <div className="text-[11px] text-amber-300">{error}</div>}
+          {error && <div className="text-[11px] text-amber-700 dark:text-amber-300">{error}</div>}
           {refused && (
             <div className="space-y-1.5 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2">
-              <div className="text-[11.5px] text-amber-100">
+              <div className="text-[11.5px] text-amber-800 dark:text-amber-100">
                 {tm(
                   "This full export would remove many records of this folder. Import it anyway only if that is right.",
                 )}
               </div>
-              <div className="text-[11px] text-amber-100/60">{refused}</div>
+              <div className="text-[11px] text-amber-800/60 dark:text-amber-100/60">{refused}</div>
               <button
                 onClick={() => void start(true)}
                 disabled={busy}
-                className="rounded-lg border border-amber-300/40 px-3 py-1 text-xs text-amber-100 hover:bg-amber-300/10 disabled:opacity-50"
+                className="rounded-lg border border-amber-300/40 px-3 py-1 text-xs text-amber-800 dark:text-amber-100 hover:bg-amber-300/10 disabled:opacity-50"
               >
                 {tm("Import anyway")}
               </button>
@@ -2031,30 +2040,30 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
             <Stat label={tm("Older export, skipped")} value={stats.older} />
             <Stat label={tm("Problems")} value={stats.problems} />
           </div>
-          <div className="space-y-0.5 text-[11px] text-white/60">
+          <div className="space-y-0.5 text-[11px] text-ink/60">
             {stats.protected > 0 && <div>{`${tm("Protected parts")}: ${stats.protected}`}</div>}
             {!!stats.review_new && <div>{`${tm("New review pairs")}: ${stats.review_new}`}</div>}
             {stats.duplicates > 0 && (
               <div>{`${tm("Repeated record ids")}: ${stats.duplicates}`}</div>
             )}
             {stats.acl_nobody > 0 && (
-              <div className="text-amber-300">
+              <div className="text-amber-700 dark:text-amber-300">
                 {`${tm("Records no one may see (unknown access code)")}: ${stats.acl_nobody}`}
               </div>
             )}
             {stats.missing_columns.length > 0 && (
-              <div className="text-amber-300">
+              <div className="text-amber-700 dark:text-amber-300">
                 {`${tm("Missing columns")}: ${stats.missing_columns.join(", ")}`}
               </div>
             )}
             {Object.entries(stats.unknown_codes).map(([list, codes]) => (
-              <div key={list} className="text-amber-300">
+              <div key={list} className="text-amber-700 dark:text-amber-300">
                 {`${tm("Unknown codes")} (${list}): ${codes.join(", ")}`}
               </div>
             ))}
           </div>
           {stats.problem_rows.length > 0 && (
-            <div className="max-h-40 space-y-0.5 overflow-y-auto pr-1 text-[11px] text-white/60">
+            <div className="max-h-40 space-y-0.5 overflow-y-auto pr-1 text-[11px] text-ink/60">
               {stats.problem_rows.map((p, i) => (
                 <div key={i}>{`${tm("Row")} ${p.row}: ${p.reason}`}</div>
               ))}
@@ -2062,22 +2071,28 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
           )}
           {rag && rag.state !== "none" && (
             <div
-              className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2.5 text-xs"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-ink/10 p-2.5 text-xs"
               style={{ backgroundColor: PANEL }}
             >
               {(rag.state === "pending" || rag.state === "running") && (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               )}
-              <span className="text-white/60">{tm("Search copy")}:</span>
-              <span className={rag.state === "failed" ? "text-amber-300" : "text-white"}>
+              <span className="text-ink/60">{tm("Search copy")}:</span>
+              <span
+                className={
+                  rag.state === "failed" ? "text-amber-700 dark:text-amber-300" : "text-ink"
+                }
+              >
                 {tm(RAG_STATE[rag.state])}
               </span>
               {rag.state === "done" && (
-                <span className="text-white/50">
+                <span className="text-ink/50">
                   {`${tm("Written")}: ${rag.written ?? 0} · ${tm("Removed")}: ${rag.removed ?? 0} · ${tm("Unchanged")}: ${rag.unchanged ?? 0}`}
                 </span>
               )}
-              {rag.error && <span className="text-[11px] text-amber-300">{rag.error}</span>}
+              {rag.error && (
+                <span className="text-[11px] text-amber-700 dark:text-amber-300">{rag.error}</span>
+              )}
             </div>
           )}
         </div>
@@ -2130,55 +2145,57 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
   const older = data.stale_total - partial;
   return (
     <div className="mt-6">
-      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/45">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink/45">
         <Settings2 className="h-3.5 w-3.5" />
         {tm("Domain profile version")}
       </div>
       {notice}
-      <div className="text-xs text-white/70">
-        {tm("Current profile")}: <span className="font-medium text-white">{data.current}</span>
+      <div className="text-xs text-ink/70">
+        {tm("Current profile")}: <span className="font-medium text-ink">{data.current}</span>
       </div>
-      <div className="mt-1 text-xs text-white/70">
+      <div className="mt-1 text-xs text-ink/70">
         {older
           ? `${tm("Extracted with an older or unknown profile")}: ${older}`
           : tm("Every document was extracted with the current profile.")}
       </div>
       {partial > 0 && (
-        <div className="mt-1 text-xs text-white/70">
+        <div className="mt-1 text-xs text-ink/70">
           {`${tm("Waiting for the language model")}: ${partial}`}
         </div>
       )}
       {data.absent_total > 0 && (
-        <div className="mt-1 text-xs text-white/70">
+        <div className="mt-1 text-xs text-ink/70">
           {`${tm("Synced files not yet in the graph")}: ${data.absent_total}`}
         </div>
       )}
       {versions.length > 1 && (
-        <div className="mt-1 text-[11px] text-white/45">
+        <div className="mt-1 text-[11px] text-ink/45">
           {versions.map(([v, n]) => `${v === "unknown" ? tm("unknown") : v}: ${n}`).join(" · ")}
         </div>
       )}
       {run.state !== "idle" && (
         <div
-          className="mt-2 rounded-xl border border-white/10 p-2.5 text-xs"
+          className="mt-2 rounded-xl border border-ink/10 p-2.5 text-xs"
           style={{ backgroundColor: PANEL }}
         >
           <div className="flex items-center gap-2">
             {running && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             <span>{tm(RUN_STATE[run.state])}</span>
-            <span className="ml-auto text-white/60">
+            <span className="ml-auto text-ink/60">
               {run.done ?? 0}/{run.total ?? 0}
             </span>
           </div>
           {running && run.current && (
-            <div className="mt-1 truncate text-[11px] text-white/50" title={run.current}>
+            <div className="mt-1 truncate text-[11px] text-ink/50" title={run.current}>
               {run.current.split("/").pop()}
             </div>
           )}
-          <div className="mt-1 text-[11px] text-white/50">
+          <div className="mt-1 text-[11px] text-ink/50">
             {`${tm("Sent")}: ${run.sent ?? 0} · ${tm("Missing")}: ${run.missing ?? 0} · ${tm("Failed")}: ${run.failed ?? 0}`}
           </div>
-          {run.error && <div className="mt-1 text-[11px] text-amber-300">{run.error}</div>}
+          {run.error && (
+            <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{run.error}</div>
+          )}
         </div>
       )}
       {canEdit && data.can_start && (
@@ -2188,13 +2205,13 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
             onChange={(e) => setFolder(e.target.value)}
             disabled={running}
             placeholder={tm("Folder (optional), e.g. /storage/drives/…")}
-            className="min-w-0 flex-1 rounded-lg border border-white/15 bg-black/30 px-2 py-1 text-xs text-white outline-none focus:border-white/30"
+            className="min-w-0 flex-1 rounded-lg border border-ink/15 bg-shade/30 px-2 py-1 text-xs text-ink outline-none focus:border-ink/30"
           />
           {running ? (
             <button
               onClick={() => void act(() => graphApi.reprocessCancel(drive))}
               disabled={busy}
-              className="rounded-lg border border-white/15 px-3 py-1 text-xs transition hover:bg-white/10 disabled:opacity-50"
+              className="rounded-lg border border-ink/15 px-3 py-1 text-xs transition hover:bg-ink/10 disabled:opacity-50"
             >
               {tm("Stop")}
             </button>
@@ -2211,7 +2228,7 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
         </div>
       )}
       {canEdit && data.can_start && !data.source_ready && (
-        <div className="mt-1 text-[11px] text-amber-300">
+        <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
           {tm("The ViVeSecBox is not connected: the files cannot be fetched again.")}
         </div>
       )}
@@ -2265,16 +2282,14 @@ function UnreadableDocuments({ drive }: { drive: string }) {
   const shown = (data?.documents ?? []).filter((d) => !reason || d.reason === reason);
   return (
     <div className="mt-6">
-      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-white/45">
+      <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink/45">
         <ShieldAlert className="h-3.5 w-3.5" />
         {tm("Not readable for search")}
-        {data && <span className="normal-case tracking-normal text-white/60">({data.count})</span>}
+        {data && <span className="normal-case tracking-normal text-ink/60">({data.count})</span>}
       </div>
       {failed && <Notice text={tm("The list could not be loaded.")} tone="warn" />}
       {data && data.count === 0 && (
-        <div className="text-xs text-white/55">
-          {tm("Every document in this scope is readable.")}
-        </div>
+        <div className="text-xs text-ink/55">{tm("Every document in this scope is readable.")}</div>
       )}
       {reasons.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-1.5">
@@ -2282,7 +2297,7 @@ function UnreadableDocuments({ drive }: { drive: string }) {
             <button
               key={key}
               onClick={() => setReason(reason === key ? null : key)}
-              className={`rounded-full border px-2 py-0.5 text-[11px] transition ${reason === key ? "border-transparent text-white" : "border-white/15 text-white/70 hover:bg-white/10"}`}
+              className={`rounded-full border px-2 py-0.5 text-[11px] transition ${reason === key ? "border-transparent text-white" : "border-ink/15 text-ink/70 hover:bg-ink/10"}`}
               style={reason === key ? { backgroundColor: ACCENT } : undefined}
             >
               {tm(SKIP_REASON[key] ?? key)}: {n}
@@ -2297,12 +2312,12 @@ function UnreadableDocuments({ drive }: { drive: string }) {
               <span className="min-w-0 flex-1 truncate" title={d.source_path}>
                 {d.source_path.split("/").pop()}
               </span>
-              <span className="shrink-0 text-amber-300/90">
+              <span className="shrink-0 text-amber-700/90 dark:text-amber-300/90">
                 {tm(SKIP_REASON[d.reason] ?? d.reason)}
               </span>
             </div>
             {!!d.skipped_pages?.length && (
-              <div className="pl-2 text-[11px] text-white/50">
+              <div className="pl-2 text-[11px] text-ink/50">
                 {tm("Pages not read")}:{" "}
                 {d.skipped_pages
                   .map(
@@ -2316,7 +2331,7 @@ function UnreadableDocuments({ drive }: { drive: string }) {
         ))}
       </div>
       {data?.truncated && (
-        <div className="mt-1 text-[11px] text-white/45">
+        <div className="mt-1 text-[11px] text-ink/45">
           {tm("Only the first documents are listed; the counts cover all.")}
         </div>
       )}
@@ -2326,9 +2341,9 @@ function UnreadableDocuments({ drive }: { drive: string }) {
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-white/10 p-3" style={{ backgroundColor: PANEL }}>
+    <div className="rounded-xl border border-ink/10 p-3" style={{ backgroundColor: PANEL }}>
       <div className="text-lg font-semibold">{value}</div>
-      <div className="text-[11px] text-white/50">{label}</div>
+      <div className="text-[11px] text-ink/50">{label}</div>
     </div>
   );
 }
@@ -2376,7 +2391,7 @@ function ProfileTab({
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="text-sm font-semibold">{label(profile.name)}</div>
-      <div className="text-[11px] text-white/50">
+      <div className="text-[11px] text-ink/50">
         {profile.id} · {tm("Version")} {profile.version}
       </div>
       {notice}
@@ -2384,10 +2399,7 @@ function ProfileTab({
       <Section title={tm("Entity kinds")}>
         <div className="flex flex-wrap gap-1.5">
           {profile.entity_subtypes.map((s) => (
-            <span
-              key={s.id}
-              className="rounded-full border border-white/10 px-2 py-0.5 text-[11px]"
-            >
+            <span key={s.id} className="rounded-full border border-ink/10 px-2 py-0.5 text-[11px]">
               <span
                 className="mr-1 inline-block h-2 w-2 rounded-full"
                 style={{ backgroundColor: TYPE_COLOR[s.type] }}
@@ -2402,7 +2414,7 @@ function ProfileTab({
           {profile.relation_types.map((r) => (
             <div key={r.id} className="flex gap-2 text-xs">
               <span className="w-40 shrink-0 font-medium">{label(r.label)}</span>
-              <span className="text-white/50">
+              <span className="text-ink/50">
                 {r.from.map((t) => tm(TYPE_NAME[t])).join("/")} →{" "}
                 {r.to.map((t) => tm(TYPE_NAME[t])).join("/")}
               </span>
@@ -2418,7 +2430,7 @@ function ProfileTab({
                 setMessage(null);
                 setDraft(JSON.stringify({ ...profile, version: profile.version + 1 }, null, 2));
               }}
-              className="rounded-full border border-white/15 px-3 py-1 text-xs hover:bg-white/10"
+              className="rounded-full border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10"
             >
               {tm("Edit profile (JSON)")}
             </button>
@@ -2428,7 +2440,7 @@ function ProfileTab({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 spellCheck={false}
-                className="h-80 w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-[11px] outline-none"
+                className="h-80 w-full rounded-lg border border-ink/10 bg-shade/30 p-2 font-mono text-[11px] outline-none"
               />
               <div className="mt-2 flex gap-2">
                 <button
@@ -2440,7 +2452,7 @@ function ProfileTab({
                 </button>
                 <button
                   onClick={() => setDraft(null)}
-                  className="rounded-full border border-white/15 px-3 py-1 text-xs hover:bg-white/10"
+                  className="rounded-full border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10"
                 >
                   {tm("Cancel")}
                 </button>

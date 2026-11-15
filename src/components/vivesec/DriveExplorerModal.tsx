@@ -37,9 +37,9 @@ import {
 import { useLang } from "./i18n";
 import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
 
-const PANEL = "#10243A";
-const BG = "#0A1B2D";
-const HEAD = "#071625";
+const PANEL = "var(--surface-3)";
+const BG = "var(--surface-1)";
+const HEAD = "var(--surface-0)";
 
 export type ExplorerFile = {
   id: string;
@@ -72,11 +72,12 @@ function iconFor(type: ExplorerFile["type"]) {
 }
 
 function tintFor(type: ExplorerFile["type"]) {
-  if (type === "xlsx" || type === "csv") return "bg-emerald-400/10 text-emerald-300";
-  if (type === "docx") return "bg-sky-400/10 text-sky-300";
-  if (type === "md") return "bg-violet-400/10 text-violet-300";
-  if (type === "txt") return "bg-amber-400/10 text-amber-300";
-  return "bg-rose-400/10 text-rose-300";
+  if (type === "xlsx" || type === "csv")
+    return "bg-emerald-400/10 text-emerald-700 dark:text-emerald-300";
+  if (type === "docx") return "bg-sky-400/10 text-sky-700 dark:text-sky-300";
+  if (type === "md") return "bg-violet-400/10 text-violet-700 dark:text-violet-300";
+  if (type === "txt") return "bg-amber-400/10 text-amber-700 dark:text-amber-300";
+  return "bg-rose-400/10 text-rose-700 dark:text-rose-300";
 }
 
 export function DriveExplorerModal({
@@ -185,8 +186,8 @@ export function DriveExplorerModal({
   };
 
   const allSelected = sortedFiles.length > 0 && sortedFiles.every((file) => selected.includes(file.id));
-  const navButton = "grid h-8 w-8 shrink-0 place-items-center rounded-md text-white/70 transition hover:bg-white/10 disabled:opacity-30";
-  const toolbarButton = "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-white/10 px-2.5 py-1.5 text-[11.5px] text-white/75 transition hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:text-white/30 disabled:hover:bg-transparent";
+  const navButton = "grid h-8 w-8 shrink-0 place-items-center rounded-md text-ink/70 transition hover:bg-ink/10 disabled:opacity-30";
+  const toolbarButton = "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-ink/10 px-2.5 py-1.5 text-[11.5px] text-ink/75 transition hover:bg-ink/[0.07] disabled:cursor-not-allowed disabled:text-ink/30 disabled:hover:bg-transparent";
   const unavailableTitle = tm("Requires file-management support from the AI Box");
 
   if (!mounted) return null;
@@ -201,52 +202,52 @@ export function DriveExplorerModal({
         role="dialog"
         aria-modal="true"
         aria-label={tm("ViVeSecBox File Explorer")}
-        className="relative flex h-full w-full flex-col overflow-hidden border border-white/10 shadow-2xl sm:h-[92vh] sm:max-w-6xl sm:rounded-lg"
+        className="relative flex h-full w-full flex-col overflow-hidden border border-ink/10 shadow-2xl sm:h-[92vh] sm:max-w-6xl sm:rounded-lg"
         style={{ backgroundColor: BG, paddingBottom: "env(safe-area-inset-bottom)" }}
       >
-        <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5" style={{ backgroundColor: HEAD }}>
+        <div className="flex items-center gap-2 border-b border-ink/10 px-3 py-2.5" style={{ backgroundColor: HEAD }}>
           <button onClick={() => setTreeOpen((open) => !open)} className={`${navButton} lg:hidden`} aria-label={tm("Toggle navigation pane")}>
             <Menu className="h-4 w-4" />
           </button>
           <HardDrive className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           <div className="min-w-0 flex-1 truncate text-[13px] font-semibold">{tm("ViVeSecBox File Explorer")}</div>
-          <span className="hidden items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/50 sm:inline-flex">
+          <span className="hidden items-center gap-1 rounded-full border border-ink/10 px-2 py-0.5 text-[10px] text-ink/50 sm:inline-flex">
             <Lock className="h-3 w-3" /> {tm("Air-gapped")}
           </span>
           <button onClick={onClose} className={navButton} aria-label={tm("Close explorer")}><X className="h-4 w-4" /></button>
         </div>
 
-        <div className="flex items-center gap-1.5 border-b border-white/[0.07] px-3 py-2">
+        <div className="flex items-center gap-1.5 border-b border-ink/[0.07] px-3 py-2">
           <button className={navButton} disabled={historyIndex === 0} onClick={() => travel(historyIndex - 1)} aria-label={tm("Back")}><ArrowLeft className="h-4 w-4" /></button>
           <button className={navButton} disabled={historyIndex >= history.length - 1} onClick={() => travel(historyIndex + 1)} aria-label={tm("Forward")}><ArrowRight className="h-4 w-4" /></button>
           <button className={navButton} disabled={!parent} onClick={() => parent && navigate(parent)} aria-label={tm("Up one level")}><ArrowUp className="h-4 w-4" /></button>
           <button className={navButton} disabled={loading} onClick={onRefresh} aria-label={tm("Refresh")}><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></button>
 
-          <div className="ml-1 flex min-w-0 flex-1 items-center overflow-x-auto rounded-md border border-white/10 px-2 py-1.5" style={{ backgroundColor: PANEL }}>
-            <button onClick={() => navigate(driveRoot)} className="shrink-0 rounded px-1.5 py-0.5 text-[11.5px] text-white/75 hover:bg-white/10">{driveName || tm("DriveRoot")}</button>
+          <div className="ml-1 flex min-w-0 flex-1 items-center overflow-x-auto rounded-md border border-ink/10 px-2 py-1.5" style={{ backgroundColor: PANEL }}>
+            <button onClick={() => navigate(driveRoot)} className="shrink-0 rounded px-1.5 py-0.5 text-[11.5px] text-ink/75 hover:bg-ink/10">{driveName || tm("DriveRoot")}</button>
             {crumbs.map((crumb, index) => (
               <span key={`${crumb}-${index}`} className="flex shrink-0 items-center">
-                <ChevronRight className="h-3 w-3 text-white/30" />
-                <button onClick={() => navigate(`${driveRoot}/${crumbs.slice(0, index + 1).join("/")}`)} className="rounded px-1.5 py-0.5 text-[11.5px] text-white/75 hover:bg-white/10">{crumb}</button>
+                <ChevronRight className="h-3 w-3 text-ink/30" />
+                <button onClick={() => navigate(`${driveRoot}/${crumbs.slice(0, index + 1).join("/")}`)} className="rounded px-1.5 py-0.5 text-[11.5px] text-ink/75 hover:bg-ink/10">{crumb}</button>
               </span>
             ))}
           </div>
 
-          <div className="flex w-[40%] max-w-67.5 items-center gap-1.5 rounded-md border border-white/10 px-2 py-1.5" style={{ backgroundColor: PANEL }}>
-            <Search className="h-3.5 w-3.5 shrink-0 text-white/40" />
-            <input ref={searchRef} value={search} onChange={(event) => onSearch(event.target.value)} placeholder={tm("Search this drive")} className="w-full bg-transparent text-[12px] outline-none placeholder:text-white/35" />
-            {search && <button onClick={() => onSearch("")} aria-label={tm("Clear search")}><X className="h-3.5 w-3.5 text-white/45" /></button>}
+          <div className="flex w-[40%] max-w-67.5 items-center gap-1.5 rounded-md border border-ink/10 px-2 py-1.5" style={{ backgroundColor: PANEL }}>
+            <Search className="h-3.5 w-3.5 shrink-0 text-ink/40" />
+            <input ref={searchRef} value={search} onChange={(event) => onSearch(event.target.value)} placeholder={tm("Search this drive")} className="w-full bg-transparent text-[12px] outline-none placeholder:text-ink/35" />
+            {search && <button onClick={() => onSearch("")} aria-label={tm("Clear search")}><X className="h-3.5 w-3.5 text-ink/45" /></button>}
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 overflow-x-auto border-b border-white/[0.07] px-3 py-2">
+        <div className="flex items-center gap-1.5 overflow-x-auto border-b border-ink/[0.07] px-3 py-2">
           <button className={toolbarButton} disabled title={unavailableTitle}>
             <FolderPlus className="h-3.5 w-3.5" /> {tm("New folder")}
           </button>
           <button className={toolbarButton} disabled title={unavailableTitle}>
             <Upload className="h-3.5 w-3.5" /> {tm("Upload")}
           </button>
-          <span className="h-5 w-px shrink-0 bg-white/10" />
+          <span className="h-5 w-px shrink-0 bg-ink/10" />
           <button className={toolbarButton} disabled title={unavailableTitle}>
             <Scissors className="h-3.5 w-3.5" /> {tm("Cut")}
           </button>
@@ -265,17 +266,17 @@ export function DriveExplorerModal({
           <button className={toolbarButton} disabled title={unavailableTitle}>
             <Trash2 className="h-3.5 w-3.5" /> {tm("Delete")}
           </button>
-          <span className="h-5 w-px shrink-0 bg-white/10" />
+          <span className="h-5 w-px shrink-0 bg-ink/10" />
           <button className={toolbarButton} onClick={() => setSelected(allSelected ? [] : sortedFiles.map((file) => file.id))} disabled={!sortedFiles.length}>
             <Check className="h-3.5 w-3.5" /> {allSelected ? tm("Clear selection") : tm("Select all")}
           </button>
-          <span className="h-5 w-px shrink-0 bg-white/10" />
+          <span className="h-5 w-px shrink-0 bg-ink/10" />
           <div className="relative shrink-0">
             <button className={toolbarButton} onClick={() => { setSortOpen((open) => !open); setViewOpen(false); }}><ListFilter className="h-3.5 w-3.5" /> {tm("Sort")} <ChevronDown className="h-3 w-3" /></button>
             {sortOpen && (
-              <div className="absolute left-0 top-full z-30 mt-1 w-44 overflow-hidden rounded-md border border-white/10 shadow-2xl" style={{ backgroundColor: PANEL }}>
+              <div className="absolute left-0 top-full z-30 mt-1 w-44 overflow-hidden rounded-md border border-ink/10 shadow-2xl" style={{ backgroundColor: PANEL }}>
                 {([['name', tm('Name')], ['modified', tm('Date modified')], ['type', tm('Type')], ['size', tm('Size')]] as [SortKey, string][]).map(([key, label]) => (
-                  <button key={key} onClick={() => { if (sort === key) setAscending((value) => !value); else { setSort(key); setAscending(true); } setSortOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-white/80 hover:bg-white/[0.07]">
+                  <button key={key} onClick={() => { if (sort === key) setAscending((value) => !value); else { setSort(key); setAscending(true); } setSortOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ink/80 hover:bg-ink/[0.07]">
                     {sort === key ? <Check className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} /> : <span className="w-3.5" />} {label}
                   </button>
                 ))}
@@ -285,9 +286,9 @@ export function DriveExplorerModal({
           <div className="relative shrink-0">
             <button className={toolbarButton} onClick={() => { setViewOpen((open) => !open); setSortOpen(false); }}>{view === 'details' ? <LayoutList className="h-3.5 w-3.5" /> : view === 'compact' ? <Rows3 className="h-3.5 w-3.5" /> : <Grid2x2 className="h-3.5 w-3.5" />} {tm("View")} <ChevronDown className="h-3 w-3" /></button>
             {viewOpen && (
-              <div className="absolute left-0 top-full z-30 mt-1 w-40 overflow-hidden rounded-md border border-white/10 shadow-2xl" style={{ backgroundColor: PANEL }}>
+              <div className="absolute left-0 top-full z-30 mt-1 w-40 overflow-hidden rounded-md border border-ink/10 shadow-2xl" style={{ backgroundColor: PANEL }}>
                 {([['details', LayoutList, tm('Details')], ['compact', Rows3, tm('Compact')], ['grid', Grid2x2, tm('Grid')]] as const).map(([mode, Icon, label]) => (
-                  <button key={mode} onClick={() => { setView(mode); setViewOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-white/80 hover:bg-white/[0.07]"><Icon className="h-3.5 w-3.5" /> {label}</button>
+                  <button key={mode} onClick={() => { setView(mode); setViewOpen(false); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-ink/80 hover:bg-ink/[0.07]"><Icon className="h-3.5 w-3.5" /> {label}</button>
                 ))}
               </div>
             )}
@@ -296,55 +297,55 @@ export function DriveExplorerModal({
         </div>
 
         <div className="flex min-h-0 flex-1">
-          <aside className={`${treeOpen ? "absolute inset-y-11 left-0 z-40 flex w-64" : "hidden"} shrink-0 flex-col border-r border-white/[0.07] p-2 lg:static lg:flex lg:w-52`} style={{ backgroundColor: HEAD }}>
-            <div className="px-2 pb-2 pt-1 text-[10px] uppercase text-white/35">{tm("Locations")}</div>
-            <button onClick={() => navigate(driveRoot)} className="flex items-center gap-2 rounded-md bg-white/8 px-2.5 py-2 text-left text-[12px] text-white">
+          <aside className={`${treeOpen ? "absolute inset-y-11 left-0 z-40 flex w-64" : "hidden"} shrink-0 flex-col border-r border-ink/[0.07] p-2 lg:static lg:flex lg:w-52`} style={{ backgroundColor: HEAD }}>
+            <div className="px-2 pb-2 pt-1 text-[10px] uppercase text-ink/35">{tm("Locations")}</div>
+            <button onClick={() => navigate(driveRoot)} className="flex items-center gap-2 rounded-md bg-ink/8 px-2.5 py-2 text-left text-[12px] text-ink">
               <HardDrive className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} /><span className="truncate">{driveName || tm("DriveRoot")}</span>
             </button>
-            <div className="mt-auto flex items-center gap-2 border-t border-white/[0.07] px-2 pt-3 text-[10px] leading-relaxed text-white/40"><ShieldCheck className="h-4 w-4 shrink-0" style={{ color: ACCENT_TEXT }} />{tm("Searched locally on ViVeSecBox")}</div>
+            <div className="mt-auto flex items-center gap-2 border-t border-ink/[0.07] px-2 pt-3 text-[10px] leading-relaxed text-ink/40"><ShieldCheck className="h-4 w-4 shrink-0" style={{ color: ACCENT_TEXT }} />{tm("Searched locally on ViVeSecBox")}</div>
           </aside>
 
           <main className="min-w-0 flex-1 overflow-y-auto p-2 sm:p-3">
-            {searching && <div className="mb-2 px-1 text-[11px] text-white/45">{files.length} {tm("matching files in this drive")}{searchTruncated ? ` · ${tm("first results only")}` : ""}</div>}
-            {loading && !files.length && <div className="grid h-full place-items-center text-xs text-white/45"><div className="text-center"><Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />{tm("Loading files from the box…")}</div></div>}
-            {!loading && error && <div className="grid h-full place-items-center px-4 text-center text-xs text-rose-200/80"><div>{tm("Could not read the drive from the box.")}<div className="mt-1 text-[11px] text-white/40">{error}</div><button onClick={onRefresh} className="mt-3 rounded-md border border-white/15 px-3 py-1.5 text-white/80">{tm("Retry")}</button></div></div>}
-            {!loading && !error && !searching && folders.length === 0 && files.length === 0 && <div className="grid h-full place-items-center text-xs text-white/40">{tm("This folder is empty.")}</div>}
-            {!loading && !error && searching && files.length === 0 && <div className="grid h-full place-items-center text-xs text-white/40">{tm("No files match your search.")}</div>}
+            {searching && <div className="mb-2 px-1 text-[11px] text-ink/45">{files.length} {tm("matching files in this drive")}{searchTruncated ? ` · ${tm("first results only")}` : ""}</div>}
+            {loading && !files.length && <div className="grid h-full place-items-center text-xs text-ink/45"><div className="text-center"><Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />{tm("Loading files from the box…")}</div></div>}
+            {!loading && error && <div className="grid h-full place-items-center px-4 text-center text-xs text-rose-800/80 dark:text-rose-200/80"><div>{tm("Could not read the drive from the box.")}<div className="mt-1 text-[11px] text-ink/40">{error}</div><button onClick={onRefresh} className="mt-3 rounded-md border border-ink/15 px-3 py-1.5 text-ink/80">{tm("Retry")}</button></div></div>}
+            {!loading && !error && !searching && folders.length === 0 && files.length === 0 && <div className="grid h-full place-items-center text-xs text-ink/40">{tm("This folder is empty.")}</div>}
+            {!loading && !error && searching && files.length === 0 && <div className="grid h-full place-items-center text-xs text-ink/40">{tm("No files match your search.")}</div>}
 
             {!searching && folders.length > 0 && (
               <div className="mb-3 grid grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3">
-                {folders.map((folder) => <button key={folder.path} onDoubleClick={() => navigate(folder.path)} onClick={() => navigate(folder.path)} className="flex items-center gap-3 rounded-md px-2.5 py-2 text-left hover:bg-white/5"><span className="grid h-9 w-9 place-items-center rounded-md bg-sky-400/10"><Folder className="h-4 w-4 text-sky-300" /></span><span className="min-w-0 flex-1 truncate text-[12.5px]">{folder.name}</span><ChevronRight className="h-3.5 w-3.5 text-white/25" /></button>)}
+                {folders.map((folder) => <button key={folder.path} onDoubleClick={() => navigate(folder.path)} onClick={() => navigate(folder.path)} className="flex items-center gap-3 rounded-md px-2.5 py-2 text-left hover:bg-ink/5"><span className="grid h-9 w-9 place-items-center rounded-md bg-sky-400/10"><Folder className="h-4 w-4 text-sky-700 dark:text-sky-300" /></span><span className="min-w-0 flex-1 truncate text-[12.5px]">{folder.name}</span><ChevronRight className="h-3.5 w-3.5 text-ink/25" /></button>)}
               </div>
             )}
 
             {view === "details" && sortedFiles.length > 0 && (
               <div className="min-w-140">
-                <div className="grid grid-cols-[32px_minmax(220px,1fr)_130px_105px_150px] border-b border-white/[0.07] px-2 py-1.5 text-[10px] uppercase text-white/35"><span /><span>{tm("Name")}</span><span>{tm("Type")}</span><span>{tm("Size")}</span><span>{tm("Date modified")}</span></div>
+                <div className="grid grid-cols-[32px_minmax(220px,1fr)_130px_105px_150px] border-b border-ink/[0.07] px-2 py-1.5 text-[10px] uppercase text-ink/35"><span /><span>{tm("Name")}</span><span>{tm("Type")}</span><span>{tm("Size")}</span><span>{tm("Date modified")}</span></div>
                 {sortedFiles.map((file) => {
                   const Icon = iconFor(file.type);
                   const isSelected = selected.includes(file.id);
-                  return <button key={file.id} onClick={(event) => toggleFile(file.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => onOpen(file)} className={`grid w-full grid-cols-[32px_minmax(220px,1fr)_130px_105px_150px] items-center rounded-md px-2 py-2 text-left text-[12px] ${isSelected ? "bg-brand-soft/10 ring-1 ring-inset ring-brand-soft/30" : "hover:bg-white/4"}`}><span className={`grid h-4 w-4 place-items-center rounded border ${isSelected ? "border-brand bg-brand text-white" : "border-white/20"}`}>{isSelected && <Check className="h-3 w-3" />}</span><span className="flex min-w-0 items-center gap-2"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-md ${tintFor(file.type)}`}><Icon className="h-4 w-4" /></span><span className="truncate font-medium">{file.name}</span></span><span className="text-white/50">{file.type.toUpperCase()}</span><span className="text-white/50">{file.size}</span><span className="text-white/50">{file.modified}</span></button>;
+                  return <button key={file.id} onClick={(event) => toggleFile(file.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => onOpen(file)} className={`grid w-full grid-cols-[32px_minmax(220px,1fr)_130px_105px_150px] items-center rounded-md px-2 py-2 text-left text-[12px] ${isSelected ? "bg-brand-soft/10 ring-1 ring-inset ring-brand-soft/30" : "hover:bg-ink/4"}`}><span className={`grid h-4 w-4 place-items-center rounded border ${isSelected ? "border-brand bg-brand text-white" : "border-ink/20"}`}>{isSelected && <Check className="h-3 w-3" />}</span><span className="flex min-w-0 items-center gap-2"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-md ${tintFor(file.type)}`}><Icon className="h-4 w-4" /></span><span className="truncate font-medium">{file.name}</span></span><span className="text-ink/50">{file.type.toUpperCase()}</span><span className="text-ink/50">{file.size}</span><span className="text-ink/50">{file.modified}</span></button>;
                 })}
               </div>
             )}
 
-            {view === "compact" && <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3">{sortedFiles.map((file) => { const Icon = iconFor(file.type); const isSelected = selected.includes(file.id); return <button key={file.id} onClick={(event) => toggleFile(file.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => onOpen(file)} className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left ${isSelected ? "bg-brand-soft/10 ring-1 ring-inset ring-brand-soft/30" : "hover:bg-white/4"}`}><Icon className={`h-4 w-4 shrink-0 ${tintFor(file.type).split(' ').pop()}`} /><span className="truncate text-[12px]">{file.name}</span></button>; })}</div>}
+            {view === "compact" && <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3">{sortedFiles.map((file) => { const Icon = iconFor(file.type); const isSelected = selected.includes(file.id); return <button key={file.id} onClick={(event) => toggleFile(file.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => onOpen(file)} className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left ${isSelected ? "bg-brand-soft/10 ring-1 ring-inset ring-brand-soft/30" : "hover:bg-ink/4"}`}><Icon className={`h-4 w-4 shrink-0 ${tintFor(file.type).split(' ').pop()}`} /><span className="truncate text-[12px]">{file.name}</span></button>; })}</div>}
 
-            {view === "grid" && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">{sortedFiles.map((file) => { const Icon = iconFor(file.type); const isSelected = selected.includes(file.id); return <button key={file.id} onClick={(event) => toggleFile(file.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => onOpen(file)} className={`relative min-h-32 rounded-md border p-3 text-left ${isSelected ? "border-brand-soft/50 bg-brand-soft/10" : "border-white/10 bg-white/2.5 hover:bg-white/6"}`}><span className={`mb-3 grid h-10 w-10 place-items-center rounded-md ${tintFor(file.type)}`}><Icon className="h-5 w-5" /></span><div className="wrap-break-word text-[12px] font-medium leading-snug">{file.name}</div><div className="mt-1 text-[10.5px] text-white/40">{file.size}</div></button>; })}</div>}
+            {view === "grid" && <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">{sortedFiles.map((file) => { const Icon = iconFor(file.type); const isSelected = selected.includes(file.id); return <button key={file.id} onClick={(event) => toggleFile(file.id, event.ctrlKey || event.metaKey)} onDoubleClick={() => onOpen(file)} className={`relative min-h-32 rounded-md border p-3 text-left ${isSelected ? "border-brand-soft/50 bg-brand-soft/10" : "border-ink/10 bg-ink/2.5 hover:bg-ink/6"}`}><span className={`mb-3 grid h-10 w-10 place-items-center rounded-md ${tintFor(file.type)}`}><Icon className="h-5 w-5" /></span><div className="wrap-break-word text-[12px] font-medium leading-snug">{file.name}</div><div className="mt-1 text-[10.5px] text-ink/40">{file.size}</div></button>; })}</div>}
           </main>
 
           {detailsOpen && (
-            <aside className="hidden w-60 shrink-0 border-l border-white/[0.07] p-4 md:block" style={{ backgroundColor: HEAD }}>
-              <div className="mb-4 text-[10px] uppercase text-white/35">{tm("Details")}</div>
-              {activeFile ? (() => { const Icon = iconFor(activeFile.type); return <div><span className={`mx-auto mb-3 grid h-14 w-14 place-items-center rounded-md ${tintFor(activeFile.type)}`}><Icon className="h-7 w-7" /></span><div className="wrap-break-word text-center text-[12.5px] font-medium">{activeFile.name}</div><dl className="mt-5 space-y-3 text-[11px]"><div><dt className="text-white/35">{tm("Location")}</dt><dd className="mt-0.5 wrap-break-word text-white/70">{activeFile.folder || driveName}</dd></div><div><dt className="text-white/35">{tm("Type")}</dt><dd className="mt-0.5 text-white/70">{activeFile.type.toUpperCase()}</dd></div><div><dt className="text-white/35">{tm("Size")}</dt><dd className="mt-0.5 text-white/70">{activeFile.size}</dd></div><div><dt className="text-white/35">{tm("Modified")}</dt><dd className="mt-0.5 text-white/70">{activeFile.modified}</dd></div></dl></div>; })() : <div className="text-[11.5px] leading-relaxed text-white/40">{selected.length > 1 ? `${selected.length} ${tm("items selected")}` : tm("Select a file to view its details.")}</div>}
+            <aside className="hidden w-60 shrink-0 border-l border-ink/[0.07] p-4 md:block" style={{ backgroundColor: HEAD }}>
+              <div className="mb-4 text-[10px] uppercase text-ink/35">{tm("Details")}</div>
+              {activeFile ? (() => { const Icon = iconFor(activeFile.type); return <div><span className={`mx-auto mb-3 grid h-14 w-14 place-items-center rounded-md ${tintFor(activeFile.type)}`}><Icon className="h-7 w-7" /></span><div className="wrap-break-word text-center text-[12.5px] font-medium">{activeFile.name}</div><dl className="mt-5 space-y-3 text-[11px]"><div><dt className="text-ink/35">{tm("Location")}</dt><dd className="mt-0.5 wrap-break-word text-ink/70">{activeFile.folder || driveName}</dd></div><div><dt className="text-ink/35">{tm("Type")}</dt><dd className="mt-0.5 text-ink/70">{activeFile.type.toUpperCase()}</dd></div><div><dt className="text-ink/35">{tm("Size")}</dt><dd className="mt-0.5 text-ink/70">{activeFile.size}</dd></div><div><dt className="text-ink/35">{tm("Modified")}</dt><dd className="mt-0.5 text-ink/70">{activeFile.modified}</dd></div></dl></div>; })() : <div className="text-[11.5px] leading-relaxed text-ink/40">{selected.length > 1 ? `${selected.length} ${tm("items selected")}` : tm("Select a file to view its details.")}</div>}
             </aside>
           )}
         </div>
 
-        <div className="flex min-h-11 items-center gap-3 border-t border-white/[0.07] px-3 py-2" style={{ backgroundColor: HEAD }}>
-          <span className="text-[11px] text-white/40">{folders.length} {tm("folders")} · {files.length} {tm("files")}</span>
-          {selected.length > 0 && <span className="text-[11px] text-white/55">{selected.length} {tm("selected")}</span>}
-          <button onClick={onClose} className="ml-auto rounded-md border border-white/10 px-3 py-1.5 text-[11.5px] text-white/75 hover:bg-white/10">{tm("Cancel")}</button>
+        <div className="flex min-h-11 items-center gap-3 border-t border-ink/[0.07] px-3 py-2" style={{ backgroundColor: HEAD }}>
+          <span className="text-[11px] text-ink/40">{folders.length} {tm("folders")} · {files.length} {tm("files")}</span>
+          {selected.length > 0 && <span className="text-[11px] text-ink/55">{selected.length} {tm("selected")}</span>}
+          <button onClick={onClose} className="ml-auto rounded-md border border-ink/10 px-3 py-1.5 text-[11.5px] text-ink/75 hover:bg-ink/10">{tm("Cancel")}</button>
           <button onClick={() => activeFile && onOpen(activeFile)} disabled={!activeFile} className="rounded-md px-3 py-1.5 text-[11.5px] font-semibold disabled:opacity-35" style={{ backgroundColor: ACCENT, color: ON_ACCENT }}>{tm("Open")}</button>
         </div>
       </div>

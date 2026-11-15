@@ -10,16 +10,9 @@ import {
   gatePath,
 } from "@/lib/auth/client";
 import { LOGIN_PATH, PASSWORD_PATH } from "@/lib/auth/protocol";
-import {
-  ACCENT,
-  ACCENT_TEXT,
-  LOGO_ASPECT,
-  LOGO_FILE_RATIO,
-  LOGO_ON_DARK,
-  NAVY,
-  ON_ACCENT,
-} from "./brand";
+import { ACCENT, ACCENT_TEXT, inkText, ON_ACCENT } from "./brand";
 import { LANGS, LanguageProvider, useLang, type Lang } from "./i18n";
+import { ThemeLogo, ThemeToggle } from "./ThemeControls";
 
 // Error codes of the login gate and the authentication service, mapped to the
 // English source text of the i18n table.
@@ -56,19 +49,7 @@ const go = (path: string) => window.location.assign(gatePath(path));
 /* ------------------------------------------------------------------ shell */
 
 export function GateLogo() {
-  const width = Math.round(180 * LOGO_FILE_RATIO);
-  const height = Math.round(width * LOGO_ASPECT);
-  return (
-    <img
-      src={LOGO_ON_DARK}
-      alt="ViVeSec"
-      width={width}
-      height={height}
-      draggable={false}
-      className="select-none"
-      style={{ width, height }}
-    />
-  );
+  return <ThemeLogo visibleWidth={180} />;
 }
 
 export function LanguagePicker() {
@@ -82,8 +63,8 @@ export function LanguagePicker() {
           onClick={() => setLang(l.code as Lang)}
           title={l.native}
           aria-pressed={l.code === lang}
-          className="rounded-md px-2 py-1 text-[11px] font-semibold transition hover:bg-white/10"
-          style={l.code === lang ? { color: ACCENT_TEXT } : { color: "rgba(255,255,255,0.55)" }}
+          className="rounded-md px-2 py-1 text-[11px] font-semibold transition hover:bg-ink/10"
+          style={l.code === lang ? { color: ACCENT_TEXT } : { color: inkText(0.55) }}
         >
           {l.code}
         </button>
@@ -103,18 +84,21 @@ function GateShell({
 }) {
   return (
     <div
-      className="flex min-h-screen flex-col items-center justify-center px-4 py-10 text-white"
+      className="flex min-h-screen flex-col items-center justify-center px-4 py-10 text-ink"
       style={{
-        backgroundColor: NAVY,
+        backgroundColor: "var(--surface-0)",
         fontFamily: "Arial, 'Liberation Sans', 'Nimbus Sans', Helvetica, sans-serif",
       }}
     >
       <div className="w-full max-w-md">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <GateLogo />
-          <LanguagePicker />
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <LanguagePicker />
+          </div>
         </div>
-        <main className="rounded-2xl border border-white/10 bg-[#10243A] p-6 shadow-2xl shadow-black/50">
+        <main className="rounded-2xl border border-ink/10 bg-surface-3 p-6 shadow-2xl shadow-shade/50">
           <h1 className="mb-5 flex items-center gap-2 text-lg font-semibold">
             <span style={{ color: ACCENT_TEXT }}>{icon}</span>
             {title}
@@ -133,12 +117,12 @@ function Field({
 }: { label: string; hint?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="mb-4 block">
-      <span className="mb-1.5 block text-xs font-medium text-white/70">{label}</span>
+      <span className="mb-1.5 block text-xs font-medium text-ink/70">{label}</span>
       <input
         {...input}
-        className="w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#B48CF5] focus:ring-2 focus:ring-[#8C49E9]/40"
+        className="w-full rounded-lg border border-ink/15 bg-ink/5 px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-ink/30 focus:border-brand-soft focus:ring-2 focus:ring-[#8C49E9]/40"
       />
-      {hint && <span className="mt-1 block text-[11px] text-white/50">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] text-ink/50">{hint}</span>}
     </label>
   );
 }
@@ -171,7 +155,7 @@ function SecondaryButton({ onClick, children }: { onClick: () => void; children:
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-white/70 transition hover:bg-white/10 hover:text-white"
+      className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs text-ink/70 transition hover:bg-ink/10 hover:text-ink"
     >
       {children}
     </button>
@@ -183,7 +167,7 @@ function ErrorLine({ text }: { text: string }) {
   return (
     <p
       role="alert"
-      className="mb-4 rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-100"
+      className="mb-4 rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-800 dark:text-rose-100"
     >
       {text}
     </p>
@@ -337,7 +321,7 @@ function LoginFlow() {
     return (
       <GateShell title={tm("Two-step verification")} icon={<ShieldCheck className="h-5 w-5" />}>
         <form method="post" onSubmit={submitCode} noValidate>
-          <p className="mb-4 text-sm text-white/75">
+          <p className="mb-4 text-sm text-ink/75">
             {tm("Enter the 6-digit code from your authenticator app.")}
           </p>
           <ErrorLine text={error} />
@@ -358,7 +342,7 @@ function LoginFlow() {
       icon={<ShieldCheck className="h-5 w-5" />}
     >
       <form method="post" onSubmit={submitCode} noValidate>
-        <ol className="mb-4 space-y-3 text-sm text-white/75">
+        <ol className="mb-4 space-y-3 text-sm text-ink/75">
           <li>
             {tm(
               "1. Install an authenticator app on your phone (for example Microsoft Authenticator, Google Authenticator or FreeOTP).",
@@ -369,25 +353,23 @@ function LoginFlow() {
         <div className="mb-4 flex justify-center">
           <QrCode rows={step.qr} label={tm("QR code for the authenticator app")} />
         </div>
-        <div className="mb-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-white/70">
+        <div className="mb-4 rounded-lg border border-ink/10 bg-ink/[0.03] p-3 text-xs text-ink/70">
           <p className="mb-1.5">{tm("Can't scan? Enter this key in the app:")}</p>
-          <p className="select-all break-all font-mono text-sm tracking-wider text-white">
+          <p className="select-all break-all font-mono text-sm tracking-wider text-ink">
             {groupedSecret}
           </p>
-          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px] text-white/55">
+          <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px] text-ink/55">
             <dt>{tm("Account")}</dt>
-            <dd className="text-white/80">{step.account}</dd>
+            <dd className="text-ink/80">{step.account}</dd>
             {step.issuer && (
               <>
                 <dt>{tm("Issuer")}</dt>
-                <dd className="text-white/80">{step.issuer}</dd>
+                <dd className="text-ink/80">{step.issuer}</dd>
               </>
             )}
           </dl>
         </div>
-        <p className="mb-3 text-sm text-white/75">
-          {tm("3. Enter the 6-digit code the app shows.")}
-        </p>
+        <p className="mb-3 text-sm text-ink/75">{tm("3. Enter the 6-digit code the app shows.")}</p>
         <ErrorLine text={error} />
         {codeField}
         <PrimaryButton busy={busy}>{busy ? tm("Checking…") : tm("Finish setup")}</PrimaryButton>
@@ -471,19 +453,19 @@ function PasswordFlow() {
     <GateShell title={tm("Change password")} icon={<KeyRound className="h-5 w-5" />}>
       {!loaded ? (
         <div className="flex justify-center py-6">
-          <Loader2 className="h-5 w-5 animate-spin text-white/60" />
+          <Loader2 className="h-5 w-5 animate-spin text-ink/60" />
         </div>
       ) : (
         <form method="post" onSubmit={submit} noValidate>
           {forced && (
-            <p className="mb-4 rounded-lg border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+            <p className="mb-4 rounded-lg border border-amber-300/40 bg-amber-400/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-100">
               {tm("Your password is temporary. Choose a new one to continue.")}
             </p>
           )}
           {done && (
             <p
               role="status"
-              className="mb-4 rounded-lg border border-emerald-300/40 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100"
+              className="mb-4 rounded-lg border border-emerald-300/40 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-100"
             >
               {tm("Password changed. Your other sessions were signed out.")}
             </p>

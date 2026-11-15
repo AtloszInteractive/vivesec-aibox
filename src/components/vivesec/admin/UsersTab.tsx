@@ -54,13 +54,13 @@ function RoomPicker({
   };
   return (
     <div>
-      <span className="mb-1 block text-[11px] font-medium text-white/65">{tm("Rooms")}</span>
+      <span className="mb-1 block text-[11px] font-medium text-ink/65">{tm("Rooms")}</span>
       {rooms.length === 0 && missing.length === 0 && (
-        <p className="text-[11px] text-white/50">
+        <p className="text-[11px] text-ink/50">
           {tm("There are no rooms yet. Create one under Rooms and permissions.")}
         </p>
       )}
-      <div className="grid max-h-48 grid-cols-2 gap-1.5 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.03] p-2">
+      <div className="grid max-h-48 grid-cols-2 gap-1.5 overflow-y-auto rounded-lg border border-ink/10 bg-ink/[0.03] p-2">
         {rooms.map((room) => (
           <Checkbox
             key={room.path}
@@ -191,7 +191,7 @@ function UserDialog({
       </div>
       {!managed && <RoomPicker rooms={rooms} selected={drives} onChange={setDrives} />}
       {managed && (
-        <p className="text-xs text-white/70">
+        <p className="text-xs text-ink/70">
           {tm("Rooms")}: {drives.map(roomName).join(", ") || "—"}
         </p>
       )}
@@ -352,7 +352,7 @@ function ConfirmDialog({
       }
     >
       {error && <Notice tone="error">{error}</Notice>}
-      <p className="text-xs leading-relaxed text-white/80">{texts.body}</p>
+      <p className="text-xs leading-relaxed text-ink/80">{texts.body}</p>
     </Dialog>
   );
 }
@@ -416,7 +416,7 @@ export function UsersTab({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={tm("Filter")}
-            className="w-40 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none placeholder:text-white/30 focus:border-[#B48CF5]"
+            className="w-40 rounded-lg border border-ink/15 bg-ink/5 px-2.5 py-1.5 text-xs text-ink outline-none placeholder:text-ink/30 focus:border-brand-soft"
           />
           <Button busy={busy} onClick={onReload}>
             <RefreshCw className="h-3.5 w-3.5" />
@@ -442,8 +442,8 @@ export function UsersTab({
       </div>
       <div className="mt-2 overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-xs">
-          <thead className="text-[11px] text-white/50">
-            <tr className="border-b border-white/10">
+          <thead className="text-[11px] text-ink/50">
+            <tr className="border-b border-ink/10">
               <th className="py-2 pr-2 font-medium">{tm("User")}</th>
               <th className="py-2 pr-2 font-medium">{tm("Roles")}</th>
               <th className="py-2 pr-2 font-medium">{tm("Rooms")}</th>
@@ -454,14 +454,14 @@ export function UsersTab({
           </thead>
           <tbody>
             {shown.map((user) => (
-              <tr key={user.username} className="border-b border-white/5 align-top">
+              <tr key={user.username} className="border-b border-ink/5 align-top">
                 <td className="py-2 pr-2">
-                  <div className="flex items-center gap-1.5 text-white">
+                  <div className="flex items-center gap-1.5 text-ink">
                     {user.username}
                     {user.username === me && <Badge tone="accent">{tm("you")}</Badge>}
                   </div>
                   {user.display_name && (
-                    <div className="text-[11px] text-white/50">{user.display_name}</div>
+                    <div className="text-[11px] text-ink/50">{user.display_name}</div>
                   )}
                   <div className="mt-1">
                     <Badge tone={user.source === "ldap" ? "accent" : "neutral"}>
@@ -469,8 +469,8 @@ export function UsersTab({
                     </Badge>
                   </div>
                 </td>
-                <td className="py-2 pr-2 text-white/80">{user.roles.join(", ") || "—"}</td>
-                <td className="max-w-[14rem] py-2 pr-2 text-white/80">
+                <td className="py-2 pr-2 text-ink/80">{user.roles.join(", ") || "—"}</td>
+                <td className="max-w-[14rem] py-2 pr-2 text-ink/80">
                   {user.drives.map(roomName).join(", ") || "—"}
                 </td>
                 <td className="py-2 pr-2">
@@ -490,7 +490,7 @@ export function UsersTab({
                     )}
                   </div>
                 </td>
-                <td className="py-2 pr-2 text-white/70">{formatTime(user.last_login_at, lang)}</td>
+                <td className="py-2 pr-2 text-ink/70">{formatTime(user.last_login_at, lang)}</td>
                 <td className="py-2">
                   <div className="flex flex-wrap justify-end gap-1">
                     <Button
