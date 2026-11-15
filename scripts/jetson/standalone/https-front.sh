@@ -5,7 +5,12 @@
 # from tls-pki.sh and relays to the web UI on loopback. It is the only network
 # surface of a standalone box:
 #   :443  the web UI (TLS 1.2/1.3, HSTS, security headers)
-#   :80   a redirect to HTTPS and the CA certificate download (/aibox-ca.cer)
+#   :80   the certificate page (/ and /cert), the CA certificate download
+#         (/aibox-ca.cer), and a redirect to HTTPS for everything else
+# A browser that does not trust the box CA cannot show anything of the box over
+# HTTPS, so the certificate page (cert-page/, copied next to nginx.conf on
+# deploy) lives on plain HTTP. It probes https://<host>/aibox-probe: a trusted
+# browser moves on to HTTPS at once, any other gets the installation steps.
 # A request for any other host name (or IP) is dropped without an answer, which
 # also stops DNS rebinding. Client-sent VVS-* headers are removed: the identity
 # headers are set by the box itself, never by a browser.
@@ -90,6 +95,50 @@ listen_lines() {
   for ip in "${listen_ips[@]}"; do echo "        listen $ip:$port$suffix;"; done
 }
 
+# Headers of the certificate page. It runs its own script and stylesheet only,
+# and may contact nothing but the HTTPS side of the same host (the probe).
+cert_page_headers() {
+  local indent=$1 scheme=$2
+  if [[ $scheme == https ]]; then
+    echo "${indent}add_header Strict-Transport-Security \"max-age=31536000\" always;"
+  fi
+  cat <<EOF
+${indent}add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://\$host; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+${indent}add_header X-Content-Type-Options "nosniff" always;
+${indent}add_header X-Frame-Options "DENY" always;
+${indent}add_header Referrer-Policy "no-referrer" always;
+${indent}add_header Cache-Control "no-store" always;
+EOF
+}
+
+# On HTTP the page answers / and /cert; on HTTPS only /cert (/ is the web UI).
+cert_page_locations() {
+  local indent=$1 scheme=$2 path
+  local -a exact=(/cert)
+  [[ $scheme == http ]] && exact=(/ /cert)
+  for path in "${exact[@]}"; do
+    echo "${indent}location = $path {"
+    echo "${indent}    root /srv/aibox-cert;"
+    echo "${indent}    try_files /index.html =404;"
+    cert_page_headers "${indent}    " "$scheme"
+    echo "${indent}}"
+  done
+  echo "${indent}location ^~ /cert/ {"
+  echo "${indent}    alias /srv/aibox-cert/;"
+  cert_page_headers "${indent}    " "$scheme"
+  echo "${indent}}"
+}
+
+# Answers only when the browser trusts the box CA: the page's trust test.
+probe_location() {
+  local indent=$1
+  echo "${indent}location = /aibox-probe {"
+  security_headers "${indent}    "
+  echo "${indent}    add_header Cache-Control \"no-store\" always;"
+  echo "${indent}    return 204;"
+  echo "${indent}}"
+}
+
 render() {
   local names header
   read_front_config
@@ -155,6 +204,7 @@ $(listen_lines 443 " ssl default_server")
 $(listen_lines 80 "")
         server_name $names;
 $(ca_download_location "        " no)
+$(cert_page_locations "        " http)
         location / {
             return 301 https://\$host\$request_uri;
         }
@@ -168,6 +218,8 @@ $(listen_lines 443 " ssl")
         ssl_certificate_key /etc/aibox-tls/server.key;
 $(security_headers "        ")
 $(ca_download_location "        " yes)
+$(cert_page_locations "        " https)
+$(probe_location "        ")
         location / {
             proxy_pass http://$upstream;
             proxy_http_version 1.1;
@@ -242,6 +294,7 @@ check_front_ports_free() {
 }
 
 set_run_args() {  # the docker run options shared by validation and the service
+  # The certificate page sits next to the configuration it belongs to.
   run_args=(--network host --read-only
     --tmpfs /tmp:rw,mode=1777,size=64m --tmpfs /var/cache/nginx:rw,size=16m
     --cap-drop ALL --cap-add NET_BIND_SERVICE --cap-add SETUID --cap-add SETGID --cap-add CHOWN
@@ -249,7 +302,33 @@ set_run_args() {  # the docker run options shared by validation and the service
     -v "$1:/etc/nginx/nginx.conf:ro"
     -v "$tls_dir/server:/etc/aibox-tls:ro"
     -v "$tls_dir/public:/srv/aibox-public:ro"
+    -v "$(dirname "$1")/cert-page:/srv/aibox-cert:ro"
     --entrypoint nginx)
+}
+
+# Copies cert-page/ next to the configuration; the previous copy is kept for
+# the rollback. Only plain files, world-readable for the nginx workers.
+install_cert_page() {
+  local source="$script_dir/cert-page" target="$conf_dir/cert-page" file
+  [[ -f $source/index.html && -f $source/cert.js ]] || die "the certificate page is missing: $source"
+  rm -rf "$target.new"
+  mkdir -p "$target.new"
+  for file in "$source"/*; do
+    [[ -f $file ]] && cp "$file" "$target.new/"
+  done
+  chmod 0755 "$target.new"
+  chmod 0644 "$target.new"/*
+  rm -rf "$target.prev"
+  if [[ -d $target ]]; then mv "$target" "$target.prev"; fi
+  mv "$target.new" "$target"
+}
+
+restore_cert_page() {
+  local target="$conf_dir/cert-page"
+  if [[ -d $target.prev ]]; then
+    rm -rf "$target"
+    mv "$target.prev" "$target"
+  fi
 }
 
 cmd_deploy() {
@@ -272,13 +351,16 @@ cmd_deploy() {
   new_conf="$conf_dir/nginx.conf.new"
   render >"$new_conf"
   chmod 0644 "$new_conf"
+  install_cert_page
   log "validating the configuration"
   set_run_args "$new_conf"
   # `nginx -t` binds the listen addresses, so it needs the host network: a
   # LAN address does not exist anywhere else. A port still held by the running
   # front is accepted in test mode; an address missing from the box is not.
-  docker run --rm "${run_args[@]}" "$image" -t -q ||
+  docker run --rm "${run_args[@]}" "$image" -t -q || {
+    restore_cert_page
     die "nginx rejected the configuration (kept in $new_conf)"
+  }
   stamp=$(date -u +%Y%m%d-%H%M%S)
   if [[ -f $conf ]]; then cp -p "$conf" "$conf.prev"; fi
   mv -f "$new_conf" "$conf"
@@ -300,6 +382,7 @@ cmd_deploy() {
   docker logs --tail 20 "$CONTAINER" >&2 2>&1 || true
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   if [[ -f $conf.prev ]]; then mv -f "$conf.prev" "$conf"; fi
+  restore_cert_page
   if [[ -n $prev ]]; then
     docker rename "$prev" "$CONTAINER"
     docker start "$CONTAINER" >/dev/null
@@ -333,9 +416,17 @@ cmd_verify() {
         test "${code:0:1}" = 2 -o "${code:0:1}" = 3
       code=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 10 \
         -H "Host: $name" "http://$probe/some/path?x=1" 2>/dev/null || true)
-      run_check "http://$name/ redirects to https ($code)" \
+      run_check "http://$name/<path> redirects to https ($code)" \
         test "$code" = "301 https://$name/some/path?x=1"
+      run_check "http://$name/ serves the certificate page" bash -c "curl -fsS --max-time 10 \
+        -H 'Host: $name' 'http://$probe/' | grep -q 'data-aibox-cert-page'"
     done
+    run_check "http://$probe/cert serves the certificate page and its script" bash -c "
+      curl -fsS --max-time 10 -H 'Host: ${dns_names[0]}' 'http://$probe/cert' | grep -q 'data-aibox-cert-page' &&
+      curl -fsS --max-time 10 -H 'Host: ${dns_names[0]}' 'http://$probe/cert/cert.js' | grep -q 'aibox-probe'"
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 --cacert "$tls_dir/ca/ca.crt" \
+      --resolve "${dns_names[0]}:443:$probe" "https://${dns_names[0]}/aibox-probe" 2>/dev/null || true)
+    run_check "https://${dns_names[0]}/aibox-probe answers for the certificate page ($code)" test "$code" = 204
     served=$(curl -sS --max-time 10 -H "Host: ${dns_names[0]}" "http://$probe/aibox-ca.cer" 2>/dev/null |
       openssl dgst -sha256 -r | cut -d' ' -f1)
     run_check "http://$probe/aibox-ca.cer is the box CA" test "$served" = "$fp"
@@ -365,5 +456,5 @@ case ${1:-} in
   docker-args)  # internal: the hardened run options for CONF, one per line (tests)
     set_run_args "${2:?docker-args needs the nginx.conf path}"
     printf '%s\n' "${run_args[@]}" ;;
-  *) sed -n '2,26p' "$0"; exit 2 ;;
+  *) sed -n '2,32p' "$0"; exit 2 ;;
 esac

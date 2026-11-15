@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>ViVeSec AI Box</title>
+<link rel="stylesheet" href="/cert/cert.css">
+</head>
+<body class="nojs" data-aibox-cert-page="1">
+<header class="top">
+  <img class="logo" src="/cert/logo.png" alt="ViVeSec" width="177" height="51">
+  <nav class="langs" id="langs" aria-label="Language"></nav>
+</header>
+
+<main>
+  <section class="status" id="status" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <div class="status-body">
+      <p class="status-title" id="status-title"></p>
+      <p class="status-text" id="status-text"></p>
+    </div>
+    <a class="button primary hidden" id="open" href="/"></a>
+  </section>
+
+  <div id="guide" class="guide">
+    <h1 id="title">Install the AI Box certificate on this device</h1>
+    <p id="lead"></p>
+
+    <section class="warning">
+      <strong id="warning-title"></strong>
+      <p id="warning-text"></p>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">1</span> <span id="dl-title"></span></h2>
+      <a class="button primary" id="download" href="/aibox-ca.cer" download="aibox-ca.cer">aibox-ca.cer</a>
+      <p class="muted" id="dl-note"></p>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">2</span> <span id="choose-title"></span></h2>
+      <div class="tabs" id="tabs" role="tablist"></div>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">3</span> <span id="fp-title"></span></h2>
+      <div id="fp-body" class="items"></div>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">4</span> <span id="install-title"></span></h2>
+      <ol class="steps" id="install-body"></ol>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">5</span> <span id="done-title"></span></h2>
+      <p id="done-text"></p>
+    </section>
+
+    <p class="admin" id="admin"></p>
+  </div>
+
+  <noscript>
+    <section class="step">
+      <p>JavaScript is off. Download the certificate from <a href="/aibox-ca.cer">/aibox-ca.cer</a>,
+        compare its SHA-256 fingerprint with the handover sheet, install it as a trusted root
+        certification authority, then open the AI Box with https://.</p>
+      <p lang="hu">A JavaScript ki van kapcsolva. Töltse le a tanúsítványt
+        (<a href="/aibox-ca.cer">/aibox-ca.cer</a>), vesse össze az SHA-256 ujjlenyomatát az
+        átadás-átvételi lappal, telepítse megbízható legfelső szintű hitelesítésszolgáltatóként,
+        majd nyissa meg az AI Boxot https:// címmel.</p>
+    </section>
+  </noscript>
+</main>
+<script src="/cert/cert.js"></script>
+</body>
+</html>

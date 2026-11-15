@@ -3637,8 +3637,8 @@
       "type": "path",
       "default": "/data/https",
       "allowed": "directory path",
-      "fail_safe": "The previous nginx.conf is kept as nginx.conf.prev and restored if the deploy fails.",
-      "impact": "Standalone HTTPS (E27): where https-front.sh writes the rendered nginx configuration.",
+      "fail_safe": "The previous nginx.conf and certificate page are kept as nginx.conf.prev and cert-page.prev and restored if the deploy fails.",
+      "impact": "Standalone HTTPS (E27): where https-front.sh writes the rendered nginx configuration and the copy of the client certificate page (cert-page/).",
       "change": "install",
       "secret": false,
       "internal": false
