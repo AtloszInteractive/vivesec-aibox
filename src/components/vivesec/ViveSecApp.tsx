@@ -2114,8 +2114,9 @@ function ViveSecAppInner() {
     } catch (err) {
       // No mock fallback: the failure is shown as a failure.
       const detail = err instanceof Error ? err.message : "error";
-      // The box asked for the purpose (its setting changed under the tab).
-      if (/purpose_required/.test(detail)) setPurposeDialog(true);
+      // The box asked for the purpose, or refused the one given (its setting
+      // changed under the tab): ask again, with the value to correct.
+      if (/purpose_(required|invalid)/.test(detail)) setPurposeDialog(true);
       setMessages((all) =>
         all.map((m) =>
           m.id === loadingId
