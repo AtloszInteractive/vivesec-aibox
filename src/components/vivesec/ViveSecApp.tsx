@@ -63,7 +63,13 @@ import {
   type AdapterInvestigation,
   type AdapterSuggestion,
 } from "@/lib/api/rag.functions";
-import { graphApi, type GraphInvestigationView } from "@/lib/api/graph.functions";
+import {
+  graphApi,
+  type GraphInvestigationView,
+  type GraphLabel,
+  type GraphProfile,
+  type GraphWatchCheck,
+} from "@/lib/api/graph.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
 import { reloadKeepingDraft, takeReloadDraft, useUiUpdateAvailable } from "@/lib/ui-update";
 import {
@@ -117,6 +123,7 @@ import {
   Link2,
   ShieldCheck,
   History,
+  Eye,
   Lightbulb,
   CornerDownRight,
   CheckSquare,
@@ -829,6 +836,15 @@ function ViveSecAppInner() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const resultScrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** Put a question opening into the composer, the cursor at its end. */
+  const putInComposer = useCallback((text: string) => {
+    setInput(text);
+    setTimeout(() => {
+      const box = textareaRef.current;
+      box?.focus();
+      box?.setSelectionRange(text.length, text.length);
+    }, 0);
+  }, []);
   // Below lg the three columns cannot coexist, so chat and results take turns.
   const [mobilePane, setMobilePane] = useState<"chat" | "results">("chat");
 
@@ -894,6 +910,7 @@ function ViveSecAppInner() {
   // Analyst boxes (ADAPTER_APP_MODE=analyst) offer chat + relationships only; the
   // drive browser and quick actions stay in the code but are not shown.
   const [analyst, setAnalyst] = useState(false);
+  const [watchlist, setWatchlist] = useState(false);
   // Concept 5.2: the case reference / legal basis of this session's queries,
   // and whether the box requires one (/status app.purpose).
   const [purposeConfig, setPurposeConfig] = useState<AdapterPurposeConfig>({
@@ -938,6 +955,7 @@ function ViveSecAppInner() {
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
       if (h.ok) setBoxVersion(h.version ?? null);
       if (h.ok) setAnalyst(h.app?.mode === "analyst");
+      if (h.ok) setWatchlist(Boolean(h.app?.watchlist));
       if (h.ok && h.app) setPurposeConfig(h.app.purpose);
       if (h.ok) {
         const policy = h.chatPolicy;
@@ -2801,20 +2819,18 @@ function ViveSecAppInner() {
                     </div>
                   ))}
                   {analyst && !chatMessages.some((m) => m.role !== "system") && (
-                    <ChatStarters
-                      previous={conversations.find(
-                        (c) => c.id !== conversationId && c.turn_count > 0,
+                    <>
+                      {watchlist && !purposeMissing && (
+                        <WatchCard key={drive} drive={drive} onTemplate={putInComposer} />
                       )}
-                      onOpen={(id) => void openConversation(id)}
-                      onTemplate={(text) => {
-                        setInput(text);
-                        setTimeout(() => {
-                          const box = textareaRef.current;
-                          box?.focus();
-                          box?.setSelectionRange(text.length, text.length);
-                        }, 0);
-                      }}
-                    />
+                      <ChatStarters
+                        previous={conversations.find(
+                          (c) => c.id !== conversationId && c.turn_count > 0,
+                        )}
+                        onOpen={(id) => void openConversation(id)}
+                        onTemplate={putInComposer}
+                      />
+                    </>
                   )}
                   {/* Room for the last answer to reach the top — no more (see tailSpace) */}
                   {tailSpace > 0 && (
@@ -3503,6 +3519,7 @@ function ViveSecAppInner() {
                 key={graphKey}
                 drive={drive}
                 initial={graphInitial}
+                watchlist={watchlist}
                 onClose={() => {
                   setGraphOpen(false);
                   setGraphInitial(null);
@@ -5767,6 +5784,157 @@ function Observations({ items }: { items?: string[] }) {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/** Watchlist pilot: what is new about the entities this analyst watches. An
+ *  empty conversation checks them once (the box logs it under the purpose). */
+function WatchCard({ drive, onTemplate }: { drive: string; onTemplate: (text: string) => void }) {
+  const { tm, lang } = useLang();
+  const [items, setItems] = useState<GraphWatchCheck[] | null>(null);
+  const [relations, setRelations] = useState<GraphProfile["relation_types"]>([]);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const list = await graphApi.watchList(drive);
+        if (!list.items.length) {
+          if (live) setItems([]);
+          return;
+        }
+        const [checked, profile] = await Promise.all([
+          graphApi.watchCheck(drive),
+          graphApi.profile(drive).catch(() => null),
+        ]);
+        if (!live) return;
+        setRelations(profile?.profile.relation_types ?? []);
+        setItems(checked.items);
+      } catch {
+        if (live) setFailed(true);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [drive]);
+  const code = lang.toLowerCase() as keyof GraphLabel;
+  const relLabel = (type: string) => {
+    const label = relations.find((r) => r.id === type)?.label;
+    return label?.[code] ?? label?.en ?? type;
+  };
+
+  async function seen(id: string) {
+    try {
+      await graphApi.watchSeen(drive, id);
+      setItems((all) => all?.map((i) => (i.id === id ? { ...i, new: [], more: [] } : i)) ?? null);
+    } catch {
+      toast.error(tm("The watchlist could not be changed."));
+    }
+  }
+  async function remove(id: string) {
+    try {
+      await graphApi.watchRemove(drive, id);
+      setItems((all) => all?.filter((i) => i.id !== id) ?? null);
+    } catch {
+      toast.error(tm("The watchlist could not be changed."));
+    }
+  }
+
+  if (failed) {
+    return (
+      <div className="rounded-2xl border border-ink/10 px-4 py-2 text-[12px] text-ink/55">
+        {tm("The watched entities could not be checked.")}
+      </div>
+    );
+  }
+  if (!items?.length) return null;
+  const changed = items.filter((i) => i.new.length || i.more.length).length;
+  return (
+    <div className="rounded-2xl border border-ink/10 bg-ink/[0.03] p-4">
+      <div className="mb-2 flex items-center gap-2 text-[10.5px] uppercase tracking-wider text-ink/45">
+        <Eye className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
+        {tm("Watched")} · {items.length}
+        <span className="ml-auto normal-case tracking-normal">
+          {changed ? `${tm("With news")}: ${changed}` : tm("Nothing new")}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {items.map((item) => (
+          <div key={item.id} className="rounded-xl border border-ink/10 px-3 py-2">
+            <div className="flex items-center gap-2 text-[12.5px]">
+              <button
+                onClick={() => onTemplate(tm("Who is directly related to: ") + item.label)}
+                title={tm("Ask about it")}
+                className="min-w-0 truncate text-left font-medium hover:underline"
+              >
+                {item.label}
+              </button>
+              {item.case_ref && (
+                <span className="shrink-0 text-[10.5px] text-ink/45">{item.case_ref}</span>
+              )}
+              <span className="ml-auto flex shrink-0 items-center gap-1">
+                {(item.new.length > 0 || item.more.length > 0) && (
+                  <button
+                    onClick={() => void seen(item.id)}
+                    className="rounded-full border border-ink/15 px-2 py-0.5 text-[10.5px] text-ink/70 hover:bg-ink/[0.06]"
+                  >
+                    {tm("Mark as seen")}
+                  </button>
+                )}
+                <button
+                  onClick={() => void remove(item.id)}
+                  title={tm("Stop watching")}
+                  aria-label={tm("Stop watching")}
+                  className="rounded-full p-1 text-ink/45 hover:bg-ink/[0.06] hover:text-ink"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            </div>
+            {item.missing ? (
+              <div className="text-[11px] text-ink/50">{tm("Not visible in this scope now.")}</div>
+            ) : !item.new.length && !item.more.length ? (
+              <div className="text-[11px] text-ink/50">
+                {tm("Nothing new since you last saw it.")}
+              </div>
+            ) : (
+              <ul className="mt-1 space-y-0.5 text-[11.5px]">
+                {item.new.map((c) => (
+                  <li key={c.id} className="flex items-center gap-2">
+                    <span
+                      className="shrink-0 rounded px-1 text-[10px] font-medium"
+                      style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+                    >
+                      {tm("new")}
+                    </span>
+                    <span className="shrink-0 text-ink/55">{relLabel(c.type)}</span>
+                    <span className="min-w-0 truncate">{c.other.label}</span>
+                    {c.start && (
+                      <span className="ml-auto shrink-0 text-[10px] text-ink/45">{c.start}</span>
+                    )}
+                  </li>
+                ))}
+                {item.more.map((c) => (
+                  <li key={c.id} className="flex items-center gap-2">
+                    <span className="shrink-0 rounded border border-ink/15 px-1 text-[10px] text-ink/60">
+                      +{c.documents - (c.before ?? 0)} {tm("documents")}
+                    </span>
+                    <span className="shrink-0 text-ink/55">{relLabel(c.type)}</span>
+                    <span className="min-w-0 truncate">{c.other.label}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {item.gone > 0 && (
+              <div className="mt-0.5 text-[10.5px] text-ink/45">
+                {tm("Earlier relations not visible now")}: {item.gone}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -153,6 +153,8 @@ export type AdapterApp = {
   quickActions: boolean;
   orchestrator: boolean;
   purpose: AdapterPurposeConfig;
+  /** The watchlist pilot (ADAPTER_WATCHLIST=on). */
+  watchlist: boolean;
 };
 
 function readPurpose(raw: unknown): AdapterPurposeConfig {
@@ -215,6 +217,7 @@ function readApp(raw: unknown): AdapterApp {
       quickActions: true,
       orchestrator: false,
       purpose,
+      watchlist: false,
     };
   }
   return {
@@ -223,6 +226,7 @@ function readApp(raw: unknown): AdapterApp {
     quickActions: Boolean(v.quick_actions),
     orchestrator: Boolean(v.orchestrator),
     purpose,
+    watchlist: v.watchlist === true,
   };
 }
 
@@ -1080,7 +1084,12 @@ export async function adapterGraph<T>(
     | "import"
     | "import/sources"
     | "import/status"
-    | "import/rag",
+    | "import/rag"
+    | "watch/list"
+    | "watch/add"
+    | "watch/remove"
+    | "watch/check"
+    | "watch/seen",
   body: Record<string, unknown>,
   drive: string,
 ): Promise<T> {

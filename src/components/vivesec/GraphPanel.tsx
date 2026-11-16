@@ -4,6 +4,7 @@ import {
   CalendarDays,
   Download,
   ExternalLink,
+  Eye,
   FileText,
   GitMerge,
   Loader2,
@@ -91,10 +92,13 @@ export type GraphSource = { path: string; page: number; quote: string; label: st
 export function GraphPanel({
   drive,
   initial,
+  watchlist = false,
   onClose,
   onOpenSource,
 }: {
   drive: string;
+  /** The watchlist pilot is on: entities can be watched. */
+  watchlist?: boolean;
   /** An investigation subgraph the Explore tab shows instead of the search. */
   initial?: GraphInvestigationView | null;
   onClose: () => void;
@@ -197,6 +201,7 @@ export function GraphPanel({
               relLabel={relLabel}
               relInfo={relInfo}
               subtypeLabel={subtypeLabel}
+              watchlist={watchlist}
               onOpenSource={onOpenSource}
             />
           )}
@@ -258,6 +263,7 @@ function ExploreTab({
   relLabel,
   relInfo,
   subtypeLabel,
+  watchlist,
   onOpenSource,
 }: {
   drive: string;
@@ -265,6 +271,7 @@ function ExploreTab({
   relLabel: (type: string) => string;
   relInfo: (type: string) => RelationInfo;
   subtypeLabel: (sub: string) => string;
+  watchlist: boolean;
   onOpenSource: (source: GraphSource) => void;
 }) {
   const { tm } = useLang();
@@ -618,6 +625,7 @@ function ExploreTab({
             graph={graph}
             relLabel={relLabel}
             subtypeLabel={subtypeLabel}
+            watchlist={watchlist}
             onEdge={setSelectedEdge}
             onExpand={() => void expand(focusNode.id)}
             onOpenSource={onOpenSource}
@@ -848,6 +856,7 @@ function EntitySheet({
   graph,
   relLabel,
   subtypeLabel,
+  watchlist,
   onEdge,
   onExpand,
   onOpenSource,
@@ -857,6 +866,7 @@ function EntitySheet({
   graph: Graph;
   relLabel: (type: string) => string;
   subtypeLabel: (sub: string) => string;
+  watchlist: boolean;
   onEdge: (id: string) => void;
   onExpand: () => void;
   onOpenSource: (source: GraphSource) => void;
@@ -888,6 +898,7 @@ function EntitySheet({
       >
         <Network className="h-3 w-3" /> {tm("Add its relations to the picture")}
       </button>
+      {watchlist && <WatchToggle drive={drive} node={node} />}
       {node.aliases.length > 1 && (
         <Section title={tm("Also known as")}>
           <div className="text-xs text-ink/75">{node.aliases.join(" · ")}</div>
@@ -954,6 +965,72 @@ function EntitySheet({
         )}
       </Section>
     </div>
+  );
+}
+
+/** Watchlist pilot: watch the focused entity, so an empty chat tells what is new
+ *  about it (adapter watch.py). Adding is purpose-bound and logged. */
+function WatchToggle({ drive, node }: { drive: string; node: GraphNode }) {
+  const { tm } = useLang();
+  const { run, notice } = useFailure();
+  // undefined: not known yet; null: not watched.
+  const [watchId, setWatchId] = useState<string | null | undefined>(undefined);
+  const [full, setFull] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setWatchId(undefined);
+    setFull(false);
+    graphApi
+      .watchList(drive)
+      .then((res) => live && setWatchId(res.items.find((i) => i.entity_id === node.id)?.id ?? null))
+      .catch(() => live && setWatchId(null));
+    return () => {
+      live = false;
+    };
+  }, [drive, node.id]);
+  if (watchId === undefined) return null;
+
+  async function toggle() {
+    setBusy(true);
+    setFull(false);
+    if (watchId) {
+      const res = await run(() => graphApi.watchRemove(drive, watchId));
+      if (res) setWatchId(null);
+    } else {
+      const res = await run(async () => {
+        try {
+          return await graphApi.watchAdd(drive, node.id);
+        } catch (err) {
+          if (err instanceof AdapterGraphError && err.status === 409) {
+            setFull(true);
+            return null;
+          }
+          throw err;
+        }
+      });
+      if (res) setWatchId(res.item.id);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => void toggle()}
+        disabled={busy}
+        title={tm(watchId ? "Stop watching" : "Watch: an empty chat tells what is new about it")}
+        className="ml-1.5 mt-2 inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1 text-[11px] text-ink/80 hover:bg-ink/10 disabled:opacity-50"
+        style={watchId ? { borderColor: ACCENT, color: ACCENT_TEXT } : undefined}
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Eye className="h-3 w-3" />}
+        {tm(watchId ? "Watching" : "Watch")}
+      </button>
+      {full && (
+        <Notice text={tm("The watchlist is full: stop watching something first.")} tone="warn" />
+      )}
+      {notice}
+    </>
   );
 }
 

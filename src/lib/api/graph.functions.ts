@@ -367,6 +367,66 @@ export const graphApi = {
   /** E29: how far the search copy of a folder's records got. */
   importRag: (drive: string, folder: string) =>
     adapterGraph<{ folder: string; rag: GraphImportRag }>("import/rag", { folder }, drive),
+  /** Watchlist pilot: the caller's watched entities in this scope. */
+  watchList: (drive: string) =>
+    adapterGraph<{ items: GraphWatchItem[]; max_items: number; max_days: number }>(
+      "watch/list",
+      {},
+      drive,
+    ),
+  watchAdd: (drive: string, entityId: string) =>
+    adapterGraph<{ created: boolean; item: GraphWatchItem }>(
+      "watch/add",
+      { entity_id: entityId },
+      drive,
+    ),
+  watchRemove: (drive: string, id: string) =>
+    adapterGraph<{ removed: boolean }>("watch/remove", { id }, drive),
+  /** What is new about each watched entity (purpose-bound, logged). */
+  watchCheck: (drive: string) =>
+    adapterGraph<{ items: GraphWatchCheck[]; documents: GraphDocuments }>("watch/check", {}, drive),
+  /** Take over what the last check found. */
+  watchSeen: (drive: string, id: string) =>
+    adapterGraph<{ seen: boolean }>("watch/seen", { id }, drive),
+};
+
+/** A watched entity (adapter watch.py). */
+export type GraphWatchItem = {
+  id: string;
+  entity_id: string;
+  label: string;
+  type: GraphEntityType;
+  subtype: string;
+  case_ref: string | null;
+  created: number;
+  expires: number;
+  checked: number | null;
+  seen: number | null;
+  relations: number;
+};
+
+/** A relation of a watched entity that is new, or that more documents back. */
+export type GraphWatchChange = {
+  id: string;
+  type: string;
+  start: string | null;
+  end: string | null;
+  weak: boolean;
+  documents: number;
+  doc_ids: string[];
+  /** Documents before (relations with new evidence only). */
+  before?: number;
+  other: { id: string | null; label: string | null; type: GraphEntityType | null };
+};
+
+export type GraphWatchCheck = GraphWatchItem & {
+  new: GraphWatchChange[];
+  more: GraphWatchChange[];
+  /** Earlier relations the caller does not see now. */
+  gone: number;
+  truncated?: boolean;
+  /** The entity is not visible in this scope now. */
+  missing?: boolean;
 };
 
 /** A structured source of the profile (graph_service import/sources). */
