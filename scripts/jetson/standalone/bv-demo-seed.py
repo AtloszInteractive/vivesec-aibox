@@ -49,6 +49,9 @@ SOURCES = ("fonix_base", "placement", "contacts", "intel_log", "odin")
 # Unfinished upload states (adapter drivestore.py); the newest uploads come first.
 PENDING = ("queued", "waiting_scanner", "indexing", "index_pending")
 BATCH = 150
+# Under the adapter's graph timeout (ADAPTER_GRAPH_TIMEOUT, default 120 s); a
+# longer import goes on in the graph and is followed with /import/status.
+GRAPH_WAIT = 100
 ACCOUNTS = (
     ("orszagos", "országos elemző", ["bv-orszagos"]),
     ("fefo", "FEFO", ["bv-orszagos", "bv-fefo"]),
@@ -215,13 +218,14 @@ def import_exports(box, tar, demo):
         content = tar.extractfile("exports/%s.csv" % source).read()
         body = {"source": source, "as_of": demo["as_of"], "folder": folder,
                 "filename": "%s_%s.csv" % (source, demo["as_of"]),
-                "content_b64": base64.b64encode(content).decode("ascii"), "wait": 300}
+                "content_b64": base64.b64encode(content).decode("ascii"), "wait": GRAPH_WAIT}
         started = time.time()
         status, out = box.call("POST", "/api/v1/ui/graph/import", body, drive=room, timeout=900)
         item = out.get("import") or {}
         while status == 200 and item.get("status") not in ("done", "failed", "refused"):
             status, out = box.call("POST", "/api/v1/ui/graph/import/status",
-                                   {"job": item.get("job"), "wait": 300}, drive=room, timeout=900)
+                                   {"job": item.get("job"), "wait": GRAPH_WAIT}, drive=room,
+                                   timeout=900)
             item = out.get("import") or item
         stats = item.get("stats") or {}
         print("import %s: %s %s in %ds %s rag=%s" % (
