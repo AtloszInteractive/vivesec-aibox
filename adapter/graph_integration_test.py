@@ -236,6 +236,65 @@ class GraphIntegrationTest(unittest.TestCase):
         return {e["label"] for e in out["entities"]}
 
     # -- tests -----------------------------------------------------------------------
+    def test_watchlist_reports_what_is_new_within_the_callers_access(self):
+        import purpose
+        import querylog
+        import watch
+        service = self.service
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        kovacs = next(e["id"] for e in self.query("lars", "find", text="Kovács János",
+                                                  types=["person"])[1]["entities"])
+        status, _ = self.call("/api/v1/ui/graph/watch/list", {}, user="lars")
+        self.assertEqual(404, status)  # off unless ADAPTER_WATCHLIST=on
+        logdir = os.path.join(temp.name, "log")
+        log = querylog.QueryLog(logdir)
+        with patch.object(service, "WATCHLIST", True), \
+                patch.object(service, "WATCHES", watch.WatchStore(os.path.join(temp.name, "w"))), \
+                patch.object(service, "PURPOSE",
+                             purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                patch.object(service, "QUERY_LOG", log):
+            status, out = self.call("/api/v1/ui/graph/watch/add", {"entity_id": kovacs},
+                                    user="lars")
+            self.assertEqual((428, "purpose_required"), (status, out["error"]))
+            bound = {"case_ref": "BV-2026/7"}
+            status, out = self.call("/api/v1/ui/graph/watch/add",
+                                    dict(bound, entity_id=kovacs), user="lars")
+            self.assertEqual((200, True, 1), (status, out["created"], out["item"]["relations"]),
+                             out)
+            watch_id = out["item"]["id"]
+            status, out = self.call("/api/v1/ui/graph/watch/check", bound, user="lars")
+            self.assertEqual((200, [], []), (status, out["items"][0]["new"],
+                                             out["items"][0]["more"]), out)
+            # The watched person's own note changes: Titkos Tamás instead of Nagy Éva.
+            # (A namesake in another document is another person until reviewed.)
+            self.sync_file(PUBLIC, "Kovács János és Titkos Tamás a Fő utcán találkozott, "
+                                   "a kapunál.")
+            self.settle()
+            status, out = self.call("/api/v1/ui/graph/watch/check", bound, user="lars")
+            self.assertEqual(200, status, out)
+            item = out["items"][0]
+            self.assertEqual(["Titkos Tamás"], [r["other"]["label"] for r in item["new"]], item)
+            self.assertEqual((1, [PUBLIC]), (item["gone"], [d["source_path"] for d in
+                                                            out["documents"].values()]))
+            # Seen: the next check has nothing new; another user has no watches.
+            status, out = self.call("/api/v1/ui/graph/watch/seen", {"id": watch_id}, user="lars")
+            self.assertTrue(out["seen"])
+            status, out = self.call("/api/v1/ui/graph/watch/check", bound, user="lars")
+            self.assertEqual(([], []), (out["items"][0]["new"], out["items"][0]["more"]))
+            status, out = self.call("/api/v1/ui/graph/watch/list", {}, user="hanna")
+            self.assertEqual((200, []), (status, out["items"]))
+            status, out = self.call("/api/v1/ui/graph/watch/remove", {"id": watch_id},
+                                    user="lars")
+            self.assertTrue(out["removed"])
+        records = []
+        for name in sorted(os.listdir(logdir)):
+            with open(os.path.join(logdir, name), encoding="utf-8") as handle:
+                records += [json.loads(line) for line in handle]
+        self.assertEqual(["watch:add", "watch:check", "watch:check", "watch:check"],
+                         [r["kind"] for r in records])
+        self.assertEqual({"BV-2026/7"}, {r["case_ref"] for r in records})
+
     def test_a_picture_of_the_graph_is_a_logged_export_with_its_purpose(self):
         import purpose
         import querylog

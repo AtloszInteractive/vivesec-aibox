@@ -697,6 +697,24 @@ call, never score or rank people, and name entities after a colon so no
 language's inflection breaks. Their language is the question's, else the
 answer's, else `ADAPTER_DEFAULT_LANG` (`hu|en|da|de`, default `en`).
 
+**Watchlist pilot** (`watch.py`, `ADAPTER_WATCHLIST`, default `off`; only `on`
+enables it): an analyst marks a graph entity (`POST /api/v1/ui/graph/watch/add
+{entity_id}`), and `watch/check` (optional `ids`) later reports per entry the
+relations that are new (`new`) or that more documents back (`more`, with
+`before`), and how many earlier ones the caller does not see now (`gone`).
+`watch/seen {id}` takes over what the last check found (a change that arrives
+between a check and `seen` is reported next time), `watch/list` and
+`watch/remove {id}` manage the list. A relation is keyed by its type, the other
+entity and that entity's name, because ids of document text are per document
+position. Each check is a one-hop graph call in the caller's current scope and
+access (the same stale-ACL guard as `/ui/graph/query`); `add` and `check` are
+purpose-bound and logged (`watch:add`, `watch:check` with every entry's own case
+reference). Nothing runs in the background and nothing is scored. Entries are
+per user and scope (like conversations), expire after `ADAPTER_WATCH_MAX_DAYS`
+(30), at most `ADAPTER_WATCH_MAX_ITEMS` (20), kept in `ADAPTER_WATCH_DIR` (memory
+only when empty). Whether such a list may be kept, and for how long, is the
+customer's legal decision: keep it off until they decide.
+
 With `GRAPH_URL` set, every chat message goes through the orchestrator
 (`orchestrator.py`): one JSON planning call chooses graph tools (relations,
 connection, common, timeline, copresence, shared_identifiers, most_connected,

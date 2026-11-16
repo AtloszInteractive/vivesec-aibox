@@ -155,6 +155,7 @@ import session  # noqa: E402
 import chat_policy
 import storage  # noqa: E402
 import voice  # noqa: E402
+import watch  # noqa: E402
 import wsfs  # noqa: E402
 from meta import MetaMirror, under as _under_path  # noqa: E402
 
@@ -755,7 +756,8 @@ QUERY_LOG = querylog.QueryLog.from_env()
 def app_settings():
     analyst = APP_MODE == APP_ANALYST
     return {"mode": APP_MODE, "drive_browser": not analyst, "quick_actions": not analyst,
-            "orchestrator": analyst and GRAPH.enabled, "purpose": purpose.public(PURPOSE)}
+            "orchestrator": analyst and GRAPH.enabled, "purpose": purpose.public(PURPOSE),
+            "watchlist": analyst and GRAPH.enabled and WATCHLIST}
 
 
 def _answer_summary(result):
@@ -816,6 +818,9 @@ def _protected_entry(access, result):
 # Multi-turn conversation memory (spec sec 2.4 + ViVeSecBox team: keep the
 # user's conversation, spill to disk on inactivity, reload on return).
 SESSIONS = session.SessionManager.from_env()
+# Watchlist pilot (watch.py): off unless ADAPTER_WATCHLIST=on.
+WATCHLIST = watch.enabled_from_env()
+WATCHES = watch.WatchStore.from_env()
 
 # AIBox->ViVeSecBox file-save channel (aibox_more3 §1): the box connects to
 # GET /api/v1/ws/fs while fs_ready; generated files are session-stored FIRST
@@ -2376,6 +2381,11 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/import/sources": self._graph_import_sources,
                 "/api/v1/ui/graph/import/status": self._graph_import_status,
                 "/api/v1/ui/graph/import/rag": self._graph_import_rag,
+                "/api/v1/ui/graph/watch/list": self._graph_watch_list,
+                "/api/v1/ui/graph/watch/add": self._graph_watch_add,
+                "/api/v1/ui/graph/watch/remove": self._graph_watch_remove,
+                "/api/v1/ui/graph/watch/check": self._graph_watch_check,
+                "/api/v1/ui/graph/watch/seen": self._graph_watch_seen,
                 "/api/v1/ui/index/skipped": self._index_skipped,
                 "/api/v1/ui/store/list": self._store_list,
                 "/api/v1/ui/store/upload": self._store_upload,
@@ -3440,10 +3450,17 @@ class Handler(BaseHTTPRequestHandler):
                                                    % sorted(graph.QUERIES)})
             return
         res = self._graph_post("/query/" + name, dict(params, **scope_body))
-        if res is None:
+        if res is None or not self._graph_cites_visible(res, req_scope, access):
             return
-        # Second line of defence, as for RAG contexts: the graph's copy of the
-        # ACL can lag the mirror. A cited document the policy hides fails the call.
+        if not self._log_graph(ctx, "graph:" + name, json.dumps(params, sort_keys=True),
+                               [d.get("source_path") for d in (res.get("documents") or {}).values()]):
+            return
+        self._send(200, res)
+
+    def _graph_cites_visible(self, res, req_scope, access):
+        """Second line of defence, as for RAG contexts: the graph's copy of the
+        ACL can lag the mirror. A cited document the policy hides fails the call
+        (False after the refusal)."""
         visible = _visible(access)
         for doc in (res.get("documents") or {}).values():
             source = doc.get("source_path") or ""
@@ -3452,11 +3469,117 @@ class Handler(BaseHTTPRequestHandler):
                 sys.stderr.write("[adapter] graph: answer cited a hidden document (stale ACL)\n")
                 self._send(503, {"ok": False, "error": "access rules are being synchronised, "
                                                        "retry shortly"})
-                return
-        if not self._log_graph(ctx, "graph:" + name, json.dumps(params, sort_keys=True),
-                               [d.get("source_path") for d in (res.get("documents") or {}).values()]):
+                return False
+        return True
+
+    # -- watchlist pilot (watch.py) ------------------------------------------
+    def _watch_request(self, bound=False):
+        if not WATCHLIST:
+            self._send(404, {"ok": False, "error": "the watchlist is not enabled"})
+            return None
+        return self._graph_request(bound=bound)
+
+    def _watch_neighbourhood(self, ctx, entity_id):
+        """The entity's one-hop relations in the caller's scope and access, or None
+        after the refusal."""
+        res = self._graph_post("/query/neighborhood", dict(ctx[4], id=entity_id, hops=1,
+                                                           limit=watch.NEIGHBOURS))
+        if res is None or not self._graph_cites_visible(res, ctx[2], ctx[3]):
+            return None
+        return res
+
+    def _graph_watch_list(self):
+        ctx = self._watch_request()
+        if ctx is None:
             return
-        self._send(200, res)
+        items = WATCHES.list(ctx[0], ctx[2].session_scope)
+        self._send(200, {"ok": True, "items": [WATCHES.public(i) for i in items],
+                         "max_items": WATCHES.max_items, "max_days": WATCHES.max_days})
+
+    def _graph_watch_add(self):
+        ctx = self._watch_request(bound=True)
+        if ctx is None:
+            return
+        user, payload, req_scope = ctx[0], ctx[1], ctx[2]
+        entity_id = str(payload.get("entity_id") or "").strip()
+        if not entity_id or len(entity_id) > 200:
+            self._send(400, {"ok": False, "error": "entity_id is required"})
+            return
+        res = self._watch_neighbourhood(ctx, entity_id)
+        if res is None:
+            return
+        node = next((n for n in res.get("nodes") or [] if n and n.get("id") == entity_id), None)
+        if node is None:
+            self._send(404, {"ok": False, "error": "not found"})
+            return
+        if len(WATCHES.list(user, req_scope.session_scope)) >= WATCHES.max_items and \
+                WATCHES.get_entity(user, req_scope.session_scope, entity_id) is None:
+            self._send(409, {"ok": False, "error": "at most %d watched entities"
+                                                   % WATCHES.max_items})
+            return
+        if not self._log_graph(ctx, "watch:add", json.dumps({"entity": entity_id}), []):
+            return
+        try:
+            item, created = WATCHES.add(user, req_scope.session_scope, node, res.get("edges"),
+                                        self._bound.get("case_ref"), res.get("nodes") or [])
+        except watch.WatchFull as e:
+            self._send(409, {"ok": False, "error": str(e)})
+            return
+        self._send(200, {"ok": True, "created": created, "item": WATCHES.public(item)})
+
+    def _graph_watch_remove(self):
+        ctx = self._watch_request()
+        if ctx is None:
+            return
+        removed = WATCHES.remove(ctx[0], ctx[2].session_scope, str(ctx[1].get("id") or ""))
+        self._send(200, {"ok": True, "removed": removed})
+
+    def _graph_watch_seen(self):
+        ctx = self._watch_request()
+        if ctx is None:
+            return
+        seen = WATCHES.seen(ctx[0], ctx[2].session_scope, str(ctx[1].get("id") or ""))
+        self._send(200, {"ok": True, "seen": seen})
+
+    def _graph_watch_check(self):
+        """What is new about the caller's watched entities (or the given `ids`)
+        since they last saw them: one graph call each, one query log record."""
+        ctx = self._watch_request(bound=True)
+        if ctx is None:
+            return
+        user, payload, req_scope = ctx[0], ctx[1], ctx[2]
+        items = WATCHES.list(user, req_scope.session_scope)
+        wanted = payload.get("ids")
+        if isinstance(wanted, list) and wanted:
+            wanted = {str(w) for w in wanted}
+            items = [i for i in items if i["id"] in wanted]
+        if not items:
+            self._send(200, {"ok": True, "items": [], "documents": {}})
+            return
+        out, documents, found = [], {}, []
+        for item in items:
+            res = self._watch_neighbourhood(ctx, item["entity_id"])
+            if res is None:
+                return
+            if not any(n and n.get("id") == item["entity_id"] for n in res.get("nodes") or []):
+                # Not visible in this scope or access now (or merged away).
+                out.append(dict(WATCHES.public(item), missing=True, new=[], more=[], gone=0))
+                continue
+            change = watch.diff(item, res)
+            found.append((item["id"], change.pop("snapshot")))
+            for row in change["new"] + change["more"]:
+                for doc_id in row["doc_ids"]:
+                    if doc_id in (res.get("documents") or {}):
+                        documents[doc_id] = res["documents"][doc_id]
+            out.append(dict(WATCHES.public(item), **change))
+        question = json.dumps({"watch": [{"entity": i["entity_id"], "case_ref": i.get("case_ref")}
+                                         for i in items]}, ensure_ascii=False, sort_keys=True)
+        if not self._log_graph(ctx, "watch:check", question,
+                               [d.get("source_path") for d in documents.values()]):
+            return
+        for watch_id, snap in found:
+            WATCHES.checked(user, req_scope.session_scope, watch_id, snap)
+        self._send(200, {"ok": True, "items": out, "documents": documents})
 
     def _log_graph(self, ctx, kind, question, sources):
         """Query log of a bound graph call; False after refusing it (log required

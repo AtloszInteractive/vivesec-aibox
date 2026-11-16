@@ -3017,6 +3017,62 @@
       ]
     },
     {
+      "name": "ADAPTER_WATCHLIST",
+      "component": "adapter",
+      "category": "chat",
+      "type": "enum",
+      "default": "off",
+      "allowed": "on | off",
+      "fail_safe": "Anything but on keeps it off (pilot; keeping such a list is the customer's legal decision).",
+      "impact": "Watchlist pilot (watch.py): analysts mark graph entities and the box reports new relations or new backing documents on request, purpose-bound and logged (watch:add, watch:check).",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "on",
+        "off"
+      ]
+    },
+    {
+      "name": "ADAPTER_WATCH_DIR",
+      "component": "adapter",
+      "category": "chat",
+      "type": "path",
+      "default": null,
+      "allowed": "directory path or empty",
+      "fail_safe": "Empty keeps watchlists in memory only (lost on restart).",
+      "impact": "Directory of the watchlist pilot's per-user, per-scope files.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_WATCH_MAX_DAYS",
+      "component": "adapter",
+      "category": "chat",
+      "type": "int",
+      "default": "30",
+      "allowed": "1..365",
+      "fail_safe": "Invalid values use 30; values are clamped to 1..365.",
+      "impact": "Days a watched entity stays on the list after it was added.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_WATCH_MAX_ITEMS",
+      "component": "adapter",
+      "category": "chat",
+      "type": "int",
+      "default": "20",
+      "allowed": "1..100",
+      "fail_safe": "Invalid values use 20; values are clamped to 1..100.",
+      "impact": "Watched entities per user and scope.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "ADAPTER_GRAPH_CHAT_FACTS",
       "component": "adapter",
       "category": "chat",
