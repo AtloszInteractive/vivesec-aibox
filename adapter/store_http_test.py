@@ -395,6 +395,11 @@ class StoreHttpTest(StandaloneHttpCase):
         self.assertEqual(self.service._reprocess_fetch("anna", ROOM + "/r.txt"), b"stored text")
         self.assertIsNone(self.service._reprocess_fetch("anna", ROOM + "/missing.txt"))
 
+    def test_reprocessing_can_start_from_the_store_without_a_vivesecbox(self):
+        with patch.object(self.service, "REPROCESS_SOURCE_DIR", ""):
+            self.assertEqual(self.service._reprocess_source(), "store")
+            self.assertTrue(self.service._reprocess_source_ready())
+
 
 if __name__ == "__main__":
     unittest.main()

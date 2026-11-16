@@ -436,7 +436,7 @@ export type GraphReprocessStatus = {
   partial_total?: number;
   absent_total: number;
   can_start: boolean;
-  source: "local" | "ws-fs";
+  source: "store" | "local" | "ws-fs";
   source_ready: boolean;
   run: GraphReprocessRun;
 };

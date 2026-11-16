@@ -612,7 +612,8 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   administrators; the folder must be inside the scope) re-reads, in this order,
   the absent files, the partial documents and the other stale ones the
   administrator may see (an absent file is sent with the RAG's doc_id,
-  `corpus.doc_id_of`): each file is fetched again -- from the ViVeSecBox over ws-fs as that
+  `corpus.doc_id_of`): each file is fetched again -- in standalone mode from the
+  box's own store (`source` `store`), else from the ViVeSecBox over ws-fs as that
   administrator, or from `ADAPTER_REPROCESS_SOURCE_DIR` on a development box --
   only when the forwarder and the graph queue are empty, and handed to the
   forwarder like a synced file (its current ACL applies). A file gone from the

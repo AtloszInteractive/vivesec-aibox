@@ -587,6 +587,18 @@ def _reprocess_fetch(user, path):
     return content or None
 
 
+def _reprocess_source():
+    """Where _reprocess_fetch reads: the standalone store, the development
+    mirror or the ViVeSecBox (ws-fs)."""
+    if INTEGRATION == integration.MODE_STANDALONE and STORE.enabled:
+        return "store"
+    return "local" if REPROCESS_SOURCE_DIR else "ws-fs"
+
+
+def _reprocess_source_ready():
+    return _reprocess_source() != "ws-fs" or WSFS.connected()
+
+
 REPROCESS = reprocess.Reprocessor(GRAPH, GRAPH_FORWARD, _reprocess_fetch)
 # (user, corpus ids, folder) -> (when, {(corpus_id, path)} the graph holds, how
 # many): the reprocessing panel polls every few seconds, the list is the scope.
@@ -3455,9 +3467,6 @@ class Handler(BaseHTTPRequestHandler):
             "forward": {"pending": forward["pending"], "counts": forward["counts"]},
             "gpu": gpu_gate.GATE.stats()})
 
-    def _reprocess_source_ready(self):
-        return bool(REPROCESS_SOURCE_DIR) or WSFS.connected()
-
     def _graph_known_paths(self, user, scope_body, prefix, fresh, limit):
         """{(corpus_id, path)} of the documents the graph holds in this scope (and
         the /documents/profile answer); None after a refusal was sent. The list is
@@ -3501,8 +3510,8 @@ class Handler(BaseHTTPRequestHandler):
                          "partial_total": res.get("partial_total", 0),
                          "absent_total": len(_graph_absent(known, req_scope, visible)),
                          "can_start": (user or "").casefold() in GRAPH_ADMINS,
-                         "source": "local" if REPROCESS_SOURCE_DIR else "ws-fs",
-                         "source_ready": self._reprocess_source_ready(),
+                         "source": _reprocess_source(),
+                         "source_ready": _reprocess_source_ready(),
                          "run": REPROCESS.status(
                              lambda p: req_scope.contains_path(p) and visible(p))})
 
@@ -3521,7 +3530,7 @@ class Handler(BaseHTTPRequestHandler):
         if prefix and not req_scope.contains_path(prefix):
             self._send(403, {"ok": False, "error": "folder outside the request scope"})
             return
-        if not self._reprocess_source_ready():
+        if not _reprocess_source_ready():
             self._send(503, {"ok": False, "error": "ViVeSecBox not connected: the files "
                                                    "cannot be fetched again"})
             return
