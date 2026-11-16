@@ -178,7 +178,11 @@ def _address(rng: random.Random) -> str:
     return "%s, %s %d." % (rng.choice(TOWNS), rng.choice(STREETS), rng.randint(1, 120))
 
 
-def build(n_persons: int = 120, seed: int = 26) -> World:
+def build(n_persons: int = 120, seed: int = 26,
+          institutions: list[str] | None = None) -> World:
+    """`institutions`: their names (default INSTITUTIONS); the bv demo passes the
+    profile's code list so documents and structured exports name them alike."""
+    institutions = list(institutions or INSTITUTIONS)
     rng = random.Random(seed)
     used_ids: set[str] = set()
     used_values: set[str] = set()
@@ -195,7 +199,7 @@ def build(n_persons: int = 120, seed: int = 26) -> World:
         return r
 
     n_cells = max(6, n_persons // 40)
-    for i, name in enumerate(INSTITUTIONS):
+    for i, name in enumerate(institutions):
         inst = Place("I%d" % (i + 1), "institution", name)
         places[inst.id] = inst
         for c in range(n_cells):
@@ -298,16 +302,16 @@ def build(n_persons: int = 120, seed: int = 26) -> World:
 
     # Placements, transfers, cell sharing.
     inmates = [p for p in persons.values() if p.role == "inmate"]
-    group_inst = {g: "I%d" % (g % len(INSTITUTIONS) + 1) for g in groups}
+    group_inst = {g: "I%d" % (g % len(institutions) + 1) for g in groups}
     for p in inmates:
-        inst = group_inst[p.group] if rng.random() < 0.7 else "I%d" % rng.randint(1, len(INSTITUTIONS))
+        inst = group_inst[p.group] if rng.random() < 0.7 else "I%d" % rng.randint(1, len(institutions))
         cell = "%s-C%d" % (inst, (p.group % n_cells) + 1 if rng.random() < 0.6
                            else rng.randint(1, n_cells))
         start = _date_between(rng, START, END - dt.timedelta(days=200))
         if rng.random() < 0.25:
             moved = _date_between(rng, start + dt.timedelta(days=60), END - dt.timedelta(days=30))
             add_rel("PLACED_IN", p.id, cell, start, moved, institution=inst)
-            new_inst = "I%d" % ((int(inst[1:]) % len(INSTITUTIONS)) + 1)
+            new_inst = "I%d" % ((int(inst[1:]) % len(institutions)) + 1)
             new_cell = "%s-C%d" % (new_inst, rng.randint(1, n_cells))
             add_rel("TRANSFERRED", p.id, new_inst, moved, None, from_institution=inst)
             add_rel("PLACED_IN", p.id, new_cell, moved, None, institution=new_inst)

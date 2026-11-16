@@ -301,13 +301,18 @@ def main() -> int:
     ap.add_argument("--tenant", default="default")
     ap.add_argument("--clean", action="store_true")
     args = ap.parse_args()
-
     out_root = os.path.abspath(args.out)
     if args.clean and os.path.isdir(out_root):
         shutil.rmtree(out_root)
-
     w = world_mod.build(args.persons, args.seed)
-    docs = Renderer(w, args.seed).render_all()
+    write_corpus(w, out_root, args.seed, args.tenant)
+    return 0
+
+
+def write_corpus(w: world_mod.World, out_root: str, seed: int, tenant: str = "default",
+                 quiet: bool = False) -> list[dict]:
+    """Render `w` into out_root (drives/, manifest.jsonl, answer_key.json); the manifest."""
+    docs = Renderer(w, seed).render_all()
 
     problems = []
     for d in docs:
@@ -324,10 +329,10 @@ def main() -> int:
         corpus_id = corpus_id_of_drive_root("%s/%s" % (DRIVE_PREFIX, d.drive))
         local_rel = "/".join(["drives", d.drive, d.rel])
         abs_path = os.path.join(out_root, *local_rel.split("/"))
-        size = write_doc(d, abs_path, args.seed * 1000 + i)
+        size = write_doc(d, abs_path, seed * 1000 + i)
         manifest.append({
-            "doc_id": make_doc_id(args.tenant, corpus_id, source_path),
-            "key": d.key, "tenant_id": args.tenant, "corpus_id": corpus_id, "drive": d.drive,
+            "doc_id": make_doc_id(tenant, corpus_id, source_path),
+            "key": d.key, "tenant_id": tenant, "corpus_id": corpus_id, "drive": d.drive,
             "source_path": source_path, "local_path": local_rel, "title": d.title,
             "kind": d.kind, "file_type": d.fmt.replace("pdf_scanned", "pdf"),
             "content_type": mimetypes.guess_type(abs_path)[0] or "application/octet-stream",
@@ -340,7 +345,7 @@ def main() -> int:
         per_drive[d.drive] += 1
         total += size
 
-    key = build_answer_key(w, docs, args.seed)
+    key = build_answer_key(w, docs, seed)
     key["documents"] = [{"key": m["key"], "doc_id": m["doc_id"], "source_path": m["source_path"],
                          "kind": m["kind"], "scanned": m["metadata"]["scanned"],
                          "noise_list": m["metadata"]["noise_list"]} for m in manifest]
@@ -352,6 +357,8 @@ def main() -> int:
     with io.open(os.path.join(out_root, "answer_key.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(key, f, ensure_ascii=False, indent=1)
 
+    if quiet:
+        return manifest
     q = key["questions"]
     print("documents: %d (%.1f MB) -> %s" % (len(docs), total / 1_048_576, out_root))
     print("  drives:  %s" % dict(per_drive))
@@ -365,7 +372,7 @@ def main() -> int:
              len(q["timeline"]), len(q["communities"])))
     if unevidenced:
         print("relations without evidence (excluded from the key): %s" % dict(unevidenced))
-    return 0
+    return manifest
 
 
 if __name__ == "__main__":

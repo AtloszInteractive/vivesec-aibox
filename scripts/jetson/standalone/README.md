@@ -380,3 +380,32 @@ text) and the environment variables of the containers (internal service keys,
 e.g. `RAG_API_KEY`); the models are not sensitive. Core dumps (apport) must be
 switched off on a customer box (`vault.py check` warns). TPM-sealed keys are
 not used (the Jetson has no discrete TPM).
+
+## Demo data: the BV dataset
+
+A fictional prison-service dataset for demonstrations and load tests:
+documents in four rooms plus the periodic exports of the `bv` profile
+(FŐNIX base data, placements, approved contacts, intelligence log with
+informants, ODIN), all from one invented world. On the workstation:
+
+```bash
+python graph-corpus/bv_demo.py --out bv-demo --preset large --clean --bundle bv-demo.tgz
+```
+
+`small` (~370 documents, ~1 400 inmates), `medium` (~1 000, ~5 000) or `large`
+(~1 900 documents; 15 000 inmates, 24 500 placements, 41 500 contacts,
+7 200 log and 5 200 ODIN rows). On the box (standalone mode, the graph
+profile `bv`, `admin` in `ADAPTER_GRAPH_ADMINS`):
+
+```bash
+python3 bv-demo-seed.py all bv-demo.tgz --prefix demo   # rooms, accounts, uploads, import, reprocessing
+python3 bv-demo-seed.py status bv-demo.tgz
+```
+
+It creates the rooms Nyilvántartás, Kommunikáció, Jelentések and Egyéb, three
+analyst accounts (`<prefix>-orszagos`, `<prefix>-fefo`, `<prefix>-intezet01`,
+with temporary passwords printed once), uploads the documents through the
+store, imports the exports into `Nyilvántartás/Adatbázis-exportok`, then starts
+the graph reprocessing that reads the bulk-uploaded documents with the model.
+Every step can be repeated. On a Jetson the reprocessing of the large preset
+takes most of a night.
