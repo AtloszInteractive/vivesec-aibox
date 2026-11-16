@@ -27,6 +27,8 @@ GRAPH_PORT=8095
 BROKER_PORT=${BROKER_PORT:-8099}
 NEO4J_IMAGE=${NEO4J_IMAGE:-neo4j:5-community}
 PROFILE=${GRAPH_PROFILE:-bv}
+# A large Neo4j graph takes minutes to open (about 2.5 min for 200k relations).
+GRAPH_START_WAIT=${GRAPH_START_WAIT:-600}
 GRAPH_KEYS='^(GRAPH_URL|GRAPH_API_KEY|ADAPTER_GPU_BROKER_PORT|ADAPTER_GRAPH_ADMINS)='
 
 adapter_env() {
@@ -165,7 +167,7 @@ docker run -d --name vivesec-graph --network host --restart unless-stopped \
   -e GRAPH_LLM_URL=http://127.0.0.1:$BROKER_PORT -e GRAPH_LLM_MODEL="${MODEL:-qwen3.6:35b}" \
   -e GRAPH_LLM_NUM_CTX="${NUM_CTX:-65536}" \
   vivesec-graph:latest >/dev/null
-wait_url http://127.0.0.1:$GRAPH_PORT/health 90 || { echo "  ABORT: graph did not come up"; docker logs --tail 30 vivesec-graph; exit 1; }
+wait_url http://127.0.0.1:$GRAPH_PORT/health "$GRAPH_START_WAIT" || { echo "  ABORT: graph did not come up"; docker logs --tail 30 vivesec-graph; exit 1; }
 curl -s -m 10 http://127.0.0.1:$GRAPH_PORT/health | sed 's/^/  health: /'; echo
 
 echo
