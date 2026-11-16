@@ -35,9 +35,9 @@ import {
 import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
 import { useLang } from "./i18n";
 
-const PANEL = "#10243A";
-const BG = "#0A1B2D";
-const HEAD = "#071625";
+const PANEL = "var(--surface-3)";
+const BG = "var(--surface-1)";
+const HEAD = "var(--surface-0)";
 const POLL_MS = 3000;
 
 type Pending = { file: File; rel: string };
@@ -111,11 +111,12 @@ function statusText(upload: StoreUpload, tm: (s: string) => string): string {
 }
 
 function statusTone(status: StoreUpload["status"]): string {
-  if (status === "indexed") return "text-emerald-300";
-  if (status === "infected" || status === "rejected" || status === "failed") return "text-rose-300";
+  if (status === "indexed") return "text-emerald-700 dark:text-emerald-300";
+  if (status === "infected" || status === "rejected" || status === "failed")
+    return "text-rose-700 dark:text-rose-300";
   if (status === "stored" || status === "waiting_scanner" || status === "index_pending")
-    return "text-amber-200";
-  return "text-white/60";
+    return "text-amber-800 dark:text-amber-200";
+  return "text-ink/60";
 }
 
 function visibleUpload(rel: string): boolean {
@@ -388,9 +389,9 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
   }
 
   const button =
-    "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-white/10 px-2.5 py-1.5 text-[11.5px] text-white/80 transition hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:text-white/30 disabled:hover:bg-transparent";
+    "inline-flex shrink-0 items-center gap-1.5 rounded-md border border-ink/10 px-2.5 py-1.5 text-[11.5px] text-ink/80 transition hover:bg-ink/[0.07] disabled:cursor-not-allowed disabled:text-ink/30 disabled:hover:bg-transparent";
   const iconButton =
-    "grid h-7 w-7 shrink-0 place-items-center rounded-md text-white/60 transition hover:bg-white/10 hover:text-white disabled:opacity-30";
+    "grid h-7 w-7 shrink-0 place-items-center rounded-md text-ink/60 transition hover:bg-ink/10 hover:text-ink disabled:opacity-30";
 
   if (!mounted) return null;
 
@@ -408,7 +409,7 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
         role="dialog"
         aria-modal="true"
         aria-label={tm("Documents")}
-        className="relative flex h-full w-full flex-col overflow-hidden border border-white/10 text-[#E6EAEE] shadow-2xl sm:h-[88vh] sm:max-w-5xl sm:rounded-lg"
+        className="relative flex h-full w-full flex-col overflow-hidden border border-ink/10 text-foreground shadow-2xl sm:h-[88vh] sm:max-w-5xl sm:rounded-lg"
         style={{ backgroundColor: BG }}
         onDragOver={(event) => {
           if (!writable) return;
@@ -419,13 +420,13 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
         onDrop={onDrop}
       >
         <div
-          className="flex items-center gap-2 border-b border-white/10 px-3 py-2.5"
+          className="flex items-center gap-2 border-b border-ink/10 px-3 py-2.5"
           style={{ backgroundColor: HEAD }}
         >
           <FolderOpen className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
           <div className="min-w-0 flex-1 truncate text-[13px] font-semibold">{tm("Documents")}</div>
           {info && info.scan !== "off" && (
-            <span className="hidden items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/55 sm:inline-flex">
+            <span className="hidden items-center gap-1 rounded-full border border-ink/10 px-2 py-0.5 text-[10px] text-ink/55 sm:inline-flex">
               <ShieldCheck className="h-3 w-3" /> {tm("Virus-scanned uploads")}
             </span>
           )}
@@ -434,7 +435,7 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
           </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-white/[0.07] px-3 py-2">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-ink/[0.07] px-3 py-2">
           {info && info.rooms.length > 1 && (
             <select
               value={room}
@@ -442,7 +443,7 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
                 setRoom(event.target.value);
                 void load(event.target.value);
               }}
-              className="rounded-md border border-white/10 px-2 py-1.5 text-[12px] text-white/85 outline-none"
+              className="rounded-md border border-ink/10 px-2 py-1.5 text-[12px] text-ink/85 outline-none"
               style={{ backgroundColor: PANEL }}
               aria-label={tm("Room")}
             >
@@ -454,21 +455,21 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
             </select>
           )}
           <div
-            className="flex min-w-0 flex-1 items-center overflow-x-auto rounded-md border border-white/10 px-2 py-1.5"
+            className="flex min-w-0 flex-1 items-center overflow-x-auto rounded-md border border-ink/10 px-2 py-1.5"
             style={{ backgroundColor: PANEL }}
           >
             <button
               onClick={() => void load(room)}
-              className="shrink-0 rounded px-1.5 py-0.5 text-[11.5px] text-white/80 hover:bg-white/10"
+              className="shrink-0 rounded px-1.5 py-0.5 text-[11.5px] text-ink/80 hover:bg-ink/10"
             >
               {baseName(room) || tm("Room")}
             </button>
             {crumbs.map((crumb, index) => (
               <span key={`${crumb}-${index}`} className="flex shrink-0 items-center">
-                <ChevronRight className="h-3 w-3 text-white/30" />
+                <ChevronRight className="h-3 w-3 text-ink/30" />
                 <button
                   onClick={() => void load(`${room}/${crumbs.slice(0, index + 1).join("/")}`)}
-                  className="rounded px-1.5 py-0.5 text-[11.5px] text-white/80 hover:bg-white/10"
+                  className="rounded px-1.5 py-0.5 text-[11.5px] text-ink/80 hover:bg-ink/10"
                 >
                   {crumb}
                 </button>
@@ -529,20 +530,20 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
 
         {folderName !== null && (
           <form
-            className="flex items-center gap-2 border-b border-white/[0.07] px-3 py-2"
+            className="flex items-center gap-2 border-b border-ink/[0.07] px-3 py-2"
             onSubmit={(event) => {
               event.preventDefault();
               void createFolder();
             }}
           >
-            <FolderPlus className="h-4 w-4 text-white/50" />
+            <FolderPlus className="h-4 w-4 text-ink/50" />
             <input
               autoFocus
               value={folderName}
               onChange={(event) => setFolderName(event.target.value)}
               placeholder={tm("Folder name")}
               maxLength={200}
-              className="min-w-0 flex-1 rounded-md border border-white/10 bg-transparent px-2 py-1 text-[12.5px] outline-none"
+              className="min-w-0 flex-1 rounded-md border border-ink/10 bg-transparent px-2 py-1 text-[12.5px] outline-none"
             />
             <button
               type="submit"
@@ -558,7 +559,7 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
         )}
 
         {(notice || (info?.scanner && !info.scanner.ok)) && (
-          <div className="space-y-1 border-b border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-[12px] text-amber-100">
+          <div className="space-y-1 border-b border-amber-300/20 bg-amber-300/[0.06] px-3 py-2 text-[12px] text-amber-800 dark:text-amber-100">
             {info?.scanner && !info.scanner.ok && (
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -592,18 +593,20 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
           )}
           {info === undefined ? (
             <div className="grid place-items-center p-6">
-              <Loader2 className="h-5 w-5 animate-spin text-white/50" />
+              <Loader2 className="h-5 w-5 animate-spin text-ink/50" />
             </div>
           ) : info === null && !error ? (
-            <p className="p-6 text-center text-[12.5px] text-white/55">
+            <p className="p-6 text-center text-[12.5px] text-ink/55">
               {tm("The file store is not available on this AI Box.")}
             </p>
           ) : error ? (
-            <p className="p-6 text-center text-[12.5px] text-rose-200">{error}</p>
+            <p className="p-6 text-center text-[12.5px] text-rose-800 dark:text-rose-200">
+              {error}
+            </p>
           ) : (
             <table className="w-full text-left text-[12.5px]">
               <thead
-                className="sticky top-0 text-[10.5px] uppercase text-white/40"
+                className="sticky top-0 text-[10.5px] uppercase text-ink/40"
                 style={{ backgroundColor: BG }}
               >
                 <tr>
@@ -618,14 +621,11 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
               </thead>
               <tbody>
                 {entries.map((entry) => (
-                  <tr
-                    key={entry.path}
-                    className="border-t border-white/[0.05] hover:bg-white/[0.03]"
-                  >
+                  <tr key={entry.path} className="border-t border-ink/[0.05] hover:bg-ink/[0.03]">
                     <td className="max-w-0 px-3 py-2">
                       {entry.file ? (
                         <span className="flex min-w-0 items-center gap-2">
-                          <FileText className="h-4 w-4 shrink-0 text-white/45" />
+                          <FileText className="h-4 w-4 shrink-0 text-ink/45" />
                           <span className="truncate">{entry.name}</span>
                         </span>
                       ) : (
@@ -638,22 +638,26 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
                         </button>
                       )}
                     </td>
-                    <td className="hidden whitespace-nowrap px-3 py-2 text-white/60 sm:table-cell">
+                    <td className="hidden whitespace-nowrap px-3 py-2 text-ink/60 sm:table-cell">
                       {entry.file ? formatSize(entry.size) : ""}
                     </td>
-                    <td className="hidden whitespace-nowrap px-3 py-2 text-white/60 md:table-cell">
+                    <td className="hidden whitespace-nowrap px-3 py-2 text-ink/60 md:table-cell">
                       {entry.modified ? new Date(entry.modified).toLocaleString() : ""}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-[11.5px]">
                       {entry.file &&
                         (!entry.stored ? (
-                          <span className="text-white/50">
+                          <span className="text-ink/50">
                             {tm("Indexed only, original not on the box")}
                           </span>
                         ) : entry.indexed ? (
-                          <span className="text-emerald-300">{tm("Searchable")}</span>
+                          <span className="text-emerald-700 dark:text-emerald-300">
+                            {tm("Searchable")}
+                          </span>
                         ) : (
-                          <span className="text-amber-200">{tm("Not searchable yet")}</span>
+                          <span className="text-amber-800 dark:text-amber-200">
+                            {tm("Not searchable yet")}
+                          </span>
                         ))}
                     </td>
                     <td className="px-2 py-1.5">
@@ -684,7 +688,7 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
                 ))}
                 {!entries.length && !listing && (
                   <tr>
-                    <td colSpan={5} className="px-3 py-8 text-center text-white/45">
+                    <td colSpan={5} className="px-3 py-8 text-center text-ink/45">
                       {writable
                         ? tm("This folder is empty. Upload files or drop them here.")
                         : tm("This folder is empty.")}
@@ -698,10 +702,10 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
 
         {(active || uploads.length > 0) && (
           <div
-            className="max-h-[32%] shrink-0 overflow-y-auto border-t border-white/10 px-3 py-2"
+            className="max-h-[32%] shrink-0 overflow-y-auto border-t border-ink/10 px-3 py-2"
             style={{ backgroundColor: HEAD }}
           >
-            <div className="mb-1 text-[10.5px] uppercase text-white/40">{tm("Uploads")}</div>
+            <div className="mb-1 text-[10.5px] uppercase text-ink/40">{tm("Uploads")}</div>
             {active && (
               <div className="flex items-center gap-2 py-1 text-[12px]">
                 <Loader2
@@ -709,7 +713,7 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
                   style={{ color: ACCENT_TEXT }}
                 />
                 <span className="min-w-0 flex-1 truncate">{active.name}</span>
-                <span className="whitespace-nowrap text-white/55">
+                <span className="whitespace-nowrap text-ink/55">
                   {tm("Sending {n}%").replace(
                     "{n}",
                     String(active.total ? Math.round((active.sent / active.total) * 100) : 0),
@@ -729,7 +733,7 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
                 {STORE_FINAL_STATES.has(upload.status) ? (
                   <span className="h-3.5 w-3.5 shrink-0" />
                 ) : (
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-white/50" />
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-ink/50" />
                 )}
                 <span className="min-w-0 flex-1 truncate" title={upload.path}>
                   {baseName(upload.path)}
@@ -765,18 +769,18 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
           <div className="absolute inset-0 z-20 grid place-items-center bg-black/60 p-4">
             <div
               role="alertdialog"
-              className="w-full max-w-md rounded-lg border border-white/10 p-4 shadow-2xl"
+              className="w-full max-w-md rounded-lg border border-ink/10 p-4 shadow-2xl"
               style={{ backgroundColor: PANEL }}
             >
               {confirmDelete ? (
                 <>
-                  <p className="text-[13px] text-white">
+                  <p className="text-[13px] text-ink">
                     {(confirmDelete.file
                       ? tm("Delete the file “{name}”?")
                       : tm("Delete the folder “{name}” and everything in it?")
                     ).replace("{name}", confirmDelete.name)}
                   </p>
-                  <p className="mt-1.5 text-[12px] text-white/55">
+                  <p className="mt-1.5 text-[12px] text-ink/55">
                     {tm(
                       "It is removed from the AI Box and from the search index. This cannot be undone.",
                     )}
@@ -784,13 +788,13 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
                 </>
               ) : (
                 <>
-                  <p className="text-[13px] text-white">
+                  <p className="text-[13px] text-ink">
                     {tm("{n} file(s) already exist in this folder. Replace them?").replace(
                       "{n}",
                       String(confirmOverwrite?.conflicts.length ?? 0),
                     )}
                   </p>
-                  <p className="mt-1.5 break-words text-[12px] text-white/55">
+                  <p className="mt-1.5 break-words text-[12px] text-ink/55">
                     {confirmOverwrite?.conflicts.slice(0, 5).join(", ")}
                     {(confirmOverwrite?.conflicts.length ?? 0) > 5 ? ", …" : ""}
                   </p>

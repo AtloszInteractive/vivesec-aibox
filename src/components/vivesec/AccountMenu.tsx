@@ -71,12 +71,12 @@ export function AccountMenu() {
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         title={tm("Account")}
-        className="relative inline-flex max-w-[12rem] items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white/85 transition hover:bg-white/10"
+        className="relative inline-flex max-w-[12rem] items-center gap-1.5 rounded-full border border-ink/10 bg-ink/5 px-2.5 py-1.5 text-xs text-ink/85 transition hover:bg-ink/10"
       >
         <UserRound className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
         <span className="hidden truncate sm:inline">{name}</span>
         <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 text-white/50 transition-transform ${open ? "rotate-180" : ""}`}
+          className={`h-3.5 w-3.5 shrink-0 text-ink/50 transition-transform ${open ? "rotate-180" : ""}`}
         />
         {attention && (
           <span
@@ -88,15 +88,15 @@ export function AccountMenu() {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-xl border border-white/10 bg-[#10243A] py-1 shadow-2xl shadow-black/60"
+          className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-xl border border-ink/10 bg-surface-3 py-1 shadow-2xl shadow-shade/60"
         >
-          <div className="border-b border-white/5 px-3 py-2">
-            <div className="truncate text-[13px] text-white">{name}</div>
+          <div className="border-b border-ink/5 px-3 py-2">
+            <div className="truncate text-[13px] text-ink">{name}</div>
             {user.display_name && (
-              <div className="truncate text-[11px] text-white/50">{user.username}</div>
+              <div className="truncate text-[11px] text-ink/50">{user.username}</div>
             )}
             {user.drives.length === 0 && (
-              <p className="mt-1.5 text-[11px] text-amber-100/90">
+              <p className="mt-1.5 text-[11px] text-amber-800/90 dark:text-amber-100/90">
                 {tm("No rooms are assigned to you yet. Ask the administrator for access.")}
               </p>
             )}
@@ -105,12 +105,14 @@ export function AccountMenu() {
             <a
               role="menuitem"
               href={gatePath(ADMIN_PATH)}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:bg-white/5 hover:text-brand-soft"
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
             >
               <Settings2 className="h-3.5 w-3.5" />
               {tm("Administration")}
               {attention && (
-                <span className="ml-auto text-[11px] text-amber-200">{tm("Needs attention")}</span>
+                <span className="ml-auto text-[11px] text-amber-800 dark:text-amber-200">
+                  {tm("Needs attention")}
+                </span>
               )}
             </a>
           )}
@@ -118,7 +120,7 @@ export function AccountMenu() {
             <a
               role="menuitem"
               href={gatePath(PASSWORD_PATH)}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:bg-white/5 hover:text-brand-soft"
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
             >
               <KeyRound className="h-3.5 w-3.5" />
               {tm("Change password")}
@@ -128,7 +130,7 @@ export function AccountMenu() {
             role="menuitem"
             type="button"
             onClick={() => void signOut()}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-white/80 transition hover:bg-white/5 hover:text-brand-soft"
+            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
           >
             <LogOut className="h-3.5 w-3.5" />
             {tm("Sign out")}

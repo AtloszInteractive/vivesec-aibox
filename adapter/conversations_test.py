@@ -82,6 +82,13 @@ class ConversationStoreTest(unittest.TestCase):
         history[-1]["sources"][0]["chunk_id"] = "changed again"
         self.assertEqual(self.store.history("u1", "scope-a")[-1]["sources"][0]["chunk_id"], "c1")
 
+    def test_a_question_back_is_marked_in_the_thread(self):
+        self.store.record("u1", "scope-a", "Kovács?", "Melyik Kovács?\n- Kovács Anna", clarify=True)
+        self.store.record("u1", "scope-a", "Kovács Anna", "Answer.")
+        turns = self.store.get("u1", "scope-a", DEFAULT_ID)["turns"]
+        self.assertEqual([t.get("clarify") for t in turns if t["role"] == "assistant"],
+                         [True, None])
+
     # -- named threads ----------------------------------------------------------
     def test_two_threads_are_independent(self):
         a = self.store.create("u1", "scope-a")["id"]

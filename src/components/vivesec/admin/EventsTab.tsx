@@ -119,7 +119,7 @@ export function EventsTab() {
   }, [view]);
 
   const tabClass = (active: boolean) =>
-    `rounded-lg px-3 py-1.5 text-xs transition ${active ? "bg-[#8C49E9]/20 text-white" : "text-white/60 hover:bg-white/5"}`;
+    `rounded-lg px-3 py-1.5 text-xs transition ${active ? "bg-[#8C49E9]/20 text-ink" : "text-ink/60 hover:bg-ink/5"}`;
 
   return (
     <Card
@@ -156,7 +156,7 @@ export function EventsTab() {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             placeholder={tm("Username")}
-            className="w-48 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-white outline-none placeholder:text-white/30 focus:border-[#B48CF5]"
+            className="w-48 rounded-lg border border-ink/15 bg-ink/5 px-2.5 py-1.5 text-xs text-ink outline-none placeholder:text-ink/30 focus:border-brand-soft"
           />
           <Button type="submit" busy={busy}>
             <RefreshCw className="h-3.5 w-3.5" />
@@ -176,8 +176,8 @@ export function EventsTab() {
       <div className="overflow-x-auto">
         {view === "auth" ? (
           <table className="w-full min-w-[720px] text-left text-xs">
-            <thead className="text-[11px] text-white/50">
-              <tr className="border-b border-white/10">
+            <thead className="text-[11px] text-ink/50">
+              <tr className="border-b border-ink/10">
                 <th className="py-2 pr-2 font-medium">{tm("Time")}</th>
                 <th className="py-2 pr-2 font-medium">{tm("Event")}</th>
                 <th className="py-2 pr-2 font-medium">{tm("User")}</th>
@@ -188,27 +188,27 @@ export function EventsTab() {
             </thead>
             <tbody>
               {authEvents.map((event) => (
-                <tr key={event.id} className="border-b border-white/5 align-top">
-                  <td className="whitespace-nowrap py-1.5 pr-2 text-white/60">
+                <tr key={event.id} className="border-b border-ink/5 align-top">
+                  <td className="whitespace-nowrap py-1.5 pr-2 text-ink/60">
                     {formatTime(event.at, lang)}
                   </td>
                   <td
-                    className={`py-1.5 pr-2 ${FAILURES.has(event.event) ? "text-rose-200" : "text-white/90"}`}
+                    className={`py-1.5 pr-2 ${FAILURES.has(event.event) ? "text-rose-800 dark:text-rose-200" : "text-ink/90"}`}
                   >
                     {label(event.event)}
                   </td>
-                  <td className="py-1.5 pr-2 text-white/80">{event.username || "—"}</td>
-                  <td className="py-1.5 pr-2 text-white/60">{event.actor || "—"}</td>
-                  <td className="py-1.5 pr-2 text-white/60">{event.client || "—"}</td>
-                  <td className="break-all py-1.5 text-white/50">{event.detail}</td>
+                  <td className="py-1.5 pr-2 text-ink/80">{event.username || "—"}</td>
+                  <td className="py-1.5 pr-2 text-ink/60">{event.actor || "—"}</td>
+                  <td className="py-1.5 pr-2 text-ink/60">{event.client || "—"}</td>
+                  <td className="break-all py-1.5 text-ink/50">{event.detail}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
           <table className="w-full min-w-[720px] text-left text-xs">
-            <thead className="text-[11px] text-white/50">
-              <tr className="border-b border-white/10">
+            <thead className="text-[11px] text-ink/50">
+              <tr className="border-b border-ink/10">
                 <th className="py-2 pr-2 font-medium">{tm("Time")}</th>
                 <th className="py-2 pr-2 font-medium">{tm("Event")}</th>
                 <th className="py-2 pr-2 font-medium">{tm("User")}</th>
@@ -218,18 +218,18 @@ export function EventsTab() {
             </thead>
             <tbody>
               {storeEvents.map((event, index) => (
-                <tr key={`${event.ts}-${index}`} className="border-b border-white/5 align-top">
-                  <td className="whitespace-nowrap py-1.5 pr-2 text-white/60">
+                <tr key={`${event.ts}-${index}`} className="border-b border-ink/5 align-top">
+                  <td className="whitespace-nowrap py-1.5 pr-2 text-ink/60">
                     {formatTime(event.ts, lang)}
                   </td>
                   <td
-                    className={`py-1.5 pr-2 ${event.result === "infected" ? "text-rose-200" : "text-white/90"}`}
+                    className={`py-1.5 pr-2 ${event.result === "infected" ? "text-rose-800 dark:text-rose-200" : "text-ink/90"}`}
                   >
                     {label(event.action)}
                   </td>
-                  <td className="py-1.5 pr-2 text-white/80">{event.user || "—"}</td>
-                  <td className="break-all py-1.5 pr-2 text-white/70">{event.path}</td>
-                  <td className="break-all py-1.5 text-white/50">{storeDetail(event)}</td>
+                  <td className="py-1.5 pr-2 text-ink/80">{event.user || "—"}</td>
+                  <td className="break-all py-1.5 pr-2 text-ink/70">{event.path}</td>
+                  <td className="break-all py-1.5 text-ink/50">{storeDetail(event)}</td>
                 </tr>
               ))}
             </tbody>
@@ -252,7 +252,7 @@ export function EventsTab() {
         </div>
       )}
       {!busy && !error && (view === "auth" ? authEvents : storeEvents).length === 0 && (
-        <p className="py-4 text-center text-xs text-white/50">{tm("No events.")}</p>
+        <p className="py-4 text-center text-xs text-ink/50">{tm("No events.")}</p>
       )}
     </Card>
   );

@@ -107,9 +107,9 @@ function RuleEditor({
   const { tm } = useLang();
   const relative = row.path === room ? tm("The whole room") : row.path.slice(room.length + 1);
   return (
-    <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+    <div className="space-y-2 rounded-xl border border-ink/10 bg-ink/[0.03] p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="break-all text-xs font-medium text-white">{relative}</span>
+        <span className="break-all text-xs font-medium text-ink">{relative}</span>
         <Button kind="danger" title={tm("Remove the rule")} onClick={onRemove}>
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
@@ -342,7 +342,7 @@ export function RoomsTab({
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           {rooms.length === 0 && (
-            <p className="text-xs text-white/50">{tm("There are no rooms yet.")}</p>
+            <p className="text-xs text-ink/50">{tm("There are no rooms yet.")}</p>
           )}
           {rooms.map((r) => (
             <button
@@ -351,12 +351,12 @@ export function RoomsTab({
               onClick={() => setSelected(r.path)}
               className={`rounded-xl border px-3 py-2 text-left text-xs transition ${
                 r.path === selected
-                  ? "border-[#8C49E9] bg-[#8C49E9]/15 text-white"
-                  : "border-white/10 bg-white/[0.03] text-white/80 hover:bg-white/[0.06]"
+                  ? "border-[#8C49E9] bg-[#8C49E9]/15 text-ink"
+                  : "border-ink/10 bg-ink/[0.03] text-ink/80 hover:bg-ink/[0.06]"
               }`}
             >
               <div className="font-medium">{r.name}</div>
-              <div className="mt-0.5 text-[11px] text-white/50">
+              <div className="mt-0.5 text-[11px] text-ink/50">
                 {fill(tm("{n} file(s)"), { n: r.files })}
                 {!r.stored && ` · ${tm("index only")}`}
               </div>
@@ -395,15 +395,15 @@ export function RoomsTab({
           <div className="space-y-3">
             <div className="grid gap-2 text-xs sm:grid-cols-2">
               <div>
-                <span className="text-white/55">{tm("Users with this room")}: </span>
-                <span className="text-white/90">{access.users.join(", ") || "—"}</span>
+                <span className="text-ink/55">{tm("Users with this room")}: </span>
+                <span className="text-ink/90">{access.users.join(", ") || "—"}</span>
               </div>
               <div>
-                <span className="text-white/55">{tm("AD roles with this room")}: </span>
-                <span className="text-white/90">{access.roles.join(", ") || "—"}</span>
+                <span className="text-ink/55">{tm("AD roles with this room")}: </span>
+                <span className="text-ink/90">{access.roles.join(", ") || "—"}</span>
               </div>
             </div>
-            <p className="text-[11px] leading-relaxed text-white/50">
+            <p className="text-[11px] leading-relaxed text-ink/50">
               {tm(
                 "A user sees a room only if it is assigned to them (Users, or an AD role). Inside the room the rules below narrow it further: a deny always wins, an allow list limits the room or folder to the listed users, groups and roles, and the classification must not exceed the user's clearance.",
               )}
@@ -426,7 +426,7 @@ export function RoomsTab({
             {editable && (
               <>
                 {roomRows.length === 0 && (
-                  <p className="text-xs text-white/60">
+                  <p className="text-xs text-ink/60">
                     {tm("No rules: everyone who has the room sees every document in it.")}
                   </p>
                 )}
@@ -480,7 +480,7 @@ export function RoomsTab({
           title={tm("Clearance and default classification")}
           icon={<ShieldCheck className="h-4 w-4" />}
         >
-          <p className="mb-3 text-[11px] leading-relaxed text-white/50">
+          <p className="mb-3 text-[11px] leading-relaxed text-ink/50">
             {fill(
               tm(
                 "A document without a classification counts as the default level. A user sees documents up to their clearance: the highest level that matches them below, else “default” (the box setting is {level}).",
@@ -587,7 +587,7 @@ export function RoomsTab({
             </>
           }
         >
-          <p className="text-xs leading-relaxed text-white/80">
+          <p className="text-xs leading-relaxed text-ink/80">
             {tm(
               "Only an empty room can be deleted. Its permission rules are removed too. Users and AD roles keep the room in their list until you remove it there.",
             )}

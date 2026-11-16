@@ -98,6 +98,33 @@
       ]
     },
     {
+      "name": "ADAPTER_ANALYSIS_DIR",
+      "component": "adapter",
+      "category": "jobs",
+      "type": "path",
+      "default": null,
+      "allowed": "directory path, off, or empty",
+      "fail_safe": "Empty uses \"analysis\" beside ADAPTER_JOBS_DIR; off, or no ADAPTER_JOBS_DIR, turns resuming off. When the directory cannot be created or written, an interrupted analysis simply starts again from the first part.",
+      "impact": "Resumable whole-document analysis (E10a): parts already read are kept here (0700 directory, 0600 files), keyed to the user, the exact passages, the task, the language, the prompt and the model.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_ANALYSIS_RETENTION_DAYS",
+      "component": "adapter",
+      "category": "jobs",
+      "type": "float",
+      "default": "7",
+      "allowed": "0 or positive days after clamp",
+      "fail_safe": "Unset, empty or not a number uses 7; negative values clamp to 0 (entries go at the next hourly sweep).",
+      "impact": "How long a stored analysis part stays resumable after its last update.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "min": 0
+    },
+    {
       "name": "ADAPTER_ANALYZE_MAX_CHARS",
       "component": "adapter",
       "category": "limits",
@@ -3637,8 +3664,8 @@
       "type": "path",
       "default": "/data/https",
       "allowed": "directory path",
-      "fail_safe": "The previous nginx.conf is kept as nginx.conf.prev and restored if the deploy fails.",
-      "impact": "Standalone HTTPS (E27): where https-front.sh writes the rendered nginx configuration.",
+      "fail_safe": "The previous nginx.conf and certificate page are kept as nginx.conf.prev and cert-page.prev and restored if the deploy fails.",
+      "impact": "Standalone HTTPS (E27): where https-front.sh writes the rendered nginx configuration and the copy of the client certificate page (cert-page/).",
       "change": "install",
       "secret": false,
       "internal": false

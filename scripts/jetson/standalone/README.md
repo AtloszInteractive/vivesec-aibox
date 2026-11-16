@@ -6,13 +6,14 @@ its own, and an nginx container terminates TLS in front of the web UI.
 
 ```text
 Browser ──HTTPS :443──▶ nginx (vivesec-https) ──HTTP, loopback──▶ web UI :8080 ──▶ adapter …
-        ──HTTP  :80 ──▶ redirect to HTTPS + /aibox-ca.cer
+        ──HTTP  :80 ──▶ certificate page (/ and /cert) + /aibox-ca.cer; anything else → HTTPS
 ```
 
 | File | Purpose |
 | --- | --- |
 | `tls-pki.sh` | Creates the CA and the server certificate, renews, shows, checks |
 | `https-front.sh` | Renders the nginx configuration, deploys the container, verifies it |
+| `cert-page/` | The certificate page for the client devices (static, served by nginx on :80) |
 | `lib.sh` | Shared name and address validation |
 | `standalone_tls_test.py` | Tests of both scripts (bash + openssl; docker end-to-end optional) |
 | `auth_deploy.py` | Authentication service container and the standalone switch (S4, below) |
@@ -70,6 +71,48 @@ sudo -E bash tls-pki.sh show        # fingerprint and expiry dates
 
 Write the SHA-256 fingerprint printed by `tls-pki.sh show` on the handover
 sheet. A client compares it with the file it downloads before installing it.
+
+### Certificate page
+
+A browser that does not trust the box CA stops at its own TLS warning and never
+shows a page of the box over HTTPS. So the page that helps a client install the
+CA lives on plain HTTP: `http://<box>/` and `http://<box>/cert` (put the
+second on the handover sheet; the first is what people type).
+
+- It probes `https://<host>/aibox-probe` (`204`). A browser that already
+  trusts the CA moves on to `https://<host>/` at once; `/` therefore costs a
+  trusted client one extra round trip and nothing else.
+- Otherwise it shows the download (`/aibox-ca.cer`) and the steps for the
+  detected device (Windows, macOS, Linux, Android, iPhone/iPad, Firefox) in
+  EN/HU/DA/DE, and keeps probing; once the CA is installed it continues to the
+  AI Box by itself.
+- The CA certificate is public by nature (every TLS handshake shows the box's
+  chain); it grants no access. The risk is the other way round: on plain HTTP
+  someone on the network could swap the file for their own CA. The page
+  therefore asks the user to compare the fingerprint with the handover sheet,
+  never with a value printed on the page itself, and offers no install script.
+  In a Windows domain, deploy the CA with Group Policy instead.
+- It is static (`cert-page/`; `deploy` copies it next to `nginx.conf` and keeps
+  the previous copy for the rollback) with a strict CSP: own script and style
+  only, `connect-src https://$host`, no inline code. `/cert` also answers over
+  HTTPS, where it simply reports that the device trusts the box.
+
+### Handover sheet
+
+Administration › Overview › *Certificate for the client devices* shows the
+installation addresses, a QR code of `http://<address>/cert`, the CA name and
+expiry and its SHA-256 fingerprint in both forms, and prints a one-page
+handover sheet with the same data and three steps for the users.
+
+- The fingerprint is computed in the browser (Web Crypto) from `/aibox-ca.cer`
+  fetched over the HTTPS connection of the administration page, so it is only
+  as trustworthy as that browser's trust in the box: for the very first sheet
+  compare it with `tls-pki.sh show` on the box.
+- The names and addresses come from `/aibox-handover.json`, rendered by
+  `https-front.sh` from `AIBOX_TLS_DNS` / `AIBOX_TLS_IPS` and served on HTTPS
+  only (plain HTTP redirects it).
+- The QR code carries the first address when there is one: phones rarely
+  resolve the box name.
 
 The web UI behind the front must listen on loopback only: run it with
 `HOST=127.0.0.1 NITRO_HOST=127.0.0.1` (the `loopback` exposure of
@@ -130,8 +173,9 @@ With `AIBOX_STANDALONE_DOCKER_TEST=1` and a running docker daemon, the
 rendered configuration also runs in the real nginx image against a stub UI,
 checked by `https-front.sh verify`.
 
-The installation guide for the client machines (Windows, Firefox) is a
-customer document in `docs/hu/`.
+The installation guide for the client machines (all platforms and Group
+Policy) is a customer document in `docs/hu/`; the certificate page carries the
+same steps.
 
 ## Login: authentication service and the mode switch (E27 S4)
 

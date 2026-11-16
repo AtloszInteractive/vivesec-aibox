@@ -251,9 +251,66 @@ class FrontRenderTest(ScriptTestCase):
         conf = self.render().stdout
         self.assertIn("ssl_protocols TLSv1.2 TLSv1.3;", conf)
         self.assertIn("ssl_session_tickets off;", conf)
-        self.assertEqual(conf.count('add_header Strict-Transport-Security "max-age=31536000" always;'), 2)
+        hsts = 'add_header Strict-Transport-Security "max-age=31536000" always;'
+        # Every HTTPS location carries HSTS (a location's own add_header drops the
+        # server-level ones); plain HTTP never does.
+        self.assertEqual(conf.count(hsts), 6)
+        self.assertNotIn(hsts, self.server_block(conf, "listen 0.0.0.0:80;"))
         self.assertIn("frame-ancestors 'none'", conf)
         self.assertIn("server_tokens off;", conf)
+
+    @staticmethod
+    def server_block(conf, marker):
+        start = conf.index(marker)
+        return conf[start:conf.find("\n    server {", start)]
+
+    def test_certificate_page_on_plain_http(self):
+        conf = self.render().stdout
+        http = self.server_block(conf, "listen 0.0.0.0:80;")
+        https = self.server_block(conf, "listen 0.0.0.0:443 ssl;")
+        # A browser that does not trust the CA sees nothing over HTTPS, so the
+        # page answers / and /cert on :80; every other path still redirects.
+        for location in ("location = / {", "location = /cert {", "location ^~ /cert/ {"):
+            self.assertIn(location, http)
+        self.assertIn("return 301 https://$host$request_uri;", http)
+        self.assertIn("try_files /index.html =404;", http)
+        self.assertIn("alias /srv/aibox-cert/;", http)
+        csp = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
+               "connect-src https://$host; base-uri 'none'; form-action 'none'; "
+               "frame-ancestors 'none'")
+        self.assertEqual(http.count(csp), 3)
+        self.assertNotIn("unsafe-inline", conf)
+        # On HTTPS / stays the web UI; the probe answers the page's trust test.
+        self.assertNotIn("location = / {", https)
+        self.assertIn("location = /cert {", https)
+        probe = https.split("location = /aibox-probe {", 1)[1].split("}", 1)[0]
+        self.assertIn("return 204;", probe)
+        self.assertIn('add_header Cache-Control "no-store" always;', probe)
+        self.assertNotIn("aibox-probe", http)
+
+    def test_handover_names_only_over_https(self):
+        conf = self.render().stdout
+        http = self.server_block(conf, "listen 0.0.0.0:80;")
+        https = self.server_block(conf, "listen 0.0.0.0:443 ssl;")
+        self.assertIn("return 200 '{\"names\":[\"aibox-01\",\"aibox-01.lan\"],"
+                      "\"addresses\":[\"192.168.10.50\"]}';", https)
+        self.assertIn("default_type application/json;", https)
+        self.assertNotIn("aibox-handover", http)
+        self.assertIn("\"addresses\":[]}';", self.render(AIBOX_TLS_IPS="").stdout)
+
+    def test_certificate_page_files_are_complete(self):
+        page = os.path.join(HERE, "cert-page")
+        with open(os.path.join(page, "index.html"), encoding="utf-8") as handle:
+            html = handle.read()
+        for asset in ("/cert/cert.css", "/cert/cert.js", "/cert/logo.png"):
+            self.assertIn(asset, html)
+            self.assertTrue(os.path.isfile(os.path.join(page, asset.rsplit("/", 1)[1])), asset)
+        self.assertIn("data-aibox-cert-page", html)
+        self.assertNotRegex(html, r"<script>|<style>|\son[a-z]+=")
+        with open(os.path.join(page, "cert.js"), encoding="utf-8") as handle:
+            script = handle.read()
+        self.assertIn('"aibox-probe?t="', script)
+        self.assertNotRegex(script, r"\.innerHTML\s*=|insertAdjacentHTML|document\.write")
 
     def test_relay_overwrites_forwarding_and_drops_identity_headers(self):
         conf = self.render().stdout
@@ -333,6 +390,10 @@ class FrontDeployTest(ScriptTestCase):
         self.assertIn("--network host", validation[0])
         self.assertNotIn("--network none", validation[0])
         self.assertTrue(validation[0].rstrip().endswith("-t -q"), validation[0])
+        # The certificate page is copied next to the configuration and mounted.
+        self.assertIn("%s/https/cert-page:/srv/aibox-cert:ro" % self.root, validation[0])
+        for name in ("index.html", "cert.js", "cert.css", "logo.png"):
+            self.assertTrue(os.path.isfile(os.path.join(self.root, "https", "cert-page", name)), name)
 
 
 def docker_ready():
@@ -356,8 +417,9 @@ class FrontEndToEndTest(ScriptTestCase):
         script = r'''
 set -eu
 apk add --no-cache bash openssl curl iproute2 python3 >/dev/null
-mkdir -p /etc/aibox-tls /srv/aibox-public
+mkdir -p /etc/aibox-tls /srv/aibox-public /srv/aibox-cert
 cp /work/tls/server/* /etc/aibox-tls/ && cp /work/tls/public/* /srv/aibox-public/
+cp /scripts/cert-page/* /srv/aibox-cert/
 bash /scripts/https-front.sh render /etc/nginx/nginx.conf
 nginx -t -q
 nginx
@@ -379,7 +441,12 @@ curl -sS -o /dev/null -D - --cacert /work/tls/ca/ca.crt https://aibox-01/ --reso
         for check in ("PASS https://127.0.0.1/ via 127.0.0.1 trusted by the box CA",
                       "PASS unknown Host header is dropped",
                       "PASS unknown TLS server name gets no answer",
-                      "PASS a known server name with a foreign Host header is not served"):
+                      "PASS a known server name with a foreign Host header is not served",
+                      "PASS http://aibox-01/ serves the certificate page",
+                      "PASS http://127.0.0.1/cert serves the certificate page and its script",
+                      "PASS https://aibox-01/aibox-probe answers for the certificate page (204)",
+                      "PASS https://aibox-01/aibox-handover.json lists the box names",
+                      "PASS http://127.0.0.1/aibox-handover.json is not served over plain HTTP (301)"):
             self.assertIn(check, result.stdout)
 
     def test_hardened_container_starts(self):
@@ -390,6 +457,7 @@ curl -sS -o /dev/null -D - --cacert /work/tls/ca/ca.crt https://aibox-01/ --reso
         self.bash([PKI, "init"], **names)
         conf = self.root + "/nginx.conf"
         self.bash([FRONT, "render", conf], **names)
+        os.makedirs(os.path.join(self.root, "cert-page"))
         args = self.bash([FRONT, "docker-args", conf], **names).stdout.split("\n")
         args = [a for a in args if a]
         self.assertEqual(args[:2], ["--network", "host"])

@@ -148,12 +148,36 @@ function readPurpose(raw: unknown): AdapterPurposeConfig {
   };
 }
 
-/** Whether a required purpose is still missing from the given values. */
+/** A purpose value as the box reads it: whitespace runs collapse to one space. */
+const purposeText = (value: string | undefined) =>
+  (value ?? "").split(/\s+/).filter(Boolean).join(" ");
+
+/** Whether a given (non-empty) field is acceptable to the box: the case reference
+ *  matches ADAPTER_CASE_REF_PATTERN in full, the legal basis is an allowed one. */
+function purposeFieldValid(config: AdapterPurposeConfig, field: PurposeField, value: string) {
+  if (field === "legal_basis") {
+    return !config.legalBases.length || config.legalBases.includes(value);
+  }
+  if (!config.caseRefPattern) return true;
+  try {
+    return new RegExp(`^(?:${config.caseRefPattern})$`).test(value);
+  } catch {
+    return true; // the box checks it anyway
+  }
+}
+
+/** Whether the purpose still has to be asked for: a required one is missing, or
+ *  a given one would be refused (the box checks every given value, also when the
+ *  purpose is optional), e.g. a case reference kept from before a pattern change. */
 export function purposeIncomplete(config: AdapterPurposeConfig, value: RequestPurpose): boolean {
-  if (config.mode !== "required") return false;
+  if (config.mode === "off") return false;
   const given = config.fields.map((f) =>
-    Boolean((f === "case_ref" ? value.caseRef : value.legalBasis)?.trim()),
+    purposeText(f === "case_ref" ? value.caseRef : value.legalBasis),
   );
+  if (config.fields.some((f, i) => given[i] && !purposeFieldValid(config, f, given[i]))) {
+    return true;
+  }
+  if (config.mode !== "required") return false;
   return config.require === "all" ? !given.every(Boolean) : !given.some(Boolean);
 }
 
@@ -251,6 +275,8 @@ export type AdapterConversationTurn = {
   content: string;
   ts?: number;
   sources?: { chunk_id?: string | null; corpus_id?: string | null; source_path?: string | null }[];
+  /** The assistant asked back (its options are chosen as the next message). */
+  clarify?: boolean;
 };
 
 export type AdapterConversation = AdapterConversationSummary & {
@@ -1024,7 +1050,11 @@ export async function adapterGraph<T>(
     | "investigation/summaries"
     | "reprocess/status"
     | "reprocess/start"
-    | "reprocess/cancel",
+    | "reprocess/cancel"
+    | "import"
+    | "import/sources"
+    | "import/status"
+    | "import/rag",
   body: Record<string, unknown>,
   drive: string,
 ): Promise<T> {

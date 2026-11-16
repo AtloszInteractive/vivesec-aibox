@@ -11,6 +11,7 @@ import {
   type Level,
 } from "./status";
 import { Badge, Button, Card, fill, formatTime, levelLabel } from "./ui";
+import { ClientCertificateCard } from "./ClientCertificateCard";
 
 const TONE: Record<Level, "ok" | "warn" | "bad" | "neutral"> = {
   ok: "ok",
@@ -21,9 +22,9 @@ const TONE: Record<Level, "ok" | "warn" | "bad" | "neutral"> = {
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/5 py-1.5 text-xs last:border-0">
-      <span className="text-white/55">{label}</span>
-      <span className="text-right text-white/90">{children}</span>
+    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-ink/5 py-1.5 text-xs last:border-0">
+      <span className="text-ink/55">{label}</span>
+      <span className="text-right text-ink/90">{children}</span>
     </div>
   );
 }
@@ -81,7 +82,9 @@ export function OverviewTab({
           icon={<Clock3 className="h-4 w-4" />}
           actions={<Badge tone={TONE[clock]}>{levelText[clock]}</Badge>}
         >
-          {authError && <p className="mb-2 text-xs text-rose-200">{authError}</p>}
+          {authError && (
+            <p className="mb-2 text-xs text-rose-800 dark:text-rose-200">{authError}</p>
+          )}
           <Row label={tm("Time on the AI Box")}>{auth ? formatTime(auth.now, lang) : "—"}</Row>
           <Row label={tm("Difference to this computer")}>
             {auth
@@ -96,7 +99,7 @@ export function OverviewTab({
               auth.clock.state === "synchronized" &&
               ` (±${auth.clock.est_error_ms} ms)`}
           </Row>
-          <p className="mt-2 text-[11px] text-white/50">
+          <p className="mt-2 text-[11px] text-ink/50">
             {fill(
               tm(
                 "The two-factor codes are accepted up to {n} seconds off. Beyond {m} seconds sign-in starts to fail: check the time server of the AI Box (chrony) and the clock of the phones.",
@@ -120,7 +123,9 @@ export function OverviewTab({
           }
           actions={<Badge tone={TONE[scanner]}>{levelText[scanner]}</Badge>}
         >
-          {adapterError && <p className="mb-2 text-xs text-rose-200">{adapterError}</p>}
+          {adapterError && (
+            <p className="mb-2 text-xs text-rose-800 dark:text-rose-200">{adapterError}</p>
+          )}
           <Row label={tm("Scanning of uploads")}>
             {adapter ? (scanText[adapter.scan] ?? adapter.scan) : "—"}
           </Row>
@@ -145,7 +150,7 @@ export function OverviewTab({
               : "—"}
           </Row>
           {adapter?.clamd.stale && (
-            <p className="mt-2 text-[11px] text-amber-100/90">
+            <p className="mt-2 text-[11px] text-amber-800/90 dark:text-amber-100/90">
               {tm(
                 "The virus definitions are old. Install the latest definitions with the update package (USB).",
               )}
@@ -168,7 +173,9 @@ export function OverviewTab({
               : "—"}
           </Row>
           {auth?.directory.problem && (
-            <p className="mt-2 break-words text-[11px] text-rose-200">{auth.directory.problem}</p>
+            <p className="mt-2 break-words text-[11px] text-rose-800 dark:text-rose-200">
+              {auth.directory.problem}
+            </p>
           )}
         </Card>
 
@@ -190,6 +197,10 @@ export function OverviewTab({
             {levelLabel(adapter?.acl.default_classification, tm)}
           </Row>
         </Card>
+
+        <div className="md:col-span-2">
+          <ClientCertificateCard />
+        </div>
       </div>
     </div>
   );

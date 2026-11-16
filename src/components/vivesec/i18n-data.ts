@@ -316,6 +316,95 @@ const M: Record<string, Tri> = {
     "ViVeSecBox er ikke forbundet: filerne kan ikke hentes igen.",
     "Die ViVeSecBox ist nicht verbunden: die Dateien können nicht erneut abgerufen werden.",
   ],
+  // ---- E28: structured import (Relationships › Processing) ----
+  "Structured import": ["Strukturált betöltés", "Struktureret import", "Strukturierter Import"],
+  "Periodic exports (CSV, XLSX) are read by the domain profile's rules, without the language model.":
+    [
+      "Az időszakos exportokat (CSV, XLSX) a domainprofil szabályai olvassák be, nyelvi modell nélkül.",
+      "Periodiske eksporter (CSV, XLSX) læses efter domæneprofilens regler, uden sprogmodel.",
+      "Periodische Exporte (CSV, XLSX) werden nach den Regeln des Domänenprofils gelesen, ohne Sprachmodell.",
+    ],
+  "No structured source in the profile.": [
+    "A profilban nincs strukturált forrás.",
+    "Profilen har ingen struktureret kilde.",
+    "Das Profil hat keine strukturierte Quelle.",
+  ],
+  "Expected columns": ["Várt oszlopok", "Forventede kolonner", "Erwartete Spalten"],
+  "Its free text also goes into the search.": [
+    "A szabad szövege a keresőbe is bekerül.",
+    "Den frie tekst kommer også med i søgningen.",
+    "Der Freitext gelangt auch in die Suche.",
+  ],
+  "Target folder": ["Célmappa", "Målmappe", "Zielordner"],
+  "Export date": ["Az export dátuma", "Eksportdato", "Exportdatum"],
+  Mode: ["Mód", "Tilstand", "Modus"],
+  "As in the profile": ["A profil szerint", "Som i profilen", "Wie im Profil"],
+  "Changes only (delta)": [
+    "Csak a változások (delta)",
+    "Kun ændringer (delta)",
+    "Nur Änderungen (Delta)",
+  ],
+  "Full state (full)": ["Teljes állapot (full)", "Fuld tilstand (full)", "Vollständiger Stand (full)"],
+  "Full mode removes the source's records of this folder that the file no longer lists.": [
+    "Teljes módban törlődnek a mappa e forrásból származó rekordjai, amelyeket a fájl már nem tartalmaz.",
+    "I fuld tilstand fjernes kildens poster i denne mappe, som filen ikke længere indeholder.",
+    "Im vollständigen Modus werden die Datensätze der Quelle in diesem Ordner entfernt, die die Datei nicht mehr enthält.",
+  ],
+  "Export file": ["Exportfájl", "Eksportfil", "Exportdatei"],
+  Import: ["Betöltés", "Importér", "Importieren"],
+  "Importing…": ["Betöltés…", "Importerer…", "Wird importiert…"],
+  "Import anyway": ["Betöltés mégis", "Importér alligevel", "Trotzdem importieren"],
+  "This full export would remove many records of this folder. Import it anyway only if that is right.":
+    [
+      "Ez a teljes export a mappa sok rekordját törölné. Csak akkor töltse be mégis, ha ez így helyes.",
+      "Denne fulde eksport ville fjerne mange poster i mappen. Importér den kun alligevel, hvis det er korrekt.",
+      "Dieser vollständige Export würde viele Datensätze dieses Ordners entfernen. Importieren Sie ihn nur dann trotzdem, wenn das richtig ist.",
+    ],
+  "Choose a source, a target folder and a file.": [
+    "Válasszon forrást, célmappát és fájlt.",
+    "Vælg en kilde, en målmappe og en fil.",
+    "Wählen Sie eine Quelle, einen Zielordner und eine Datei.",
+  ],
+  "The file is larger than 50 MB.": [
+    "A fájl nagyobb 50 MB-nál.",
+    "Filen er større end 50 MB.",
+    "Die Datei ist größer als 50 MB.",
+  ],
+  "The import failed.": [
+    "A betöltés sikertelen.",
+    "Importen mislykkedes.",
+    "Der Import ist fehlgeschlagen.",
+  ],
+  Records: ["Rekordok", "Poster", "Datensätze"],
+  Updated: ["Frissült", "Opdateret", "Aktualisiert"],
+  Unchanged: ["Változatlan", "Uændret", "Unverändert"],
+  Removed: ["Törölve", "Fjernet", "Entfernt"],
+  "Older export, skipped": [
+    "Régebbi export, kihagyva",
+    "Ældre eksport, sprunget over",
+    "Älterer Export, übersprungen",
+  ],
+  Problems: ["Hibák", "Problemer", "Probleme"],
+  Row: ["Sor", "Række", "Zeile"],
+  "Protected parts": ["Védett részek", "Beskyttede dele", "Geschützte Teile"],
+  "New review pairs": ["Új review-párok", "Nye gennemgangspar", "Neue Prüfpaare"],
+  "Repeated record ids": [
+    "Ismétlődő rekordazonosítók",
+    "Gentagne post-id'er",
+    "Wiederholte Datensatz-IDs",
+  ],
+  "Records no one may see (unknown access code)": [
+    "Senki által nem látható rekordok (ismeretlen hozzáférési kód)",
+    "Poster, som ingen må se (ukendt adgangskode)",
+    "Datensätze, die niemand sehen darf (unbekannter Zugriffscode)",
+  ],
+  "Missing columns": ["Hiányzó oszlopok", "Manglende kolonner", "Fehlende Spalten"],
+  "Unknown codes": ["Ismeretlen kódok", "Ukendte koder", "Unbekannte Codes"],
+  "Search copy": ["Kereső-másolat", "Søgekopi", "Suchkopie"],
+  Waiting: ["Várakozik", "Venter", "Wartet"],
+  "Updating…": ["Frissítés…", "Opdaterer…", "Wird aktualisiert…"],
+  "Up to date": ["Naprakész", "Ajour", "Aktuell"],
+  Written: ["Beírva", "Skrevet", "Geschrieben"],
   // ---- Concept 5.2: purpose-bound queries ----
   "Purpose of the queries": [
     "A lekérdezések célja",
@@ -1045,6 +1134,10 @@ const M: Record<string, Tri> = {
   "Username": ["Felhasználónév", "Brugernavn", "Benutzername"],
   "Password": ["Jelszó", "Adgangskode", "Passwort"],
   "Language": ["Nyelv", "Sprog", "Sprache"],
+  Theme: ["Téma", "Tema", "Farbschema"],
+  Dark: ["Sötét", "Mørk", "Dunkel"],
+  Light: ["Világos", "Lys", "Hell"],
+  System: ["Rendszer", "System", "System"],
   "Two-step verification": ["Kétlépcsős azonosítás", "Totrinsbekræftelse", "Zwei-Schritt-Verifizierung"],
   "Enter the 6-digit code from your authenticator app.": ["Írja be a hitelesítő alkalmazás 6 számjegyű kódját.", "Indtast den 6-cifrede kode fra din godkendelsesapp.", "Geben Sie den 6-stelligen Code aus Ihrer Authentifizierungs-App ein."],
   "Verification code": ["Ellenőrző kód", "Bekræftelseskode", "Bestätigungscode"],
@@ -1258,6 +1351,82 @@ const M: Record<string, Tri> = {
   "Active Directory": ["Active Directory", "Active Directory", "Active Directory"],
   "Permission rules": ["Jogosultsági szabályok", "Rettighedsregler", "Berechtigungsregeln"],
   "Rules file": ["Szabályfájl", "Regelfil", "Regeldatei"],
+  // ---- Administration: client certificate and handover sheet ----
+  "Certificate for the client devices": [
+    "Tanúsítvány a kliensgépekhez",
+    "Certifikat til klientenhederne",
+    "Zertifikat für die Client-Geräte",
+  ],
+  "Print handover sheet": [
+    "Átadás-átvételi lap nyomtatása",
+    "Udskriv overdragelsesark",
+    "Übergabeprotokoll drucken",
+  ],
+  "Installation page": ["Telepítő oldal", "Installationsside", "Installationsseite"],
+  "CA certificate": ["CA-tanúsítvány", "CA-certifikat", "CA-Zertifikat"],
+  "Valid until": ["Érvényes eddig", "Gyldigt til", "Gültig bis"],
+  "SHA-256 fingerprint (Windows form)": [
+    "SHA-256 ujjlenyomat (Windows-alak)",
+    "SHA-256-fingeraftryk (Windows-form)",
+    "SHA-256-Fingerabdruck (Windows-Form)",
+  ],
+  "SHA-256 fingerprint (Firefox form)": [
+    "SHA-256 ujjlenyomat (Firefox-alak)",
+    "SHA-256-fingeraftryk (Firefox-form)",
+    "SHA-256-Fingerabdruck (Firefox-Form)",
+  ],
+  "QR code of the installation page": [
+    "A telepítő oldal QR-kódja",
+    "QR-kode til installationssiden",
+    "QR-Code der Installationsseite",
+  ],
+  "The certificate cannot be read here: the page is not open through the HTTPS front of the AI Box.":
+    [
+      "A tanúsítvány itt nem olvasható: az oldal nem az AI Box HTTPS-előtétjén keresztül van megnyitva.",
+      "Certifikatet kan ikke læses her: siden er ikke åbnet gennem AI Boxens HTTPS-front.",
+      "Das Zertifikat ist hier nicht lesbar: Die Seite ist nicht über das HTTPS-Frontend der AI Box geöffnet.",
+    ],
+  "The fingerprint is computed in this browser from the certificate received over the encrypted connection. For the very first sheet, compare it with the output of tls-pki.sh show on the AI Box.":
+    [
+      "Az ujjlenyomatot ez a böngésző számolja a titkosított kapcsolaton kapott tanúsítványból. A legelső lapnál vesse össze az AI Boxon futtatott tls-pki.sh show kimenetével.",
+      "Fingeraftrykket beregnes i denne browser ud fra det certifikat, der modtages over den krypterede forbindelse. Sammenlign det allerførste ark med outputtet af tls-pki.sh show på AI Boxen.",
+      "Der Fingerabdruck wird in diesem Browser aus dem über die verschlüsselte Verbindung empfangenen Zertifikat berechnet. Vergleichen Sie das allererste Protokoll mit der Ausgabe von tls-pki.sh show auf der AI Box.",
+    ],
+  "Handover sheet: AI Box certificate for the client devices": [
+    "Átadás-átvételi lap: az AI Box tanúsítványa a kliensgépekhez",
+    "Overdragelsesark: AI Boxens certifikat til klientenhederne",
+    "Übergabeprotokoll: Zertifikat der AI Box für die Client-Geräte",
+  ],
+  "AI Box names": ["Az AI Box nevei", "AI Boxens navne", "Namen der AI Box"],
+  "AI Box addresses": ["Az AI Box címei", "AI Boxens adresser", "Adressen der AI Box"],
+  "Scan with a phone on the AI Box network": [
+    "Olvassa be telefonnal az AI Box hálózatán",
+    "Scan med en telefon på AI Boxens netværk",
+    "Mit einem Telefon im Netz der AI Box scannen",
+  ],
+  "Open the installation page with http:// (not https://), on the device to be set up.": [
+    "A beállítandó eszközön nyissa meg a telepítő oldalt http:// előtaggal (nem https://).",
+    "Åbn installationssiden med http:// (ikke https://) på den enhed, der skal sættes op.",
+    "Öffnen Sie die Installationsseite auf dem einzurichtenden Gerät mit http:// (nicht https://).",
+  ],
+  "Download the certificate and compare its SHA-256 fingerprint with this sheet character by character. Install it only if they match.":
+    [
+      "Töltse le a tanúsítványt, és vesse össze az SHA-256 ujjlenyomatát karakterre pontosan ezzel a lappal. Csak egyezés esetén telepítse.",
+      "Hent certifikatet, og sammenlign dets SHA-256-fingeraftryk tegn for tegn med dette ark. Installer det kun, hvis de stemmer overens.",
+      "Laden Sie das Zertifikat herunter und vergleichen Sie seinen SHA-256-Fingerabdruck Zeichen für Zeichen mit diesem Protokoll. Installieren Sie es nur bei Übereinstimmung.",
+    ],
+  "Follow the steps shown for the device. In a Windows domain the administrator can deploy the certificate with Group Policy instead.":
+    [
+      "Kövesse az eszközhöz megjelenő lépéseket. Windows-tartományban a rendszergazda csoportházirenddel is kioszthatja a tanúsítványt.",
+      "Følg de trin, der vises for enheden. I et Windows-domæne kan administratoren i stedet fordele certifikatet med gruppepolitik.",
+      "Folgen Sie den für das Gerät angezeigten Schritten. In einer Windows-Domäne kann der Administrator das Zertifikat stattdessen per Gruppenrichtlinie verteilen.",
+    ],
+  "Keep this sheet: every device checks the downloaded certificate against it.": [
+    "Őrizze meg ezt a lapot: minden eszköz ehhez veti össze a letöltött tanúsítványt.",
+    "Gem dette ark: hver enhed kontrollerer det hentede certifikat op imod det.",
+    "Bewahren Sie dieses Protokoll auf: Jedes Gerät prüft das heruntergeladene Zertifikat daran.",
+  ],
+  Printed: ["Nyomtatva", "Udskrevet", "Gedruckt"],
   "unusable: every document is hidden": ["használhatatlan: minden dokumentum rejtett", "ubrugelig: alle dokumenter er skjult", "unbrauchbar: alle Dokumente sind verborgen"],
   "{n} rule(s)": ["{n} szabály", "{n} regel/regler", "{n} Regel(n)"],
   "not configured": ["nincs beállítva", "ikke konfigureret", "nicht eingerichtet"],

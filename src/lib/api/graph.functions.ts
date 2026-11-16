@@ -316,6 +316,99 @@ export const graphApi = {
     ),
   reprocessCancel: (drive: string) =>
     adapterGraph<{ run: GraphReprocessRun }>("reprocess/cancel", {}, drive),
+  /** E28: the structured sources of the profile (graph administrators). */
+  importSources: (drive: string) =>
+    adapterGraph<{ sources: GraphImportSource[] }>("import/sources", {}, drive),
+  /** E28: one periodic export into a folder; answers within `wait` seconds or
+   *  with the job still running (then `importStatus`). */
+  importRecords: (
+    drive: string,
+    req: {
+      source: string;
+      asOf: string;
+      folder: string;
+      filename: string;
+      contentB64: string;
+      mode?: "delta" | "full";
+      force?: boolean;
+    },
+  ) =>
+    adapterGraph<GraphImportAnswer>(
+      "import",
+      {
+        source: req.source,
+        as_of: req.asOf,
+        folder: req.folder,
+        filename: req.filename,
+        content_b64: req.contentB64,
+        mode: req.mode,
+        force: req.force || undefined,
+        wait: 20,
+      },
+      drive,
+    ),
+  importStatus: (drive: string, job: string) =>
+    adapterGraph<GraphImportAnswer>("import/status", { job, wait: 15 }, drive),
+  /** E29: how far the search copy of a folder's records got. */
+  importRag: (drive: string, folder: string) =>
+    adapterGraph<{ folder: string; rag: GraphImportRag }>("import/rag", { folder }, drive),
+};
+
+/** A structured source of the profile (graph_service import/sources). */
+export type GraphImportSource = {
+  id: string;
+  label: GraphLabel;
+  title: string;
+  mode: "delta" | "full";
+  record_id: string[];
+  columns: string[];
+  acl: boolean;
+  /** Its records' free text also goes into the search (E29). */
+  rag?: boolean;
+};
+
+export type GraphImportStats = {
+  source: string;
+  as_of: string;
+  mode: "delta" | "full";
+  rows: number;
+  records: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  older: number;
+  removed: number;
+  problems: number;
+  problem_rows: { row: number; reason: string }[];
+  duplicates: number;
+  missing_columns: string[];
+  unknown_codes: Record<string, string[]>;
+  person_key: "on" | "off";
+  person_keys: number;
+  acl_nobody: number;
+  protected: number;
+  review_new?: number;
+};
+
+/** The search copy of a folder's records (adapter/record_rag.py). */
+export type GraphImportRag = {
+  state: "none" | "pending" | "running" | "done" | "failed";
+  records?: number;
+  written?: number;
+  removed?: number;
+  unchanged?: number;
+  error?: string;
+};
+
+export type GraphImportAnswer = {
+  import: {
+    status: "queued" | "running" | "done" | "refused" | "failed";
+    job?: string;
+    stats?: GraphImportStats;
+    error?: string;
+    source_path?: string;
+  };
+  rag?: GraphImportRag;
 };
 
 /** A reprocessing run after a profile change (adapter/reprocess.py). */

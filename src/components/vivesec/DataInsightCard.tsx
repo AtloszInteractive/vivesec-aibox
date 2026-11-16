@@ -2,10 +2,10 @@ import { Database, HardDrive, Cpu, ShieldCheck, FileText, Lock, AlertTriangle } 
 import { useLang } from "./i18n";
 import { getDataInsightCopy } from "./data-insight";
 import type { PlatformInsight, InsightValue } from "@/lib/api/rag.functions";
-import { ACCENT, ACCENT_TEXT } from "./brand";
+import { ACCENT, ACCENT_TEXT, inkA } from "./brand";
 
-const PANEL = "#152B44";
-const PANEL_HI = "#1C3550";
+const PANEL = "var(--surface-4)";
+const PANEL_HI = "var(--surface-5)";
 
 function fmtNumber(n: number): string {
   return n.toLocaleString("en-US").replace(/,/g, " ");
@@ -32,17 +32,17 @@ function KpiCard({ icon: Icon, label, value, note }: {
   const missing = value === null;
   return (
     <div
-      className="flex min-w-0 flex-col justify-between rounded-xl border border-white/[0.07] p-3"
+      className="flex min-w-0 flex-col justify-between rounded-xl border border-ink/[0.07] p-3"
       style={{ backgroundColor: PANEL_HI }}
     >
-      <div className="flex items-center gap-1.5 text-[11px] leading-tight text-white/55">
-        <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: missing ? "rgba(255,255,255,0.3)" : ACCENT_TEXT }} />
+      <div className="flex items-center gap-1.5 text-[11px] leading-tight text-ink/55">
+        <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: missing ? inkA(0.3) : ACCENT_TEXT }} />
         <span className="break-words">{label}</span>
       </div>
-      <div className={`mt-2 break-words text-lg font-bold leading-none ${missing ? "italic text-white/30" : "text-white"}`}>
+      <div className={`mt-2 break-words text-lg font-bold leading-none ${missing ? "italic text-ink/30" : "text-ink"}`}>
         {missing ? c.noData : value}
       </div>
-      {note && !missing && <div className="mt-1 text-[9px] leading-tight text-white/40">{note}</div>}
+      {note && !missing && <div className="mt-1 text-[9px] leading-tight text-ink/40">{note}</div>}
     </div>
   );
 }
@@ -53,18 +53,18 @@ function Row({ label, value }: { label: string; value: string | null }) {
   const c = getDataInsightCopy(lang);
   return (
     <div className="flex items-start justify-between gap-3 py-1 text-[12px]">
-      <span className="min-w-0 text-white/60">{label}</span>
+      <span className="min-w-0 text-ink/60">{label}</span>
       {value === null ? (
-        <span className="shrink-0 italic text-white/30" title={c.noDataHint}>{c.noData}</span>
+        <span className="shrink-0 italic text-ink/30" title={c.noDataHint}>{c.noData}</span>
       ) : (
-        <span className="shrink-0 font-semibold text-white tabular-nums">{value}</span>
+        <span className="shrink-0 font-semibold text-ink tabular-nums">{value}</span>
       )}
     </div>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wide text-white/40">{children}</div>;
+  return <div className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wide text-ink/40">{children}</div>;
 }
 
 export function DataInsightCard({
@@ -81,9 +81,9 @@ export function DataInsightCard({
 
   if (loading || !insight) {
     return (
-      <div className="rounded-2xl border border-white/[0.07] p-6 text-center text-[12px] text-white/50" style={{ backgroundColor: PANEL }}>
+      <div className="rounded-2xl border border-ink/[0.07] p-6 text-center text-[12px] text-ink/50" style={{ backgroundColor: PANEL }}>
         {error ? (
-          <span className="text-rose-200/80">
+          <span className="text-rose-800/80 dark:text-rose-200/80">
             <AlertTriangle className="mr-1 inline h-4 w-4" />
             {c.loadFailed} {error}
           </span>
@@ -98,19 +98,19 @@ export function DataInsightCard({
   const unit = c.filesUnit ? ` ${c.filesUnit}` : "";
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-white/[0.07]" style={{ backgroundColor: PANEL }}>
+    <div className="overflow-hidden rounded-2xl border border-ink/[0.07]" style={{ backgroundColor: PANEL }}>
       {/* Header */}
-      <div className="border-b border-white/[0.07] px-4 py-3">
+      <div className="border-b border-ink/[0.07] px-4 py-3">
         <div className="flex items-center gap-2">
           <Database className="h-4 w-4" style={{ color: ACCENT_TEXT }} />
-          <span className="text-[13px] font-bold leading-tight text-white">{c.cardTitle}</span>
+          <span className="text-[13px] font-bold leading-tight text-ink">{c.cardTitle}</span>
         </div>
-        <div className="mt-2 space-y-0.5 text-[11px] text-white/50">
+        <div className="mt-2 space-y-0.5 text-[11px] text-ink/50">
           <div>
-            <span className="text-white/70">{c.classification}:</span> {c.classificationValue}
+            <span className="text-ink/70">{c.classification}:</span> {c.classificationValue}
           </div>
           <div>
-            <span className="text-white/70">{c.networkMode}:</span> {c.networkModeValue}
+            <span className="text-ink/70">{c.networkMode}:</span> {c.networkModeValue}
           </div>
         </div>
       </div>
@@ -128,10 +128,10 @@ export function DataInsightCard({
       </div>
 
       {/* Split view: ViVeSecBox (left) vs AI Box (right) */}
-      <div className="grid grid-cols-1 gap-px border-t border-white/[0.07] bg-white/[0.06] md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-px border-t border-ink/[0.07] bg-ink/[0.06] md:grid-cols-2">
         {/* ViVeSecBox — storage side */}
         <div className="p-4" style={{ backgroundColor: PANEL }}>
-          <div className="mb-2 flex items-center gap-1.5 border-b border-white/[0.07] pb-2 text-[12px] font-bold text-white">
+          <div className="mb-2 flex items-center gap-1.5 border-b border-ink/[0.07] pb-2 text-[12px] font-bold text-ink">
             <HardDrive className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
             {c.boxTitle}
           </div>
@@ -166,7 +166,7 @@ export function DataInsightCard({
 
         {/* AI Box — index + runtime */}
         <div className="p-4" style={{ backgroundColor: PANEL }}>
-          <div className="mb-2 flex items-center gap-1.5 border-b border-white/[0.07] pb-2 text-[12px] font-bold text-white">
+          <div className="mb-2 flex items-center gap-1.5 border-b border-ink/[0.07] pb-2 text-[12px] font-bold text-ink">
             <Cpu className="h-3.5 w-3.5" style={{ color: ACCENT_TEXT }} />
             {c.aiTitle}
           </div>
@@ -193,18 +193,18 @@ export function DataInsightCard({
       </div>
 
       {/* Audit footer */}
-      <div className="border-t border-white/[0.07] px-4 py-3 text-[10px] leading-relaxed text-white/45">
+      <div className="border-t border-ink/[0.07] px-4 py-3 text-[10px] leading-relaxed text-ink/45">
         <div>
-          <span className="text-white/65">{c.auditTitle}</span>
+          <span className="text-ink/65">{c.auditTitle}</span>
         </div>
         <div className="mt-1">
-          <span className="text-white/60">{c.sources}:</span> ViVeSecBox drive sync · AI Box adapter status
+          <span className="text-ink/60">{c.sources}:</span> ViVeSecBox drive sync · AI Box adapter status
         </div>
       </div>
 
       {/* Air-gapped stamp */}
       <div
-        className="flex items-center gap-1.5 border-t border-white/[0.07] px-4 py-2 text-[10px]"
+        className="flex items-center gap-1.5 border-t border-ink/[0.07] px-4 py-2 text-[10px]"
         style={{ color: ACCENT_TEXT, backgroundColor: `${ACCENT}0d` }}
       >
         <Lock className="h-3 w-3 shrink-0" />

@@ -47,9 +47,9 @@ function toRows(map: GroupMap | null): { groups: GroupRow[]; roles: RoleRow[] } 
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/5 py-1.5 text-xs last:border-0">
-      <span className="text-white/55">{label}</span>
-      <span className="break-all text-right text-white/90">{children}</span>
+    <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-ink/5 py-1.5 text-xs last:border-0">
+      <span className="text-ink/55">{label}</span>
+      <span className="break-all text-right text-ink/90">{children}</span>
     </div>
   );
 }
@@ -181,7 +181,7 @@ export function DirectoryTab({
               {fill(tm("every {n} minutes"), { n: Math.round(info.refresh_seconds / 60) })}
             </Row>
             <Row label={tm("Directory users on the box")}>{info.users}</Row>
-            <p className="mt-2 text-[11px] text-white/50">
+            <p className="mt-2 text-[11px] text-ink/50">
               {tm(
                 "The connection settings and the service account password are set on the box when the AI Box is installed (auth_service README).",
               )}
@@ -189,7 +189,7 @@ export function DirectoryTab({
           </>
         )}
         {info?.state === "ready" && (
-          <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-white/10 pt-3">
+          <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-ink/10 pt-3">
             <div className="w-56">
               <TextField
                 label={tm("Test a user (optional)")}
@@ -220,14 +220,14 @@ export function DirectoryTab({
             )}
             {check.groups?.map((g) => (
               <div key={g.dn} className="flex items-center justify-between gap-2">
-                <span className="break-all text-white/80">{g.dn}</span>
+                <span className="break-all text-ink/80">{g.dn}</span>
                 <Badge tone={g.found ? "ok" : "bad"}>
                   {g.found ? tm("found") : tm("not found")}
                 </Badge>
               </div>
             ))}
             {check.user && (
-              <div className="rounded-lg border border-white/10 p-2 text-white/80">
+              <div className="rounded-lg border border-ink/10 p-2 text-ink/80">
                 <b>{check.user.username}</b>:{" "}
                 {check.user.refused
                   ? `${tm("cannot sign in")} (${check.user.refused})`
@@ -258,7 +258,7 @@ export function DirectoryTab({
           </Button>
         }
       >
-        <p className="mb-3 text-[11px] leading-relaxed text-white/50">
+        <p className="mb-3 text-[11px] leading-relaxed text-ink/50">
           {tm(
             "An AD group gives roles; a role gives rooms. Nested groups count. A user in none of these groups cannot sign in. The group name is what the permission rules use as group:<name>.",
           )}
@@ -274,12 +274,12 @@ export function DirectoryTab({
           )}
           {dirty && <Notice tone="warn">{tm("There are unsaved changes.")}</Notice>}
         </div>
-        <h3 className="mb-2 mt-3 text-xs font-semibold text-white/80">{tm("AD groups")}</h3>
+        <h3 className="mb-2 mt-3 text-xs font-semibold text-ink/80">{tm("AD groups")}</h3>
         <div className="space-y-2">
           {groups.map((group) => (
             <div
               key={group.id}
-              className="grid gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-2 md:grid-cols-[2fr_1fr_1fr_auto]"
+              className="grid gap-2 rounded-xl border border-ink/10 bg-ink/[0.03] p-2 md:grid-cols-[2fr_1fr_1fr_auto]"
             >
               <TextField
                 label={tm("Group (distinguished name)")}
@@ -336,9 +336,7 @@ export function DirectoryTab({
           </Button>
         </div>
 
-        <h3 className="mb-2 mt-4 text-xs font-semibold text-white/80">
-          {tm("Rooms of the roles")}
-        </h3>
+        <h3 className="mb-2 mt-4 text-xs font-semibold text-ink/80">{tm("Rooms of the roles")}</h3>
         <div className="space-y-2">
           {[
             ...roles,
@@ -346,13 +344,13 @@ export function DirectoryTab({
           ].map((row) => (
             <div
               key={`${row.id}-${row.role}`}
-              className="rounded-xl border border-white/10 bg-white/[0.03] p-2"
+              className="rounded-xl border border-ink/10 bg-ink/[0.03] p-2"
             >
               <div className="mb-1.5 flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-white">
+                <span className="text-xs font-medium text-ink">
                   {row.role}
                   {row.role === "admin" && (
-                    <span className="ml-2 text-[11px] font-normal text-amber-100/80">
+                    <span className="ml-2 text-[11px] font-normal text-amber-800/80 dark:text-amber-100/80">
                       {tm("(administrators of the AI Box)")}
                     </span>
                   )}
@@ -415,7 +413,7 @@ export function DirectoryTab({
             </div>
           ))}
           {roles.length === 0 && missingRoles.length === 0 && (
-            <p className="text-xs text-white/50">{tm("Add a group and its roles first.")}</p>
+            <p className="text-xs text-ink/50">{tm("Add a group and its roles first.")}</p>
           )}
         </div>
       </Card>

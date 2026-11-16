@@ -541,6 +541,12 @@ _RECORD_RAG_JOBS = set()
 
 def _protected_record_path(path):
     return "/%s/" % record_rag.RECORDS_DIR in path and "/~protected/" in path
+
+
+def _record_path(path):
+    """A structured record's RAG path (<folder>/~records/<source>/<name>): no
+    file stands behind it."""
+    return "/%s/" % record_rag.RECORDS_DIR in path
 # Reprocessing after a profile change fetches each file again: from the
 # ViVeSecBox (ws-fs), or -- on a development box without that channel -- from
 # this mirror of the drives (<dir>/<drive>/... for /storage/drives/<drive>/...).
@@ -1756,7 +1762,7 @@ def _clarify_result(user, drive, query, question, req_scope, session_scope, prof
     """The orchestrator asks the user back instead of answering. The question is
     stored as the assistant's turn, so the next message is read as the reply."""
     stored = SESSIONS.record(user, session_scope, query, question,
-                             conversation_id=conversation_id)
+                             conversation_id=conversation_id, clarify=True)
     if stored == 1:
         _title_thread(user, session_scope, conversation_id, query, question, lang)
     aid = confidence.audit_id(user, drive, query, question)
@@ -3974,6 +3980,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "Missing 'path'"})
             return
         path = corpus.norm(raw_path)
+        if _record_path(path) and MIRROR.get(path) is None:
+            self._send_record(user, drive, path)
+            return
         if INTEGRATION == integration.MODE_STANDALONE:
             # The store resolves names in NFC; the scope and the ACL must judge
             # that same spelling, or an NFD name would pass a rule set on the
@@ -4013,6 +4022,41 @@ class Handler(BaseHTTPRequestHandler):
                              "error": "the box returned no file content"})
             return
         self._send_document(path, len(content), [content])
+
+    def _send_record(self, user, drive, path):
+        """A structured record cited from the RAG (E29: a log or ODIN entry) has
+        no file behind it on any box: its text comes from the RAG, which applies
+        the folder's ACL AND the record's own rule for this caller. A protected
+        record part, a path outside the scope or one the caller may not read
+        all answer the same 404 as a record that does not exist."""
+        req_scope = _resolve_scope(self.headers, user, drive, self._caller)
+        access = self._access()
+        if ".." in path.split("/") or _protected_record_path(path) \
+                or not req_scope.contains_path(path):
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        if not ACL.allows(path, access, MIRROR.acl_of):
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        try:
+            corpus_id = req_scope.corpus_id_for_path(path)
+        except ValueError:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        res = rag_post_json("/rag/document_context",
+                            {"corpus_id": corpus_id, "tenant_id": TENANT_ID,
+                             "source_path": path, "max_context_tokens": 8000,
+                             "access": access.as_rag()})
+        contexts = [c for c in res.get("contexts") or []
+                    if corpus.norm(c.get("source_path") or "") == path]
+        if not contexts:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        text = "\n\n".join(c.get("text") or "" for c in contexts).encode("utf-8")
+        name = path.rsplit("/", 1)[-1] or "record"
+        self._send_bytes(200, "text/plain; charset=utf-8", text, {
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": _content_disposition("inline", name + ".txt")})
 
     def _send_document(self, path, size, blocks):
         name = path.rsplit("/", 1)[-1] or "document"

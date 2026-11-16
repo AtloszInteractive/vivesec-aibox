@@ -409,6 +409,30 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertTrue(all("~protected" not in d["path"] for d in listed))
             self.assertIn("/~records/odin/ODIN R-2026-32 (", json.dumps(listed,
                                                                        ensure_ascii=False))
+            # A cited record opens as its text, by the same two rules (no file behind it).
+            [first] = [d["path"] for d in listed if "/Felderítési napló 2026-14-1 (" in d["path"]]
+
+            def open_record(user, path):
+                request = urllib.request.Request(
+                    "http://127.0.0.1:%d/api/v1/ui/file" % self.server.server_port,
+                    data=json.dumps({"path": path}).encode(), method="POST",
+                    headers={"Content-Type": "application/json", "VVS-User": user,
+                             "VVS-Drive": b64(DRIVE + "/")})
+                try:
+                    with urllib.request.urlopen(request, timeout=60) as response:
+                        return response.status, response.headers.get("Content-Type"), \
+                            response.read().decode("utf-8")
+                except urllib.error.HTTPError as e:
+                    return e.code, None, ""
+            status, ctype, body = open_record("nat", first)
+            self.assertEqual((200, "text/plain; charset=utf-8"), (status, ctype))
+            self.assertIn(drug, body)
+            self.assertIn("Naplószám: 2026/14/1", body)
+            self.assertEqual(200, open_record("i01", first)[0])
+            for user in ("lars", "hrx"):
+                self.assertEqual(404, open_record(user, first)[0], user)
+            twin = first.rsplit("/", 1)[0] + "/~protected/x"
+            self.assertEqual(404, open_record("fefo", twin)[0])
             # The folder's ACL narrows: the records follow, their own rule stays.
             self.call("/api/v1/index/upsert/acl", {"path": folder, "acl": {"allow": ["group:hr"]}})
             self.assertNotIn(drug, ask("nat", drug))

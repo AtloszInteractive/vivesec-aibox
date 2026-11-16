@@ -141,8 +141,9 @@ export function Button({
     "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-50";
   const styles: Record<ButtonKind, string> = {
     primary: "hover:brightness-110",
-    secondary: "border border-white/15 bg-white/5 text-white/85 hover:bg-white/10",
-    danger: "border border-rose-400/40 bg-rose-500/10 text-rose-100 hover:bg-rose-500/20",
+    secondary: "border border-ink/15 bg-ink/5 text-ink/85 hover:bg-ink/10",
+    danger:
+      "border border-rose-400/40 bg-rose-500/10 text-rose-800 dark:text-rose-100 hover:bg-rose-500/20",
   };
   return (
     <button
@@ -166,12 +167,12 @@ export function TextField({
 }: { label: string; hint?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-medium text-white/65">{label}</span>
+      <span className="mb-1 block text-[11px] font-medium text-ink/65">{label}</span>
       <input
         {...input}
-        className="w-full rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-[#B48CF5] focus:ring-2 focus:ring-[#8C49E9]/40 disabled:opacity-60"
+        className="w-full rounded-lg border border-ink/15 bg-ink/5 px-2.5 py-1.5 text-sm text-ink outline-none transition placeholder:text-ink/30 focus:border-brand-soft focus:ring-2 focus:ring-[#8C49E9]/40 disabled:opacity-60"
       />
-      {hint && <span className="mt-1 block text-[11px] text-white/45">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] text-ink/45">{hint}</span>}
     </label>
   );
 }
@@ -189,11 +190,11 @@ export function SelectField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-medium text-white/65">{label}</span>
+      <span className="mb-1 block text-[11px] font-medium text-ink/65">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-white/15 bg-[#0B1C2E] px-2.5 py-1.5 text-sm text-white outline-none focus:border-[#B48CF5]"
+        className="w-full rounded-lg border border-ink/15 bg-surface-1 px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand-soft"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -217,7 +218,7 @@ export function Checkbox({
   disabled?: boolean;
 }) {
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-xs text-white/80">
+    <label className="flex cursor-pointer items-center gap-2 text-xs text-ink/80">
       <input
         type="checkbox"
         checked={checked}
@@ -238,11 +239,11 @@ export function Badge({
   children: ReactNode;
 }) {
   const tones = {
-    neutral: "border-white/15 bg-white/5 text-white/70",
-    accent: "border-[#8C49E9]/50 bg-[#8C49E9]/15 text-[#D9C5FA]",
-    ok: "border-emerald-400/40 bg-emerald-500/10 text-emerald-100",
-    warn: "border-amber-400/40 bg-amber-500/10 text-amber-100",
-    bad: "border-rose-400/40 bg-rose-500/10 text-rose-100",
+    neutral: "border-ink/15 bg-ink/5 text-ink/70",
+    accent: "border-[#8C49E9]/50 bg-[#8C49E9]/15 text-brand-soft dark:text-[#D9C5FA]",
+    ok: "border-emerald-400/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-100",
+    warn: "border-amber-400/40 bg-amber-500/10 text-amber-800 dark:text-amber-100",
+    bad: "border-rose-400/40 bg-rose-500/10 text-rose-800 dark:text-rose-100",
   };
   return (
     <span
@@ -265,10 +266,10 @@ export function Card({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-white/10 bg-[#10243A] p-4 shadow-xl shadow-black/30">
+    <section className="rounded-2xl border border-ink/10 bg-surface-3 p-4 shadow-xl shadow-shade/30">
       {(title || actions) && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-white">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
             {icon && <span style={{ color: ACCENT_TEXT }}>{icon}</span>}
             {title}
           </h2>
@@ -282,9 +283,9 @@ export function Card({
 
 export function Notice({ tone, children }: { tone: "error" | "warn" | "ok"; children: ReactNode }) {
   const tones = {
-    error: "border-rose-400/40 bg-rose-500/10 text-rose-100",
-    warn: "border-amber-400/40 bg-amber-500/10 text-amber-100",
-    ok: "border-emerald-400/40 bg-emerald-500/10 text-emerald-100",
+    error: "border-rose-400/40 bg-rose-500/10 text-rose-800 dark:text-rose-100",
+    warn: "border-amber-400/40 bg-amber-500/10 text-amber-800 dark:text-amber-100",
+    ok: "border-emerald-400/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-100",
   };
   return (
     <p
@@ -330,20 +331,20 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`flex max-h-full w-full ${wide ? "max-w-2xl" : "max-w-md"} flex-col rounded-2xl border border-white/10 bg-[#10243A] shadow-2xl shadow-black/60`}
+        className={`flex max-h-full w-full ${wide ? "max-w-2xl" : "max-w-md"} flex-col rounded-2xl border border-ink/10 bg-surface-3 shadow-2xl shadow-shade/60`}
       >
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <h3 className="text-sm font-semibold text-white">{title}</h3>
+        <div className="flex items-center justify-between border-b border-ink/10 px-4 py-3">
+          <h3 className="text-sm font-semibold text-ink">{title}</h3>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-white/60 hover:bg-white/10 hover:text-white"
+            className="rounded-md p-1 text-ink/60 hover:bg-ink/10 hover:text-ink"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">{children}</div>
-        <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">{footer}</div>
+        <div className="flex justify-end gap-2 border-t border-ink/10 px-4 py-3">{footer}</div>
       </div>
     </div>
   );
