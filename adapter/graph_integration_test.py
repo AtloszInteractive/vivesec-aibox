@@ -628,6 +628,9 @@ class GraphIntegrationTest(unittest.TestCase):
                                     user="lars")
             self.assertEqual(200, status, out)
             self.assertEqual("relations", out["graph"]["calls"][0]["tool"])
+            self.assertTrue(any("Kovács János" in s["question"] for s in out["suggestions"]),
+                            out["suggestions"])
+            self.assertIsInstance(out["observations"], list)
             self.assertRegex(out["answer"], r"Kovács János -- \w+ -- Nagy Éva|"
                                             r"Nagy Éva -- \w+ -- Kovács János")
             self.assertNotIn("Titkos", json.dumps(out, ensure_ascii=False))

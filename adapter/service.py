@@ -142,6 +142,7 @@ import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
 import orchestrator  # noqa: E402
+import proactive  # noqa: E402
 import person_summary  # noqa: E402
 import purpose  # noqa: E402
 import querylog  # noqa: E402
@@ -685,6 +686,14 @@ def _parse_app_mode(raw):
 
 APP_MODE = _parse_app_mode(os.environ.get("ADAPTER_APP_MODE"))
 ORCHESTRATOR_MAX_FACTS = max(1, int(os.environ.get("ADAPTER_ORCHESTRATOR_MAX_FACTS", "40") or 40))
+# Proactive chat (proactive.py): next-question suggestions and evidence
+# observations under an analyst answer. Only "off" switches them off.
+PROACTIVE = (os.environ.get("ADAPTER_PROACTIVE", "on") or "on").strip().lower() != "off"
+# The language of box-made texts when neither the question nor the answer shows
+# one; anything but hu/en/da/de means English.
+DEFAULT_LANG_CODE = (os.environ.get("ADAPTER_DEFAULT_LANG", "en") or "en").strip().lower()
+if DEFAULT_LANG_CODE not in ("hu", "en", "da", "de"):
+    DEFAULT_LANG_CODE = "en"
 # The analyst planner may read EVERY passage that names its terms (deep.py), a
 # 1-3 minute job that holds the heavy slot. Only "off" disables it.
 DEEP_READ = (os.environ.get("ADAPTER_DEEP_READ", "on") or "on").strip().lower() != "off"
@@ -1756,6 +1765,18 @@ def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
         result["document"] = document
     if graph_info is not None:
         result["graph"] = graph_info
+    if orchestrated is not None and PROACTIVE:
+        # Proactive chat: what to ask next, what the box noticed (no model call).
+        try:
+            # A question without a language signal: the answer is in the user's;
+            # with no signal at all, the box's default language.
+            code = orchestrator.LANG_CODES.get(lang or llm.detect_lang(answer or "")) \
+                or DEFAULT_LANG_CODE
+            result["suggestions"] = proactive.suggestions(run, query, turns=len(history),
+                                                          code=code)
+            result["observations"] = proactive.observations(run, query, code=code)
+        except Exception as e:  # noqa: BLE001 -- advisory, never fails the answer
+            sys.stderr.write("[adapter] proactive: %s\n" % e)
     if deep_info is not None:
         result["deep"] = deep_info
     if conversation_id:

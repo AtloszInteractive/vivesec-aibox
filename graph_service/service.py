@@ -176,6 +176,9 @@ def run_query(state: State, name: str, body: dict) -> dict:
         if doc is not None:
             documents[doc_id] = {"corpus_id": doc.corpus_id, "source_path": doc.source_path,
                                  "title": doc.title, "kind": doc.kind}
+            if (doc.profile or "").endswith("/partial"):
+                # Read without the language model so far (rules, tables, forms).
+                documents[doc_id]["partial"] = True
     out["documents"] = documents
     wanted = body.get("doc_refs")
     if isinstance(wanted, list) and documents:

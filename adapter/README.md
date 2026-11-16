@@ -683,6 +683,20 @@ and `/ui/files/children` answer 403, a typed `/summary` is plain text, and
 orchestrator}` so the UI hides the drive browser, the results column and the
 slash menu. Source viewing (`/ui/file`) and saving (`/ui/save`) stay.
 
+**Proactive chat** (`proactive.py`, `ADAPTER_PROACTIVE`, default `on`): an
+answer the planner built with graph tools also carries `suggestions` (at most 4
+`{label, question}`: the timeline, direct relations, shared identifiers, a
+two-level investigation or the cell-mates of the entities the message named,
+the path and common relations of two named people, a year or direct relations
+only when the result was cut, a summary from the third exchange; never what was
+just asked) and `observations` (at most 4 sentences about the evidence: informant
+data in the answer, relations only named together, a single source, differing
+birth data of a person asked about, documents not fully processed yet, data after
+the year asked about). Both come from the planner's results without a model
+call, never score or rank people, and name entities after a colon so no
+language's inflection breaks. Their language is the question's, else the
+answer's, else `ADAPTER_DEFAULT_LANG` (`hu|en|da|de`, default `en`).
+
 With `GRAPH_URL` set, every chat message goes through the orchestrator
 (`orchestrator.py`): one JSON planning call chooses graph tools (relations,
 connection, common, timeline, copresence, shared_identifiers, most_connected,

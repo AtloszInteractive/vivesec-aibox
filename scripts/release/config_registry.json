@@ -2981,6 +2981,42 @@
       "internal": false
     },
     {
+      "name": "ADAPTER_PROACTIVE",
+      "component": "adapter",
+      "category": "chat",
+      "type": "enum",
+      "default": "on",
+      "allowed": "on | off",
+      "fail_safe": "Anything but off keeps it on; the suggestions and observations never change the answer.",
+      "impact": "Next-question suggestions and evidence observations under an analyst-mode answer (proactive.py), built from the planner's results without a model call.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "on",
+        "off"
+      ]
+    },
+    {
+      "name": "ADAPTER_DEFAULT_LANG",
+      "component": "adapter",
+      "category": "chat",
+      "type": "enum",
+      "default": "en",
+      "allowed": "hu | en | da | de",
+      "fail_safe": "Anything else means en.",
+      "impact": "Language of box-made texts (proactive suggestions and observations) when neither the question nor the answer shows one.",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "hu",
+        "en",
+        "da",
+        "de"
+      ]
+    },
+    {
       "name": "ADAPTER_GRAPH_CHAT_FACTS",
       "component": "adapter",
       "category": "chat",

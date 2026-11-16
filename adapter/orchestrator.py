@@ -921,6 +921,9 @@ class Run:
         self._reason = None
         # Why the planning rounds ended (complete, done, repeat, max_rounds ...).
         self.stop = None
+        # Relation facts given to the answer, and those only named together (proactive.py).
+        self.edge_facts = 0
+        self.weak_facts = 0
 
     def query(self, name, **params):
         if self.name_join and name in ("match", "aggregate", "sequence", "investigate"):
@@ -1224,6 +1227,8 @@ class Run:
         if added:
             self._call_labels.update((a, b))
             self._note_people(edge["a"], edge["b"])
+            self.weak_facts += 1 if edge.get("weak") else 0
+            self.edge_facts += 1
         return added
 
     def _note_people(self, *ids):
