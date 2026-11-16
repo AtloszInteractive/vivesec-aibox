@@ -139,7 +139,7 @@ class MemoryGraphStore:
             self.documents[doc.doc_id] = doc
             self._by_path[(doc.corpus_id, doc.source_path)] = doc.doc_id
             for e in entities:
-                self._upsert_entity(e)
+                self._upsert_entity(e, doc.doc_id)
                 for a in e.attributes:
                     self._doc_attr_entities.setdefault(a.doc_id, set()).add(e.id)
             for m in mentions:
@@ -164,7 +164,7 @@ class MemoryGraphStore:
             return {"entities": len(entities), "mentions": len(mentions),
                     "relations": len(relations)}
 
-    def _upsert_entity(self, e: Entity) -> None:
+    def _upsert_entity(self, e: Entity, doc_id: str | None = None) -> None:
         cur = self.entities.get(e.id)
         if cur is None:
             self.entities[e.id] = Entity(e.id, e.type, e.subtype, e.label, list(e.attributes),
@@ -173,16 +173,27 @@ class MemoryGraphStore:
         if cur.type != e.type:
             raise StoreError("entity %s already exists with type %s" % (e.id, cur.type))
         cur.subtype = cur.subtype or e.subtype
+        if doc_id is not None and all(a.doc_id == doc_id for a in e.attributes) \
+                and e.id not in self._doc_attr_entities.get(doc_id, ()):
+            # Nothing of this document is on it yet, so nothing to skip: a shared
+            # entity (an institution of thousands of records) is not rescanned.
+            cur.attributes += e.attributes
+            return
         seen = {(a.name, a.value, a.doc_id) for a in cur.attributes}
         cur.attributes += [a for a in e.attributes if (a.name, a.value, a.doc_id) not in seen]
 
     def _add_relation(self, r: Relation) -> None:
         key = _rel_key(r)
         existing_id = self._rel_by_key.get(key)
+        fresh = existing_id is not None and not any(
+            existing_id in self._doc_rels.get(ev.doc_id, ()) for ev in r.evidence)
         for ev in r.evidence:
             self._doc_rels.setdefault(ev.doc_id, set()).add(existing_id or r.id)
         if existing_id:
             cur = self.relations[existing_id]
+            if fresh:
+                cur.evidence += r.evidence
+                return
             seen = {(ev.doc_id, ev.quote) for ev in cur.evidence}
             cur.evidence += [ev for ev in r.evidence if (ev.doc_id, ev.quote) not in seen]
             return

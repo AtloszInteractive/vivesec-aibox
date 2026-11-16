@@ -80,6 +80,13 @@ def _edit1(a: str, b: str) -> bool:
     return a[i:] == b[i + 1:]
 
 
+def _variants(s: str) -> set[str]:
+    """s and s with one character deleted: two strings _edit1 accepts always
+    share one (a swap of positions i, i+1: delete i from one, i+1 from the other),
+    so an index of these finds every near-identical name without a full scan."""
+    return {s} | {s[:i] + s[i + 1:] for i in range(len(s))}
+
+
 class Resolver:
     def __init__(self, profile: dict):
         self.rules = profile.get("resolution", {})
@@ -87,6 +94,8 @@ class Resolver:
         self.lock = threading.Lock()
         self.people: dict[str, dict] = {}  # id -> {"names", "attrs", "keys", "contacts", ...}
         self.by_full: dict[str, set[str]] = {}
+        # One-deletion variant -> the full name keys having it (_variants).
+        self.by_variant: dict[str, set[str]] = {}
         self.by_initial: dict[str, set[str]] = {}
         self.by_key: dict[str, set[str]] = {}
         # Held phone, e-mail and address ids -> people (key-only review pairs).
@@ -130,6 +139,9 @@ class Resolver:
         for n in names:
             p["names"].add(n)
             full, initial = _person_keys(n)
+            if full not in self.by_full:
+                for v in _variants(full):
+                    self.by_variant.setdefault(v, set()).add(full)
             self.by_full.setdefault(full, set()).add(pid)
             self.by_initial.setdefault(initial, set()).add(pid)
         for k, v in attrs.items():
@@ -174,6 +186,7 @@ class Resolver:
         with self.lock:
             self.people.clear()
             self.by_full.clear()
+            self.by_variant.clear()
             self.by_initial.clear()
             self.by_key.clear()
             self.by_contact.clear()
@@ -281,7 +294,10 @@ class Resolver:
         for n in ent.names:
             full, initial = _person_keys(n)
             out |= self.by_full.get(full, set()) | self.by_initial.get(initial, set())
-            for key in self.by_full:
+            near = set()
+            for v in _variants(full):
+                near |= self.by_variant.get(v, set())
+            for key in near:
                 if _edit1(full, key):
                     out |= self.by_full[key]
         return out

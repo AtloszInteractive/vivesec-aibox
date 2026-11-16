@@ -207,6 +207,17 @@ class ResolverTest(unittest.TestCase):
         a = self.r.resolve("d4", person(["Tóth Ádám"], id_number="123456AB"))
         self.assertEqual(a, self.r.resolve("d5", person(["Tóht Ádám"], id_number="123456AB")))
 
+    def test_every_one_letter_misspelling_is_found_among_many_people(self):
+        for i in range(300):
+            self.r.resolve("n%d" % i, person(["Ember%03d Ödön" % i]))
+        typos = ["Kovács Jánis", "Kovácss János", "Kovác János", "Kovásc János"]
+        for i, name in enumerate(typos):
+            self.r.resolve("t%d" % i, person([name], birth_date="1980-01-02"))
+        self.r.resolve("t9", person(["Kovácska János"], birth_date="1980-01-02"))
+        near = [x for x in self.r.review if x["b"] == self.first]
+        self.assertEqual(len(typos), len(near))
+        self.assertTrue(all(x["reason"].startswith("near-identical name") for x in near))
+
     def test_held_id_card_links_the_same_name(self):
         card = frozenset({"id_card:499529TT"})
         a = self.r.resolve("d6", person(["Takács Bence"]), card)
