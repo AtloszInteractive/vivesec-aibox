@@ -254,6 +254,14 @@ class GraphIntegrationTest(unittest.TestCase):
                                      out["import"]["stats"]["person_key"]))
         status, sources = self.call("/api/v1/ui/graph/import/sources", {}, user="hanna")
         self.assertIn("contacts", [s["id"] for s in sources["sources"]])
+        # A client's long wait stays under the adapter's own graph timeout.
+        graph_client = self.service.GRAPH
+        sent, post = [], graph_client.post
+        with patch.object(graph_client, "timeout", 40), \
+                patch.object(graph_client, "post",
+                             lambda path, obj, **kw: sent.append(obj.get("wait")) or post(path, obj, **kw)):
+            status, out = self.call("/api/v1/ui/graph/import", dict(body, wait=300), user="hanna")
+        self.assertEqual((200, [25]), (status, sent[:1]), out)
         # The folder admits hr; the records also need their institution or the national group.
         self.assertEqual(set(), self.people("hanna", "Kerekes"))
         with patch.dict(GROUPS, {"hanna": ["hr", "bv-orszagos"],

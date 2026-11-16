@@ -430,6 +430,12 @@ def _review_int(payload, key, default):
         else default
 
 
+def _graph_wait(payload, default):
+    """A `wait` the graph holds the answer for, kept under this client's own
+    timeout: a longer one would turn a running import into 'graph unreachable'."""
+    return min(_review_int(payload, "wait", default), max(0, int(GRAPH.timeout) - 15))
+
+
 def _flat_acl(path):
     return ACL.effective(path, MIRROR.acl_of).as_rag()
 
@@ -3591,7 +3597,7 @@ class Handler(BaseHTTPRequestHandler):
             if payload.get(key) is not None:
                 body[key] = payload[key]
         body["force"] = payload.get("force") is True
-        body["wait"] = _review_int(payload, "wait", 60)
+        body["wait"] = _graph_wait(payload, 60)
         res = self._graph_post("/import/records", body)
         if res is None:
             return
@@ -3621,7 +3627,7 @@ class Handler(BaseHTTPRequestHandler):
         ctx = self._graph_request()
         if ctx is None or not self._graph_admin(ctx[0]):
             return
-        wait = _review_int(ctx[1], "wait", 0)
+        wait = _graph_wait(ctx[1], 0)
         res = self._graph_post("/import/status", {"job": str(ctx[1].get("job") or ""),
                                                   "wait": wait})
         if res is not None:
