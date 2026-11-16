@@ -2343,6 +2343,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
+                "/api/v1/ui/graph/image/log": self._graph_image_log,
                 "/api/v1/ui/graph/investigation/export": self._graph_investigation_export,
                 "/api/v1/ui/graph/investigation/graph": self._graph_investigation_graph,
                 "/api/v1/ui/graph/investigation/summaries":
@@ -3444,6 +3445,30 @@ class Handler(BaseHTTPRequestHandler):
             return True
         self._send(503, {"ok": False, "error": "query log unavailable"})
         return False
+
+    def _graph_image_log(self):
+        """A picture of the relationship view leaves the box (PNG or SVG, drawn in
+        the browser): an export like the others, under the request's purpose and
+        in the query log. The answer is the watermark -- who, for which case,
+        when -- as the box knows it, not as the client claims it."""
+        ctx = self._graph_request(bound=True)
+        if ctx is None:
+            return
+        user, payload = ctx[0], ctx[1]
+        fmt = str(payload.get("format") or "")
+        if fmt not in ("png", "svg"):
+            self._send(400, {"ok": False, "error": "format must be png or svg"})
+            return
+        shown = {"format": fmt, "view": "3d" if payload.get("view") == "3d" else "2d",
+                 "nodes": _review_int(payload, "nodes", 0),
+                 "edges": _review_int(payload, "edges", 0)}
+        if not self._log_graph(ctx, "export:image", json.dumps(shown, sort_keys=True), []):
+            return
+        sys.stderr.write("[adapter] graph: picture export (%s, %d nodes) by %s\n"
+                         % (fmt, shown["nodes"], user))
+        self._send(200, {"ok": True, "user": user, "case_ref": self._bound.get("case_ref"),
+                         "legal_basis": self._bound.get("legal_basis"),
+                         "at": time.strftime("%Y-%m-%d %H:%M", time.localtime())})
 
     def _graph_status(self):
         """Processing progress over what this caller may see; queue sizes and

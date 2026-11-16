@@ -1045,6 +1045,7 @@ export async function adapterGraph<T>(
     | "profile/get"
     | "profile/set"
     | "dossier"
+    | "image/log"
     | "investigation/export"
     | "investigation/graph"
     | "investigation/summaries"

@@ -15,11 +15,13 @@ import {
   Settings2,
   ShieldAlert,
   Split,
+  Undo2,
   Upload,
   X,
 } from "lucide-react";
 import { useLang } from "./i18n";
-import { GraphCanvas } from "./GraphCanvas";
+import { GraphCanvas, type Emphasis, type ExportRequest } from "./GraphCanvas";
+import { mergeGraphs } from "./graph-model";
 import { pairKey, TYPE_COLOR, TYPE_NAME, type RelationInfo } from "./graph-style";
 import { saveToDrive } from "@/lib/api/rag.functions";
 import { AdapterGraphError } from "@/lib/rag/adapter-client";
@@ -41,6 +43,7 @@ import {
   type GraphReviewList,
   type GraphStatus,
   type GraphTimelineItem,
+  type GraphWatermark,
   type GraphReprocessRun,
   type GraphReprocessStatus,
   type GraphInvestigationView,
@@ -72,6 +75,8 @@ const STATUS_TEXT: Record<string, string> = {
 };
 
 type Tab = "explore" | "review" | "processing" | "profile" | "querylog";
+/** Nodes the picture may hold before an added neighbourhood replaces it. */
+const MAX_PICTURE = 400;
 type Graph = {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -277,9 +282,31 @@ function ExploreTab({
   const [pathNote, setPathNote] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Earlier pictures, for "Back" (an added neighbourhood, a path, a new start).
+  const [history, setHistory] = useState<{ graph: Graph; focus: string | null }[]>([]);
+  // Two nodes picked with Shift+click, and the path or common relations found.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [emphasis, setEmphasis] = useState<Emphasis | null>(null);
+
+  function remember() {
+    if (graph) setHistory((h) => [...h.slice(-19), { graph, focus }]);
+  }
+
+  function back() {
+    const last = history[history.length - 1];
+    if (!last) return;
+    setHistory((h) => h.slice(0, -1));
+    setGraph(last.graph);
+    setFocus(last.focus);
+    setSelectedEdge(null);
+    setEmphasis(null);
+    setPathNote(null);
+    setInvestigating(last.graph === initial);
+  }
 
   function showInvestigation(id: string | null = startId) {
     if (!initial) return;
+    if (graph !== initial) remember();
     setGraph(initial);
     setFocus(id);
     setSelectedEdge(null);
@@ -304,15 +331,101 @@ function ExploreTab({
       const res = await run(() => graphApi.neighborhood(drive, id, depth));
       setBusy(false);
       if (res) {
+        remember();
         setFocus(id);
         setGraph(res);
         setSelectedEdge(null);
         setPathNote(null);
+        setPicked([]);
+        setEmphasis(null);
         setInvestigating(false);
       }
     },
-    [drive, run],
+    // remember() reads the picture on screen
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drive, run, graph, focus],
   );
+
+  /** A node's direct relations added to the picture on screen. */
+  async function expand(id: string) {
+    if (!graph) return;
+    setBusy(true);
+    const res = await run(() => graphApi.neighborhood(drive, id, 1));
+    setBusy(false);
+    if (!res) return;
+    remember();
+    const merged = mergeGraphs(graph, res);
+    if (merged.nodes.length > MAX_PICTURE) {
+      setGraph(res);
+      setPathNote(tm("The picture would be too large: it now shows only this neighbourhood."));
+    } else {
+      setGraph(merged);
+      setPathNote(null);
+    }
+    setFocus(id);
+    setSelectedEdge(null);
+    setInvestigating(false);
+  }
+
+  function pickNode(id: string, shift: boolean) {
+    if (shift) {
+      setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id].slice(-2)));
+      setEmphasis(null);
+      return;
+    }
+    setFocus(id);
+    setSelectedEdge(null);
+  }
+
+  /** The shortest chain between the two picked nodes, added and highlighted. */
+  async function pickedPath() {
+    if (picked.length !== 2 || !graph) return;
+    setBusy(true);
+    const res = await run(() => graphApi.path(drive, picked[0], picked[1]));
+    setBusy(false);
+    if (!res) return;
+    if (!res.path) {
+      setPathNote(tm("No connection found within 6 steps."));
+      return;
+    }
+    remember();
+    const found = { nodes: res.path.nodes, edges: res.path.edges, documents: res.documents };
+    const merged = mergeGraphs(graph, found);
+    setGraph(merged.nodes.length > MAX_PICTURE ? found : merged);
+    setEmphasis({
+      nodes: new Set(res.path.nodes.filter(Boolean).map((n) => n.id)),
+      pairs: new Set(res.path.edges.map(pairKey)),
+    });
+    setPathNote(null);
+    setInvestigating(false);
+  }
+
+  /** Who in the picture is related to both picked nodes. */
+  function pickedCommon() {
+    if (picked.length !== 2 || !graph) return;
+    const [a, b] = picked;
+    const around = (id: string) =>
+      new Set(graph.edges.flatMap((e) => (e.a === id ? [e.b] : e.b === id ? [e.a] : [])));
+    const mine = around(a);
+    const shared = [...around(b)].filter((x) => mine.has(x));
+    if (!shared.length) {
+      setPathNote(tm("No common relations in the picture."));
+      setEmphasis(null);
+      return;
+    }
+    setPathNote(null);
+    const touches = (e: GraphEdge) =>
+      (picked.includes(e.a) && shared.includes(e.b)) ||
+      (picked.includes(e.b) && shared.includes(e.a));
+    setEmphasis({
+      nodes: new Set([a, b, ...shared]),
+      pairs: new Set(graph.edges.filter(touches).map(pairKey)),
+    });
+  }
+
+  async function logExport(req: ExportRequest): Promise<GraphWatermark | null> {
+    return run(() => graphApi.imageLog(drive, req));
+  }
 
   async function connectTo(target: string) {
     if (!focus) return;
@@ -326,7 +439,10 @@ function ExploreTab({
       setPathNote(tm("No connection found within 6 steps."));
       return;
     }
+    remember();
     setGraph({ nodes: res.path.nodes, edges: res.path.edges, documents: res.documents });
+    setPicked([]);
+    setEmphasis(null);
     setSelectedEdge(res.path.edges[0] ? pairKey(res.path.edges[0]) : null);
     setPathNote(null);
     setInvestigating(false);
@@ -381,6 +497,15 @@ function ExploreTab({
           >
             <Route className="h-3.5 w-3.5" /> {tm("Connection to…")}
           </button>
+          {history.length > 0 && (
+            <button
+              onClick={back}
+              title={tm("Back to the previous picture")}
+              className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1.5 text-xs text-ink/80 hover:bg-ink/10"
+            >
+              <Undo2 className="h-3.5 w-3.5" /> {tm("Back")}
+            </button>
+          )}
         </div>
         {notice}
         {pathNote && <Notice text={pathNote} />}
@@ -415,18 +540,55 @@ function ExploreTab({
               graph={graph}
               focus={focus}
               selectedEdge={selectedEdge}
+              picked={picked}
+              emphasis={emphasis}
               relLabel={relLabel}
               relInfo={relInfo}
-              onNode={(id) => {
-                if (investigating) {
-                  setFocus(id);
-                  setSelectedEdge(null);
-                } else void showNeighbourhood(id, hops);
-              }}
+              subtypeLabel={subtypeLabel}
+              onNode={pickNode}
+              onExpand={(id) => void expand(id)}
               onEdge={setSelectedEdge}
+              onExport={logExport}
             />
           ) : (
             !results && <Notice text={tm("Search for a name to start.")} />
+          )}
+          {picked.length > 0 && graph && (
+            <div
+              className="absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1 text-[11px] shadow-sm"
+              style={{ backgroundColor: "var(--surface-3)" }}
+            >
+              <span className="text-ink/55">{tm("Picked")}:</span>
+              {picked.map((id) => (
+                <span key={id} className="font-medium" style={{ color: ACCENT_TEXT }}>
+                  {graph.nodes.find((n) => n?.id === id)?.label ?? id}
+                </span>
+              ))}
+              <button
+                disabled={picked.length !== 2 || busy}
+                onClick={() => void pickedPath()}
+                className="ml-1 rounded-full border border-ink/10 px-2 py-0.5 hover:bg-ink/10 disabled:opacity-40"
+              >
+                {tm("Shortest path")}
+              </button>
+              <button
+                disabled={picked.length !== 2}
+                onClick={pickedCommon}
+                className="rounded-full border border-ink/10 px-2 py-0.5 hover:bg-ink/10 disabled:opacity-40"
+              >
+                {tm("Common relations")}
+              </button>
+              <button
+                onClick={() => {
+                  setPicked([]);
+                  setEmphasis(null);
+                }}
+                title={tm("Clear the selection")}
+                className="rounded-full p-0.5 text-ink/60 hover:bg-ink/10"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
           )}
           {graph?.truncated && (
             <div className="absolute bottom-2 left-3 text-[11px] text-ink/45">
@@ -457,10 +619,15 @@ function ExploreTab({
             relLabel={relLabel}
             subtypeLabel={subtypeLabel}
             onEdge={setSelectedEdge}
+            onExpand={() => void expand(focusNode.id)}
             onOpenSource={onOpenSource}
           />
         ) : (
-          <Notice text={tm("Click a node to focus it, a line to see its evidence.")} />
+          <Notice
+            text={tm(
+              "Click a node to focus it, double-click to add its relations, a line to see its evidence.",
+            )}
+          />
         )}
       </aside>
     </div>
@@ -682,6 +849,7 @@ function EntitySheet({
   relLabel,
   subtypeLabel,
   onEdge,
+  onExpand,
   onOpenSource,
 }: {
   drive: string;
@@ -690,6 +858,7 @@ function EntitySheet({
   relLabel: (type: string) => string;
   subtypeLabel: (sub: string) => string;
   onEdge: (id: string) => void;
+  onExpand: () => void;
   onOpenSource: (source: GraphSource) => void;
 }) {
   const { tm } = useLang();
@@ -713,6 +882,12 @@ function EntitySheet({
         {subtypeLabel(node.subtype) || tm(TYPE_NAME[node.type])} · {node.mentions} {tm("mentions")}{" "}
         · {node.documents.length} {tm("documents")}
       </div>
+      <button
+        onClick={onExpand}
+        className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-ink/10 px-3 py-1 text-[11px] text-ink/80 hover:bg-ink/10"
+      >
+        <Network className="h-3 w-3" /> {tm("Add its relations to the picture")}
+      </button>
       {node.aliases.length > 1 && (
         <Section title={tm("Also known as")}>
           <div className="text-xs text-ink/75">{node.aliases.join(" · ")}</div>

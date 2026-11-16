@@ -61,6 +61,14 @@ export type GraphEdge = {
 export type GraphDocument = { corpus_id: string; source_path: string; title: string; kind: string };
 export type GraphDocuments = Record<string, GraphDocument>;
 
+/** Who exported a picture, for which case and when -- as the box knows it. */
+export type GraphWatermark = {
+  user: string;
+  case_ref?: string | null;
+  legal_basis?: string | null;
+  at: string;
+};
+
 export type GraphTimelineItem = {
   date: string;
   end: string | null;
@@ -232,6 +240,11 @@ export const graphApi = {
     adapterGraph<{ profile: GraphProfile }>("profile/set", { profile }, drive),
   dossier: (drive: string, id: string, format: "docx" | "pdf", lang: string) =>
     adapterGraph<GraphDossier>("dossier", { id, format, lang }, drive),
+  /** Log a picture export (purpose-bound) and get the watermark it must carry. */
+  imageLog: (
+    drive: string,
+    req: { format: "png" | "svg"; view: "2d" | "3d"; nodes: number; edges: number },
+  ) => adapterGraph<GraphWatermark>("image/log", req, drive),
   /** One investigation table as XLSX, rebuilt on the box within the caller's
    *  current access: "download" returns the file, "drive" saves it like /ui/save. */
   investigationExport: (

@@ -659,6 +659,12 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   relation left without evidence. Response: `{name, format, content_type, size,
   text, content_b64}` (base64, because the ViVeSecBox tunnel carries JSON
   only); `text` is the markdown, which the UI can save with `/ui/save`.
+- **Picture export**: the relationship view draws its PNG or SVG in the
+  browser, after `POST /api/v1/ui/graph/image/log` `{format: png|svg, view:
+  2d|3d, nodes, edges}`. That call is purpose-bound like every export and
+  writes an `export:image` entry (format, view and counts) to the query log;
+  it answers the watermark the picture carries -- `{user, case_ref,
+  legal_basis, at}` as the box knows them. Without it the UI exports nothing.
 - **GPU priority**: with `ADAPTER_GPU_BROKER_PORT` set, a loopback-only broker
   (`gpu_gate.py`) forwards `/api/chat`, `/api/generate` and
   `/v1/chat/completions` to Ollama one background call at a time, only while no

@@ -5,29 +5,64 @@
 
 export type LayoutNode = { id: string; x: number; y: number };
 
+export type Point = { x: number; y: number };
+
+/** `seed`: earlier positions to start from (a warm start: the picture keeps its
+ *  shape when nodes are added, new ones start next to a placed neighbour);
+ *  `fixed`: positions that do not move (nodes the user pinned). */
 export function layoutGraph(
   ids: string[],
   links: { a: string; b: string }[],
   center: string | null,
   iterations = 260,
+  options: { seed?: Map<string, Point>; fixed?: Map<string, Point> } = {},
 ): Map<string, LayoutNode> {
   const n = ids.length;
   const nodes = new Map<string, LayoutNode>();
+  const seed = options.seed ?? new Map<string, Point>();
+  const fixed = options.fixed ?? new Map<string, Point>();
+  const warm = ids.some((id) => seed.has(id));
   // Seeded start on a spiral: the same graph always lands in the same picture.
   ids.forEach((id, i) => {
+    const at = fixed.get(id) ?? seed.get(id);
+    if (at) {
+      nodes.set(id, { id, x: at.x, y: at.y });
+      return;
+    }
     const angle = i * 2.399963;
     const radius = 40 * Math.sqrt(i + 1);
     nodes.set(id, { id, x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
   });
-  if (center && nodes.has(center)) Object.assign(nodes.get(center)!, { x: 0, y: 0 });
+  if (warm) {
+    // A new node starts beside a neighbour that already has its place.
+    const around = new Map<string, Point>();
+    for (const l of links) {
+      for (const [mine, other] of [
+        [l.a, l.b],
+        [l.b, l.a],
+      ]) {
+        const at = fixed.get(other) ?? seed.get(other);
+        if (!seed.has(mine) && !fixed.has(mine) && at && !around.has(mine)) around.set(mine, at);
+      }
+    }
+    let k = 0;
+    for (const [id, at] of around) {
+      const angle = k++ * 2.399963;
+      Object.assign(nodes.get(id) ?? {}, {
+        x: at.x + Math.cos(angle) * 45,
+        y: at.y + Math.sin(angle) * 45,
+      });
+    }
+  } else if (center && nodes.has(center)) Object.assign(nodes.get(center)!, { x: 0, y: 0 });
   const list = [...nodes.values()];
   const edges = links
     .map((l) => [nodes.get(l.a), nodes.get(l.b)] as const)
     .filter((p): p is readonly [LayoutNode, LayoutNode] => Boolean(p[0] && p[1]));
   const spring = n > 80 ? 70 : 110;
   const repulse = n > 80 ? 2600 : 5200;
-  for (let step = 0; step < iterations; step++) {
-    const cool = 1 - step / iterations;
+  const steps = warm ? Math.round(iterations / 2) : iterations;
+  for (let step = 0; step < steps; step++) {
+    const cool = 1 - step / steps;
     const dx = new Float64Array(n);
     const dy = new Float64Array(n);
     for (let i = 0; i < n; i++) {
@@ -63,11 +98,12 @@ export function layoutGraph(
     }
     for (let i = 0; i < n; i++) {
       const p = list[i];
-      if (p.id === center) continue;
+      if ((!warm && p.id === center) || fixed.has(p.id)) continue;
       dx[i] -= p.x * 0.01;
       dy[i] -= p.y * 0.01;
       const len = Math.sqrt(dx[i] * dx[i] + dy[i] * dy[i]);
-      const max = 30 * cool + 1;
+      // A warm start only settles: placed nodes move little, new ones find room.
+      const max = warm ? (seed.has(p.id) ? 1.5 * cool + 0.15 : 20 * cool + 1) : 30 * cool + 1;
       const k = len > max ? max / len : 1;
       p.x += dx[i] * k;
       p.y += dy[i] * k;

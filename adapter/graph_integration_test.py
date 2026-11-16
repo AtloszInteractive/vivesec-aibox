@@ -236,6 +236,31 @@ class GraphIntegrationTest(unittest.TestCase):
         return {e["label"] for e in out["entities"]}
 
     # -- tests -----------------------------------------------------------------------
+    def test_a_picture_of_the_graph_is_a_logged_export_with_its_purpose(self):
+        import purpose
+        import querylog
+        service = self.service
+        logdir = tempfile.TemporaryDirectory()
+        self.addCleanup(logdir.cleanup)
+        body = {"format": "png", "view": "3d", "nodes": 12, "edges": 15}
+        with patch.object(service, "PURPOSE",
+                          purpose.settings({"ADAPTER_PURPOSE": "required"})), \
+                patch.object(service, "QUERY_LOG", querylog.QueryLog(logdir.name)):
+            status, out = self.call("/api/v1/ui/graph/image/log", body, user="lars")
+            self.assertEqual((428, "purpose_required"), (status, out["error"]))
+            status, _ = self.call("/api/v1/ui/graph/image/log",
+                                  dict(body, format="gif", case_ref="BV-2026/7"), user="lars")
+            self.assertEqual(400, status)
+            status, out = self.call("/api/v1/ui/graph/image/log",
+                                    dict(body, case_ref="BV-2026/7", user="mallory"),
+                                    user="lars")
+        self.assertEqual((200, "lars", "BV-2026/7"), (status, out["user"], out["case_ref"]), out)
+        name, = os.listdir(logdir.name)
+        with open(os.path.join(logdir.name, name), encoding="utf-8") as handle:
+            records = [json.loads(line) for line in handle]
+        self.assertEqual([("export:image", "lars", "BV-2026/7")],
+                         [(r["kind"], r["user"], r["case_ref"]) for r in records])
+
     def test_a_graph_admin_imports_a_structured_export_with_record_rules(self):
         sys.path.append(os.path.join(REPO, "graph-corpus"))
         import structured_samples as samples
