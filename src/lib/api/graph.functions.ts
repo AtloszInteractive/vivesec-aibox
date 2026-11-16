@@ -82,6 +82,8 @@ export type GraphProfile = {
     from: GraphEntityType[];
     to: GraphEntityType[];
     synonyms: string[];
+    symmetric?: boolean;
+    presence?: boolean;
   }[];
 } & Record<string, unknown>;
 

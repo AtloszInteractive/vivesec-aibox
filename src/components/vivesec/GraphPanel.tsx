@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -19,7 +19,8 @@ import {
   X,
 } from "lucide-react";
 import { useLang } from "./i18n";
-import { layoutGraph } from "./graph-layout";
+import { GraphCanvas } from "./GraphCanvas";
+import { pairKey, TYPE_COLOR, TYPE_NAME, type RelationInfo } from "./graph-style";
 import { saveToDrive } from "@/lib/api/rag.functions";
 import { AdapterGraphError } from "@/lib/rag/adapter-client";
 import {
@@ -27,7 +28,6 @@ import {
   graphFailure,
   type GraphDocuments,
   type GraphEdge,
-  type GraphEntityType,
   type GraphEvidence,
   type GraphFailure,
   type GraphImportAnswer,
@@ -48,27 +48,11 @@ import {
   type QueryLog,
   type QueryLogRecord,
 } from "@/lib/api/graph.functions";
-import { ACCENT, ACCENT_TEXT, inkA, inkText, ON_ACCENT } from "./brand";
+import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
 
 const PANEL = "var(--surface-3)";
 const BG = "var(--surface-2)";
 
-const TYPE_COLOR: Record<GraphEntityType, string> = {
-  person: "#B48CF5",
-  organization: "#60A5FA",
-  place: "#F59E0B",
-  identifier: "#CBD5E1",
-  event: "#FB7185",
-  object: "#2DD4BF",
-};
-const TYPE_NAME: Record<GraphEntityType, string> = {
-  person: "Person",
-  organization: "Organisation",
-  place: "Place",
-  identifier: "Identifier",
-  event: "Event",
-  object: "Object",
-};
 const FAILURE_TEXT: Record<GraphFailure, string> = {
   disabled: "Relationship analysis is not enabled on this AI Box.",
   extraction_off: "Document processing for relationships is not enabled on this AI Box.",
@@ -95,7 +79,6 @@ type Graph = {
   truncated?: boolean;
 };
 
-const pairKey = (e: GraphEdge) => (e.a < e.b ? `${e.a}|${e.b}` : `${e.b}|${e.a}`);
 const byDate = (x: GraphEdge, y: GraphEdge) => (x.start ?? "").localeCompare(y.start ?? "");
 
 export type GraphSource = { path: string; page: number; quote: string; label: string };
@@ -148,6 +131,16 @@ export function GraphPanel({
     },
     [profile, code],
   );
+  const relInfo = useCallback(
+    (type: string): RelationInfo => {
+      const rel = profile?.relation_types.find((r) => r.id === type);
+      return {
+        directed: Boolean(rel && !rel.symmetric),
+        ongoing: Boolean(rel?.presence && rel.to.includes("place")),
+      };
+    },
+    [profile],
+  );
 
   const tabs: { id: Tab; label: string; icon: typeof Network }[] = [
     { id: "explore", label: tm("Explore"), icon: Network },
@@ -197,6 +190,7 @@ export function GraphPanel({
               drive={drive}
               initial={initial ?? null}
               relLabel={relLabel}
+              relInfo={relInfo}
               subtypeLabel={subtypeLabel}
               onOpenSource={onOpenSource}
             />
@@ -257,12 +251,14 @@ function ExploreTab({
   drive,
   initial,
   relLabel,
+  relInfo,
   subtypeLabel,
   onOpenSource,
 }: {
   drive: string;
   initial: GraphInvestigationView | null;
   relLabel: (type: string) => string;
+  relInfo: (type: string) => RelationInfo;
   subtypeLabel: (sub: string) => string;
   onOpenSource: (source: GraphSource) => void;
 }) {
@@ -420,6 +416,7 @@ function ExploreTab({
               focus={focus}
               selectedEdge={selectedEdge}
               relLabel={relLabel}
+              relInfo={relInfo}
               onNode={(id) => {
                 if (investigating) {
                   setFocus(id);
@@ -577,160 +574,6 @@ function ResultList({
         </button>
       ))}
     </div>
-  );
-}
-
-function GraphCanvas({
-  graph,
-  focus,
-  selectedEdge,
-  relLabel,
-  onNode,
-  onEdge,
-}: {
-  graph: Graph;
-  focus: string | null;
-  selectedEdge: string | null;
-  relLabel: (type: string) => string;
-  onNode: (id: string) => void;
-  onEdge: (id: string) => void;
-}) {
-  const nodes = useMemo(() => graph.nodes.filter(Boolean), [graph]);
-  const layout = useMemo(
-    () =>
-      layoutGraph(
-        nodes.map((n) => n.id),
-        graph.edges,
-        focus,
-      ),
-    [nodes, graph.edges, focus],
-  );
-  const [view, setView] = useState({ k: 1, x: 0, y: 0 });
-  const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
-  useEffect(() => setView({ k: 1, x: 0, y: 0 }), [graph]);
-
-  const bounds = useMemo(() => {
-    const pts = [...layout.values()];
-    const xs = pts.map((p) => p.x);
-    const ys = pts.map((p) => p.y);
-    const pad = 60;
-    const minX = Math.min(...xs, 0) - pad;
-    const minY = Math.min(...ys, 0) - pad;
-    return { minX, minY, w: Math.max(...xs, 0) + pad - minX, h: Math.max(...ys, 0) + pad - minY };
-  }, [layout]);
-
-  const pairs = useMemo(() => {
-    const out = new Map<string, GraphEdge[]>();
-    for (const e of graph.edges) out.set(pairKey(e), [...(out.get(pairKey(e)) ?? []), e]);
-    return [...out.entries()];
-  }, [graph.edges]);
-  const showLabels = pairs.length <= 40;
-  const maxMentions = Math.max(1, ...nodes.map((n) => n.mentions));
-  const pathIds = new Set<string>();
-
-  return (
-    <svg
-      className="h-full w-full cursor-grab active:cursor-grabbing"
-      viewBox={`${bounds.minX} ${bounds.minY} ${bounds.w} ${bounds.h}`}
-      onWheel={(e) => {
-        const k = Math.min(4, Math.max(0.3, view.k * (e.deltaY < 0 ? 1.12 : 0.89)));
-        setView((v) => ({ ...v, k }));
-      }}
-      onPointerDown={(e) => {
-        drag.current = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y };
-      }}
-      onPointerMove={(e) => {
-        const d = drag.current;
-        if (!d) return;
-        const scale = bounds.w / (e.currentTarget.clientWidth || 1) / view.k;
-        setView((v) => ({
-          ...v,
-          x: d.vx + (e.clientX - d.x) * scale,
-          y: d.vy + (e.clientY - d.y) * scale,
-        }));
-      }}
-      onPointerUp={() => (drag.current = null)}
-      onPointerLeave={() => (drag.current = null)}
-    >
-      <g
-        transform={`translate(${view.x} ${view.y}) translate(${bounds.minX + bounds.w / 2} ${
-          bounds.minY + bounds.h / 2
-        }) scale(${view.k}) translate(${-(bounds.minX + bounds.w / 2)} ${-(bounds.minY + bounds.h / 2)})`}
-      >
-        {pairs.map(([key, edges]) => {
-          const e = edges[0];
-          const a = layout.get(e.a);
-          const b = layout.get(e.b);
-          if (!a || !b) return null;
-          const active = key === selectedEdge;
-          if (active) pathIds.add(e.a).add(e.b);
-          const counts = new Map<string, number>();
-          for (const x of edges) counts.set(x.type, (counts.get(x.type) ?? 0) + 1);
-          const label = [...counts.entries()]
-            .map(([type, n]) => (n > 1 ? `${relLabel(type)} ×${n}` : relLabel(type)))
-            .join(", ");
-          // Labels sit away from the focused node, where every line starts.
-          const t = e.a === focus ? 0.62 : e.b === focus ? 0.38 : 0.5;
-          const lx = a.x + (b.x - a.x) * t;
-          const ly = a.y + (b.y - a.y) * t;
-          return (
-            <g key={key} onClick={() => onEdge(key)} className="cursor-pointer">
-              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={10} />
-              <line
-                x1={a.x}
-                y1={a.y}
-                x2={b.x}
-                y2={b.y}
-                style={{ stroke: active ? ACCENT_TEXT : inkA(0.28) }}
-                strokeWidth={(active ? 2.4 : 1.2) + Math.min(edges.length - 1, 4) * 0.5}
-                strokeDasharray={edges.every((x) => x.weak) ? "4 4" : undefined}
-              />
-              {(showLabels || active) && (
-                <text
-                  x={lx}
-                  y={ly - 3}
-                  textAnchor="middle"
-                  fontSize={9}
-                  style={{ fill: active ? ACCENT_TEXT : inkText(0.55) }}
-                >
-                  {label}
-                  {edges.length === 1 && e.start ? ` · ${e.start}` : ""}
-                </text>
-              )}
-            </g>
-          );
-        })}
-        {nodes.map((n) => {
-          const p = layout.get(n.id);
-          if (!p) return null;
-          const r = 6 + 8 * Math.sqrt(n.mentions / maxMentions);
-          const isFocus = n.id === focus;
-          return (
-            <g key={n.id} onClick={() => onNode(n.id)} className="cursor-pointer">
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={r}
-                fill={TYPE_COLOR[n.type]}
-                fillOpacity={isFocus || pathIds.has(n.id) ? 1 : 0.8}
-                stroke="rgba(0,0,0,0.4)"
-                style={isFocus ? { stroke: "var(--ink)" } : undefined}
-                strokeWidth={isFocus ? 2.5 : 1}
-              />
-              <text
-                x={p.x}
-                y={p.y + r + 11}
-                textAnchor="middle"
-                fontSize={10}
-                style={{ fill: "var(--foreground)" }}
-              >
-                {n.label.length > 28 ? `${n.label.slice(0, 27)}…` : n.label}
-              </text>
-            </g>
-          );
-        })}
-      </g>
-    </svg>
   );
 }
 

@@ -75,3 +75,187 @@ export function layoutGraph(
   }
   return nodes;
 }
+
+export type LayoutNode3 = { id: string; x: number; y: number; z: number };
+
+/** The same force layout in three dimensions (the optional 3D view), seeded on a
+ *  Fibonacci sphere so the same graph always gives the same picture. */
+export function layoutGraph3d(
+  ids: string[],
+  links: { a: string; b: string }[],
+  center: string | null,
+  iterations = 220,
+): Map<string, LayoutNode3> {
+  const n = ids.length;
+  const nodes = new Map<string, LayoutNode3>();
+  ids.forEach((id, i) => {
+    const y = 1 - (2 * (i + 0.5)) / Math.max(n, 1);
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const angle = i * 2.399963;
+    const radius = 40 * Math.cbrt(i + 1) + 20;
+    nodes.set(id, {
+      id,
+      x: Math.cos(angle) * r * radius,
+      y: y * radius,
+      z: Math.sin(angle) * r * radius,
+    });
+  });
+  if (center && nodes.has(center)) Object.assign(nodes.get(center)!, { x: 0, y: 0, z: 0 });
+  const list = [...nodes.values()];
+  const index = new Map(list.map((p, i) => [p.id, i]));
+  const edges = links
+    .map((l) => [index.get(l.a), index.get(l.b)] as const)
+    .filter((p): p is readonly [number, number] => p[0] !== undefined && p[1] !== undefined);
+  const spring = n > 80 ? 80 : 120;
+  const repulse = n > 80 ? 60000 : 120000;
+  for (let step = 0; step < iterations; step++) {
+    const cool = 1 - step / iterations;
+    const f = new Float64Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        let dx = list[i].x - list[j].x;
+        let dy = list[i].y - list[j].y;
+        let dz = list[i].z - list[j].z;
+        let d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < 0.01) {
+          dx = (i % 7) - 3 + 0.1;
+          dy = (j % 5) - 2 + 0.1;
+          dz = ((i + j) % 3) - 1 + 0.1;
+          d2 = dx * dx + dy * dy + dz * dz;
+        }
+        const d = Math.sqrt(d2);
+        const push = repulse / (d2 * d);
+        f[i * 3] += dx * push;
+        f[i * 3 + 1] += dy * push;
+        f[i * 3 + 2] += dz * push;
+        f[j * 3] -= dx * push;
+        f[j * 3 + 1] -= dy * push;
+        f[j * 3 + 2] -= dz * push;
+      }
+    }
+    for (const [i, j] of edges) {
+      const dx = list[j].x - list[i].x;
+      const dy = list[j].y - list[i].y;
+      const dz = list[j].z - list[i].z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+      const pull = ((d - spring) * 0.08) / d;
+      f[i * 3] += dx * pull;
+      f[i * 3 + 1] += dy * pull;
+      f[i * 3 + 2] += dz * pull;
+      f[j * 3] -= dx * pull;
+      f[j * 3 + 1] -= dy * pull;
+      f[j * 3 + 2] -= dz * pull;
+    }
+    for (let i = 0; i < n; i++) {
+      const p = list[i];
+      if (p.id === center) continue;
+      const fx = f[i * 3] - p.x * 0.01;
+      const fy = f[i * 3 + 1] - p.y * 0.01;
+      const fz = f[i * 3 + 2] - p.z * 0.01;
+      const len = Math.sqrt(fx * fx + fy * fy + fz * fz);
+      const max = 30 * cool + 1;
+      const k = len > max ? max / len : 1;
+      p.x += fx * k;
+      p.y += fy * k;
+      p.z += fz * k;
+    }
+  }
+  return nodes;
+}
+
+/** A point of the 3D layout seen from the camera: turned by yaw (around the
+ *  vertical axis) and pitch, then in perspective. `scale` < 1 is farther away;
+ *  `depth` grows towards the viewer. */
+export function project(
+  p: { x: number; y: number; z: number },
+  yaw: number,
+  pitch: number,
+  distance: number,
+): { x: number; y: number; scale: number; depth: number } {
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const x1 = p.x * cy + p.z * sy;
+  const z1 = -p.x * sy + p.z * cy;
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  const y2 = p.y * cp - z1 * sp;
+  const z2 = p.y * sp + z1 * cp;
+  const scale = distance / Math.max(distance * 0.15, distance + z2);
+  return { x: x1 * scale, y: y2 * scale, scale, depth: -z2 };
+}
+
+/** "YYYY-MM" of a date string ("2026-03-05", "2026-03", "2026"), or null. */
+export function monthOf(date: string | null | undefined): string | null {
+  const m = /^(\d{4})(?:-(\d{2}))?/.exec(date ?? "");
+  return m ? `${m[1]}-${m[2] ?? "01"}` : null;
+}
+
+/** Every month from the earliest to the latest date of the edges, in order. */
+export function monthsOf(edges: { start: string | null; end: string | null }[]): string[] {
+  const seen = edges.flatMap((e) => [monthOf(e.start), monthOf(e.end)]).filter(Boolean) as string[];
+  if (!seen.length) return [];
+  seen.sort();
+  const out: string[] = [];
+  let [y, m] = seen[0].split("-").map(Number);
+  const last = seen[seen.length - 1];
+  for (let guard = 0; guard < 1200; guard++) {
+    const cur = `${y}-${String(m).padStart(2, "0")}`;
+    out.push(cur);
+    if (cur >= last) break;
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
+/** Does the edge's time span touch the months from..to? Without an end date an
+ *  `ongoing` relation (a placement still in force) runs on, any other is the
+ *  one month of its date; an undated edge counts only when `undated` is set. */
+export function edgeInPeriod(
+  e: { start: string | null; end: string | null },
+  from: string,
+  to: string,
+  undated: boolean,
+  ongoing = false,
+): boolean {
+  const start = monthOf(e.start);
+  const end = monthOf(e.end);
+  if (!start && !end) return undated;
+  const first = start ?? end!;
+  const last = end ?? (ongoing ? "9999-12" : first);
+  return first <= to && last >= from;
+}
+
+export type LabelCandidate = {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  priority: number;
+  /** Shown even where it overlaps (the focused node, the selected relation). */
+  force?: boolean;
+};
+
+/** The labels that fit without overlapping each other or the `obstacles` (the
+ *  circles), most important first (greedy). */
+export function placeLabels(
+  candidates: LabelCandidate[],
+  obstacles: Omit<LabelCandidate, "id" | "priority">[] = [],
+): Set<string> {
+  const placed: Omit<LabelCandidate, "id" | "priority">[] = [...obstacles];
+  const out = new Set<string>();
+  for (const c of [...candidates].sort((p, q) => q.priority - p.priority)) {
+    const clash = placed.some(
+      (p) => Math.abs(p.x - c.x) * 2 < p.w + c.w && Math.abs(p.y - c.y) * 2 < p.h + c.h,
+    );
+    if (!clash || c.force) {
+      placed.push(c);
+      out.add(c.id);
+    }
+  }
+  return out;
+}
