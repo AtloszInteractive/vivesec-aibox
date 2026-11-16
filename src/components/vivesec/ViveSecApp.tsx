@@ -61,6 +61,7 @@ import {
   type ChatPolicy,
   type AdapterJobProgress,
   type AdapterInvestigation,
+  type AdapterSuggestion,
 } from "@/lib/api/rag.functions";
 import { graphApi, type GraphInvestigationView } from "@/lib/api/graph.functions";
 import { UI_BUILD, versionDiffers, type BoxVersion } from "@/lib/build-info";
@@ -115,6 +116,9 @@ import {
   Pencil,
   Link2,
   ShieldCheck,
+  History,
+  Lightbulb,
+  CornerDownRight,
   CheckSquare,
   AlertTriangle,
   TrendingUp,
@@ -230,6 +234,10 @@ type LiveMeta = {
   feedbackDrive?: string;
   /** Analyst investigation tables behind the answer (XLSX export). */
   investigations?: AdapterInvestigation[];
+  /** Proactive chat: next questions offered under the answer. */
+  suggestions?: AdapterSuggestion[];
+  /** Proactive chat: what the box noticed about the evidence. */
+  observations?: string[];
 };
 
 type Message =
@@ -1413,6 +1421,8 @@ function ViveSecAppInner() {
       question: question ?? label,
       feedbackDrive: drive || undefined,
       investigations: res.investigations,
+      suggestions: res.suggestions,
+      observations: res.observations,
     };
     const plain: Message = {
       ...base,
@@ -2790,6 +2800,22 @@ function ViveSecAppInner() {
                       />
                     </div>
                   ))}
+                  {analyst && !chatMessages.some((m) => m.role !== "system") && (
+                    <ChatStarters
+                      previous={conversations.find(
+                        (c) => c.id !== conversationId && c.turn_count > 0,
+                      )}
+                      onOpen={(id) => void openConversation(id)}
+                      onTemplate={(text) => {
+                        setInput(text);
+                        setTimeout(() => {
+                          const box = textareaRef.current;
+                          box?.focus();
+                          box?.setSelectionRange(text.length, text.length);
+                        }, 0);
+                      }}
+                    />
+                  )}
                   {/* Room for the last answer to reach the top — no more (see tailSpace) */}
                   {tailSpace > 0 && (
                     <div aria-hidden className="shrink-0" style={{ height: tailSpace }} />
@@ -5645,6 +5671,7 @@ function SearchCard({
         </div>
       )}
       <AnswerBody text={answerBody} onChoose={msg.clarify ? onAsk : undefined} />
+      <Observations items={msg.observations} />
       {msg.citations.length > 0 && (
         <div className="mt-3">
           <div
@@ -5716,8 +5743,117 @@ function SearchCard({
         <SaveToDriveButton text={msg.answer} defaultName={saveName("ai-answer")} />
       </div>
       <InvestigationExport meta={msg} />
+      {onAsk && <NextQuestions items={msg.suggestions} onAsk={onAsk} />}
       <LiveFooter meta={msg} />
     </CardShell>
+  );
+}
+
+/** Proactive chat: what the box noticed about the evidence of the answer. */
+function Observations({ items }: { items?: string[] }) {
+  const { tm } = useLang();
+  if (!items?.length) return null;
+  return (
+    <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-400/[0.06] p-2.5">
+      <div className="mb-1 flex items-center gap-1.5 text-[10.5px] uppercase tracking-wider text-ink/55">
+        <Lightbulb className="h-3 w-3 text-amber-600 dark:text-amber-300" />
+        {tm("Noticed")}
+      </div>
+      <ul className="space-y-1 text-[12px] leading-relaxed text-ink/75">
+        {items.map((text, i) => (
+          <li key={i} className="flex gap-1.5">
+            <span className="text-ink/40">•</span>
+            <span>{text}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Typical questions of the analyst's work (the golden flows): each puts its
+ *  opening into the composer, the user adds the name. */
+const STARTERS: { label: string; template: string }[] = [
+  { label: "Relations of a person", template: "Who is directly related to: " },
+  { label: "Timeline of a person", template: "Show the timeline of: " },
+  { label: "Visitors in a period", template: "Who visited this person in 2026: " },
+  { label: "Shared cell", template: "Who was in the same cell at the same time as: " },
+  { label: "Shared phone number", template: "Who uses the same phone number as: " },
+  { label: "Common relations of two people", template: "Who do these two have in common: " },
+];
+
+/** Proactive chat: an empty conversation offers to continue the last one and
+ *  the typical questions. */
+function ChatStarters({
+  previous,
+  onOpen,
+  onTemplate,
+}: {
+  previous?: ConversationSummary;
+  onOpen: (id: string) => void;
+  onTemplate: (text: string) => void;
+}) {
+  const { tm } = useLang();
+  return (
+    <div className="rounded-2xl border border-ink/10 bg-ink/[0.03] p-4">
+      {previous && (
+        <button
+          onClick={() => onOpen(previous.id)}
+          className="mb-3 flex w-full items-center gap-2 rounded-xl border border-ink/10 px-3 py-2 text-left text-[12.5px] text-ink/80 transition hover:border-ink/25 hover:bg-ink/[0.06]"
+        >
+          <History className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
+          <span className="shrink-0 text-ink/55">{tm("Resume")}:</span>
+          <span className="min-w-0 truncate font-medium">{previous.title}</span>
+        </button>
+      )}
+      <div className="mb-2 text-[10.5px] uppercase tracking-wider text-ink/45">
+        {tm("Start with a typical question")}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {STARTERS.map((s) => (
+          <button
+            key={s.label}
+            onClick={() => onTemplate(tm(s.template))}
+            title={tm(s.template)}
+            className="inline-flex items-center gap-1.5 rounded-full border border-ink/15 px-2.5 py-1 text-[11.5px] text-ink/75 transition hover:border-ink/30 hover:bg-ink/[0.06] hover:text-ink"
+          >
+            <CornerDownRight className="h-3 w-3 shrink-0" style={{ color: ACCENT_TEXT }} />
+            {tm(s.label)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Proactive chat: the next questions the box offers; a click sends one. */
+function NextQuestions({
+  items,
+  onAsk,
+}: {
+  items?: AdapterSuggestion[];
+  onAsk: (text: string) => void;
+}) {
+  const { tm } = useLang();
+  if (!items?.length) return null;
+  return (
+    <div className="mt-3">
+      <div className="mb-1.5 text-[10.5px] uppercase tracking-wider text-ink/45">
+        {tm("Suggested next questions")}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((s) => (
+          <button
+            key={s.question}
+            onClick={() => onAsk(s.question)}
+            className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-ink/15 px-2.5 py-1 text-left text-[11.5px] text-ink/75 transition hover:border-ink/30 hover:bg-ink/[0.06] hover:text-ink"
+          >
+            <CornerDownRight className="h-3 w-3 shrink-0" style={{ color: ACCENT_TEXT }} />
+            <span className="min-w-0">{s.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

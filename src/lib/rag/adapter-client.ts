@@ -73,7 +73,30 @@ export type AdapterAnswer = {
   /** Analyst investigation tables of the answer (graph.investigations), without
    *  their rows: the export rebuilds the table on the box. */
   investigations?: AdapterInvestigation[];
+  /** Proactive chat: next questions offered under an analyst answer. */
+  suggestions?: AdapterSuggestion[];
+  /** Proactive chat: what the box noticed about the evidence (sentences). */
+  observations?: string[];
 };
+
+export type AdapterSuggestion = { label: string; question: string };
+
+function suggestionsOf(raw: unknown): AdapterSuggestion[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.flatMap((item) => {
+    const s = item as Record<string, unknown>;
+    if (typeof s?.question !== "string" || !s.question) return [];
+    const label = typeof s.label === "string" && s.label ? s.label : s.question;
+    return [{ label, question: s.question }];
+  });
+  return out.length ? out : undefined;
+}
+
+function observationsOf(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((x): x is string => typeof x === "string" && x.trim() !== "");
+  return out.length ? out : undefined;
+}
 
 export type AdapterInvestigation = {
   start: string;
@@ -688,6 +711,8 @@ function answerFromJson(j: Record<string, unknown>): AdapterAnswer {
     error: j.error as string | undefined,
     clarify: j.clarify === true,
     investigations: investigationsOf(j.graph),
+    suggestions: suggestionsOf(j.suggestions),
+    observations: observationsOf(j.observations),
   };
 }
 

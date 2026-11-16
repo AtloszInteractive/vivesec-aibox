@@ -48,6 +48,7 @@ import {
   type AdapterConversationSummary,
   type AdapterConversationTurn,
   type AdapterInvestigation,
+  type AdapterSuggestion,
   type AdapterJobStatus,
   type AdapterJobSummary,
   type AdapterJobProgress,
@@ -63,6 +64,7 @@ export type {
   ChatPolicy,
   AdapterJobProgress,
   AdapterInvestigation,
+  AdapterSuggestion,
 } from "../rag/adapter-client";
 
 const ACTIONS = [
@@ -136,6 +138,9 @@ export type RagAskResult = {
   clarify?: boolean;
   /** Investigation tables the answer was built on (XLSX export). */
   investigations?: AdapterInvestigation[];
+  /** Proactive chat: next questions and evidence observations. */
+  suggestions?: AdapterSuggestion[];
+  observations?: string[];
   error?: string;
   backgroundJobId?: string;
 };
@@ -309,6 +314,8 @@ function ragResultFromAdapter(result: AdapterAnswer): RagAskResult {
     refused,
     clarify: result.clarify,
     investigations: result.investigations,
+    suggestions: result.suggestions,
+    observations: result.observations,
   };
 }
 
