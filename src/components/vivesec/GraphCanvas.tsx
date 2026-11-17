@@ -126,13 +126,13 @@ const TYPE_ICON: Record<GraphNode["type"], LucideIcon> = {
 
 function storedMode(): Mode {
   try {
-    return window.localStorage.getItem(MODE_KEY) === "3d" ? "3d" : "2d";
+    return window.localStorage.getItem(MODE_KEY) === "2d" ? "2d" : "3d";
   } catch {
-    return "2d";
+    return "3d";
   }
 }
 
-/** The relationship picture (E26): 2D, or 3D to turn around. Zoom, fit, full
+/** The relationship picture (E26): 3D by default, with a remembered 2D option. Zoom, fit, full
  *  screen; a legend that also filters; arrows for directed relations and line
  *  styles by source; crowded nodes' leaves grouped; the neighbours of the node
  *  under the pointer brought forward; a time filter that can play; nodes to
@@ -170,7 +170,7 @@ export function GraphCanvas({
   const uid = useId().replace(/:/g, "");
   const box = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const [mode, setMode] = useState<Mode>("2d");
+  const [mode, setMode] = useState<Mode>("3d");
   const [view, setView] = useState({ k: 1, x: 0, y: 0 });
   const [rot, setRot] = useState({ yaw: 0.5, pitch: -0.35 });
   const [spin, setSpin] = useState(true);
