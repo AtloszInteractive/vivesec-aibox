@@ -1210,6 +1210,7 @@ const M: Record<string, Tri> = {
   "Username": ["Felhasználónév", "Brugernavn", "Benutzername"],
   "Password": ["Jelszó", "Adgangskode", "Passwort"],
   "Language": ["Nyelv", "Sprog", "Sprache"],
+  "Settings": ["Beállítások", "Indstillinger", "Einstellungen"],
   Theme: ["Téma", "Tema", "Farbschema"],
   Dark: ["Sötét", "Mørk", "Dunkel"],
   Light: ["Világos", "Lys", "Hell"],

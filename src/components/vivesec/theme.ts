@@ -9,9 +9,9 @@ export type ThemePref = "dark" | "light" | "system";
 const STORAGE_KEY = "vivesec_theme";
 const QUERY = "(prefers-color-scheme: dark)";
 /** Browser chrome colour per theme: the header background. */
-const THEME_COLOR = { dark: "#071625", light: "#FFFFFF" } as const;
+const THEME_COLOR = { dark: "#141414", light: "#FFFFFF" } as const;
 
-/** Runs in <head> before the first paint, so a light page never flashes navy.
+/** Runs in <head> before the first paint, so the theme never flashes.
  *  Unknown stored values count as "system"; no matchMedia means dark. */
 export const THEME_INIT_SCRIPT = `(function(){try{var p=localStorage.getItem('${STORAGE_KEY}');var d=p==='dark'||(p!=='light'&&(!window.matchMedia||window.matchMedia('${QUERY}').matches));document.documentElement.classList.toggle('dark',d);var m=document.querySelector('meta[name=theme-color]');if(m)m.setAttribute('content',d?'${THEME_COLOR.dark}':'${THEME_COLOR.light}')}catch(e){}})()`;
 

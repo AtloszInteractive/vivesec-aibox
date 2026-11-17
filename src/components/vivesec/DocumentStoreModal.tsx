@@ -128,7 +128,15 @@ function visibleUpload(rel: string): boolean {
  * and folders, create folders, delete, download. Uploads are virus-scanned in
  * quarantine and indexed on the box; their state is shown until dismissed.
  */
-export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose: () => void }) {
+export function DocumentStoreModal({
+  drive,
+  onClose,
+  onOpen,
+}: {
+  drive: string;
+  onClose: () => void;
+  onOpen: (path: string) => void;
+}) {
   const { tm } = useLang();
   const [mounted, setMounted] = useState(false);
   const [info, setInfo] = useState<StoreInfo | null | undefined>(undefined);
@@ -624,10 +632,20 @@ export function DocumentStoreModal({ drive, onClose }: { drive: string; onClose:
                   <tr key={entry.path} className="border-t border-ink/[0.05] hover:bg-ink/[0.03]">
                     <td className="max-w-0 px-3 py-2">
                       {entry.file ? (
-                        <span className="flex min-w-0 items-center gap-2">
-                          <FileText className="h-4 w-4 shrink-0 text-ink/45" />
-                          <span className="truncate">{entry.name}</span>
-                        </span>
+                        entry.stored ? (
+                          <button
+                            onClick={() => onOpen(entry.path)}
+                            className="flex min-w-0 items-center gap-2 text-left hover:text-brand-soft"
+                          >
+                            <FileText className="h-4 w-4 shrink-0 text-ink/45" />
+                            <span className="truncate">{entry.name}</span>
+                          </button>
+                        ) : (
+                          <span className="flex min-w-0 items-center gap-2">
+                            <FileText className="h-4 w-4 shrink-0 text-ink/45" />
+                            <span className="truncate">{entry.name}</span>
+                          </span>
+                        )
                       ) : (
                         <button
                           onClick={() => void load(entry.path)}

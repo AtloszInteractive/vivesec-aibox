@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -151,7 +152,7 @@ import {
 } from "lucide-react";
 import { GraphPanel, type GraphSource } from "./GraphPanel";
 import { ACCENT, ACCENT_TEXT, DANGER_TEXT, inkA, inkText, ON_ACCENT } from "./brand";
-import { ThemeLogo, ThemeMenuItems, ThemeToggle } from "./ThemeControls";
+import { ThemeLogo, ThemeMenuItems } from "./ThemeControls";
 
 /* ---------- Types ---------- */
 // One command per function specification v2 quick action (F1-F7), plus /data.
@@ -2565,8 +2566,7 @@ function ViveSecAppInner() {
                 />
               </button>
               <AccountMenu />
-              <ThemeToggle className="hidden sm:inline-flex" />
-              <LanguageSelector />
+              <PreferencesMenu />
             </div>
           </div>
         </header>
@@ -2752,18 +2752,17 @@ function ViveSecAppInner() {
                         <div className="px-3 py-2 text-[11px] uppercase tracking-wider text-ink/40">
                           {t.activeAgents}
                         </div>
-                        {AGENTS.map((a) => {
+                        {AGENTS.filter((a) => a.available).map((a) => {
                           const Icon = a.icon;
                           const active = activeAgent === a.id;
                           return (
                             <button
                               key={a.id}
-                              disabled={!a.available}
                               onClick={() => {
                                 setActiveAgent(a.id);
                                 setAgentMenuOpen(false);
                               }}
-                              className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${a.available ? "hover:bg-ink/5" : "cursor-not-allowed opacity-40"} ${active ? "bg-ink/[0.06]" : ""}`}
+                              className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-ink/5 ${active ? "bg-ink/[0.06]" : ""}`}
                             >
                               <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-ink/5">
                                 <Icon
@@ -2777,17 +2776,11 @@ function ViveSecAppInner() {
                                 </div>
                                 <div className="truncate text-[11px] text-ink/50">{tm(a.desc)}</div>
                               </div>
-                              {active ? (
+                              {active && (
                                 <span
                                   className="h-2 w-2 shrink-0 rounded-full"
                                   style={{ backgroundColor: ACCENT }}
                                 />
-                              ) : (
-                                !a.available && (
-                                  <span className="shrink-0 rounded-md border border-ink/10 px-1.5 py-0.5 text-[9.5px] uppercase tracking-wide text-ink/40">
-                                    {tm("Soon")}
-                                  </span>
-                                )
                               )}
                             </button>
                           );
@@ -3566,6 +3559,14 @@ function ViveSecAppInner() {
       {storeOpen && drive && (
         <DocumentStoreModal
           drive={drive}
+          onOpen={(path) => {
+            setStoreOpen(false);
+            if (!analyst) void loadFolder(drive, cwd || undefined);
+            openFile(path);
+            setViewerCitations([]);
+            setViewerIndex(0);
+            setViewerMode("split");
+          }}
           onClose={() => {
             setStoreOpen(false);
             // Uploads and deletes may have changed the folder on screen.
@@ -3846,10 +3847,12 @@ function ThreadDialog({
   );
 }
 
-function LanguageSelector() {
-  const { lang, setLang } = useLang();
+function PreferencesMenu() {
+  const { lang, setLang, tm } = useLang();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -3861,28 +3864,47 @@ function LanguageSelector() {
   }, [open]);
 
   return (
-    <div ref={ref} className="relative">
+    <div
+      ref={ref}
+      className="relative"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && open) {
+          e.stopPropagation();
+          setOpen(false);
+          trigger.current?.focus();
+        }
+      }}
+    >
       <button
+        ref={trigger}
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 rounded-full border border-ink/10 bg-ink/5 px-2.5 py-1.5 text-xs font-medium text-ink/85 hover:bg-ink/10 transition"
-        title="Language"
+        aria-label={tm("Settings")}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-ink/10 bg-ink/5 text-ink/85 transition hover:bg-ink/10"
+        title={tm("Settings")}
       >
-        {lang}
-        <ChevronDown
-          className={`h-3.5 w-3.5 text-ink/50 transition-transform ${open ? "rotate-180" : ""}`}
-        />
+        <MoreVertical className="h-4 w-4" />
       </button>
       <AnimatePresence>
         {open && (
           <>
             <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setOpen(false)} />
             <motion.div
+              id={panelId}
+              role="dialog"
+              aria-label={tm("Settings")}
               initial={{ opacity: 0, y: -6, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -6, scale: 0.97 }}
               transition={{ type: "spring", stiffness: 320, damping: 26 }}
-              className="absolute right-0 z-50 mt-2 w-44 overflow-hidden rounded-xl border border-ink/10 bg-surface-3 shadow-2xl shadow-shade/60"
+              className="absolute right-0 z-50 mt-2 max-h-[calc(100dvh-5rem)] w-52 overflow-y-auto rounded-xl border border-ink/10 bg-surface-3 shadow-2xl shadow-shade/60"
             >
+              <div className="px-3 pb-1 pt-2.5 text-[10.5px] uppercase tracking-wider text-ink/55">
+                {tm("Language")}
+              </div>
               {LANGS.map((l) => {
                 const active = l.code === lang;
                 return (
@@ -3891,6 +3913,7 @@ function LanguageSelector() {
                     onClick={() => {
                       setLang(l.code as Lang);
                       setOpen(false);
+                      trigger.current?.focus();
                     }}
                     className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:text-brand-soft hover:bg-ink/5"
                   >
@@ -3905,7 +3928,7 @@ function LanguageSelector() {
                   </button>
                 );
               })}
-              <ThemeMenuItems className="sm:hidden" />
+              <ThemeMenuItems />
             </motion.div>
           </>
         )}

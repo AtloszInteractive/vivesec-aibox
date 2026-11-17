@@ -1,8 +1,8 @@
 // ViVeSec brand colours (brandbook 1.1, logo kit 2026-10-24) for the dark and the
 // light theme. The theme-dependent values are CSS variables from src/styles.css,
 // so inline styles follow the active theme without a re-render.
-// The brand purple fails the 4.5:1 text contrast on the navy surfaces, so text
-// and icons use a tint of it (lighter on navy, darker on white); a purple fill
+// The brand purple fails the 4.5:1 text contrast on the dark surfaces, so text
+// and icons use a tint of it (lighter on graphite, darker on white); a purple fill
 // always carries white text.
 // Imported as assets so both the SSR and the mount-agnostic embed build resolve them.
 import logoOnDark from "@/assets/brand/vivesec-logo-purple-white.png";
@@ -10,11 +10,11 @@ import logoOnLight from "@/assets/brand/vivesec-logo-purple-black.png";
 
 /** ViVeSec purple: fills, borders, tints and status accents (the same in both themes). */
 export const ACCENT = "#8C49E9";
-/** Purple tint for text and icons: #B48CF5 on navy, #7A3AD6 on white (at least 4.5:1). */
+/** Purple tint for text and icons: #B48CF5 on graphite, #7A3AD6 on white (at least 4.5:1). */
 export const ACCENT_TEXT = "var(--brand-soft)";
 /** Text and icons on an ACCENT fill (4.9:1). */
 export const ON_ACCENT = "#FFFFFF";
-/** Error and offline text: rose-400 on navy, rose-700 on white. */
+/** Error and offline text: rose-400 on graphite, rose-700 on white. */
 export const DANGER_TEXT = "var(--danger-text)";
 
 /** The foreground colour at an opacity, for inline styles (the `ink/NN` class equivalent). */

@@ -59,7 +59,7 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  /* ViVeSec brand (brandbook 1.1): purple for fills, its tint for text on navy,
+  /* ViVeSec brand (brandbook 1.1): purple for fills, its tint for text on dark surfaces,
      pale lilac for highlights. Mirrors src/components/vivesec/brand.ts. */
   --color-brand: var(--brand);
   --color-brand-soft: var(--brand-soft);
@@ -67,8 +67,8 @@
   /* Theme tokens of the ViVeSec screens. `ink` is the foreground every tint is
      derived from (ink/70 text, ink/10 borders and fills); `shade` darkens wells
      and casts shadows; `surface-0..5` are the background layers from the
-     deepest to the most raised; `header` is the top bar. The dark values are
-     the original navy palette, so `.dark` keeps the interface pixel-identical. */
+     deepest to the most raised; `header` is the top bar. Dark UI surfaces use
+     a neutral graphite palette; the brand purple remains the accent. */
   --color-ink: var(--ink);
   --color-shade: var(--shade);
   --color-header: var(--header);
@@ -141,28 +141,28 @@
   --brand-pale: #F3ECFD;
   --ink: #FFFFFF;
   --shade: #000000;
-  --header: #071625;
-  --surface-0: #071625;
-  --surface-1: #0A1B2D;
-  --surface-2: #0C1E31;
-  --surface-3: #10243A;
-  --surface-4: #152B44;
-  --surface-5: #1C3550;
+  --header: #141414;
+  --surface-0: #141414;
+  --surface-1: #191919;
+  --surface-2: #1E1E1E;
+  --surface-3: #242424;
+  --surface-4: #2B2B2B;
+  --surface-5: #333333;
   --danger-text: #FB7185;
-  --background: #0C1E31;
-  --foreground: #E6EAEE;
-  --card: #152B44;
-  --card-foreground: #E6EAEE;
-  --popover: #152B44;
-  --popover-foreground: #E6EAEE;
+  --background: var(--surface-2);
+  --foreground: #EBEBEB;
+  --card: var(--surface-4);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-4);
+  --popover-foreground: var(--foreground);
   --primary: #8C49E9;
   --primary-foreground: #FFFFFF;
-  --secondary: #1C3550;
-  --secondary-foreground: #E6EAEE;
-  --muted: #1C3550;
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: #1C3550;
-  --accent-foreground: #E6EAEE;
+  --secondary: var(--surface-5);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-5);
+  --muted-foreground: #A3A3A3;
+  --accent: var(--surface-5);
+  --accent-foreground: var(--foreground);
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.984 0.003 247.858);
   --border: oklch(1 0 0 / 10%);
@@ -173,14 +173,14 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: #071625;
-  --sidebar-foreground: oklch(0.984 0.003 247.858);
+  --sidebar: var(--surface-0);
+  --sidebar-foreground: var(--foreground);
   --sidebar-primary: #8C49E9;
   --sidebar-primary-foreground: oklch(0.984 0.003 247.858);
-  --sidebar-accent: oklch(0.279 0.041 260.031);
-  --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
+  --sidebar-accent: var(--surface-3);
+  --sidebar-accent-foreground: var(--foreground);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.551 0.027 264.364);
+  --sidebar-ring: #858585;
 }
 
 @layer base {
