@@ -1106,6 +1106,11 @@ export async function adapterGraph<T>(
       res.status,
     );
   }
+  // A body cut off on the way (e.g. a dropped HTTP/2 connection) reads as {}:
+  // that is a failed call, not an empty answer the views would try to draw.
+  if (j.ok !== true) {
+    throw new AdapterGraphError(`ui/graph/${endpoint}: incomplete answer`, 502);
+  }
   return j as T;
 }
 
