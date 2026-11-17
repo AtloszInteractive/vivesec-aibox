@@ -45,6 +45,9 @@ AIBOX_BACKUP_TIME=02:30
 AIBOX_TLS_DNS="aibox-01,aibox-01.bv.local"
 AIBOX_TLS_IPS="192.168.10.50"
 #AIBOX_HTTPS_LISTEN=0.0.0.0
+# Remote access: the box's tailnet name, served with Tailscale's certificate to
+# tailnet clients only (https-front.sh; turn `tailscale serve` off first).
+#AIBOX_HTTPS_TAILNET_NAME=aibox-01.tail1234.ts.net
 
 # --- Installation (standalone_install.py) -----------------------------------
 # Release stage build directory (172-release-box.py) with auth_service/ and adapter/.

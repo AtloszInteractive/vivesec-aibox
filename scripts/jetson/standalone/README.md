@@ -123,6 +123,32 @@ so the front cannot run there; `deploy` stops with a port conflict instead.
 `docker pull --platform linux/arm64 nginx:1.28-alpine && docker save nginx:1.28-alpine -o nginx-image.tar`,
 then on the box `docker load -i nginx-image.tar`.
 
+### Remote access over Tailscale
+
+With `AIBOX_HTTPS_TAILNET_NAME` set to the box's tailnet name (e.g.
+`aibox-01.tail1234.ts.net`), the same front also serves that name on :443 with
+the certificate Tailscale issues for it (`tailscale cert`, publicly trusted, so
+remote users install no CA), and only to tailnet addresses (`100.64.0.0/10`).
+It needs HTTPS certificates enabled for the tailnet (admin console › DNS).
+
+```bash
+export AIBOX_HTTPS_TAILNET_NAME=aibox-01.tail1234.ts.net   # plus the AIBOX_TLS_* names above
+sudo tailscale serve reset           # deploy refuses while `tailscale serve` holds :443
+sudo -E bash https-front.sh deploy   # fetches the certificate, enables the renewal timer
+```
+
+- Do not use `tailscale serve` for the web UI: its own TCP stack moved it some
+  25 times slower than the tunnel (a 350 KB file: 25 s instead of 1 s), and
+  browsers then dropped the connection mid-answer (`ERR_HTTP2_PING_FAILED`).
+- nginx listens on `0.0.0.0:443` for the tailnet name (the tailnet address can
+  change, or come up after nginx); `allow 100.64.0.0/10; deny all;` keeps it
+  to tailnet clients, and the LAN names keep the box CA's certificate.
+- `aibox-tailnet-cert.timer` runs `https-front.sh tailnet-cert` weekly:
+  Tailscale renews the certificate within 30 days of its expiry (it lasts 90),
+  the command reloads nginx. `verify` fails 14 days before it expires.
+- Back to `tailscale serve`: unset `AIBOX_HTTPS_TAILNET_NAME`, `deploy`, then
+  `sudo tailscale serve --bg http://127.0.0.1:8080`.
+
 ### Renewal and changes
 
 | Situation | Action |

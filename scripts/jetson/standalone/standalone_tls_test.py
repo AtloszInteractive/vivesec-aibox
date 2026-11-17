@@ -349,6 +349,46 @@ class FrontRenderTest(ScriptTestCase):
             self.assertNotEqual(result.returncode, 0, value)
             self.assertIn("AIBOX_HTTPS_MAX_BODY", result.stderr, value)
 
+    def test_tailnet_name_with_its_own_certificate_for_tailnet_clients_only(self):
+        conf = self.render(AIBOX_HTTPS_LISTEN="192.168.10.50",
+                           AIBOX_HTTPS_TAILNET_NAME="AIBox-01.Tail1234.ts.net").stdout
+        self.assertNotIn("aibox-tailnet", self.render(AIBOX_HTTPS_LISTEN="192.168.10.50").stdout)
+        # Every address on :443 (the tailnet address may change or come up after
+        # nginx), with its own default that drops unknown names; never on :80.
+        default = self.server_block(conf, "listen 0.0.0.0:443 ssl default_server;")
+        self.assertIn("ssl_certificate /etc/aibox-tailnet/tailnet.crt;", default)
+        self.assertIn("return 444;", default)
+        self.assertNotIn("listen 0.0.0.0:80", conf)
+        tailnet = self.server_block(conf, "server_name aibox-01.tail1234.ts.net;")
+        self.assertIn("http2 on;\n        server_name aibox-01.tail1234.ts.net;", conf)
+        for line in ("ssl_certificate_key /etc/aibox-tailnet/tailnet.key;",
+                     "allow 100.64.0.0/10;", "deny all;",
+                     "proxy_pass http://127.0.0.1:8080;", 'proxy_set_header VVS-Identity "";',
+                     'add_header Strict-Transport-Security "max-age=31536000" always;'):
+            self.assertIn(line, tailnet)
+        self.assertNotIn("aibox-handover", tailnet)
+        # The LAN names keep the box CA's certificate.
+        self.assertIn("server_name aibox-01 aibox-01.lan 192.168.10.50;", conf)
+        # Listening everywhere already: no second default server.
+        conf = self.render(AIBOX_HTTPS_TAILNET_NAME="aibox-01.tail1234.ts.net").stdout
+        self.assertEqual(conf.count("listen 0.0.0.0:443 ssl default_server;"), 1)
+        self.assertIn("server_name aibox-01.tail1234.ts.net;", conf)
+
+    def test_tailnet_name_must_be_a_tailnet_name(self):
+        for name in ("aibox.example.com", "ts.net", "a b.ts.net"):
+            result = self.render(check=False, AIBOX_HTTPS_TAILNET_NAME=name)
+            self.assertNotEqual(result.returncode, 0, name)
+            self.assertIn("AIBOX_HTTPS_TAILNET_NAME", result.stderr, name)
+
+    def test_tailnet_certificate_is_mounted_only_with_a_tailnet_name(self):
+        conf = self.root + "/https/nginx.conf"
+        plain = self.bash([FRONT, "docker-args", conf]).stdout
+        self.assertNotIn("aibox-tailnet", plain)
+        args = self.bash([FRONT, "docker-args", conf],
+                         AIBOX_HTTPS_TAILNET_NAME="aibox-01.tail1234.ts.net",
+                         AIBOX_HTTPS_CONF_DIR=self.root + "/https").stdout
+        self.assertIn("%s/https/tailnet:/etc/aibox-tailnet:ro" % self.root, args)
+
 
 FAKE_TOOLS = r'''#!/usr/bin/env bash
 case $(basename "$0") in

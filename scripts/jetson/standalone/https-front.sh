@@ -18,6 +18,17 @@
 #   bash https-front.sh render [FILE]  # print (or write) the nginx configuration
 #   bash https-front.sh deploy         # check, validate, (re)start, verify; rolls back on failure
 #   bash https-front.sh verify         # checks from the box's point of view
+#   bash https-front.sh tailnet-cert   # fetch or renew the tailnet certificate, reload nginx
+#
+# Remote access over Tailscale (optional): with AIBOX_HTTPS_TAILNET_NAME set the
+# front also serves the box's tailnet name on :443, with the certificate
+# Tailscale issues for it (`tailscale cert`, publicly trusted: no CA to install),
+# to tailnet addresses (100.64.0.0/10) only. This replaces `tailscale serve`,
+# whose own TCP stack moved the web UI some 25 times slower than the tunnel
+# itself and made browsers drop the connection (ERR_HTTP2_PING_FAILED). The
+# deploy refuses while `tailscale serve` still holds :443, and installs a weekly
+# systemd timer that renews the certificate (tailscale renews it within 30 days
+# of expiry; the timer reloads nginx).
 #
 # Parameters (environment), besides the AIBOX_TLS_* names of tls-pki.sh:
 #   AIBOX_HTTPS_LISTEN     IPv4 addresses nginx binds   (default 0.0.0.0 = every
@@ -30,6 +41,8 @@
 #                          the upload limit of the file store, ADAPTER_UPLOAD_MAX_BYTES)
 #   AIBOX_INTERNAL_PORTS   ports that must listen on loopback only
 #                          (default "8080 8088 8090 8097 11434": UI, adapter, RAG, auth, Ollama)
+#   AIBOX_HTTPS_TAILNET_NAME  the box's tailnet name, e.g. aibox-01.tail1234.ts.net
+#                          (default empty: no tailnet front)
 set -euo pipefail
 
 # shellcheck source=lib.sh
@@ -43,6 +56,11 @@ image="${AIBOX_HTTPS_IMAGE:-nginx:1.28-alpine}"
 upstream="${AIBOX_HTTPS_UPSTREAM:-127.0.0.1:8080}"
 max_body="${AIBOX_HTTPS_MAX_BODY:-64m}"
 internal_ports="${AIBOX_INTERNAL_PORTS:-8080 8088 8090 8097 11434}"
+tailnet_name="${AIBOX_HTTPS_TAILNET_NAME:-}"
+tailnet_dir="$conf_dir/tailnet"
+# Tailscale's address range (CGNAT): the only clients of the tailnet front.
+TAILNET_CLIENTS=100.64.0.0/10
+TIMER=aibox-tailnet-cert
 # Identity headers only the box may set (adapter scope.py / identity.py).
 CLIENT_HEADERS_DROPPED=(VVS-Drive VVS-User VVS-Session VVS-Identity VVS-Other-Drives)
 
@@ -63,6 +81,25 @@ read_front_config() {
     die "AIBOX_HTTPS_UPSTREAM must be a loopback host:port, got: $upstream"
   [[ $max_body =~ ^[1-9][0-9]{0,6}[kKmM]?$ ]] ||
     die "AIBOX_HTTPS_MAX_BODY must be an nginx size such as 256m, got: $max_body"
+  tailnet_name=${tailnet_name,,}
+  if [[ -n $tailnet_name ]]; then
+    # `tailscale cert` issues certificates for the tailnet's own names only.
+    valid_dns "$tailnet_name" && [[ $tailnet_name == *.ts.net ]] ||
+      die "AIBOX_HTTPS_TAILNET_NAME must be the box's tailnet name (*.ts.net), got: $tailnet_name"
+  fi
+  # The tailnet name is served on every address (the tailnet address can change
+  # and may not exist yet when the front starts); the source check keeps it to
+  # tailnet clients. With the default 0.0.0.0 the box already listens there.
+  tailnet_ips=()
+  if [[ -n $tailnet_name ]]; then
+    tailnet_ips=(0.0.0.0)
+    extra_default=yes
+    for item in "${listen_ips[@]}"; do
+      if [[ $item == 0.0.0.0 ]]; then extra_default=no; fi
+    done
+  else
+    extra_default=no
+  fi
 }
 
 security_headers() {
@@ -93,6 +130,71 @@ ca_download_location() {
 listen_lines() {
   local port=$1 suffix=$2 ip
   for ip in "${listen_ips[@]}"; do echo "        listen $ip:$port$suffix;"; done
+}
+
+tailnet_listen_lines() {
+  local suffix=$1 ip
+  for ip in "${tailnet_ips[@]}"; do echo "        listen $ip:443$suffix;"; done
+}
+
+ui_location() {  # the web UI behind the front
+  local header
+  cat <<EOF
+        location / {
+            proxy_pass http://$upstream;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Host \$host;
+            proxy_set_header X-Forwarded-For \$remote_addr;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header Forwarded "";
+EOF
+  for header in "${CLIENT_HEADERS_DROPPED[@]}"; do
+    echo "            proxy_set_header $header \"\";"
+  done
+  cat <<EOF
+            proxy_hide_header X-Powered-By;
+            # Answers stream and long-poll; nothing may be held back or cut short.
+            proxy_buffering off;
+            # Uploads stream through as well: a buffered body would have to fit
+            # the small /tmp tmpfs of this read-only container.
+            proxy_request_buffering off;
+            proxy_read_timeout 900s;
+            proxy_send_timeout 900s;
+        }
+EOF
+}
+
+# The tailnet name: Tailscale's certificate, tailnet clients only. The box CA's
+# certificate page and handover sheet are for the LAN names; a browser trusts
+# this certificate without them.
+tailnet_servers() {
+  [[ -n $tailnet_name ]] || return 0
+  if [[ $extra_default == yes ]]; then
+    cat <<EOF
+    server {
+$(tailnet_listen_lines " ssl default_server")
+        ssl_certificate /etc/aibox-tailnet/tailnet.crt;
+        ssl_certificate_key /etc/aibox-tailnet/tailnet.key;
+        return 444;
+    }
+EOF
+  fi
+  cat <<EOF
+    server {
+$(tailnet_listen_lines " ssl")
+        http2 on;
+        server_name $tailnet_name;
+        ssl_certificate /etc/aibox-tailnet/tailnet.crt;
+        ssl_certificate_key /etc/aibox-tailnet/tailnet.key;
+        allow $TAILNET_CLIENTS;
+        deny all;
+$(security_headers "        ")
+$(ui_location)
+    }
+EOF
 }
 
 # Headers of the certificate page. It runs its own script and stylesheet only,
@@ -158,7 +260,7 @@ handover_location() {
 }
 
 render() {
-  local names header
+  local names
   read_front_config
   names="${dns_names[*]} ${ip_names[*]}"
   cat <<EOF
@@ -239,31 +341,9 @@ $(ca_download_location "        " yes)
 $(cert_page_locations "        " https)
 $(probe_location "        ")
 $(handover_location "        ")
-        location / {
-            proxy_pass http://$upstream;
-            proxy_http_version 1.1;
-            proxy_set_header Connection "";
-            proxy_set_header Host \$host;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header X-Forwarded-Host \$host;
-            proxy_set_header X-Forwarded-For \$remote_addr;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header Forwarded "";
-EOF
-  for header in "${CLIENT_HEADERS_DROPPED[@]}"; do
-    echo "            proxy_set_header $header \"\";"
-  done
-  cat <<EOF
-            proxy_hide_header X-Powered-By;
-            # Answers stream and long-poll; nothing may be held back or cut short.
-            proxy_buffering off;
-            # Uploads stream through as well: a buffered body would have to fit
-            # the small /tmp tmpfs of this read-only container.
-            proxy_request_buffering off;
-            proxy_read_timeout 900s;
-            proxy_send_timeout 900s;
-        }
+$(ui_location)
     }
+$(tailnet_servers)
 }
 EOF
 }
@@ -321,8 +401,9 @@ set_run_args() {  # the docker run options shared by validation and the service
     -v "$1:/etc/nginx/nginx.conf:ro"
     -v "$tls_dir/server:/etc/aibox-tls:ro"
     -v "$tls_dir/public:/srv/aibox-public:ro"
-    -v "$(dirname "$1")/cert-page:/srv/aibox-cert:ro"
-    --entrypoint nginx)
+    -v "$(dirname "$1")/cert-page:/srv/aibox-cert:ro")
+  if [[ -n $tailnet_name ]]; then run_args+=(-v "$tailnet_dir:/etc/aibox-tailnet:ro"); fi
+  run_args+=(--entrypoint nginx)
 }
 
 # Copies cert-page/ next to the configuration; the previous copy is kept for
@@ -350,6 +431,72 @@ restore_cert_page() {
   fi
 }
 
+# `tailscale serve` on :443 would keep answering the tailnet name itself.
+check_tailscale_serve_off() {
+  command -v tailscale >/dev/null || die "AIBOX_HTTPS_TAILNET_NAME is set but tailscale is not installed"
+  if tailscale serve status 2>/dev/null | grep -qE '^https?://'; then
+    die "tailscale serve still answers on the tailnet; turn it off first: tailscale serve reset"
+  fi
+}
+
+tailnet_cert_valid() {  # the certificate is there, names the box and is not expired
+  [[ -s $tailnet_dir/tailnet.crt && -s $tailnet_dir/tailnet.key ]] &&
+    openssl x509 -in "$tailnet_dir/tailnet.crt" -noout -checkend 0 >/dev/null 2>&1 &&
+    openssl x509 -in "$tailnet_dir/tailnet.crt" -noout -ext subjectAltName 2>/dev/null |
+      grep -qF "DNS:$tailnet_name"
+}
+
+cmd_tailnet_cert() {
+  read_front_config
+  [[ -n $tailnet_name ]] || die "AIBOX_HTTPS_TAILNET_NAME is not set"
+  command -v tailscale >/dev/null || die "tailscale is not installed"
+  mkdir -p "$tailnet_dir"
+  chmod 0755 "$tailnet_dir"
+  # tailscale keeps the certificate and renews it within 30 days of expiry.
+  tailscale cert --cert-file "$tailnet_dir/tailnet.crt.new" --key-file "$tailnet_dir/tailnet.key.new" \
+    "$tailnet_name" >/dev/null ||
+    die "tailscale cert failed; HTTPS certificates must be enabled for the tailnet (admin console, DNS)"
+  chmod 0644 "$tailnet_dir/tailnet.crt.new"
+  chmod 0600 "$tailnet_dir/tailnet.key.new"
+  mv -f "$tailnet_dir/tailnet.crt.new" "$tailnet_dir/tailnet.crt"
+  mv -f "$tailnet_dir/tailnet.key.new" "$tailnet_dir/tailnet.key"
+  tailnet_cert_valid || die "the tailnet certificate does not name $tailnet_name or has expired"
+  log "tailnet certificate for $tailnet_name valid until $(openssl x509 -in "$tailnet_dir/tailnet.crt" -noout -enddate | cut -d= -f2)"
+  if [[ $(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null) == true ]]; then
+    docker exec "$CONTAINER" nginx -s reload && log "nginx reloaded"
+  fi
+}
+
+install_tailnet_timer() {
+  command -v systemctl >/dev/null || { log "no systemd: renew with 'https-front.sh tailnet-cert' yourself"; return 0; }
+  cat >/etc/systemd/system/$TIMER.service <<EOF
+[Unit]
+Description=AI Box: renew the tailnet certificate of the HTTPS front
+After=tailscaled.service docker.service
+
+[Service]
+Type=oneshot
+Environment=AIBOX_HTTPS_TAILNET_NAME=$tailnet_name
+Environment=AIBOX_HTTPS_CONF_DIR=$conf_dir
+ExecStart=/bin/bash $script_dir/https-front.sh tailnet-cert
+EOF
+  cat >/etc/systemd/system/$TIMER.timer <<EOF
+[Unit]
+Description=AI Box: weekly tailnet certificate renewal
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "$TIMER.timer" >/dev/null
+  log "renewal timer $TIMER.timer enabled"
+}
+
 cmd_deploy() {
   local stamp new_conf conf prev=""
   read_front_config
@@ -359,6 +506,10 @@ cmd_deploy() {
   log "internal ports"
   check_internal_ports || die "an internal service is reachable from the network; bind it to 127.0.0.1 first"
   check_front_ports_free
+  if [[ -n $tailnet_name ]]; then
+    check_tailscale_serve_off
+    tailnet_cert_valid || cmd_tailnet_cert
+  fi
   if ! docker image inspect "$image" >/dev/null 2>&1; then
     log "image $image not present, trying to pull it"
     docker pull "$image" ||
@@ -394,7 +545,8 @@ cmd_deploy() {
        "${run_args[@]}" "$image" -g 'daemon off;' >/dev/null &&
      sleep 2 && cmd_verify; then
     if [[ -n $prev ]]; then docker rm "$prev" >/dev/null; fi
-    log "HTTPS front running: https://${dns_names[0]}/"
+    if [[ -n $tailnet_name ]]; then install_tailnet_timer; fi
+    log "HTTPS front running: https://${dns_names[0]}/${tailnet_name:+ and https://$tailnet_name/}"
     return 0
   fi
   echo "deploy failed, rolling back" >&2
@@ -467,6 +619,19 @@ cmd_verify() {
       --cacert '$tls_dir/ca/ca.crt' --resolve '${dns_names[0]}:443:$probe' 'https://${dns_names[0]}/' |
       grep -qi '^strict-transport-security: max-age='"
   done
+  if [[ -n $tailnet_name ]]; then
+    run_check "the tailnet certificate names $tailnet_name and is valid for 14 more days" \
+      bash -c "openssl x509 -in '$tailnet_dir/tailnet.crt' -noout -checkend 1209600 >/dev/null &&
+        openssl x509 -in '$tailnet_dir/tailnet.crt' -noout -ext subjectAltName | grep -qF 'DNS:$tailnet_name'"
+    run_check "tailscale serve is off" bash -c "! tailscale serve status 2>/dev/null | grep -qE '^https?://'"
+    tailnet_ip=$(tailscale ip -4 2>/dev/null | head -n 1 || true)
+    if [[ -n $tailnet_ip ]]; then
+      code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+        --resolve "$tailnet_name:443:$tailnet_ip" "https://$tailnet_name/" 2>/dev/null || true)
+      run_check "https://$tailnet_name/ via $tailnet_ip with a publicly trusted certificate ($code)" \
+        test "${code:0:1}" = 2 -o "${code:0:1}" = 3
+    fi
+  fi
   if command -v ss >/dev/null; then
     run_check "internal ports listen on loopback only ($internal_ports)" check_internal_ports
   fi
@@ -478,8 +643,9 @@ case ${1:-} in
     if [[ -n ${2:-} ]]; then render >"$2"; else render; fi ;;
   deploy) cmd_deploy ;;
   verify) cmd_verify ;;
+  tailnet-cert) cmd_tailnet_cert ;;
   docker-args)  # internal: the hardened run options for CONF, one per line (tests)
     set_run_args "${2:?docker-args needs the nginx.conf path}"
     printf '%s\n' "${run_args[@]}" ;;
-  *) sed -n '2,32p' "$0"; exit 2 ;;
+  *) sed -n '2,48p' "$0"; exit 2 ;;
 esac
