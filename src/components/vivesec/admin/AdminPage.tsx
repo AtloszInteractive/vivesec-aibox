@@ -1,12 +1,14 @@
 // Administration page of a standalone box (E27 S7): users, AD group mapping,
 // rooms and permissions, two-factor resets, the clock and virus definitions,
-// the organisation's templates (E18) and the event logs. Only for users with
+// the company profile (E12), the organisation's templates (E18) and the event
+// logs. Only for users with
 // the admin role; the login gate and both backends check that again on every
 // call.
 
 import { useCallback, useEffect, useState } from "react";
 import {
   ArrowLeft,
+  Building2,
   DoorOpen,
   FileText,
   Gauge,
@@ -34,6 +36,7 @@ import { GateLogo, LanguagePicker } from "../AuthPages";
 import { ACCENT_TEXT } from "../brand";
 import { LanguageProvider, useLang } from "../i18n";
 import { ThemeToggle } from "../ThemeControls";
+import { CompanyTab } from "./CompanyTab";
 import { DirectoryTab } from "./DirectoryTab";
 import { EventsTab } from "./EventsTab";
 import { OverviewTab } from "./OverviewTab";
@@ -43,7 +46,7 @@ import { TemplatesTab } from "./TemplatesTab";
 import { UsersTab } from "./UsersTab";
 import { errorText } from "./ui";
 
-type Tab = "overview" | "users" | "rooms" | "directory" | "templates" | "events";
+type Tab = "overview" | "users" | "rooms" | "directory" | "company" | "templates" | "events";
 
 type Gate = { state: "loading" } | { state: "not_standalone" } | { state: "ready"; me: string };
 
@@ -149,6 +152,7 @@ function AdminScreen() {
     { id: "users", label: tm("Users"), icon: <Users className="h-4 w-4" /> },
     { id: "rooms", label: tm("Rooms and permissions"), icon: <DoorOpen className="h-4 w-4" /> },
     { id: "directory", label: tm("AD groups"), icon: <Network className="h-4 w-4" /> },
+    { id: "company", label: tm("Company profile"), icon: <Building2 className="h-4 w-4" /> },
     { id: "templates", label: tm("Templates"), icon: <FileText className="h-4 w-4" /> },
     { id: "events", label: tm("Event log"), icon: <ScrollText className="h-4 w-4" /> },
   ];
@@ -250,6 +254,7 @@ function AdminScreen() {
               onSaved={setDirectory}
             />
           )}
+          {tab === "company" && <CompanyTab />}
           {tab === "templates" && <TemplatesTab />}
           {tab === "events" && <EventsTab />}
         </main>

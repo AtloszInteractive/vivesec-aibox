@@ -333,12 +333,6 @@ export type TemplateVersion = {
 
 export type LayoutColumn = { column: string | null; label: string | null; width: number | null };
 
-export type OrgCard = {
-  name: string;
-  about: string;
-  terms: { term: string; meaning: string }[];
-};
-
 type Stamped<T> = { value: T; updated_by: string; updated_at: number } | null;
 
 export type TemplatesState = {
@@ -351,7 +345,6 @@ export type TemplatesState = {
     activated_at?: number;
   };
   xlsx_layout: Stamped<LayoutColumn[]>;
-  org_card: Stamped<OrgCard>;
   scan: string;
   columns: { id: string; labels: Record<"en" | "hu" | "da" | "de", string> }[];
   required: string[];
@@ -359,11 +352,6 @@ export type TemplatesState = {
     max_bytes: number;
     max_columns: number;
     max_label: number;
-    max_name: number;
-    max_about: number;
-    max_terms: number;
-    max_term: number;
-    max_meaning: number;
   };
 };
 
@@ -398,5 +386,103 @@ export const readSampleSheet = (file: File) =>
 export const saveLayout = (columns: LayoutColumn[] | null) =>
   adapterAdmin<TemplatesState>("templates/xlsx", { columns });
 
-export const saveOrgCard = (card: OrgCard | null) =>
-  adapterAdmin<TemplatesState>("templates/org", { card });
+/* ------------------------------------------------------------------ company profile (E12) */
+
+export type FactState = "draft" | "effective" | "expired" | "archived";
+
+export type FactSource = { path: string; page: number | null; quote: string };
+
+export type FactInput = {
+  id?: string;
+  group: string;
+  field: string;
+  label: string;
+  value: string;
+  classification: string;
+  valid_from: string | null;
+  valid_to: string | null;
+};
+
+export type CompanyFact = FactInput & {
+  id: string;
+  state: FactState;
+  source: FactSource | null;
+  replaces: string | null;
+  created_by: string;
+  created_at: number;
+  updated_by: string;
+  updated_at: number;
+};
+
+export type ProfileGroup = {
+  id: string;
+  label: string;
+  fields: { id: string; label: string; repeatable: boolean; named: boolean }[];
+};
+
+export type Extraction = {
+  state: "idle" | "queued" | "running" | "done" | "cancelled" | "failed";
+  user?: string;
+  documents?: number;
+  done?: number;
+  parts?: number;
+  proposals?: number;
+  failed?: string[];
+  error?: string;
+  started_at?: number;
+  finished_at?: number;
+};
+
+export type CompanyState = {
+  configured: boolean;
+  error: string | null;
+  revision: number;
+  facts: CompanyFact[];
+  schema: ProfileGroup[];
+  states: FactState[];
+  levels: string[];
+  default_classification: string | null;
+  extraction: Extraction;
+  limits: { max_label: number; max_value: number; max_documents: number };
+};
+
+export type FactHistoryEntry = {
+  seq: number;
+  ts: number;
+  user: string;
+  action: "create" | "edit" | "state" | "delete" | "propose" | "import";
+  fact: string;
+  before: CompanyFact | null;
+  after: CompanyFact | null;
+};
+
+export type ProfileDocument = { path: string; name: string; room: string };
+
+export const readCompany = () => adapterAdmin<CompanyState>("company");
+
+export const saveFact = (base: number, fact: FactInput) =>
+  adapterAdmin<CompanyState>("company/fact", { base, fact });
+
+export const setFactState = (base: number, id: string, state: FactState) =>
+  adapterAdmin<CompanyState>("company/state", { base, id, state });
+
+export const deleteFact = (base: number, id: string) =>
+  adapterAdmin<CompanyState>("company/delete", { base, id });
+
+export const restoreFact = (base: number, id: string, seq: number) =>
+  adapterAdmin<CompanyState>("company/restore", { base, id, seq });
+
+export const readFactHistory = (id: string) =>
+  adapterAdmin<{ history: FactHistoryEntry[] }>(
+    `company/history?id=${encodeURIComponent(id)}`,
+  ).then((r) => r.history);
+
+export const listProfileDocuments = (query: string) =>
+  adapterAdmin<{ documents: ProfileDocument[] }>(
+    `company/documents?q=${encodeURIComponent(query)}`,
+  ).then((r) => r.documents);
+
+export const startExtraction = (paths: string[]) =>
+  adapterAdmin<CompanyState>("company/extract", { paths });
+
+export const cancelExtraction = () => adapterAdmin<CompanyState>("company/extract/cancel", {});

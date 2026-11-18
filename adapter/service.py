@@ -54,7 +54,10 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/ui/admin/templates/docx/preview    {id?, text, title}
     POST /api/v1/ui/admin/templates/xlsx/read raw .xlsx body -> proposed layout
     POST /api/v1/ui/admin/templates/xlsx      {columns|null}
-    POST /api/v1/ui/admin/templates/org       {card|null}
+    GET  /api/v1/ui/admin/company             (E12 company_profile.py: facts, schema, reading)
+    POST /api/v1/ui/admin/company/fact | state | delete | restore   {base, ...}
+    GET  /api/v1/ui/admin/company/history?id= | documents?q=
+    POST /api/v1/ui/admin/company/extract {paths} | extract/cancel  (proposals from documents)
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -150,7 +153,8 @@ import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
 import orchestrator  # noqa: E402
-import org_card  # noqa: E402
+import company_extract  # noqa: E402
+import company_profile  # noqa: E402
 import proactive  # noqa: E402
 import person_summary  # noqa: E402
 import purpose  # noqa: E402
@@ -758,7 +762,125 @@ INVESTIGATION_XLSX = investigation_export.settings()
 # generated Word file, the spreadsheet layout and the organisation card the
 # model gets as background. Empty ADAPTER_TEMPLATES_DIR: the built-in look.
 TEMPLATES = templates.TemplateStore.from_env()
-llm.ORGANISATION = lambda: org_card.prompt_block(TEMPLATES.org_card())
+# The company profile (E12): effective facts up to the caller's clearance are
+# the model's background, chosen per answer (_answer -> llm.organisation_for).
+COMPANY = company_profile.CompanyProfile(TEMPLATES)
+llm.ORGANISATION = lambda question, clearance: company_profile.prompt_block(
+    COMPANY.facts(), question, clearance)
+
+
+def _take_over_card():
+    """The organisation card of the first step becomes profile facts, once."""
+    try:
+        taken = COMPANY.take_over_card()
+    except (OSError, company_profile.ProfileInvalid, templates.TemplateInvalid) as e:
+        sys.stderr.write("[adapter] company profile: card not taken over: %s\n" % e)
+        return
+    if taken:
+        sys.stderr.write("[adapter] company profile: %d facts taken over from the "
+                         "organisation card\n" % taken)
+
+
+def _clearance_of(access):
+    """The ACL level index the company facts are given up to."""
+    if access is None:
+        return 0
+    return access.clearance if access.enforced else len(acl.LEVELS) - 1
+
+
+class _CompanyReader:
+    """One reading of documents into profile proposals at a time, on the heavy
+    slot (company_extract.py): every part of each document, read with the
+    administrator's access."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = {"state": "idle"}
+        self._cancel = threading.Event()
+        self._job = None
+
+    def status(self):
+        with self._lock:
+            return dict(self._state)
+
+    def _update(self, **values):
+        with self._lock:
+            self._state.update(values)
+
+    def start(self, paths, user, access):
+        with self._lock:
+            if self._state.get("state") in ("queued", "running"):
+                return False
+            self._cancel = threading.Event()
+            self._job = "company-" + uuid.uuid4().hex[:12]
+            self._state = {"state": "queued", "user": user, "documents": len(paths),
+                           "done": 0, "parts": 0, "proposals": 0, "failed": [],
+                           "started_at": int(time.time())}
+        threading.Thread(target=self._run, args=(paths, user, access, self._job),
+                         name="company-reader", daemon=True).start()
+        return True
+
+    def cancel(self):
+        self._cancel.set()
+        with self._lock:
+            job, user = self._job, self._state.get("user")
+        if job:
+            HEAVY_SCHEDULER.cancel(job, user, "")
+
+    def _read(self, path, user, access, cancel):
+        res = rag_post_json("/rag/document_context",
+                            {"corpus_id": corpus.corpus_id_of_path(path), "tenant_id": TENANT_ID,
+                             "source_path": path, "max_context_tokens": ANALYZE_DOC_MAX_TOKENS,
+                             "access": access.as_rag()})
+        level = acl.level_name(ACL.effective(path, MIRROR.acl_of).classification)
+        name = path.rsplit("/", 1)[-1]
+        found = []
+        for group in company_extract.parts(res.get("contexts") or []):
+            if cancel():
+                break
+            content, _, _ = llm._chat(company_extract.system_prompt(),
+                                      company_extract.user_prompt(name, group),
+                                      timeout=company_extract.PART_TIMEOUT, stream=False,
+                                      num_predict=company_extract.PART_PREDICT,
+                                      response_format=company_extract.SCHEMA)
+            found += company_extract.proposals(content, group, path, level)
+            with self._lock:
+                self._state["parts"] += 1
+        return found
+
+    def _run(self, paths, user, access, job):
+        try:
+            with HEAVY_SCHEDULER.slot(job, user, "") as slot_cancel:
+                self._update(state="running")
+
+                def cancelled():
+                    return self._cancel.is_set() or slot_cancel.is_set()
+
+                for path in paths:
+                    if cancelled():
+                        break
+                    try:
+                        found = self._read(path, user, access, cancelled)
+                        added = COMPANY.add_proposals(found, user)
+                    except Exception as e:  # noqa: BLE001 -- one document must not stop the rest
+                        sys.stderr.write("[adapter] company reading of %s failed: %s\n"
+                                         % (path, e))
+                        with self._lock:
+                            self._state["failed"].append(path)
+                        added = 0
+                    with self._lock:
+                        self._state["done"] += 1
+                        self._state["proposals"] += added
+                self._update(state="cancelled" if cancelled() else "done",
+                             finished_at=int(time.time()))
+        except scheduler.QueueCancelled:
+            self._update(state="cancelled", finished_at=int(time.time()))
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write("[adapter] company reading failed: %s\n" % e)
+            self._update(state="failed", error=str(e)[:200], finished_at=int(time.time()))
+
+
+COMPANY_READER = _CompanyReader()
 _LANG_NAMES = {code: name for name, code in orchestrator.LANG_CODES.items()}
 
 
@@ -1497,10 +1619,22 @@ def _read_document(chunks, document, query, lang, cancel_event, stage_callback, 
     return contexts[:1], contexts[1:], dict(info, kind="document")
 
 
-def _answer(user, drive, query, top_k, lang, action=None, mode=None, files=None,
-            params=None, agent=None, history_snapshot=None, cancel_event=None,
-            progress_callback=None, req_scope=None, profile="grounded",
-            conversation_id=None, access=None, job_id=None, stage_callback=None):
+def _answer(*args, **kwargs):
+    """_answer_turn with the company background chosen for this question and
+    this caller's clearance, in this thread only."""
+    user = args[0] if args else kwargs.get("user")
+    query = args[2] if len(args) > 2 else kwargs.get("query")
+    if kwargs.get("access") is None:
+        # No directory lookup here: group membership stays unknown (fail-closed).
+        kwargs["access"] = ACL.access_for(user, None, None)
+    with llm.organisation_for(query, _clearance_of(kwargs["access"])):
+        return _answer_turn(*args, **kwargs)
+
+
+def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=None,
+                 params=None, agent=None, history_snapshot=None, cancel_event=None,
+                 progress_callback=None, req_scope=None, profile="grounded",
+                 conversation_id=None, access=None, job_id=None, stage_callback=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -2319,7 +2453,10 @@ class Handler(BaseHTTPRequestHandler):
                        "/api/v1/ui/admin/rooms": self._admin_rooms,
                        "/api/v1/ui/admin/acl": self._admin_acl_get,
                        "/api/v1/ui/admin/events": self._admin_events,
-                       "/api/v1/ui/admin/templates": self._admin_templates}.get(path)
+                       "/api/v1/ui/admin/templates": self._admin_templates,
+                       "/api/v1/ui/admin/company": self._admin_company,
+                       "/api/v1/ui/admin/company/history": self._admin_company_history,
+                       "/api/v1/ui/admin/company/documents": self._admin_company_documents}.get(path)
         if admin_route is not None:
             try:
                 admin_route(query)
@@ -2418,7 +2555,12 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/admin/templates/docx/preview": self._admin_template_preview,
                 "/api/v1/ui/admin/templates/xlsx/read": self._admin_template_xlsx_read,
                 "/api/v1/ui/admin/templates/xlsx": self._admin_template_xlsx,
-                "/api/v1/ui/admin/templates/org": self._admin_template_org,
+                "/api/v1/ui/admin/company/fact": self._admin_company_fact,
+                "/api/v1/ui/admin/company/state": self._admin_company_state,
+                "/api/v1/ui/admin/company/delete": self._admin_company_delete,
+                "/api/v1/ui/admin/company/restore": self._admin_company_restore,
+                "/api/v1/ui/admin/company/extract": self._admin_company_extract,
+                "/api/v1/ui/admin/company/extract/cancel": self._admin_company_extract_cancel,
                 "/api/v1/ui/querylog": self._ui_querylog,
             }.get(path.rstrip("/"))
             if route is None:
@@ -4774,16 +4916,13 @@ class Handler(BaseHTTPRequestHandler):
         state = TEMPLATES.state()
         return {"ok": True, "configured": TEMPLATES.configured, "error": state.get("error"),
                 "docx": state["docx"], "xlsx_layout": state["xlsx_layout"],
-                "org_card": state["org_card"], "scan": UPLOAD_SCAN,
+                "scan": UPLOAD_SCAN,
                 "columns": [{"id": col, "labels": investigation_export.TEXT["columns"][col]}
                             for col in investigation_export.COLUMNS],
                 "required": list(investigation_export.REQUIRED),
                 "limits": {"max_bytes": templates.MAX_UPLOAD_BYTES,
                            "max_columns": investigation_export.MAX_LAYOUT_COLUMNS,
-                           "max_label": investigation_export.MAX_LABEL,
-                           "max_name": org_card.MAX_NAME, "max_about": org_card.MAX_ABOUT,
-                           "max_terms": org_card.MAX_TERMS, "max_term": org_card.MAX_TERM,
-                           "max_meaning": org_card.MAX_MEANING}}
+                           "max_label": investigation_export.MAX_LABEL}}
 
     def _template_refusal(self, error):
         status = {"templates_not_configured": 409, "too_large": 413}.get(error.code, 422)
@@ -4936,21 +5075,6 @@ class Handler(BaseHTTPRequestHandler):
                           columns=len(layout) if layout else "default")
         self._send(200, self._templates_view())
 
-    def _admin_template_org(self):
-        caller = self._admin_caller()
-        if caller is None:
-            return
-        try:
-            card = org_card.validate(self._read_json().get("card"))
-        except ValueError as e:
-            self._send(400, {"ok": False, "error": "invalid_card", "message": str(e)[:300]})
-            return
-        if not self._template_set(TEMPLATES.set_org_card, card, caller):
-            return
-        self._admin_event("template_org_card", caller, "templates/org",
-                          terms=len(card["terms"]) if card else "cleared")
-        self._send(200, self._templates_view())
-
     def _template_set(self, setter, value, caller):
         try:
             setter(value, caller.user)
@@ -4962,6 +5086,149 @@ class Handler(BaseHTTPRequestHandler):
             self._send(503, {"ok": False, "error": "templates_unwritable"})
             return False
         return True
+
+    # -- company profile (E12, company_profile.py) --------------------------------
+    def _company_view(self):
+        state = COMPANY.state()
+        return {"ok": True, "configured": COMPANY.configured, "error": state.get("error"),
+                "revision": state["revision"], "facts": state["facts"],
+                "schema": company_profile.schema(), "states": list(company_profile.STATES),
+                "levels": list(acl.LEVELS),
+                "default_classification": acl.level_name(ACL.default_classification),
+                "extraction": COMPANY_READER.status(),
+                "limits": {"max_label": company_profile.MAX_LABEL,
+                           "max_value": company_profile.MAX_VALUE,
+                           "max_documents": company_extract.MAX_DOCUMENTS}}
+
+    def _company_change(self, work, event, **detail):
+        """Run one change of the profile for the administrator of this request
+        and answer with the profile; None after a refusal."""
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        payload = self._read_json()
+        if not isinstance(payload, dict):
+            raise ValueError("expected a JSON object")
+        base = payload.get("base")
+        if not isinstance(base, int) or isinstance(base, bool):
+            self._send(400, {"ok": False, "error": "invalid_profile",
+                             "message": "base (the revision read) is required"})
+            return
+        try:
+            fact_id = work(payload, caller.user, base)
+        except company_profile.ProfileConflict:
+            self._send(409, {"ok": False, "error": "profile_changed"})
+            return
+        except KeyError:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        except company_profile.ProfileInvalid as e:
+            self._send(400, {"ok": False, "error": "invalid_profile", "message": str(e)[:300]})
+            return
+        except templates.TemplateInvalid as e:
+            self._template_refusal(e)
+            return
+        except OSError as e:
+            sys.stderr.write("[adapter] company profile: not written: %s\n" % e)
+            self._send(503, {"ok": False, "error": "templates_unwritable"})
+            return
+        self._admin_event(event, caller, "company", fact=fact_id, **detail)
+        self._send(200, self._company_view())
+
+    def _admin_company(self, _query=""):
+        if self._admin_caller() is None:
+            return
+        _take_over_card()
+        self._send(200, self._company_view())
+
+    def _admin_company_fact(self):
+        def work(payload, user, base):
+            fact = payload.get("fact")
+            state = COMPANY.save_fact(fact, user, base)
+            fact_id = fact.get("id") if isinstance(fact, dict) else None
+            return fact_id or state["facts"][-1]["id"]
+        self._company_change(work, "company_fact")
+
+    def _admin_company_state(self):
+        def work(payload, user, base):
+            COMPANY.set_state(str(payload.get("id") or ""), payload.get("state"), user, base)
+            return payload.get("id")
+        self._company_change(work, "company_state")
+
+    def _admin_company_delete(self):
+        def work(payload, user, base):
+            COMPANY.delete(str(payload.get("id") or ""), user, base)
+            return payload.get("id")
+        self._company_change(work, "company_delete")
+
+    def _admin_company_restore(self):
+        def work(payload, user, base):
+            seq = payload.get("seq")
+            if not isinstance(seq, int) or isinstance(seq, bool):
+                raise company_profile.ProfileInvalid("seq must be a history entry number")
+            COMPANY.restore(str(payload.get("id") or ""), seq, user, base)
+            return payload.get("id")
+        self._company_change(work, "company_restore")
+
+    def _admin_company_history(self, query=""):
+        if self._admin_caller() is None:
+            return
+        params = urllib.parse.parse_qs(query or "")
+        fact_id = (params.get("id") or [None])[0]
+        self._send(200, {"ok": True, "history": COMPANY.history(fact_id)})
+
+    def _admin_company_documents(self, query=""):
+        """Indexed files this administrator may read, to pick for a reading."""
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        params = urllib.parse.parse_qs(query or "")
+        needle = company_profile.fold((params.get("q") or [""])[0])
+        visible = _visible(self._access())
+        out = []
+        for meta in MIRROR.files():
+            path = meta.get("path") or ""
+            if not path or (needle and needle not in company_profile.fold(path)) \
+                    or not visible(path):
+                continue
+            out.append({"path": path, "name": path.rsplit("/", 1)[-1],
+                        "room": (corpus.drive_root_of_path(path) or "").rsplit("/", 1)[-1]})
+            if len(out) >= 300:
+                break
+        self._send(200, {"ok": True, "documents": sorted(out, key=lambda d: d["path"])})
+
+    def _admin_company_extract(self):
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        if not COMPANY.configured:
+            self._send(409, {"ok": False, "error": "templates_not_configured"})
+            return
+        paths = self._read_json().get("paths")
+        if not isinstance(paths, list) or not paths \
+                or len(paths) > company_extract.MAX_DOCUMENTS \
+                or any(not isinstance(p, str) or not p for p in paths):
+            self._send(400, {"ok": False, "error": "invalid_documents",
+                             "message": "1-%d document paths are expected"
+                                        % company_extract.MAX_DOCUMENTS})
+            return
+        access = self._access()
+        visible = _visible(access)
+        paths = list(dict.fromkeys(corpus.norm(p) for p in paths))
+        if any(not MIRROR.get(p) or not visible(p) for p in paths):
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        if not COMPANY_READER.start(paths, caller.user, access):
+            self._send(409, {"ok": False, "error": "busy"})
+            return
+        self._admin_event("company_extract", caller, "company", documents=len(paths))
+        self._send(200, self._company_view())
+
+    def _admin_company_extract_cancel(self):
+        if self._admin_caller() is None:
+            return
+        COMPANY_READER.cancel()
+        self._send(200, self._company_view())
 
     # -- voice I/O (on-box STT/TTS; voice.py) --------------------------------
     def _stt(self):
@@ -5192,6 +5459,7 @@ def main():
         UPLOADS.start()
     else:
         print("  File store  :", "off" if vivesecbox else "(disabled: ADAPTER_STORE_DIR empty)")
+    _take_over_card()
     # SSDP/UPnP discovery so the ViVeSecBox finds us on the LAN (spec sec 2.5).
     responder = discovery.from_env(default_port=PORT, uuid_dir=PKI_DIR) if vivesecbox else None
     if responder is not None:

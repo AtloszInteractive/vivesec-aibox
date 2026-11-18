@@ -327,11 +327,9 @@ class TemplateStoreTest(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(os.path.join(self.root, "docx"))),
                          sorted(v + ".docx" for v in kept))
 
-    def test_layout_card_and_an_unreadable_state(self):
+    def test_layout_and_an_unreadable_state(self):
         self.store.set_layout([{"column": "name", "label": "Név", "width": None}], "admin")
-        self.store.set_org_card({"name": "BV", "about": "", "terms": []}, "admin")
         self.assertEqual(self.store.layout()[0]["label"], "Név")
-        self.assertEqual(self.store.org_card()["name"], "BV")
         with open(os.path.join(self.root, "state.json"), "w") as handle:
             handle.write("{nope")
         self.assertIsNone(self.store.layout())
@@ -395,8 +393,7 @@ class TemplatesHttpTest(StandaloneHttpCase):
                  ("POST", "/api/v1/ui/admin/templates/docx/activate", {"id": None}, None),
                  ("POST", "/api/v1/ui/admin/templates/docx/preview", {"text": "x"}, None),
                  ("POST", "/api/v1/ui/admin/templates/xlsx/read", None, sample_sheet()),
-                 ("POST", "/api/v1/ui/admin/templates/xlsx", {"columns": None}, None),
-                 ("POST", "/api/v1/ui/admin/templates/org", {"card": None}, None))
+                 ("POST", "/api/v1/ui/admin/templates/xlsx", {"columns": None}, None))
         for method, path, body, raw in calls:
             status, answer = self.send(method, path, body, raw, roles=("analyst",))
             self.assertEqual((status, answer.get("error")), (403, "forbidden"), path)
@@ -465,27 +462,9 @@ class TemplatesHttpTest(StandaloneHttpCase):
         self.send("POST", "/api/v1/ui/admin/templates/xlsx", {"columns": None})
         self.assertIsNone(self.templates.layout())
 
-    def test_the_organisation_card_reaches_the_model(self):
-        card = {"name": "Büntetés-végrehajtás", "about": "Prison\nservice",
-                "terms": [{"term": "BV", "meaning": "büntetés-végrehajtás"}]}
-        status, body = self.send("POST", "/api/v1/ui/admin/templates/org", {"card": card})
-        self.assertEqual(status, 200, body)
-        self.assertEqual(body["org_card"]["value"]["about"], "Prison service")
-        block = self.service.llm.organisation_block()
-        self.assertIn("- Name: Büntetés-végrehajtás", block)
-        self.assertIn("  - BV: büntetés-végrehajtás", block)
-        status, body = self.send("POST", "/api/v1/ui/admin/templates/org",
-                                 {"card": {"terms": [{"term": "BV"}]}})
-        self.assertEqual((status, body["error"]), (400, "invalid_card"))
-        self.send("POST", "/api/v1/ui/admin/templates/org", {"card": None})
-        self.assertEqual(self.service.llm.organisation_block(), "")
-
     def test_not_configured(self):
         with patch.object(self.service, "TEMPLATES", templates.TemplateStore(None)):
             status, body = self.send("POST", "/api/v1/ui/admin/templates/docx", raw=word_file())
-            self.assertEqual((status, body["error"]), (409, "templates_not_configured"))
-            status, body = self.send("POST", "/api/v1/ui/admin/templates/org",
-                                     {"card": {"name": "x"}})
             self.assertEqual((status, body["error"]), (409, "templates_not_configured"))
             status, body = self.send("GET", "/api/v1/ui/admin/templates")
             self.assertEqual((status, body["configured"]), (200, False))

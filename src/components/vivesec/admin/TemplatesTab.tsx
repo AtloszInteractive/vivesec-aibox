@@ -1,12 +1,10 @@
 // Organisation templates on the administration page (E18, adapter templates.py):
-// the Word template every generated DOCX is framed in, the column layout of
-// the investigation spreadsheet, and the organisation card the assistant gets
-// as background. The adapter validates everything again; this page only
-// shapes the calls and shows what it answered.
+// the Word template every generated DOCX is framed in and the column layout of
+// the investigation spreadsheet. The adapter validates everything again; this
+// page only shapes the calls and shows what it answered.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  Building2,
   CheckCircle2,
   Download,
   FileSpreadsheet,
@@ -23,15 +21,13 @@ import {
   readSampleSheet,
   readTemplates,
   saveLayout,
-  saveOrgCard,
   uploadWordTemplate,
   type FrameSummary,
   type LayoutColumn,
-  type OrgCard,
   type TemplatesState,
 } from "@/lib/auth/admin-client";
 import { useLang } from "../i18n";
-import { Badge, Button, Card, Notice, TextField, errorText, fill, formatTime, type Tm } from "./ui";
+import { Badge, Button, Card, Notice, errorText, fill, formatTime, type Tm } from "./ui";
 
 type Busy = string | null;
 type Feedback = { tone: "ok" | "error"; text: string } | null;
@@ -516,165 +512,6 @@ function SpreadsheetCard({
   );
 }
 
-/* ------------------------------------------------------------------ organisation card */
-
-const EMPTY_CARD: OrgCard = { name: "", about: "", terms: [] };
-
-function OrganisationCard({
-  state,
-  onState,
-}: {
-  state: TemplatesState;
-  onState: (state: TemplatesState) => void;
-}) {
-  const { tm, lang } = useLang();
-  const saved = state.org_card?.value ?? null;
-  const [card, setCard] = useState<OrgCard>(saved ?? EMPTY_CARD);
-  const [busy, setBusy] = useState<Busy>(null);
-  const [feedback, setFeedback] = useState<Feedback>(null);
-  const limits = state.limits;
-  const savedKey = JSON.stringify(saved);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => setCard(saved ?? EMPTY_CARD), [savedKey]);
-
-  async function save(value: OrgCard | null, done: string) {
-    setBusy(value ? "save" : "clear");
-    setFeedback(null);
-    try {
-      onState(await saveOrgCard(value));
-      setFeedback({ tone: "ok", text: done });
-    } catch (err) {
-      setFeedback({ tone: "error", text: errorText(err, tm) });
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  const setTerm = (index: number, change: Partial<OrgCard["terms"][number]>) =>
-    setCard({
-      ...card,
-      terms: card.terms.map((t, i) => (i === index ? { ...t, ...change } : t)),
-    });
-
-  return (
-    <Card
-      title={tm("Organisation card")}
-      icon={<Building2 className="h-4 w-4" />}
-      actions={
-        saved && (
-          <Button
-            kind="danger"
-            busy={busy === "clear"}
-            onClick={() => void save(null, tm("The organisation card was removed."))}
-          >
-            {tm("Remove the card")}
-          </Button>
-        )
-      }
-    >
-      <p className="mb-3 text-xs text-ink/65">
-        {tm(
-          "The organisation card tells the assistant who you are and what your terms mean, for example what an abbreviation in your documents stands for. It is background only: answers still cite your documents alone.",
-        )}
-      </p>
-      {feedback && <Notice tone={feedback.tone}>{feedback.text}</Notice>}
-      <div className="mt-3 space-y-3">
-        <TextField
-          label={tm("Name of the organisation")}
-          value={card.name}
-          maxLength={limits.max_name}
-          disabled={!state.configured}
-          onChange={(e) => setCard({ ...card, name: e.target.value })}
-        />
-        <label className="block">
-          <span className="mb-1 block text-[11px] font-medium text-ink/65">
-            {tm("What the organisation does")}
-          </span>
-          <textarea
-            value={card.about}
-            maxLength={limits.max_about}
-            rows={3}
-            disabled={!state.configured}
-            onChange={(e) => setCard({ ...card, about: e.target.value })}
-            className="w-full rounded-lg border border-ink/15 bg-ink/5 px-2.5 py-1.5 text-sm text-ink outline-none transition placeholder:text-ink/30 focus:border-brand-soft focus:ring-2 focus:ring-[#8C49E9]/40 disabled:opacity-60"
-          />
-          <span className="mt-1 block text-[11px] text-ink/45">
-            {fill(tm("{n} of {m} characters"), { n: card.about.length, m: limits.max_about })}
-          </span>
-        </label>
-        <div>
-          <span className="mb-1 block text-[11px] font-medium text-ink/65">
-            {tm("Terms and abbreviations")}
-          </span>
-          <div className="space-y-1.5">
-            {card.terms.map((term, index) => (
-              <div key={index} className="flex gap-2">
-                <input
-                  value={term.term}
-                  maxLength={limits.max_term}
-                  placeholder={tm("Term")}
-                  aria-label={tm("Term")}
-                  onChange={(e) => setTerm(index, { term: e.target.value })}
-                  className="w-40 shrink-0 rounded-lg border border-ink/15 bg-ink/5 px-2 py-1 text-xs text-ink outline-none placeholder:text-ink/30 focus:border-brand-soft"
-                />
-                <input
-                  value={term.meaning}
-                  maxLength={limits.max_meaning}
-                  placeholder={tm("Meaning")}
-                  aria-label={tm("Meaning")}
-                  onChange={(e) => setTerm(index, { meaning: e.target.value })}
-                  className="min-w-0 flex-1 rounded-lg border border-ink/15 bg-ink/5 px-2 py-1 text-xs text-ink outline-none placeholder:text-ink/30 focus:border-brand-soft"
-                />
-                <button
-                  type="button"
-                  title={tm("Remove")}
-                  aria-label={tm("Remove")}
-                  onClick={() =>
-                    setCard({ ...card, terms: card.terms.filter((_, i) => i !== index) })
-                  }
-                  className="rounded-md p-1 text-ink/50 hover:bg-ink/10 hover:text-ink"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="mt-2">
-            <Button
-              disabled={!state.configured || card.terms.length >= limits.max_terms}
-              onClick={() =>
-                setCard({ ...card, terms: [...card.terms, { term: "", meaning: "" }] })
-              }
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {tm("Add term")}
-            </Button>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] text-ink/45">
-            {state.org_card
-              ? fill(tm("Set by {user}, {time}"), {
-                  user: state.org_card.updated_by,
-                  time: formatTime(state.org_card.updated_at, lang),
-                })
-              : tm("No organisation card yet.")}
-          </span>
-          <Button
-            kind="primary"
-            busy={busy === "save"}
-            disabled={!state.configured}
-            onClick={() => void save(card, tm("Saved."))}
-          >
-            {tm("Save")}
-          </Button>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
 /* ------------------------------------------------------------------ the tab */
 
 export function TemplatesTab() {
@@ -724,7 +561,6 @@ export function TemplatesTab() {
         <>
           <WordTemplateCard state={state} onState={setState} />
           <SpreadsheetCard state={state} onState={setState} />
-          <OrganisationCard state={state} onState={setState} />
         </>
       )}
     </div>

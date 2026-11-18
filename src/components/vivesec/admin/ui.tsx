@@ -129,7 +129,10 @@ const ERROR_TEXT: Record<string, string> = {
     "The virus scanner is not available, so the file cannot be checked. Try again later.",
   scan_error: "The virus scanner could not check the file.",
   invalid_layout: "The column layout is not valid.",
-  invalid_card: "The organisation card is not valid.",
+  profile_changed:
+    "Someone else changed the company profile meanwhile. It was reloaded; try again.",
+  invalid_profile: "The fact is not valid.",
+  invalid_documents: "The document selection is not valid.",
   length_required: "The upload did not arrive completely. Try again.",
   incomplete: "The upload did not arrive completely. Try again.",
 };

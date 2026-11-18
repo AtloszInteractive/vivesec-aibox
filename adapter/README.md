@@ -226,7 +226,7 @@ deletion and rules changes are written to `events.jsonl` (`room_create`,
 
 ### Organisation templates (E18, first step)
 
-`templates.py`, `org_card.py`; the **Templates** tab of the administration page.
+`templates.py`; the **Templates** tab of the administration page.
 They change how generated files look and what background the model has, never
 what an answer may say or who may see what. Stored under
 `ADAPTER_TEMPLATES_DIR` (default `/data/adapter/templates`, inside the
@@ -238,13 +238,12 @@ else uploads vanish with the container. The endpoints follow the administration 
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET /api/v1/ui/admin/templates` | The Word frames (versions, the active one), the spreadsheet layout, the organisation card, the known columns and the limits. |
+| `GET /api/v1/ui/admin/templates` | The Word frames (versions, the active one), the spreadsheet layout, the known columns and the limits. |
 | `POST /api/v1/ui/admin/templates/docx` | Raw `.docx`/`.dotx` body (at most 10 MiB, `X-Template-Name` percent-encoded). Scanned by clamd as `ADAPTER_UPLOAD_SCAN` says, then the frame is taken and stored as a new, **inactive** version (the newest 10 and the active one are kept). |
 | `POST /api/v1/ui/admin/templates/docx/activate {id\|null}` | Every DOCX the box writes from now on (`/ui/save`, the graph dossier) uses this frame; `null` is the built-in look. |
 | `POST /api/v1/ui/admin/templates/docx/preview {id?, text, title}` | A sample DOCX in a version's frame (default: the active one), base64 JSON. |
 | `POST /api/v1/ui/admin/templates/xlsx/read` | Raw `.xlsx` body: the first row with text on the first sheet, each header matched to a column of the investigation export (its labels in the four languages and a few common variants), widths kept. Only read, never stored. |
 | `POST /api/v1/ui/admin/templates/xlsx {columns\|null}` | Saves the layout `[{column, label, width}]`: order, the organisation's header texts, widths, and empty columns (`column: null`) kept for entry by hand. `name` and `source` are required. It only arranges columns: which personal data a row carries is still `ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT`. Without a layout the `ADAPTER_INVESTIGATION_XLSX_COLUMNS` order applies. |
-| `POST /api/v1/ui/admin/templates/org {card\|null}` | The organisation card `{name, about, terms: [{term, meaning}]}` (at most 120 / 1200 characters, 40 terms). |
 
 **The Word frame.** From the upload the box keeps the styles, theme, list
 numbering, page size and margins, and the headers and footers with their
@@ -263,18 +262,67 @@ pass the same checks every time it is read; a stored frame that no longer does
 gives the built-in look. Layout is Word's: the result follows the template's
 styles but is not a pixel copy of a hand-formatted document (E19).
 
-**The organisation card** is background for reading the user's words and the
-documents' jargon: it is added, marked as not a source and not an
-instruction, to the system prompt of the grounded, hybrid and conversation
-answers and of the analyst planner. Line breaks are folded and every field
-capped, so it cannot open a prompt section of its own; the grounding rules
-follow it and still bind every answer to the cited documents.
-
 Uploads, refusals, activations and saves are written to `events.jsonl`
 (`template_upload`, `template_rejected`, `template_activate`,
-`template_layout`, `template_org_card`). On a ViVeSecBox-integrated box there
-is no administration page; a frame or card already in `ADAPTER_TEMPLATES_DIR`
-still applies.
+`template_layout`). On a ViVeSecBox-integrated box there is no administration
+page; a frame already in `ADAPTER_TEMPLATES_DIR` still applies.
+
+### Company profile (E12)
+
+`company_profile.py`, `company_extract.py`; the **Company profile** tab of the
+administration page. What the organisation is, for the assistant and the
+agents: legal and contact details, introduction, organisational units, roles,
+policies, language and style, industry and legal environment, terms and free
+notes (a fixed schema, product spec 3.1). Every item is one **fact** with a
+classification (an ACL level), a validity window, an optional source passage
+and a state: `draft` -> `effective` -> `expired` | `archived`.
+
+* **Background, not a source.** Facts in effect are added, marked as not a
+  source and not an instruction, to the system prompt of the grounded, hybrid
+  and conversation answers and of the analyst planner. The grounding rules
+  follow them and still bind every answer to the cited documents; a fact is
+  never cited. Line breaks are folded and values capped, so a fact cannot open
+  a prompt section of its own.
+* **Up to the caller's clearance.** Each answer gets only the facts whose
+  classification its caller may read (all levels when the ACL is not
+  enforced); prompts built outside an answer get public facts only. Within
+  4000 characters the core facts (name, short description, activity, style,
+  terms) come first, then the rest by the words they share with the question.
+* **Approval.** Nothing is used until an administrator approves it. Editing a
+  fact in effect makes a draft that replaces it on approval; approving another
+  value of a single-valued field (or an item of the same name) expires the
+  old one. A fact in effect is expired or archived, not deleted. Every change
+  is kept with its before/after in `company/history.jsonl`, and any entry can
+  be restored as a draft.
+* **Proposals from documents.** The administrator picks up to 20 indexed
+  documents they may read; the box reads every part of each (on the heavy
+  scheduler slot, one reading at a time) and proposes facts. A proposal is
+  kept only when its quote is found verbatim in the part it came from; it
+  takes the document's classification and its passage as the source, and what
+  the profile already says is not proposed again.
+
+Stored under `ADAPTER_TEMPLATES_DIR` as `company/profile.json` (with a revision
+counter; a change made on an older revision is refused with `409
+profile_changed`) and `company/history.jsonl`. An unreadable profile gives no
+background and refuses changes. The organisation card of the first E18 step is
+taken over once, as public facts in effect, so its background stays.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/v1/ui/admin/company` | The facts, the revision, the schema, the levels, the reading's status and the limits. |
+| `POST /api/v1/ui/admin/company/fact {base, fact}` | A new draft, or an edit (`fact.id`) as above. |
+| `POST /api/v1/ui/admin/company/state {base, id, state}` | Approve (`effective`), expire, archive or reopen (`draft`). |
+| `POST /api/v1/ui/admin/company/delete {base, id}` | Drops a fact not in effect; its history stays. |
+| `POST /api/v1/ui/admin/company/restore {base, id, seq}` | A draft with the content of a history entry. |
+| `GET /api/v1/ui/admin/company/history?id=` | The history of a fact, newest first. |
+| `GET /api/v1/ui/admin/company/documents?q=` | Indexed files the administrator may read, filtered by name. |
+| `POST /api/v1/ui/admin/company/extract {paths}` | Starts a reading (`409 busy` while one runs, `404` for a file the administrator cannot see). |
+| `POST /api/v1/ui/admin/company/extract/cancel` | Stops it; the proposals found so far stay. |
+
+Changes and readings are written to `events.jsonl` (`company_fact`,
+`company_state`, `company_delete`, `company_restore`, `company_extract`). On a
+ViVeSecBox-integrated box there is no administration page; a profile already
+in `ADAPTER_TEMPLATES_DIR` still applies.
 
 ### Encrypted storage in standalone mode (E05, E27 S8)
 

@@ -50,6 +50,11 @@ const EVENT_TEXT: Record<string, string> = {
   template_activate: "Word template activated",
   template_layout: "Spreadsheet columns saved",
   template_org_card: "Organisation card saved",
+  company_fact: "Company profile fact saved",
+  company_state: "Company profile fact state changed",
+  company_delete: "Company profile fact deleted",
+  company_restore: "Company profile fact restored",
+  company_extract: "Company profile reading started",
 };
 
 const FAILURES = new Set([

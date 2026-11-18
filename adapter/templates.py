@@ -12,8 +12,9 @@ They shape how a generated file looks, never what it says or who may read it:
   added;
 * the investigation spreadsheet's layout: column order, the organisation's
   own header texts and widths (investigation_export.validate_layout),
-  proposed from the header row of a sample .xlsx;
-* the organisation card (org_card.py).
+  proposed from the header row of a sample .xlsx.
+The organisation card of the first step is only read here, once, when the
+company profile takes it over (company_profile.py).
 
 Fail closed. A Word upload with anything the frame does not need that could
 act on its own -- macros, embedded objects, linked or external content,
@@ -945,11 +946,9 @@ class TemplateStore:
         entry = self.state().get("xlsx_layout")
         return entry.get("value") if isinstance(entry, dict) else None
 
-    def set_org_card(self, card, user, now=None):
-        """Store a validated organisation card (None: no card)."""
-        return self._set("org_card", card, user, now)
-
     def org_card(self):
+        """The organisation card of the first step, if one was saved (read
+        once by the company profile)."""
         entry = self.state().get("org_card")
         return entry.get("value") if isinstance(entry, dict) else None
 

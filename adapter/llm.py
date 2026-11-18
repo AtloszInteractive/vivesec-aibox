@@ -11,6 +11,7 @@ the answer is source-grounded and refuses out-of-corpus questions instead of
 inventing figures. If Ollama is unreachable (e.g. dev machine) generation is
 skipped gracefully and the caller still gets the raw hits.
 """
+import contextlib
 import json
 import os
 import re
@@ -95,17 +96,33 @@ def persona_for(agent=None):
     return PERSONAS.get(key, PERSONA)
 
 
-# The organisation card (org_card.prompt_block): a callable the service sets,
-# returning "" when there is no card. It is background, never a source.
+# The company profile (company_profile.prompt_block): a callable the service
+# sets, (question, clearance) -> the background section or "". The question
+# and the caller's clearance come from organisation_for() around one answer;
+# outside it (summaries, other jobs) only public facts are given.
 ORGANISATION = None
+_ORGANISATION_CALL = threading.local()
+
+
+@contextlib.contextmanager
+def organisation_for(question, clearance):
+    """The question and ACL clearance index the background is chosen for, in
+    this thread, for the duration of one answer."""
+    previous = getattr(_ORGANISATION_CALL, "value", None)
+    _ORGANISATION_CALL.value = (question or "", clearance)
+    try:
+        yield
+    finally:
+        _ORGANISATION_CALL.value = previous
 
 
 def organisation_block():
-    """"\n\n" + the organisation card, or "" (no card, or it cannot be read)."""
+    """"\n\n" + the company profile background, or "" (none, or unreadable)."""
+    question, clearance = getattr(_ORGANISATION_CALL, "value", None) or ("", None)
     try:
-        text = ORGANISATION() if ORGANISATION is not None else ""
+        text = ORGANISATION(question, clearance) if ORGANISATION is not None else ""
     except Exception as e:  # noqa: BLE001
-        sys.stderr.write("[adapter] organisation card unavailable: %s\n" % e)
+        sys.stderr.write("[adapter] company profile unavailable: %s\n" % e)
         return ""
     return "\n\n" + text if text else ""
 
