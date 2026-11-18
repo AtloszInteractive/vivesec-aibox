@@ -11,6 +11,10 @@ info sheet says when and from what it was made.
 
 Column order and the sheet layout are customer decisions (BV question 9), so
 they are settings: ADAPTER_INVESTIGATION_XLSX_COLUMNS, ADAPTER_INVESTIGATION_XLSX_SHEETS.
+An administrator may instead set the organisation's own layout (E18, from the
+header row of a sample spreadsheet, templates.py): column order, header texts,
+widths and empty columns kept for hand entry. It only arranges the columns:
+which personal data a row carries is still decided by with_personal_data.
 BV's answer (2026-11-13): an inmate is identified by name and registry number;
 for anyone else the birth date and mother's name are shown where the visible
 documents state them (ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT names the
@@ -20,6 +24,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 
 import orchestrator
 import xlsx
@@ -33,6 +38,25 @@ PERSONAL = ("birth_date", "mother_name")
 SHEET_MODES = ("single", "per_level")
 LANGS = ("en", "hu", "da", "de")
 MAX_START = 120
+MAX_LAYOUT_COLUMNS = 40
+MAX_LABEL = 80
+# Header texts of a sample spreadsheet that name a column besides its own
+# labels (TEXT) and id; compared casefolded, without punctuation.
+ALIASES = {
+    "name": ("nev", "teljes nev", "full name", "person"),
+    "registry_number": ("nyilvantartasi szam", "nyilv szam", "fogvatartotti nyilvantartasi szam",
+                        "registry no"),
+    "birth_date": ("szuletesi datum", "szul ido", "szul datum", "date of birth", "dob",
+                   "birth date"),
+    "mother_name": ("anyja neve", "anya neve", "mother name"),
+    "id_number": ("szemelyi igazolvany szam", "szig szam", "id no", "id card number"),
+    "phone": ("telefonszam", "telefon szam", "phone number", "mobile"),
+    "address": ("cim", "lakhely", "lakcim", "address"),
+    "email": ("email cim", "e mail cim", "email address"),
+    "source": ("forrasdokumentum", "forras dokumentum", "dokumentum", "source document"),
+    "page": ("oldalszam", "page number"),
+    "role": ("minoseg", "szerepkor"),
+}
 
 TEXT = {
     "columns": {
@@ -200,6 +224,78 @@ def settings(env=None):
     return {"columns": columns, "sheets": sheets, "birth_except": birth_except}
 
 
+def _key(text):
+    """A header text for matching: no accents, case or punctuation."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", str(text or ""))
+                    if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[\W_]+", " ", plain.casefold()).split())
+
+
+def _column_names():
+    names = {}
+    for col in COLUMNS:
+        for text in (col, *TEXT["columns"][col].values(), *ALIASES.get(col, ())):
+            names.setdefault(_key(text), col)
+    return names
+
+
+def propose_layout(headers):
+    """A layout for the header row of a sample spreadsheet
+    (templates.read_xlsx_header): each header text with the column it names,
+    None (an empty column) where none fits. The administrator checks it."""
+    names, used, out = _column_names(), set(), []
+    for header in headers:
+        col = names.get(_key(header.get("label")))
+        if col in used:
+            col = None
+        if col:
+            used.add(col)
+        out.append({"column": col, "label": header.get("label") or "",
+                    "width": header.get("width")})
+    return out
+
+
+def validate_layout(raw):
+    """The normalised layout an administrator saves, or ValueError: 1 to
+    MAX_LAYOUT_COLUMNS entries {column: id or None, label, width}, each column
+    at most once, an empty column with a header text, name and source present."""
+    if not isinstance(raw, list) or not raw or len(raw) > MAX_LAYOUT_COLUMNS:
+        raise ValueError("columns must be a list of 1-%d entries" % MAX_LAYOUT_COLUMNS)
+    out, seen = [], set()
+    for number, entry in enumerate(raw, 1):
+        if not isinstance(entry, dict) or set(entry) - {"column", "label", "width"}:
+            raise ValueError("column %d: column, label and width are expected" % number)
+        col = entry.get("column")
+        if col is not None and (col not in COLUMNS or col in seen):
+            raise ValueError("column %d: unknown or repeated column %r" % (number, col))
+        label = entry.get("label")
+        if label is not None and not isinstance(label, str):
+            raise ValueError("column %d: label must be text" % number)
+        label = " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", label or "").split())
+        if len(label) > MAX_LABEL:
+            raise ValueError("column %d: label longer than %d characters" % (number, MAX_LABEL))
+        if col is None and not label:
+            raise ValueError("column %d: an empty column needs a header text" % number)
+        width = entry.get("width")
+        if width is not None:
+            if isinstance(width, bool) or not isinstance(width, (int, float)) \
+                    or not 3 <= width <= 100:
+                raise ValueError("column %d: width must be 3-100" % number)
+            width = round(float(width), 1)
+        if col:
+            seen.add(col)
+        out.append({"column": col, "label": label or None, "width": width})
+    missing = [col for col in REQUIRED if col not in seen]
+    if missing:
+        raise ValueError("the %s column(s) are required" % ", ".join(missing))
+    return out
+
+
+def with_layout(conf, layout):
+    """The export settings with the organisation's layout, when one is set."""
+    return dict(conf, layout=layout) if layout else conf
+
+
 def with_personal_data(run, inv, conf, prof):
     """The investigation with each person's date of birth and mother's name
     from the documents the caller may see, except for the kinds the setting
@@ -313,21 +409,28 @@ def build(inv, lang="en", conf=None, meta=None):
     lang = lang_code(lang)
     conf = conf or settings({})
     meta = meta or {}
-    cols = list(conf["columns"])
+    entries = [dict(e) for e in conf.get("layout") or ()] or [
+        {"column": col, "label": None, "width": None} for col in conf["columns"]]
+    cols = [e["column"] for e in entries]
     if inv.get("truncated") and "more" not in cols:
         # A cut table always says where it was cut.
-        cols.insert(cols.index("source") if "source" in cols else len(cols), "more")
-    header = [TEXT["columns"][col].get(lang) or TEXT["columns"][col]["en"] for col in cols]
+        at = cols.index("source") if "source" in cols else len(cols)
+        entries.insert(at, {"column": "more", "label": None, "width": None})
+        cols.insert(at, "more")
+    header = [e.get("label") or (TEXT["columns"][e["column"]].get(lang)
+                                 or TEXT["columns"][e["column"]]["en"] if e["column"] else "")
+              for e in entries]
+    widths = [e.get("width") for e in entries]
     rows = inv.get("rows") or []
-    table = [[cell(row, col, lang) for col in cols] for row in rows]
+    table = [[cell(row, col, lang) if col else None for col in cols] for row in rows]
     if conf["sheets"] == "per_level":
         sheets = []
         for level in sorted({row.get("level", 0) for row in rows}):
             name = _t("sheet_start", lang) if level == 0 else _t("sheet_level", lang) % level
-            sheets.append({"name": name, "rows": [header] + [
+            sheets.append({"name": name, "widths": widths, "rows": [header] + [
                 values for row, values in zip(rows, table) if row.get("level", 0) == level]})
     else:
-        sheets = [{"name": _t("sheet", lang), "rows": [header] + table}]
+        sheets = [{"name": _t("sheet", lang), "widths": widths, "rows": [header] + table}]
     cfg = meta.get("config") or {}
     now = meta.get("now") or time.time()
     coverage = (_t("cut", lang) % (cfg.get("branch", 0), cfg.get("max_rows", 0))

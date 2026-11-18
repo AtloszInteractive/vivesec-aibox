@@ -236,6 +236,43 @@ class InvestigationExportTest(unittest.TestCase):
         self.assertEqual("per_level", ie.settings(
             {"ADAPTER_INVESTIGATION_XLSX_SHEETS": " Per_Level "})["sheets"])
 
+    def test_the_organisations_layout_only_arranges_the_columns(self):
+        graph = BirthGraph(truncated=True)
+        run = orchestrator.Run(graph, {"corpus_ids": ["c"], "access": None},
+                               lambda p: "/hr/" not in p, "Hungarian", investigate=CONFIG)
+        inv = ie.investigate(run, "Sas Tibor", 2)
+        prof = graph.post("/profile/get", {})["profile"]
+        layout = ie.validate_layout([
+            {"column": "name", "label": "Érintett neve", "width": 32},
+            {"column": "birth_date", "label": "Szül. dátum", "width": None},
+            {"column": None, "label": "Megjegyzés (kézzel)", "width": 40},
+            {"column": "source", "label": None, "width": None}])
+        conf = ie.with_layout(DEFAULT, layout)
+        files, _, _, _ = self.build(ie.with_personal_data(run, inv, conf, prof), "en", conf,
+                                    prof=prof)
+        rows = sheet_rows(files["xl/worksheets/sheet1.xml"])
+        # A cut table still says where it was cut, before the source.
+        self.assertEqual(["Érintett neve", "Szül. dátum", "Megjegyzés (kézzel)",
+                          "Left out by the limit", "Source"], rows[0])
+        people = {r[0]: r for r in rows[1:]}
+        # Which personal data a row carries is not the layout's business.
+        self.assertIsNone(people["Sas Tibor"][1])
+        self.assertEqual("1975-05-06", people["Kende Anna"][1])
+        self.assertIsNone(people["Kende Anna"][2])
+        self.assertIn('<col min="1" max="1" width="32.0" customWidth="1"/>',
+                      files["xl/worksheets/sheet1.xml"])
+        self.assertIn('<col min="3" max="3" width="40.0" customWidth="1"/>',
+                      files["xl/worksheets/sheet1.xml"])
+        for bad in ([], [{"column": "name"}], [{"column": "name"}, {"column": "name"},
+                                               {"column": "source"}],
+                    [{"column": "name"}, {"column": "source"}, {"column": None, "label": ""}],
+                    [{"column": "name"}, {"column": "source"}, {"column": "x"}],
+                    [{"column": "name", "width": 500}, {"column": "source"}],
+                    [{"column": "name", "label": "x" * 81}, {"column": "source"}],
+                    [{"column": "name", "extra": 1}, {"column": "source"}]):
+            with self.assertRaises(ValueError, msg=bad):
+                ie.validate_layout(bad)
+
     def test_request_validation(self):
         self.assertEqual(("Sas Tibor", 2), ie.parse_request({"start": " Sas Tibor "}))
         self.assertEqual(("NY-1", 4), ie.parse_request({"start": "NY-1", "levels": "4"}))

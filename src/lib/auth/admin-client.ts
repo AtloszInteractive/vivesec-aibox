@@ -3,8 +3,9 @@
 // Two backends, both behind the login gate:
 //   * the authentication service (users, directory, clock, sign-in events):
 //     POST /auth/admin/<action>; the gate adds the session and checks CSRF;
-//   * the adapter (rooms, ACL rules file, virus definitions, file events):
-//     /api/v1/ui/admin/*, relayed with the signed identity token.
+//   * the adapter (rooms, ACL rules file, virus definitions, file events,
+//     organisation templates): /api/v1/ui/admin/*, relayed with the signed
+//     identity token.
 // Both check the admin role themselves; this module only shapes the calls.
 
 import { followAuthSignal, gatePath, withCsrf } from "./client";
@@ -303,3 +304,99 @@ export const listAuthEvents = (options: { limit?: number; username?: string; bef
 
 export const listStoreEvents = (limit: number) =>
   adapterAdmin<{ events: StoreEvent[] }>(`events?limit=${limit}`).then((r) => r.events);
+
+/* ------------------------------------------------------------------ templates (E18) */
+
+export type FrameSummary = {
+  page: { width_mm: number; height_mm: number; landscape: boolean };
+  margins_mm: { top: number; right: number; bottom: number; left: number };
+  headers: number;
+  footers: number;
+  pictures: number;
+  links: number;
+  fonts: { headings?: string; body?: string };
+  added_styles: string[];
+  bullets: "template" | "symbol";
+  first_page: boolean;
+  even_odd: boolean;
+};
+
+export type TemplateVersion = {
+  id: string;
+  name: string;
+  size: number;
+  sha256: string;
+  uploaded_by: string;
+  uploaded_at: number;
+  summary: FrameSummary;
+};
+
+export type LayoutColumn = { column: string | null; label: string | null; width: number | null };
+
+export type OrgCard = {
+  name: string;
+  about: string;
+  terms: { term: string; meaning: string }[];
+};
+
+type Stamped<T> = { value: T; updated_by: string; updated_at: number } | null;
+
+export type TemplatesState = {
+  configured: boolean;
+  error: string | null;
+  docx: {
+    active: string | null;
+    versions: TemplateVersion[];
+    activated_by?: string;
+    activated_at?: number;
+  };
+  xlsx_layout: Stamped<LayoutColumn[]>;
+  org_card: Stamped<OrgCard>;
+  scan: string;
+  columns: { id: string; labels: Record<"en" | "hu" | "da" | "de", string> }[];
+  required: string[];
+  limits: {
+    max_bytes: number;
+    max_columns: number;
+    max_label: number;
+    max_name: number;
+    max_about: number;
+    max_terms: number;
+    max_term: number;
+    max_meaning: number;
+  };
+};
+
+export type GeneratedFile = { name: string; content_type: string; content_b64: string };
+
+/** A file sent as the raw request body; its name travels percent-encoded. */
+function adapterUpload<T>(endpoint: string, file: File): Promise<T> {
+  return call<T>(`/api/v1/ui/admin/${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-Template-Name": encodeURIComponent(file.name),
+    },
+    body: file,
+  });
+}
+
+export const readTemplates = () => adapterAdmin<TemplatesState>("templates");
+
+export const uploadWordTemplate = (file: File) =>
+  adapterUpload<TemplatesState & { version: TemplateVersion }>("templates/docx", file);
+
+export const activateWordTemplate = (id: string | null) =>
+  adapterAdmin<TemplatesState>("templates/docx/activate", { id });
+
+export const previewWordTemplate = (id: string | null, text: string, title: string) =>
+  adapterAdmin<GeneratedFile>("templates/docx/preview", { id, text, title });
+
+export const readSampleSheet = (file: File) =>
+  adapterUpload<{ columns: LayoutColumn[] }>("templates/xlsx/read", file).then((r) => r.columns);
+
+export const saveLayout = (columns: LayoutColumn[] | null) =>
+  adapterAdmin<TemplatesState>("templates/xlsx", { columns });
+
+export const saveOrgCard = (card: OrgCard | null) =>
+  adapterAdmin<TemplatesState>("templates/org", { card });

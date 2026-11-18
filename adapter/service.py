@@ -48,6 +48,13 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     GET  /api/v1/ui/admin/acl                 (ADAPTER_ACL_RULES content and version)
     POST /api/v1/ui/admin/acl                 {rules, base}
     GET  /api/v1/ui/admin/events?limit=N      (the file store's event log)
+    GET  /api/v1/ui/admin/templates           (E18 templates.py: DOCX frames, layout, card)
+    POST /api/v1/ui/admin/templates/docx      raw .docx/.dotx body, X-Template-Name
+    POST /api/v1/ui/admin/templates/docx/activate   {id|null}
+    POST /api/v1/ui/admin/templates/docx/preview    {id?, text, title}
+    POST /api/v1/ui/admin/templates/xlsx/read raw .xlsx body -> proposed layout
+    POST /api/v1/ui/admin/templates/xlsx      {columns|null}
+    POST /api/v1/ui/admin/templates/org       {card|null}
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -99,6 +106,7 @@ externally; this adapter is the only thing in front of it.
 import json
 import base64
 import hashlib
+import io
 import ipaddress
 import mimetypes
 import os
@@ -142,6 +150,7 @@ import lifecycle  # noqa: E402
 import llm  # noqa: E402
 import named_files  # noqa: E402
 import orchestrator  # noqa: E402
+import org_card  # noqa: E402
 import proactive  # noqa: E402
 import person_summary  # noqa: E402
 import purpose  # noqa: E402
@@ -154,6 +163,7 @@ import scope  # noqa: E402
 import session  # noqa: E402
 import chat_policy
 import storage  # noqa: E402
+import templates  # noqa: E402
 import voice  # noqa: E402
 import watch  # noqa: E402
 import wsfs  # noqa: E402
@@ -744,6 +754,11 @@ INVESTIGATE_ANSWER_ROWS = _bounded_int("ADAPTER_INVESTIGATE_ANSWER_ROWS", 80, 1,
 DOCUMENT_REFS = _relation_list("ADAPTER_DOCUMENT_REFS", "case_number")
 # Its spreadsheet export: column order and sheet layout (investigation_export.py).
 INVESTIGATION_XLSX = investigation_export.settings()
+# The organisation's templates (E18, templates.py): the DOCX frame of every
+# generated Word file, the spreadsheet layout and the organisation card the
+# model gets as background. Empty ADAPTER_TEMPLATES_DIR: the built-in look.
+TEMPLATES = templates.TemplateStore.from_env()
+llm.ORGANISATION = lambda: org_card.prompt_block(TEMPLATES.org_card())
 _LANG_NAMES = {code: name for name, code in orchestrator.LANG_CODES.items()}
 
 
@@ -2303,7 +2318,8 @@ class Handler(BaseHTTPRequestHandler):
         admin_route = {"/api/v1/ui/admin/system": self._admin_system,
                        "/api/v1/ui/admin/rooms": self._admin_rooms,
                        "/api/v1/ui/admin/acl": self._admin_acl_get,
-                       "/api/v1/ui/admin/events": self._admin_events}.get(path)
+                       "/api/v1/ui/admin/events": self._admin_events,
+                       "/api/v1/ui/admin/templates": self._admin_templates}.get(path)
         if admin_route is not None:
             try:
                 admin_route(query)
@@ -2395,6 +2411,12 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/admin/rooms/create": self._admin_room_create,
                 "/api/v1/ui/admin/rooms/delete": self._admin_room_delete,
                 "/api/v1/ui/admin/acl": self._admin_acl_save,
+                "/api/v1/ui/admin/templates/docx": self._admin_template_docx,
+                "/api/v1/ui/admin/templates/docx/activate": self._admin_template_activate,
+                "/api/v1/ui/admin/templates/docx/preview": self._admin_template_preview,
+                "/api/v1/ui/admin/templates/xlsx/read": self._admin_template_xlsx_read,
+                "/api/v1/ui/admin/templates/xlsx": self._admin_template_xlsx,
+                "/api/v1/ui/admin/templates/org": self._admin_template_org,
                 "/api/v1/ui/querylog": self._ui_querylog,
             }.get(path.rstrip("/"))
             if route is None:
@@ -3095,7 +3117,8 @@ class Handler(BaseHTTPRequestHandler):
                                                        % requested})
                 return
             content, fmt = docgen.render(str(payload["text"]), requested,
-                                         title=str(payload.get("title") or ""))
+                                         title=str(payload.get("title") or ""),
+                                         frame=TEMPLATES.docx_frame())
             name = docgen.with_extension(name, fmt)
         else:
             self._send(400, {"ok": False, "error": "Missing 'content_b64' or 'text'"})
@@ -3955,7 +3978,7 @@ class Handler(BaseHTTPRequestHandler):
         text, title = built
         if not self._log_graph(ctx, "export:dossier", bound_id, []):
             return
-        content, fmt = docgen.render(text, fmt, title=title)
+        content, fmt = docgen.render(text, fmt, title=title, frame=TEMPLATES.docx_frame())
         safe = re.sub(r"[^\w\- ]+", "", title, flags=re.UNICODE).strip().replace(" ", "_")
         sys.stderr.write("[adapter] graph: dossier (%s) by %s\n" % (fmt, user))
         self._send(200, {"ok": True, "name": docgen.with_extension(safe or "dossier", fmt),
@@ -4083,7 +4106,8 @@ class Handler(BaseHTTPRequestHandler):
                 {"start": start, "levels": levels, "audit_id": audit_id or None,
                  "rows": len(inv["rows"])}, ensure_ascii=False, sort_keys=True), sources):
             return
-        content, name, _ = investigation_export.build(inv, lang, INVESTIGATION_XLSX, {
+        content, name, _ = investigation_export.build(inv, lang, investigation_export.with_layout(
+            INVESTIGATION_XLSX, TEMPLATES.layout()), {
             "user": user, "drives": [r.rstrip("/").rsplit("/", 1)[-1]
                                      for r in req_scope.drive_roots],
             "case_ref": self._bound.get("case_ref"),
@@ -4708,6 +4732,200 @@ class Handler(BaseHTTPRequestHandler):
             limit = 200
         events = STORE.tail_events(limit) if STORE.enabled else []
         self._send(200, {"ok": True, "events": events})
+
+    # -- organisation templates (E18, templates.py) ------------------------------
+    def _templates_view(self):
+        state = TEMPLATES.state()
+        return {"ok": True, "configured": TEMPLATES.configured, "error": state.get("error"),
+                "docx": state["docx"], "xlsx_layout": state["xlsx_layout"],
+                "org_card": state["org_card"], "scan": UPLOAD_SCAN,
+                "columns": [{"id": col, "labels": investigation_export.TEXT["columns"][col]}
+                            for col in investigation_export.COLUMNS],
+                "required": list(investigation_export.REQUIRED),
+                "limits": {"max_bytes": templates.MAX_UPLOAD_BYTES,
+                           "max_columns": investigation_export.MAX_LAYOUT_COLUMNS,
+                           "max_label": investigation_export.MAX_LABEL,
+                           "max_name": org_card.MAX_NAME, "max_about": org_card.MAX_ABOUT,
+                           "max_terms": org_card.MAX_TERMS, "max_term": org_card.MAX_TERM,
+                           "max_meaning": org_card.MAX_MEANING}}
+
+    def _template_refusal(self, error):
+        status = {"templates_not_configured": 409, "too_large": 413}.get(error.code, 422)
+        self._send(status, {"ok": False, "error": error.code, "message": error.detail})
+
+    def _template_upload(self):
+        """(administrator, raw body) of a template upload, or None after the
+        refusal. The body must announce its length and stay within the limit."""
+        caller = self._admin_caller()
+        if caller is None:
+            self.close_connection = True
+            return None
+        if not TEMPLATES.configured:
+            self._refuse_upload(409, {"ok": False, "error": "templates_not_configured"})
+            return None
+        try:
+            length = int(self.headers.get("Content-Length") or "")
+        except ValueError:
+            length = -1
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower() or length < 0:
+            self.close_connection = True
+            self._send(411, {"ok": False, "error": "length_required"})
+            return None
+        if length > templates.MAX_UPLOAD_BYTES:
+            self._refuse_upload(413, {"ok": False, "error": "too_large"})
+            return None
+        raw = self.rfile.read(length) if length else b""
+        if len(raw) != length or not raw:
+            self.close_connection = True
+            self._send(400, {"ok": False, "error": "incomplete"})
+            return None
+        return caller, raw
+
+    def _template_scan(self, raw):
+        """None when the upload may be kept, else (status, error): the file
+        store's ADAPTER_UPLOAD_SCAN decides, as for any upload."""
+        if UPLOAD_SCAN == drivestore.SCAN_OFF:
+            return None
+        try:
+            result, _signature = CLAMD.scan_stream(io.BytesIO(raw))
+        except clamd.ScanUnavailable:
+            return (503, "scanner_unavailable") if UPLOAD_SCAN == drivestore.SCAN_REQUIRED \
+                else None
+        except clamd.ScanError:
+            return (422, "scan_error") if UPLOAD_SCAN == drivestore.SCAN_REQUIRED else None
+        return (422, "infected") if result == "infected" else None
+
+    def _admin_templates(self, _query=""):
+        if self._admin_caller() is None:
+            return
+        self._send(200, self._templates_view())
+
+    def _admin_template_docx(self):
+        """A Word file whose frame becomes a new version (not yet active)."""
+        upload = self._template_upload()
+        if upload is None:
+            return
+        caller, raw = upload
+        name = urllib.parse.unquote(self.headers.get("X-Template-Name") or "", errors="replace")
+        refused = self._template_scan(raw)
+        if refused:
+            self._admin_event("template_rejected", caller, "templates/docx", reason=refused[1],
+                              sha256=hashlib.sha256(raw).hexdigest())
+            self._send(refused[0], {"ok": False, "error": refused[1]})
+            return
+        try:
+            meta = TEMPLATES.add_docx(raw, name, caller.user)
+        except templates.TemplateInvalid as e:
+            self._admin_event("template_rejected", caller, "templates/docx", reason=e.code,
+                              sha256=hashlib.sha256(raw).hexdigest())
+            self._template_refusal(e)
+            return
+        except OSError as e:
+            sys.stderr.write("[adapter] templates: not written: %s\n" % e)
+            self._send(503, {"ok": False, "error": "templates_unwritable"})
+            return
+        self._admin_event("template_upload", caller, "templates/docx", version=meta["id"],
+                          name=meta["name"], sha256=meta["sha256"])
+        self._send(200, dict(self._templates_view(), version=meta))
+
+    def _admin_template_activate(self):
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        version = self._read_json().get("id")
+        if version is not None and not isinstance(version, str):
+            raise ValueError("id must be a version id or null")
+        try:
+            TEMPLATES.activate_docx(version or None, caller.user)
+        except templates.TemplateInvalid as e:
+            self._template_refusal(e)
+            return
+        except KeyError:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        except OSError as e:
+            sys.stderr.write("[adapter] templates: not written: %s\n" % e)
+            self._send(503, {"ok": False, "error": "templates_unwritable"})
+            return
+        self._admin_event("template_activate", caller, "templates/docx",
+                          version=version or "built-in")
+        self._send(200, self._templates_view())
+
+    def _admin_template_preview(self):
+        """A sample DOCX in a stored version's frame (default: the active one,
+        the built-in look without one), for the administrator to check."""
+        if self._admin_caller() is None:
+            return
+        payload = self._read_json()
+        version, text, title = payload.get("id"), payload.get("text"), payload.get("title") or ""
+        if version is not None and not isinstance(version, str):
+            raise ValueError("id must be a version id or null")
+        if not isinstance(text, str) or len(text) > 20000 or not isinstance(title, str):
+            raise ValueError("text (at most 20000 characters) and title are expected")
+        frame = TEMPLATES.docx_frame(version or None)
+        if version and frame is None:
+            self._send(404, {"ok": False, "error": "not-found"})
+            return
+        content, _ = docgen.render(text, "docx", title=title[:200], frame=frame)
+        self._send(200, {"ok": True, "name": "template-preview.docx",
+                         "content_type": docgen.content_type("docx"), "size": len(content),
+                         "content_b64": base64.b64encode(content).decode("ascii")})
+
+    def _admin_template_xlsx_read(self):
+        """The layout proposed from the header row of a sample spreadsheet.
+        The file is only read here, never kept."""
+        upload = self._template_upload()
+        if upload is None:
+            return
+        try:
+            headers = templates.read_xlsx_header(upload[1])
+        except templates.TemplateInvalid as e:
+            self._template_refusal(e)
+            return
+        self._send(200, {"ok": True, "columns": investigation_export.propose_layout(headers)})
+
+    def _admin_template_xlsx(self):
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        raw = self._read_json().get("columns")
+        try:
+            layout = None if raw is None else investigation_export.validate_layout(raw)
+        except ValueError as e:
+            self._send(400, {"ok": False, "error": "invalid_layout", "message": str(e)[:300]})
+            return
+        if not self._template_set(TEMPLATES.set_layout, layout, caller):
+            return
+        self._admin_event("template_layout", caller, "templates/xlsx",
+                          columns=len(layout) if layout else "default")
+        self._send(200, self._templates_view())
+
+    def _admin_template_org(self):
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        try:
+            card = org_card.validate(self._read_json().get("card"))
+        except ValueError as e:
+            self._send(400, {"ok": False, "error": "invalid_card", "message": str(e)[:300]})
+            return
+        if not self._template_set(TEMPLATES.set_org_card, card, caller):
+            return
+        self._admin_event("template_org_card", caller, "templates/org",
+                          terms=len(card["terms"]) if card else "cleared")
+        self._send(200, self._templates_view())
+
+    def _template_set(self, setter, value, caller):
+        try:
+            setter(value, caller.user)
+        except templates.TemplateInvalid as e:
+            self._template_refusal(e)
+            return False
+        except OSError as e:
+            sys.stderr.write("[adapter] templates: not written: %s\n" % e)
+            self._send(503, {"ok": False, "error": "templates_unwritable"})
+            return False
+        return True
 
     # -- voice I/O (on-box STT/TTS; voice.py) --------------------------------
     def _stt(self):

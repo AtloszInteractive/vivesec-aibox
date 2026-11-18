@@ -1480,6 +1480,19 @@
       "internal": false
     },
     {
+      "name": "ADAPTER_TEMPLATES_DIR",
+      "component": "adapter",
+      "category": "files",
+      "type": "path",
+      "default": "/data/adapter/templates",
+      "allowed": "directory path or empty",
+      "fail_safe": "Empty turns organisation templates off (built-in look, no organisation card, admin template endpoints answer 409); an unreadable state file or stored frame falls back to the built-in look.",
+      "impact": "Organisation templates (E18): the Word frame of every generated DOCX, the investigation spreadsheet layout and the organisation card given to the model as background.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "ADAPTER_TENANT_ID",
       "component": "adapter",
       "category": "scope",

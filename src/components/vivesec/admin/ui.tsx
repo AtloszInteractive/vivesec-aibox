@@ -105,6 +105,33 @@ const ERROR_TEXT: Record<string, string> = {
   store_disabled: "The file store is not available on this AI Box.",
   store_unavailable: "The file store is not available on this AI Box.",
   "storage locked": "The storage of the AI Box is locked.",
+  templates_not_configured:
+    "No template folder is configured on this AI Box (ADAPTER_TEMPLATES_DIR).",
+  templates_unwritable: "The templates cannot be saved on the AI Box.",
+  too_large: "The file is too large.",
+  not_docx: "This is not a Word document or template (.docx, .dotx).",
+  not_xlsx: "This is not an Excel workbook (.xlsx).",
+  macros: "The file contains macros. Save it as a .docx or .dotx without macros.",
+  linked_content:
+    "The file refers to content outside itself (a linked picture, a file or network path). Embed the pictures and remove such links.",
+  unsupported_content:
+    "The header, footer or styles contain something the AI Box does not take over (an embedded object, a chart, a DTD).",
+  unsafe_field:
+    "A header or footer contains a field that can fetch content. Only page numbers, dates and document properties are allowed.",
+  picture_type:
+    "A picture is not PNG, JPEG, GIF, BMP, TIFF, EMF, WMF or SVG, or not what its name says.",
+  unsupported_layout: "The file is built in an unusual way. Open it in Word and save it again.",
+  broken: "The file is damaged or incomplete.",
+  no_header: "No header row was found on the first sheet.",
+  too_many_columns: "The header row has too many columns.",
+  infected: "The virus scanner found malware in the file. It was not kept.",
+  scanner_unavailable:
+    "The virus scanner is not available, so the file cannot be checked. Try again later.",
+  scan_error: "The virus scanner could not check the file.",
+  invalid_layout: "The column layout is not valid.",
+  invalid_card: "The organisation card is not valid.",
+  length_required: "The upload did not arrive completely. Try again.",
+  incomplete: "The upload did not arrive completely. Try again.",
 };
 
 export function errorText(error: unknown, tm: Tm): string {

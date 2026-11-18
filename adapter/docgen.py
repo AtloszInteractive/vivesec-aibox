@@ -16,7 +16,7 @@ because chr(0x8D).encode('cp1252') would itself become '?'.
 import re
 import textwrap
 import zipfile
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 FORMATS = ("md", "txt", "pdf", "docx", "pptx")
 # Formats rendered elsewhere (investigation_export.py) and only stored here as
@@ -151,12 +151,19 @@ def _docx_core(title):
         '</cp:coreProperties>' % escape(title or "Document"))
 
 
-def _docx_paragraph(kind, text):
-    style = {"h1": "Heading1", "h2": "Heading2"}.get(kind)
-    ppr = '<w:pPr><w:pStyle w:val="%s"/></w:pPr>' % style if style else ""
+_DEFAULT_STYLES = {"h1": "Heading1", "h2": "Heading2", "bullet": None}
+
+
+def _docx_paragraph(kind, text, styles=None):
+    styles = styles or _DEFAULT_STYLES
+    style = styles.get(kind) if kind in ("h1", "h2") else None
     clean = text or ""
     if kind == "" and clean.startswith(("- ", "* ")):
-        clean = "\u2022 " + clean[2:].strip()
+        if styles.get("bullet"):
+            style, clean = styles["bullet"], clean[2:].strip()
+        else:
+            clean = "\u2022 " + clean[2:].strip()
+    ppr = '<w:pPr><w:pStyle w:val=%s/></w:pPr>' % quoteattr(style) if style else ""
     run_props = '<w:rPr><w:rFonts w:ascii="Consolas" w:hAnsi="Consolas"/></w:rPr>' if kind == "mono" else ""
     if not clean:
         return "<w:p>%s</w:p>" % ppr
@@ -164,14 +171,19 @@ def _docx_paragraph(kind, text):
             % (ppr, run_props, escape(clean)))
 
 
-def render_docx(text, title=""):
-    """Markdown-ish text -> a portable .docx package (bytes)."""
+def render_docx(text, title="", frame=None):
+    """Markdown-ish text -> a portable .docx package (bytes). `frame` (a
+    templates.DocxFrame) gives the organisation's styles, page setup, headers
+    and footers; without one the built-in look applies."""
     import io
 
     blocks = parse_blocks(text)
     if title and not any(kind == "h1" for kind, _ in blocks):
         blocks.insert(0, ("h1", title))
-    body = "".join(_docx_paragraph(kind, value) for kind, value in blocks)
+    styles = frame.styles if frame is not None else None
+    body = "".join(_docx_paragraph(kind, value, styles) for kind, value in blocks)
+    if frame is not None:
+        return frame.package(body, _docx_core(title))
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -751,13 +763,14 @@ def render_pptx(text, title=""):
     return buf.getvalue()
 
 
-def render(text, fmt, title=""):
-    """Text + format name -> (bytes, format). Unknown format falls back to md."""
+def render(text, fmt, title="", frame=None):
+    """Text + format name -> (bytes, format). Unknown format falls back to md.
+    `frame` (the organisation's DOCX frame) applies to DOCX only."""
     fmt = normalize_format(fmt) or "md"
     if fmt == "pdf":
         return render_pdf(text, title=title), fmt
     if fmt == "docx":
-        return render_docx(text, title=title), fmt
+        return render_docx(text, title=title, frame=frame), fmt
     if fmt == "pptx":
         return render_pptx(text, title=title), fmt
     if fmt == "txt":

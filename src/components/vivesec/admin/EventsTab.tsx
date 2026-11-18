@@ -45,6 +45,11 @@ const EVENT_TEXT: Record<string, string> = {
   room_create: "Room created",
   room_delete: "Room deleted",
   acl_update: "Permission rules saved",
+  template_upload: "Word template uploaded",
+  template_rejected: "Template refused",
+  template_activate: "Word template activated",
+  template_layout: "Spreadsheet columns saved",
+  template_org_card: "Organisation card saved",
 };
 
 const FAILURES = new Set([

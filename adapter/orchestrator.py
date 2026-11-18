@@ -783,7 +783,8 @@ def plan(question, history, lang=None, vocab="", results="", deep=False, investi
         "{person_chain}", "" if investigate else PERSON_CHAIN_EXAMPLE).replace(
         "{chain_rule}", INVESTIGATE_CHAIN_RULE if investigate else "").replace(
         "{deep}", DEEP_TOOL if deep else "") + (
-        " Write any question to the user in %s." % lang if lang else "")
+        " Write any question to the user in %s." % lang if lang else "") + \
+        llm.organisation_block()
     convo = _transcript(history)
     user = ("CONVERSATION:\n%s\n\nMESSAGE: %s" % (convo, question)) if convo \
         else "MESSAGE: %s" % question

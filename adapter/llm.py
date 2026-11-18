@@ -15,6 +15,7 @@ import json
 import os
 import re
 import socket
+import sys
 import threading
 import urllib.request
 
@@ -92,6 +93,21 @@ def persona_for(agent=None):
     unknown id -> the generic assistant (never another agent's role)."""
     key = (agent or "").strip().lower() or DEFAULT_AGENT
     return PERSONAS.get(key, PERSONA)
+
+
+# The organisation card (org_card.prompt_block): a callable the service sets,
+# returning "" when there is no card. It is background, never a source.
+ORGANISATION = None
+
+
+def organisation_block():
+    """"\n\n" + the organisation card, or "" (no card, or it cannot be read)."""
+    try:
+        text = ORGANISATION() if ORGANISATION is not None else ""
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("[adapter] organisation card unavailable: %s\n" % e)
+        return ""
+    return "\n\n" + text if text else ""
 
 GROUNDING_RULES = (
     "STRICT RULES:\n"
@@ -710,6 +726,7 @@ def generate(question, contexts, lang=None, history=None, task=None,
         )
         if lang:
             system += " Always answer in %s." % lang
+        system += organisation_block()
         user = (
             "CURRENT REQUEST: %s\n\nDOCUMENTS (use only if relevant to this request):\n%s\n\n"
             "%s"
@@ -736,7 +753,7 @@ def generate(question, contexts, lang=None, history=None, task=None,
     if GENERATE == "auto" and not _ollama_up():
         return None, "unavailable"
     if conversational:
-        system = persona_for(agent) + "\n\n" + _build_chat_guard(lang)
+        system = persona_for(agent) + organisation_block() + "\n\n" + _build_chat_guard(lang)
         try:
             chat_kwargs = {"history": history, "num_ctx": num_ctx}
             if cancel_event is not None:
@@ -754,7 +771,8 @@ def generate(question, contexts, lang=None, history=None, task=None,
         return content, label
 
     context_tagged, _ = build_context(contexts)
-    system = persona_for(agent) + "\n\n" + _build_guard(lang, has_history=bool(history))
+    system = persona_for(agent) + organisation_block() + "\n\n" + _build_guard(
+        lang, has_history=bool(history))
     task_block = TASK_INSTRUCTIONS.get(task or "")
     if task_block and params:
         # Payload keys are snake_case; the model reads the label, not the key.

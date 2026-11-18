@@ -1,10 +1,20 @@
 // Administration page of a standalone box (E27 S7): users, AD group mapping,
 // rooms and permissions, two-factor resets, the clock and virus definitions,
-// and the event logs. Only for users with the admin role; the login gate and
-// both backends check that again on every call.
+// the organisation's templates (E18) and the event logs. Only for users with
+// the admin role; the login gate and both backends check that again on every
+// call.
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, DoorOpen, Gauge, Loader2, Network, ScrollText, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  DoorOpen,
+  FileText,
+  Gauge,
+  Loader2,
+  Network,
+  ScrollText,
+  Users,
+} from "lucide-react";
 
 import {
   listRooms,
@@ -29,10 +39,11 @@ import { EventsTab } from "./EventsTab";
 import { OverviewTab } from "./OverviewTab";
 import { RoomsTab } from "./RoomsTab";
 import { needsAttention } from "./status";
+import { TemplatesTab } from "./TemplatesTab";
 import { UsersTab } from "./UsersTab";
 import { errorText } from "./ui";
 
-type Tab = "overview" | "users" | "rooms" | "directory" | "events";
+type Tab = "overview" | "users" | "rooms" | "directory" | "templates" | "events";
 
 type Gate = { state: "loading" } | { state: "not_standalone" } | { state: "ready"; me: string };
 
@@ -138,6 +149,7 @@ function AdminScreen() {
     { id: "users", label: tm("Users"), icon: <Users className="h-4 w-4" /> },
     { id: "rooms", label: tm("Rooms and permissions"), icon: <DoorOpen className="h-4 w-4" /> },
     { id: "directory", label: tm("AD groups"), icon: <Network className="h-4 w-4" /> },
+    { id: "templates", label: tm("Templates"), icon: <FileText className="h-4 w-4" /> },
     { id: "events", label: tm("Event log"), icon: <ScrollText className="h-4 w-4" /> },
   ];
 
@@ -238,6 +250,7 @@ function AdminScreen() {
               onSaved={setDirectory}
             />
           )}
+          {tab === "templates" && <TemplatesTab />}
           {tab === "events" && <EventsTab />}
         </main>
       )}

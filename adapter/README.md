@@ -224,6 +224,56 @@ spellings is refused, and nodes that set nothing are dropped. Room creation,
 deletion and rules changes are written to `events.jsonl` (`room_create`,
 `room_delete`, `acl_update`) with the administrator's name.
 
+### Organisation templates (E18, first step)
+
+`templates.py`, `org_card.py`; the **Templates** tab of the administration page.
+They change how generated files look and what background the model has, never
+what an answer may say or who may see what. Stored under
+`ADAPTER_TEMPLATES_DIR` (default `/data/adapter/templates`, inside the
+`/data/adapter` volume and so on the vault of a standalone box; empty turns the
+feature off). The endpoints follow the administration rules above
+(standalone, `role:admin`).
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /api/v1/ui/admin/templates` | The Word frames (versions, the active one), the spreadsheet layout, the organisation card, the known columns and the limits. |
+| `POST /api/v1/ui/admin/templates/docx` | Raw `.docx`/`.dotx` body (at most 10 MiB, `X-Template-Name` percent-encoded). Scanned by clamd as `ADAPTER_UPLOAD_SCAN` says, then the frame is taken and stored as a new, **inactive** version (the newest 10 and the active one are kept). |
+| `POST /api/v1/ui/admin/templates/docx/activate {id\|null}` | Every DOCX the box writes from now on (`/ui/save`, the graph dossier) uses this frame; `null` is the built-in look. |
+| `POST /api/v1/ui/admin/templates/docx/preview {id?, text, title}` | A sample DOCX in a version's frame (default: the active one), base64 JSON. |
+| `POST /api/v1/ui/admin/templates/xlsx/read` | Raw `.xlsx` body: the first row with text on the first sheet, each header matched to a column of the investigation export (its labels in the four languages and a few common variants), widths kept. Only read, never stored. |
+| `POST /api/v1/ui/admin/templates/xlsx {columns\|null}` | Saves the layout `[{column, label, width}]`: order, the organisation's header texts, widths, and empty columns (`column: null`) kept for entry by hand. `name` and `source` are required. It only arranges columns: which personal data a row carries is still `ADAPTER_INVESTIGATION_XLSX_BIRTH_DATA_EXCEPT`. Without a layout the `ADAPTER_INVESTIGATION_XLSX_COLUMNS` order applies. |
+| `POST /api/v1/ui/admin/templates/org {card\|null}` | The organisation card `{name, about, terms: [{term, meaning}]}` (at most 120 / 1200 characters, 40 terms). |
+
+**The Word frame.** From the upload the box keeps the styles, theme, list
+numbering, page size and margins, and the headers and footers with their
+pictures and hyperlinks; the body text, settings, fonts table, glossary and
+everything else are dropped. Heading and bullet styles are found by their
+built-in names (`heading 1`, `List Bullet`), because Word localises the style
+ids (`Cmsor1` in Hungarian Word); a missing heading style is added. The upload
+is refused as a whole (`422` with a code) for macros (`macros`), a picture or
+link pointing outside the file, VML `src`/`href`, file or UNC paths
+(`linked_content`), embedded objects, charts or a DTD (`unsupported_content`),
+a header or footer field other than page numbers, dates and document
+properties (`unsafe_field`), a picture that is not PNG, JPEG, GIF, BMP, TIFF,
+EMF, WMF or a script- and link-free SVG, or not what its name says
+(`picture_type`). Only the frame is stored, itself as a `.docx` that has to
+pass the same checks every time it is read; a stored frame that no longer does
+gives the built-in look. Layout is Word's: the result follows the template's
+styles but is not a pixel copy of a hand-formatted document (E19).
+
+**The organisation card** is background for reading the user's words and the
+documents' jargon: it is added, marked as not a source and not an
+instruction, to the system prompt of the grounded, hybrid and conversation
+answers and of the analyst planner. Line breaks are folded and every field
+capped, so it cannot open a prompt section of its own; the grounding rules
+follow it and still bind every answer to the cited documents.
+
+Uploads, refusals, activations and saves are written to `events.jsonl`
+(`template_upload`, `template_rejected`, `template_activate`,
+`template_layout`, `template_org_card`). On a ViVeSecBox-integrated box there
+is no administration page; a frame or card already in `ADAPTER_TEMPLATES_DIR`
+still applies.
+
 ### Encrypted storage in standalone mode (E05, E27 S8)
 
 A standalone box keeps the original documents, so its data must sit on an
