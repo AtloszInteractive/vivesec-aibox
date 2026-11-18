@@ -1487,7 +1487,7 @@
       "default": "/data/adapter/templates",
       "allowed": "directory path or empty",
       "fail_safe": "Empty turns organisation templates off (built-in look, no organisation card, admin template endpoints answer 409); an unreadable state file or stored frame falls back to the built-in look.",
-      "impact": "Organisation templates (E18): the Word frame of every generated DOCX, the investigation spreadsheet layout and the organisation card given to the model as background.",
+      "impact": "Organisation templates (E18): the Word frame of every generated DOCX, the investigation spreadsheet layout and the organisation card given to the model as background. Must lie in a writable mount of the adapter (the standalone layout binds /data/adapter to /data, so auth_deploy.py enable sets /data/templates when unset).",
       "change": "restart",
       "secret": false,
       "internal": false

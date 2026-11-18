@@ -60,6 +60,12 @@ ADAPTER_FORBIDDEN_KEYS = ("ADAPTER_SCOPE_ALL_DRIVES",)
 # would hide every document.
 ACL_RULES_KEY = "ADAPTER_ACL_RULES"
 DEFAULT_ACL_RULES = "/data/acl-rules.json"
+# The organisation templates (E18, adapter templates.py): `enable` sets the
+# folder when the adapter has none, inside one of its writable mounts, so an
+# uploaded template outlives the container and lies on the encrypted volume.
+# A value set by hand, even an empty one (feature off), is kept.
+TEMPLATES_KEY = "ADAPTER_TEMPLATES_DIR"
+DEFAULT_TEMPLATES_DIR = "/data/templates"
 
 
 def settings(env=None):
@@ -177,27 +183,43 @@ def host_path(binds, container_path):
     return best[0].rstrip("/") + container_path[len(best[1].rstrip("/")):]
 
 
+def _in_mount(key, path, binds, override):
+    if not path.startswith("/") or ".." in path.split("/"):
+        raise SystemExit("%s must be an absolute path" % key)
+    host = host_path(binds, path)
+    if host is None:
+        raise SystemExit("%s=%s is not inside a writable mount of the adapter; set "
+                         "%s to a path below one of: %s"
+                         % (key, path, override, ", ".join(b.split(":")[1] for b in binds or [])))
+    return path, host
+
+
 def acl_rules_path(env, binds, wanted=DEFAULT_ACL_RULES):
     """(container path, host path) of the rules file `enable` uses: the one
     the adapter already has, else `wanted`. SystemExit when no writable mount
     holds it (the file would vanish with the container)."""
     path = (env.get(ACL_RULES_KEY) or "").strip() or wanted
-    if not path.startswith("/") or ".." in path.split("/"):
-        raise SystemExit("%s must be an absolute path" % ACL_RULES_KEY)
-    host = host_path(binds, path)
-    if host is None:
-        raise SystemExit("%s=%s is not inside a writable mount of the adapter; set "
-                         "AIBOX_ADAPTER_ACL_RULES to a path below one of: %s"
-                         % (ACL_RULES_KEY, path, ", ".join(b.split(":")[1] for b in binds or [])))
-    return path, host
+    return _in_mount(ACL_RULES_KEY, path, binds, "AIBOX_ADAPTER_ACL_RULES")
 
 
-def adapter_change(env, binds, data_dir, auth_env, enable, acl_rules=DEFAULT_ACL_RULES):
+def templates_dir(env, binds, wanted=DEFAULT_TEMPLATES_DIR):
+    """The templates folder `enable` uses: the adapter's own setting (empty:
+    the feature is off), else `wanted`, which must lie in a writable mount."""
+    if TEMPLATES_KEY in env:
+        path = env[TEMPLATES_KEY].strip()
+        return _in_mount(TEMPLATES_KEY, path, binds, "AIBOX_ADAPTER_TEMPLATES_DIR")[0] \
+            if path else ""
+    return _in_mount(TEMPLATES_KEY, wanted, binds, "AIBOX_ADAPTER_TEMPLATES_DIR")[0]
+
+
+def adapter_change(env, binds, data_dir, auth_env, enable, acl_rules=DEFAULT_ACL_RULES,
+                   templates=DEFAULT_TEMPLATES_DIR):
     keys = ADAPTER_STANDALONE_KEYS + ADAPTER_FORBIDDEN_KEYS
     targets = {ADAPTER_KEY}
     if not enable:
-        # The rules file stays when somebody set it up by hand.
-        drop = keys + ((ACL_RULES_KEY,) if env.get(ACL_RULES_KEY) == acl_rules else ())
+        # The rules file and the templates stay when somebody set them up by hand.
+        drop = keys + ((ACL_RULES_KEY,) if env.get(ACL_RULES_KEY) == acl_rules else ()) + (
+            (TEMPLATES_KEY,) if env.get(TEMPLATES_KEY) == templates else ())
         return with_settings(env, {}, drop), with_binds(binds, [], targets)
     values = {"ADAPTER_INTEGRATION": "standalone", "ADAPTER_IDENTITY_MODE": "require",
               "ADAPTER_DIRECTORY": "token", "ADAPTER_IDENTITY_ALGORITHMS": "HS256",
@@ -206,6 +228,8 @@ def adapter_change(env, binds, data_dir, auth_env, enable, acl_rules=DEFAULT_ACL
               "ADAPTER_IDENTITY_AUDIENCE": auth_env.get("AUTH_JWT_AUDIENCE") or DEFAULT_AUDIENCE}
     if not (env.get(ACL_RULES_KEY) or "").strip():
         values[ACL_RULES_KEY] = acl_rules
+    if TEMPLATES_KEY not in env:
+        values[TEMPLATES_KEY] = templates
     bind = data_dir + "/identity-hs256.key:" + ADAPTER_KEY + ":ro"
     return with_settings(env, values, keys), with_binds(binds, [bind], targets)
 
@@ -398,11 +422,14 @@ def switch(enable):
     adapter_env, ui_env = environment(adapter), environment(ui)
     adapter_binds = adapter["HostConfig"].get("Binds")
     acl_rules = (os.environ.get("AIBOX_ADAPTER_ACL_RULES") or "").strip() or DEFAULT_ACL_RULES
+    templates = (os.environ.get("AIBOX_ADAPTER_TEMPLATES_DIR") or "").strip() \
+        or DEFAULT_TEMPLATES_DIR
     if enable:
         acl_rules, acl_host = acl_rules_path(adapter_env, adapter_binds, acl_rules)
         seed_acl_rules(acl_host, adapter["Config"].get("User") or "0:0", config["base_image"])
+        templates = templates_dir(adapter_env, adapter_binds, templates)
     new_adapter = adapter_change(adapter_env, adapter_binds, config["data_dir"],
-                                 auth_env, enable, acl_rules)
+                                 auth_env, enable, acl_rules, templates)
     new_ui = ui_change(ui_env, ui["HostConfig"].get("Binds"), config["data_dir"], config["port"], enable)
     mode = "standalone" if enable else "vivesecbox"
     if (new_adapter, new_ui) == ((adapter_env, adapter["HostConfig"].get("Binds") or []),

@@ -230,8 +230,10 @@ deletion and rules changes are written to `events.jsonl` (`room_create`,
 They change how generated files look and what background the model has, never
 what an answer may say or who may see what. Stored under
 `ADAPTER_TEMPLATES_DIR` (default `/data/adapter/templates`, inside the
-`/data/adapter` volume and so on the vault of a standalone box; empty turns the
-feature off). The endpoints follow the administration rules above
+`/data/adapter` volume of the 40/60 install layout; the standalone layout binds
+`/data/adapter` to `/data`, so `auth_deploy.py enable` sets `/data/templates`
+there; empty turns the feature off). The folder must lie in a writable mount,
+else uploads vanish with the container. The endpoints follow the administration rules above
 (standalone, `role:admin`).
 
 | Endpoint | What it does |

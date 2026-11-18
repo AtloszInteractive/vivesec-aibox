@@ -87,6 +87,27 @@ class SwitchTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             auth_deploy.acl_rules_path({}, binds, "/data/../etc/x")
 
+    def test_the_templates_folder_lives_in_a_writable_mount(self):
+        env, _ = auth_deploy.adapter_change(ADAPTER_ENV, ADAPTER_BINDS, "/data/auth", {}, True)
+        self.assertEqual(env["ADAPTER_TEMPLATES_DIR"], "/data/templates")
+        self.assertEqual(auth_deploy.templates_dir({}, ADAPTER_BINDS), "/data/templates")
+        # Set by hand -- also empty, which turns the feature off -- is kept.
+        for own in ("/data/jobs/t", ""):
+            mine = dict(ADAPTER_ENV, ADAPTER_TEMPLATES_DIR=own)
+            self.assertEqual(auth_deploy.templates_dir(mine, ADAPTER_BINDS), own)
+            env, binds = auth_deploy.adapter_change(mine, ADAPTER_BINDS, "/data/auth", {}, True)
+            self.assertEqual(env["ADAPTER_TEMPLATES_DIR"], own)
+            env, _ = auth_deploy.adapter_change(env, binds, "/data/auth", {}, False)
+            self.assertEqual(env["ADAPTER_TEMPLATES_DIR"], own)
+        # Outside every mount the uploads would vanish with the container.
+        layout = ["/data/adapter:/data/adapter", "/data/jobs:/data/jobs"]
+        with self.assertRaises(SystemExit):
+            auth_deploy.templates_dir({}, layout)
+        self.assertEqual(auth_deploy.templates_dir({}, layout, "/data/adapter/templates"),
+                         "/data/adapter/templates")
+        with self.assertRaises(SystemExit):
+            auth_deploy.templates_dir({"ADAPTER_TEMPLATES_DIR": "/tmp/t"}, ADAPTER_BINDS)
+
 
 class ServiceTest(unittest.TestCase):
     def test_auth_environment_keeps_settings_but_not_paths(self):
