@@ -881,6 +881,8 @@ class _CompanyReader:
 
 
 COMPANY_READER = _CompanyReader()
+# The company tab lists at most this many matching files; a search narrows it.
+MAX_PICKABLE_DOCUMENTS = 300
 _LANG_NAMES = {code: name for name, code in orchestrator.LANG_CODES.items()}
 
 
@@ -5193,9 +5195,9 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             out.append({"path": path, "name": path.rsplit("/", 1)[-1],
                         "room": (corpus.drive_root_of_path(path) or "").rsplit("/", 1)[-1]})
-            if len(out) >= 300:
-                break
-        self._send(200, {"ok": True, "documents": sorted(out, key=lambda d: d["path"])})
+        out.sort(key=lambda d: d["path"])
+        self._send(200, {"ok": True, "documents": out[:MAX_PICKABLE_DOCUMENTS],
+                         "truncated": len(out) > MAX_PICKABLE_DOCUMENTS})
 
     def _admin_company_extract(self):
         caller = self._admin_caller()

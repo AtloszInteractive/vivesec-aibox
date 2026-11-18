@@ -1842,6 +1842,7 @@ const M: Record<string, Tri> = {
   "Company profile fact deleted": ["Cégprofil-tény törölve", "Fakta i virksomhedsprofilen slettet", "Fakt im Unternehmensprofil gelöscht"],
   "Company profile fact restored": ["Cégprofil-tény visszaállítva", "Fakta i virksomhedsprofilen gendannet", "Fakt im Unternehmensprofil wiederhergestellt"],
   "Company profile reading started": ["Cégprofil-beolvasás elindítva", "Læsning til virksomhedsprofilen startet", "Einlesen für das Unternehmensprofil gestartet"],
+  "Only the first {n} matches are shown; narrow the search.": ["Csak az első {n} találat látszik; szűkítse a keresést.", "Kun de første {n} resultater vises; indsnævr søgningen.", "Nur die ersten {n} Treffer werden angezeigt; grenzen Sie die Suche ein."],
 };
 
 export function translateExact(text: string, lang: Lang): string | null {

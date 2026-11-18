@@ -340,8 +340,14 @@ class CompanyHttpTest(StandaloneHttpCase):
     def test_proposals_read_from_documents(self):
         doc = ROOM + "/szmsz.txt"
         self.mirror.upsert(doc, file=True, mtime=1, size=1)
+        self.mirror.upsert(ROOM + "/a.txt", file=True, mtime=1, size=1)
         status, body = self.send("GET", "/api/v1/ui/admin/company/documents?q=SZMSZ")
-        self.assertEqual([d["path"] for d in body["documents"]], [doc])
+        self.assertEqual(([d["path"] for d in body["documents"]], body["truncated"]),
+                         ([doc], False))
+        with patch.object(self.service, "MAX_PICKABLE_DOCUMENTS", 1):
+            status, body = self.send("GET", "/api/v1/ui/admin/company/documents?q=")
+        self.assertEqual(([d["path"] for d in body["documents"]], body["truncated"]),
+                         ([ROOM + "/a.txt"], True))
         status, body = self.send("POST", "/api/v1/ui/admin/company/extract",
                                  {"paths": [ROOM + "/missing.txt"]})
         self.assertEqual(status, 404)

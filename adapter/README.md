@@ -315,7 +315,7 @@ taken over once, as public facts in effect, so its background stays.
 | `POST /api/v1/ui/admin/company/delete {base, id}` | Drops a fact not in effect; its history stays. |
 | `POST /api/v1/ui/admin/company/restore {base, id, seq}` | A draft with the content of a history entry. |
 | `GET /api/v1/ui/admin/company/history?id=` | The history of a fact, newest first. |
-| `GET /api/v1/ui/admin/company/documents?q=` | Indexed files the administrator may read, filtered by name. |
+| `GET /api/v1/ui/admin/company/documents?q=` | Indexed files the administrator may read, filtered by name, sorted, at most 300 (`truncated` says when a search should narrow it). |
 | `POST /api/v1/ui/admin/company/extract {paths}` | Starts a reading (`409 busy` while one runs, `404` for a file the administrator cannot see). |
 | `POST /api/v1/ui/admin/company/extract/cancel` | Stops it; the proposals found so far stay. |
 

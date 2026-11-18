@@ -438,6 +438,7 @@ function ReadingCard({
   const { tm } = useLang();
   const [query, setQuery] = useState("");
   const [documents, setDocuments] = useState<ProfileDocument[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -448,8 +449,9 @@ function ReadingCard({
   useEffect(() => {
     const timer = setTimeout(() => {
       listProfileDocuments(query)
-        .then((docs) => {
-          setDocuments(docs);
+        .then((found) => {
+          setDocuments(found.documents);
+          setTruncated(found.truncated);
           setError("");
         })
         .catch((err) => setError(errorText(err, tm)));
@@ -553,6 +555,13 @@ function ReadingCard({
               }
             />
           ))}
+          {truncated && (
+            <p className="pt-1 text-[11px] text-ink/50">
+              {fill(tm("Only the first {n} matches are shown; narrow the search."), {
+                n: documents?.length ?? 0,
+              })}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-[11px] text-ink/45">

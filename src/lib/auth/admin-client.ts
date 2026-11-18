@@ -478,9 +478,9 @@ export const readFactHistory = (id: string) =>
   ).then((r) => r.history);
 
 export const listProfileDocuments = (query: string) =>
-  adapterAdmin<{ documents: ProfileDocument[] }>(
+  adapterAdmin<{ documents: ProfileDocument[]; truncated: boolean }>(
     `company/documents?q=${encodeURIComponent(query)}`,
-  ).then((r) => r.documents);
+  );
 
 export const startExtraction = (paths: string[]) =>
   adapterAdmin<CompanyState>("company/extract", { paths });
