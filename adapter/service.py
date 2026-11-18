@@ -32,7 +32,7 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
                                               (mutual TLS or loopback only)
     POST /api/v1/ui/graph/query               {query,params[,drives]}  (E26, graph.py)
     POST /api/v1/ui/graph/status | review/list | review/decide | review/history | review/undo
-                            | profile/get | profile/set
+                            | profile/get | profile/set | profile/suggest[/apply]
   Standalone file store (E27 S5, drivestore.py; 404 in vivesecbox mode):
     GET  /api/v1/ui/store/info                (limits, scan mode, may this caller write)
     POST /api/v1/ui/store/list                {path}  (stored + indexed entries, scope + ACL)
@@ -2384,6 +2384,8 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/review/undo": self._graph_review_undo,
                 "/api/v1/ui/graph/profile/get": self._graph_profile_get,
                 "/api/v1/ui/graph/profile/set": self._graph_profile_set,
+                "/api/v1/ui/graph/profile/suggest": self._graph_profile_suggest,
+                "/api/v1/ui/graph/profile/suggest/apply": self._graph_profile_suggest_apply,
                 "/api/v1/ui/graph/dossier": self._graph_dossier,
                 "/api/v1/ui/graph/image/log": self._graph_image_log,
                 "/api/v1/ui/graph/investigation/export": self._graph_investigation_export,
@@ -3949,6 +3951,40 @@ class Handler(BaseHTTPRequestHandler):
                 (res.get("profile") or {}).get("id"), (res.get("profile") or {}).get("version"),
                 user))
             self._send(200, res)
+
+    def _graph_profile_suggest(self):
+        """What extraction kept that the profile lacks (E26e, graph
+        profile_suggest.py), over the documents this administrator may see:
+        labels, counts and entity kinds only, never a quote or a name. The one
+        model call waits its turn on the GPU, hence the longer timeout."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, _, _, scope_body = ctx
+        if not self._graph_admin(user):
+            return
+        body = dict(scope_body, model=payload.get("model", True) is not False)
+        try:
+            res = GRAPH.post("/profile/suggest", body, timeout=max(GRAPH.timeout, 600))
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return
+        sys.stderr.write("[adapter] graph: profile suggestions (%d, model %s) for %s\n"
+                         % (len(res.get("items") or []), res.get("model"), user))
+        self._send(200, dict(res, ok=True))
+
+    def _graph_profile_suggest_apply(self):
+        """The next profile version from the accepted suggestions, validated by
+        the graph but not saved: the administrator saves it (profile/set)."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload, _, _, _ = ctx
+        if not self._graph_admin(user):
+            return
+        res = self._graph_post("/profile/suggest/apply", {"items": payload.get("items")})
+        if res is not None:
+            self._send(200, dict(res, ok=True))
 
     def _graph_dossier(self):
         """One entity's relations as DOCX/PDF with a source list. Returned as

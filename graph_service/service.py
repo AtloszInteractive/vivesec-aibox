@@ -6,6 +6,8 @@ request and sends it with every query (corpus_ids + access).
 
   ops      GET  /health
   profile  POST /profile/get  /profile/templates  /profile/validate  /profile/set
+           POST /profile/suggest (what extraction found that the profile lacks, in the
+           caller's scope)  /profile/suggest/apply (accepted items -> next version, unsaved)
   ingest   POST /graph/document/put  /graph/document/drop  /graph/document/acl
            POST /graph/document/drop_tree  /graph/acl/update (by path, as the RAG)
            POST /graph/entity/merge
@@ -45,6 +47,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import domain_profile  # noqa: E402
+import profile_suggest  # noqa: E402
 from extraction import fold  # noqa: E402
 import analytics  # noqa: E402
 import namesakes  # noqa: E402
@@ -597,6 +600,19 @@ def handle_post(state: State, path: str, body: dict) -> dict:
         return {"profile": state.profile}
     if path == "/profile/templates":
         return {"templates": domain_profile.templates()}
+    if path == "/profile/suggest":
+        try:
+            scope = Scope.parse(body, state.profile)
+        except ScopeError as e:
+            raise HttpError(400, str(e))
+        llm = state.worker.llm if state.worker is not None and body.get("model", True) else None
+        return profile_suggest.suggest(state.store.view(scope), state.profile, llm)
+    if path == "/profile/suggest/apply":
+        try:
+            profile, changes = profile_suggest.apply(state.profile, body.get("items"))
+        except domain_profile.ProfileError as e:
+            raise HttpError(400, str(e))
+        return {"profile": profile, "changes": changes}
     if path == "/profile/validate":
         try:
             return {"profile": domain_profile.validate(body.get("profile") or {})}

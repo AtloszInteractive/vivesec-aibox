@@ -648,6 +648,27 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   graph keeps every decision and undo, with the deciding user, in
   `GRAPH_REVIEW_PATH`. Tests: graph `review_undo_test`, adapter
   `graph_integration_test` (`test_review_in_bulk_with_history_and_undo`).
+- **Profile suggestions (E26e)**: `/api/v1/ui/graph/profile/suggest` and
+  `/profile/suggest/apply`, for `ADAPTER_GRAPH_ADMINS` only. Where no relation
+  type fitted, extraction keeps a link as `RELATED_TO` with the model's own
+  label; an identifier no pattern knows stays without a subtype. `suggest`
+  groups these over the documents the administrator may see (at least two
+  documents per group; a bare number shorter than six digits is no identifier
+  kind), reports the labels the profile already knows with the number of
+  documents read with an older profile (reprocessing types those links), and
+  asks the model once (through the GPU broker; up to 10 minutes on the adapter
+  side) to sort the rest: a synonym of an existing type, a new type with
+  labels in the four languages, or nothing. The model only names: a new type's
+  ends come from the graph, every id it gives is checked, and a synonym whose
+  type fits few of the links is flagged (`fit`). Without the model each group
+  is offered under its own label. Items carry labels, counts and entity kinds,
+  never a quote, a name or an identifier value. `apply {items}` returns the
+  next profile version, validated but not saved; the administrator saves it
+  with `/profile/set`. Measured on the dev box (BV graph, 198k links of which
+  1975 `RELATED_TO`, Neo4j directly): 9 s for the groups, 44 s with the model.
+  Learnt table layouts are not offered yet (they cannot be tied to the
+  caller's scope). Tests: graph `profile_suggest_test`, adapter
+  `graph_integration_test` (`test_profile_suggestions_are_for_graph_administrators`).
 - **Reprocessing after a profile change** (`reprocess.py`): the graph records
   the profile and extractor revision each document was extracted with (`bv@3/e2`:
   a software update that changes extraction raises the revision, so its documents

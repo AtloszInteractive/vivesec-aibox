@@ -1073,6 +1073,8 @@ export async function adapterGraph<T>(
     | "review/undo"
     | "profile/get"
     | "profile/set"
+    | "profile/suggest"
+    | "profile/suggest/apply"
     | "dossier"
     | "image/log"
     | "investigation/export"
@@ -1092,12 +1094,13 @@ export async function adapterGraph<T>(
     | "watch/seen",
   body: Record<string, unknown>,
   drive: string,
+  timeoutMs: number = GRAPH_TIMEOUT_MS,
 ): Promise<T> {
   const res = await apiFetch(`${adapterUrl()}/api/v1/ui/graph/${endpoint}`, {
     method: "POST",
     headers: vvsHeaders(drive, demoUser()),
     body: JSON.stringify({ ...body, ...purposeFields() }),
-    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const j = await safeJson(res);
   if (!res.ok) {

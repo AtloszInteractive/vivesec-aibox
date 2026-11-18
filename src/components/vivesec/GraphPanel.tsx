@@ -53,6 +53,7 @@ import {
   type QueryLogRecord,
 } from "@/lib/api/graph.functions";
 import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
+import { ProfileSuggestions } from "./ProfileSuggestions";
 
 const PANEL = "var(--surface-3)";
 const BG = "var(--surface-2)";
@@ -2518,43 +2519,56 @@ function ProfileTab({
         </div>
       </Section>
       {canEdit ? (
-        <Section title={tm("Edit profile (JSON)")}>
-          {draft === null ? (
-            <button
-              onClick={() => {
-                setMessage(null);
-                setDraft(JSON.stringify({ ...profile, version: profile.version + 1 }, null, 2));
+        <>
+          <Section title={tm("Suggestions from the documents")}>
+            <ProfileSuggestions
+              drive={drive}
+              profile={profile}
+              code={code}
+              onSaved={async (text) => {
+                setMessage(text);
+                await onSaved();
               }}
-              className="rounded-full border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10"
-            >
-              {tm("Edit profile (JSON)")}
-            </button>
-          ) : (
-            <>
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                spellCheck={false}
-                className="h-80 w-full rounded-lg border border-ink/10 bg-shade/30 p-2 font-mono text-[11px] outline-none"
-              />
-              <div className="mt-2 flex gap-2">
-                <button
-                  onClick={() => void save()}
-                  className="rounded-full px-3 py-1 text-xs text-white"
-                  style={{ backgroundColor: ACCENT }}
-                >
-                  {tm("Save as new version")}
-                </button>
-                <button
-                  onClick={() => setDraft(null)}
-                  className="rounded-full border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10"
-                >
-                  {tm("Cancel")}
-                </button>
-              </div>
-            </>
-          )}
-        </Section>
+            />
+          </Section>
+          <Section title={tm("Edit profile (JSON)")}>
+            {draft === null ? (
+              <button
+                onClick={() => {
+                  setMessage(null);
+                  setDraft(JSON.stringify({ ...profile, version: profile.version + 1 }, null, 2));
+                }}
+                className="rounded-full border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10"
+              >
+                {tm("Edit profile (JSON)")}
+              </button>
+            ) : (
+              <>
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  spellCheck={false}
+                  className="h-80 w-full rounded-lg border border-ink/10 bg-shade/30 p-2 font-mono text-[11px] outline-none"
+                />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    onClick={() => void save()}
+                    className="rounded-full px-3 py-1 text-xs text-white"
+                    style={{ backgroundColor: ACCENT }}
+                  >
+                    {tm("Save as new version")}
+                  </button>
+                  <button
+                    onClick={() => setDraft(null)}
+                    className="rounded-full border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10"
+                  >
+                    {tm("Cancel")}
+                  </button>
+                </div>
+              </>
+            )}
+          </Section>
+        </>
       ) : (
         <Notice text={tm("Only graph administrators can change the profile.")} />
       )}

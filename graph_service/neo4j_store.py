@@ -438,15 +438,19 @@ class Neo4jView(GraphView):
             out.setdefault(row["eid"], []).append(_relation(row["r"], row["a"], row["b"]))
         return out
 
-    def _iter_entity_ids(self, types=None):
-        rows = self._run("MATCH (e:Entity) WHERE $types IS NULL OR e.type IN $types "
+    def _iter_entity_ids(self, types=None, subtypes=None):
+        rows = self._run("MATCH (e:Entity) WHERE ($types IS NULL OR e.type IN $types) "
+                         "AND ($subtypes IS NULL OR coalesce(e.subtype, '') IN $subtypes) "
                          "RETURN e.id AS id ORDER BY id",
-                         types=sorted(types) if types is not None else None)
+                         types=sorted(types) if types is not None else None,
+                         subtypes=sorted(subtypes) if subtypes is not None else None)
         return [r["id"] for r in rows]
 
-    def _iter_relations(self):
+    def _iter_relations(self, types=None):
         rows = self._run("MATCH (a:Entity)-[r:REL]->(b:Entity) "
-                         "RETURN r {.*} AS r, a.id AS a, b.id AS b ORDER BY r.id")
+                         "WHERE $types IS NULL OR r.type IN $types "
+                         "RETURN r {.*} AS r, a.id AS a, b.id AS b ORDER BY r.id",
+                         types=sorted(types) if types is not None else None)
         return [_relation(row["r"], row["a"], row["b"]) for row in rows]
 
     def _load_doc_mentions(self, doc_ids, subtypes):

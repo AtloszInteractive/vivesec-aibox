@@ -330,10 +330,10 @@ class GraphView:
     def _load_relations_of_many(self, eids: list[str]) -> dict[str, list[Relation]]:
         return {eid: self._load_relations_of(eid) for eid in eids}
 
-    def _iter_entity_ids(self, types=None):
+    def _iter_entity_ids(self, types=None, subtypes=None):
         raise NotImplementedError
 
-    def _iter_relations(self):
+    def _iter_relations(self, types=None):
         raise NotImplementedError
 
     def _load_doc_mentions(self, doc_ids: list[str], subtypes: set[str]
@@ -477,9 +477,11 @@ class GraphView:
             self._check_docs({ev.doc_id for r in rels for ev in r.evidence})
             self.prefetch({x for r in rels for x in (r.a, r.b)})
 
-    def nodes(self, types=None):
+    def nodes(self, types=None, subtypes=None):
+        """Visible entities; `subtypes` narrows by the stored subtype ("" for
+        none) before the per-document visible subtype is worked out."""
         batch = []
-        for eid in self._iter_entity_ids(types):
+        for eid in self._iter_entity_ids(types, subtypes):
             batch.append(eid)
             if len(batch) >= 1000:
                 yield from self._emit(batch, types)
@@ -494,9 +496,9 @@ class GraphView:
             if n and (types is None or n["type"] in types):
                 yield n
 
-    def edges(self):
+    def edges(self, types=None):
         batch = []
-        for r in self._iter_relations():
+        for r in self._iter_relations(types):
             batch.append(r)
             if len(batch) >= 1000:
                 yield from self._edges(batch)
@@ -530,12 +532,14 @@ class MemoryView(GraphView):
     def _load_relations_of(self, eid):
         return [self.s.relations[r] for r in self.s._rels_of.get(eid, ()) if r in self.s.relations]
 
-    def _iter_entity_ids(self, types=None):
+    def _iter_entity_ids(self, types=None, subtypes=None):
         return [e.id for e in sorted(self.s.entities.values(), key=lambda e: e.id)
-                if types is None or e.type in types]
+                if (types is None or e.type in types)
+                and (subtypes is None or (e.subtype or "") in subtypes)]
 
-    def _iter_relations(self):
-        return [self.s.relations[r] for r in sorted(self.s.relations)]
+    def _iter_relations(self, types=None):
+        return [self.s.relations[r] for r in sorted(self.s.relations)
+                if types is None or self.s.relations[r].type in types]
 
     def _load_doc_mentions(self, doc_ids, subtypes):
         out = {}

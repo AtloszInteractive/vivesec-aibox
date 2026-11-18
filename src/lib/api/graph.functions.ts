@@ -95,6 +95,49 @@ export type GraphProfile = {
   }[];
 } & Record<string, unknown>;
 
+/** One suggestion of graph_service/profile_suggest.py; the administrator may
+ *  edit it before applying. Never carries a quote, a name or a value. */
+export type GraphSuggestion = {
+  key: string;
+  kind: "relation" | "identifier";
+  action: "new" | "synonym" | "ignore" | "known" | "existing";
+  source?: "model" | "rule";
+  // relation
+  label?: string;
+  variants?: string[];
+  relation?: string;
+  id?: string;
+  labels?: GraphLabel;
+  from?: GraphEntityType[];
+  to?: GraphEntityType[];
+  fit?: number;
+  ends?: { from: GraphEntityType; to: GraphEntityType; count: number }[];
+  // identifier
+  shape?: string;
+  regex?: string;
+  normalize?: string;
+  subtype?: string;
+  support: {
+    relations?: number;
+    documents: number;
+    stale_documents?: number;
+    values?: number;
+  };
+};
+
+export type GraphProfileSuggestions = {
+  items: GraphSuggestion[];
+  known: GraphSuggestion[];
+  model: "used" | "unused" | "off" | "failed";
+  profile: { id: string; version: number };
+  scanned: { relations: number; identifiers: number; cut: boolean };
+};
+
+export type GraphProfileChange =
+  | { change: "relation"; relation: string }
+  | { change: "synonyms"; relation: string; added: string[] }
+  | { change: "pattern"; subtype: string; new_subtype: boolean };
+
 export type GraphReviewItem = {
   a: string;
   b: string;
@@ -238,6 +281,16 @@ export const graphApi = {
     ),
   saveProfile: (drive: string, profile: unknown) =>
     adapterGraph<{ profile: GraphProfile }>("profile/set", { profile }, drive),
+  /** What extraction kept that the profile lacks (graph admins; one model call,
+   *  which waits for the GPU, hence the long timeout). */
+  profileSuggest: (drive: string) =>
+    adapterGraph<GraphProfileSuggestions>("profile/suggest", {}, drive, 660_000),
+  profileSuggestApply: (drive: string, items: GraphSuggestion[]) =>
+    adapterGraph<{ profile: GraphProfile; changes: GraphProfileChange[] }>(
+      "profile/suggest/apply",
+      { items },
+      drive,
+    ),
   dossier: (drive: string, id: string, format: "docx" | "pdf", lang: string) =>
     adapterGraph<GraphDossier>("dossier", { id, format, lang }, drive),
   /** Log a picture export (purpose-bound) and get the watermark it must carry. */

@@ -1192,6 +1192,27 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertEqual([PUBLIC], record["result"]["sources"])
         self.assertEqual((True, 1, None), querylog.verify(path))
 
+    def test_profile_suggestions_are_for_graph_administrators(self):
+        for path in ("/api/v1/ui/graph/profile/suggest", "/api/v1/ui/graph/profile/suggest/apply"):
+            status, _ = self.call(path, {}, user="lars")
+            self.assertEqual(403, status, path)
+        status, out = self.call("/api/v1/ui/graph/profile/suggest", {}, user="hanna")
+        self.assertEqual((200, [], "unused"), (status, out["items"], out["model"]))
+        _, prof = self.call("/api/v1/ui/graph/profile/get", {}, user="hanna")
+        item = {"kind": "relation", "action": "new", "id": "ACQUAINTANCE_OF",
+                "labels": {"en": "Acquaintance of", "hu": "Ismerőse"}, "from": ["person"],
+                "to": ["person"], "variants": ["ismerőse"]}
+        status, out = self.call("/api/v1/ui/graph/profile/suggest/apply", {"items": [item]},
+                                user="hanna")
+        self.assertEqual((200, prof["profile"]["version"] + 1), (status, out["profile"]["version"]))
+        self.assertIn("ACQUAINTANCE_OF", [r["id"] for r in out["profile"]["relation_types"]])
+        # Not saved: the administrator saves it through profile/set.
+        _, again = self.call("/api/v1/ui/graph/profile/get", {}, user="hanna")
+        self.assertEqual(prof["profile"]["version"], again["profile"]["version"])
+        status, out = self.call("/api/v1/ui/graph/profile/suggest/apply",
+                                {"items": [dict(item, id="MET")]}, user="hanna")
+        self.assertEqual(400, status)
+
     def test_a_profile_change_is_reprocessed_from_the_file_source(self):
         import reprocess
 
