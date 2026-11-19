@@ -3618,13 +3618,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "query must be one of %s with object params"
                                                    % sorted(graph.QUERIES)})
             return
+        params = dict(params)
+        compact = params.pop("compact", None) is True and name == "neighborhood"
         res = self._graph_post("/query/" + name, dict(params, **scope_body))
         if res is None or not self._graph_cites_visible(res, req_scope, access):
             return
         if not self._log_graph(ctx, "graph:" + name, json.dumps(params, sort_keys=True),
                                [d.get("source_path") for d in (res.get("documents") or {}).values()]):
             return
-        self._send(200, res)
+        self._send(200, graph.compact_picture(res) if compact else res)
 
     def _graph_cites_visible(self, res, req_scope, access):
         """Second line of defence, as for RAG contexts: the graph's copy of the
@@ -4207,6 +4209,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         sys.stderr.write("[adapter] graph: investigation subgraph (%d nodes, %d edges) by %s\n"
                          % (len(sub["nodes"]), len(sub["edges"]), user))
+        if ctx[1].get("compact") is True:
+            sub = graph.compact_picture(sub)
         self._send(200, dict(sub, ok=True, start=start, levels=levels,
                              shared_contact=built["shared_contact"]))
 

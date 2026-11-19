@@ -552,6 +552,15 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertNotIn("Titkos", blob)
         self.assertNotIn("raktár", blob)
         self.assertEqual([PUBLIC], [d["source_path"] for d in hood["documents"].values()])
+        self.assertNotIn("compact", hood)
+        # A large picture asked compact keeps its relations and documents, not the quotes.
+        with patch.object(graph, "COMPACT_ABOVE", 0):
+            status, small = self.query("lars", "neighborhood", id=kovacs, hops=2, compact=True)
+        self.assertEqual((200, True), (status, small.get("compact")), small)
+        self.assertEqual(({e["id"] for e in hood["edges"]}, hood["documents"]),
+                         ({e["id"] for e in small["edges"]}, small["documents"]))
+        self.assertTrue(any(ev["quote"] for e in hood["edges"] for ev in e["evidence"]))
+        self.assertEqual({""}, {ev["quote"] for e in small["edges"] for ev in e["evidence"]})
         status, found = self.query("hanna", "find", text="Titkos", types=["person"])
         status, control = self.query("hanna", "neighborhood", id=found["entities"][0]["id"])
         self.assertIn("Kovács János", json.dumps(control, ensure_ascii=False))
@@ -836,6 +845,12 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertEqual(("MET", True), (edge["type"], {edge["a"], edge["b"]} <= ids))
             self.assertEqual({PUBLIC}, {d["source_path"] for d in out["documents"].values()})
             self.assertEqual(set(out["documents"]), {ev["doc_id"] for ev in edge["evidence"]})
+            with patch.object(graph, "COMPACT_ABOVE", 0):
+                status, small = self.investigation_graph("lars", {"drives": [DRIVE],
+                                                                  "compact": True})
+            self.assertEqual((200, True, out["documents"]),
+                             (status, small.get("compact"), small["documents"]), small)
+            self.assertEqual({""}, {ev["quote"] for e in small["edges"] for ev in e["evidence"]})
             self.assertEqual([("Kovács János", 0), ("Nagy Éva", 1)],
                              [(r["name"], r["level"]) for r in out["rows"]])
             self.assertEqual(("Kovács János", 2, False),

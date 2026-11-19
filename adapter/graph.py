@@ -34,6 +34,33 @@ GRAPH_EXTS = frozenset((
 QUERIES = frozenset(("find", "mentioned", "entity", "path", "common", "copresence",
                      "shared", "timeline", "neighborhood", "communities", "ranking"))
 RECENT = 200
+# A picture the client may take compact (E26f) once it holds more nodes than this.
+COMPACT_ABOVE = 300
+
+
+def compact_picture(res, above=None):
+    """A large picture (a neighbourhood or an investigation subgraph) for drawing:
+    when it holds more than `above` nodes, each relation keeps one evidence item
+    per document and method, without the quote. Nodes, documents and everything
+    that decides what is shown (protected records, the source of a relation)
+    stay as they were; the quotes come with the `entity` query when a node is
+    opened. A smaller picture is returned unchanged."""
+    if len([n for n in res.get("nodes") or [] if n]) <= (COMPACT_ABOVE if above is None
+                                                          else above):
+        return res
+    edges = []
+    for edge in res.get("edges") or []:
+        kept = {}
+        for ev in edge.get("evidence") or []:
+            key = (ev.get("doc_id"), ev.get("method"))
+            if key not in kept:
+                kept[key] = {"doc_id": ev.get("doc_id"), "method": ev.get("method"),
+                             "page": ev.get("page"), "quote": "",
+                             "confidence": ev.get("confidence") or 0}
+            elif (ev.get("confidence") or 0) > kept[key]["confidence"]:
+                kept[key]["confidence"] = ev.get("confidence") or 0
+        edges.append(dict(edge, evidence=list(kept.values())))
+    return dict(res, edges=edges, compact=True)
 
 
 class GraphError(Exception):

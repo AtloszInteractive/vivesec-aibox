@@ -651,6 +651,12 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `access` itself (the client's own values are overwritten). Every document an
   answer cites is re-checked against the current policy; a hidden one (the
   graph's ACL copy lags) fails the call with 503 and schedules a resync.
+  `neighborhood` takes `params.compact: true` (E26f, large pictures): when the
+  answer holds more than 300 nodes (`graph.COMPACT_ABOVE`), each edge keeps one
+  evidence item per document and method with an empty `quote`, and the answer
+  carries `compact: true`; smaller answers are unchanged. The check and the
+  query log run on the full answer first; the client fetches the quotes of a
+  node with `entity` when it opens it.
 - **Chat**: a plain question (no quick action) that names entities the graph
   knows (`/query/mentioned`: names with Hungarian case endings, identifier
   patterns) gets the path between the first two and their direct relations as
@@ -1032,7 +1038,7 @@ drive delivery and the stored-copy download, refusals).
 #### Investigation subgraph (`/ui/graph/investigation/graph`, BV 1.3 / 2.3)
 
 `POST /api/v1/ui/graph/investigation/graph` `{start, levels, drives?,
-audit_id?}` returns the same investigation as a subgraph in the
+audit_id?, compact?}` returns the same investigation as a subgraph in the
 `/query/neighborhood` shape, `{nodes, edges, documents, truncated}`, so the
 Relationships view draws it unchanged, plus `rows` (`id, level, name, role,
 path, also` per row), `start` and `levels`. It is rebuilt exactly like the
@@ -1047,7 +1053,8 @@ through it (people, shared entities, held identifiers). The subgraph is not
 part of the answer (`Run.investigation_graphs` stays server-side). Purpose
 binding and errors as for the spreadsheet; the query-log kind is
 `graph:investigation` (start, levels, audit id and the row/node/edge counts as
-the question hash; every document of the subgraph in `sources`).
+the question hash; every document of the subgraph in `sources`). With
+`compact: true` a subgraph over 300 nodes comes compact as for `neighborhood`.
 
 Tests: `orchestrator_test.InvestigateTest.test_the_subgraph_*` (nodes and
 edges, hidden evidence and everything reached only through it absent) and
