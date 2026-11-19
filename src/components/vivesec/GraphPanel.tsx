@@ -41,6 +41,7 @@ import {
   type GraphNode,
   type GraphProfile,
   type GraphReviewDecision,
+  type GraphReviewField,
   type GraphReviewItem,
   type GraphReviewList,
   type GraphStatus,
@@ -110,6 +111,8 @@ export function GraphPanel({
   const { tm, lang } = useLang();
   const code = lang.toLowerCase() as keyof GraphLabel;
   const [tab, setTab] = useState<Tab>("explore");
+  /** People the Explore tab opens with (a review pair to look at). */
+  const [exploreSeed, setExploreSeed] = useState<string[] | null>(null);
   const [profile, setProfile] = useState<GraphProfile | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [failure, setFailure] = useState<GraphFailure | null>(null);
@@ -201,6 +204,8 @@ export function GraphPanel({
             <ExploreTab
               drive={drive}
               initial={initial ?? null}
+              seed={exploreSeed}
+              onSeedUsed={() => setExploreSeed(null)}
               relLabel={relLabel}
               relInfo={relInfo}
               subtypeLabel={subtypeLabel}
@@ -208,7 +213,19 @@ export function GraphPanel({
               onOpenSource={onOpenSource}
             />
           )}
-          {tab === "review" && <ReviewTab drive={drive} canEdit={canEdit} />}
+          {tab === "review" && (
+            <ReviewTab
+              drive={drive}
+              canEdit={canEdit}
+              relLabel={relLabel}
+              subtypeLabel={subtypeLabel}
+              onOpenSource={onOpenSource}
+              onOpenPair={(a, b) => {
+                setExploreSeed([a, b]);
+                setTab("explore");
+              }}
+            />
+          )}
           {tab === "processing" && <ProcessingTab drive={drive} canEdit={canEdit} />}
           {tab === "profile" && (
             <ProfileTab
@@ -263,6 +280,8 @@ function useFailure() {
 function ExploreTab({
   drive,
   initial,
+  seed,
+  onSeedUsed,
   relLabel,
   relInfo,
   subtypeLabel,
@@ -271,6 +290,8 @@ function ExploreTab({
 }: {
   drive: string;
   initial: GraphInvestigationView | null;
+  seed: string[] | null;
+  onSeedUsed: () => void;
   relLabel: (type: string) => string;
   relInfo: (type: string) => RelationInfo;
   subtypeLabel: (sub: string) => string;
@@ -297,6 +318,32 @@ function ExploreTab({
   // Two nodes picked with Shift+click, and the path or common relations found.
   const [picked, setPicked] = useState<string[]>([]);
   const [emphasis, setEmphasis] = useState<Emphasis | null>(null);
+
+  // A review pair opened here: both people with their relations, picked, so
+  // "path" and "common relations" work on them right away.
+  useEffect(() => {
+    if (!seed?.length) return;
+    const ids = seed;
+    onSeedUsed();
+    void (async () => {
+      setBusy(true);
+      const parts = await run(() =>
+        Promise.all(ids.map((id) => graphApi.neighborhood(drive, id, 1))),
+      );
+      setBusy(false);
+      if (!parts?.length) return;
+      remember();
+      setGraph(parts.slice(1).reduce((all, part) => mergeGraphs(all, part), parts[0]));
+      setFocus(ids[0]);
+      setPicked(ids.slice(0, 2));
+      setSelectedEdge(null);
+      setEmphasis(null);
+      setPathNote(null);
+      setInvestigating(false);
+    })();
+    // Runs once per seed; remember() reads the picture on screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed]);
 
   function remember() {
     if (graph) setHistory((h) => [...h.slice(-19), { graph, focus }]);
@@ -1197,7 +1244,16 @@ function useReasonText() {
   );
 }
 
-function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+type ReviewProps = {
+  drive: string;
+  canEdit: boolean;
+  relLabel: (type: string) => string;
+  subtypeLabel: (sub: string) => string;
+  onOpenSource: (source: GraphSource) => void;
+  onOpenPair: (a: string, b: string) => void;
+};
+
+function ReviewTab(props: ReviewProps) {
   const { tm } = useLang();
   const [view, setView] = useState<ReviewView>("open");
   return (
@@ -1216,16 +1272,19 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
           </button>
         ))}
       </div>
-      {view === "open" ? (
-        <OpenReview drive={drive} canEdit={canEdit} />
-      ) : (
-        <DecidedReview drive={drive} />
-      )}
+      {view === "open" ? <OpenReview {...props} /> : <DecidedReview drive={props.drive} />}
     </div>
   );
 }
 
-function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+function OpenReview({
+  drive,
+  canEdit,
+  relLabel,
+  subtypeLabel,
+  onOpenSource,
+  onOpenPair,
+}: ReviewProps) {
   const { tm } = useLang();
   const reason = useReasonText();
   const { run, notice } = useFailure();
@@ -1235,6 +1294,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [why, setWhy] = useState("");
+  const [roles, setRoles] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [done, setDone] = useState<Record<string, Decision>>({});
   const [confirm, setConfirm] = useState<Decision | null>(null);
@@ -1252,6 +1312,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
         graphApi.reviewList(drive, {
           q: applied || undefined,
           reason: why || undefined,
+          include_role_mismatch: roles || undefined,
           offset,
         }),
       );
@@ -1265,7 +1326,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
         setConfirm(null);
       }
     },
-    [drive, run, applied, why],
+    [drive, run, applied, why, roles],
   );
   useEffect(() => {
     void load();
@@ -1362,6 +1423,17 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
             <option key={r} value={r}>{`${reason(r)} (${n})`}</option>
           ))}
         </select>
+        {Boolean(list?.role_mismatch) && (
+          <label
+            className="flex cursor-pointer items-center gap-1.5 text-xs text-ink/70"
+            title={tm(
+              "An inmate and a visitor of the same name are taken as two people unless more than the name links them.",
+            )}
+          >
+            <input type="checkbox" checked={roles} onChange={() => setRoles((v) => !v)} />
+            {`${tm("Also pairs of different roles")} (${list?.role_mismatch ?? 0})`}
+          </label>
+        )}
       </div>
       {canEdit && pending.length > 0 && (
         <div
@@ -1464,6 +1536,13 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                   {reason(item.reason)} · {Math.round(item.score * 100)}%
                 </span>
               </div>
+              <PairDetails
+                item={item}
+                relLabel={relLabel}
+                subtypeLabel={subtypeLabel}
+                onOpenSource={onOpenSource}
+                onOpenPair={onOpenPair}
+              />
               {state ? (
                 <div
                   className="mt-2 flex items-center gap-3 text-xs"
@@ -1511,6 +1590,135 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
         </button>
       )}
     </>
+  );
+}
+
+const FIELD_STATE: Record<GraphReviewField["state"], { text: string; className: string }> = {
+  same: { text: "Matches", className: "text-emerald-700 dark:text-emerald-300" },
+  conflict: { text: "Conflicts", className: "text-rose-700 dark:text-rose-300" },
+  different: { text: "Differs", className: "text-ink/60" },
+  a_only: { text: "Only in record 1", className: "text-ink/50" },
+  b_only: { text: "Only in record 2", className: "text-ink/50" },
+};
+
+/** What tells the two records of a review pair apart: the stated details side
+ *  by side, then each record's role, sources and relations. */
+function PairDetails({
+  item,
+  relLabel,
+  subtypeLabel,
+  onOpenSource,
+  onOpenPair,
+}: {
+  item: GraphReviewItem;
+  relLabel: (type: string) => string;
+  subtypeLabel: (sub: string) => string;
+  onOpenSource: (source: GraphSource) => void;
+  onOpenPair: (a: string, b: string) => void;
+}) {
+  const { tm } = useLang();
+  if (!item.a_info || !item.b_info) return null;
+  const fields = item.fields ?? [];
+  const fieldName = (name: string) =>
+    name === "identifiers" ? tm("Phones, documents, addresses") : tm(name);
+  return (
+    <div className="mt-2 space-y-2">
+      {fields.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px]">
+            <thead className="text-ink/45">
+              <tr>
+                <th className="py-0.5 pr-3 font-normal" />
+                <th className="py-0.5 pr-3 font-normal">{tm("Record 1")}</th>
+                <th className="py-0.5 pr-3 font-normal">{tm("Record 2")}</th>
+                <th className="py-0.5 font-normal" />
+              </tr>
+            </thead>
+            <tbody>
+              {fields.map((f) => (
+                <tr key={f.name} className="border-t border-ink/5">
+                  <td className="py-0.5 pr-3 text-ink/60">{fieldName(f.name)}</td>
+                  <td className="py-0.5 pr-3 text-ink">{f.a.join(", ") || "—"}</td>
+                  <td className="py-0.5 pr-3 text-ink">{f.b.join(", ") || "—"}</td>
+                  <td className={`py-0.5 whitespace-nowrap ${FIELD_STATE[f.state].className}`}>
+                    {tm(FIELD_STATE[f.state].text)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="text-[11px] text-ink/50">
+          {tm("Neither record states a birth date, a mother's name or an identifier.")}
+        </div>
+      )}
+      <div className="grid gap-2 md:grid-cols-2">
+        {(
+          [
+            [tm("Record 1"), item.a_info],
+            [tm("Record 2"), item.b_info],
+          ] as const
+        ).map(([title, side]) => (
+          <div key={title} className="rounded-lg border border-ink/10 bg-shade/20 p-2 text-[11px]">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-ink/50">{title}</span>
+              <span className="rounded-full border border-ink/15 px-1.5 py-px text-ink/80">
+                {(side.subtype && subtypeLabel(side.subtype)) ||
+                  side.subtype ||
+                  tm("No role given")}
+              </span>
+              <span className="ml-auto text-ink/45">
+                {`${side.counts.documents} ${tm("documents")} · ${side.counts.links} ${tm("relations")}`}
+              </span>
+            </div>
+            {side.documents.map((d) => (
+              <button
+                key={d.doc_id}
+                onClick={() => onOpenSource({ path: d.path, page: 0, quote: "", label: d.name })}
+                className="mt-1 flex max-w-full items-center gap-1 truncate hover:underline"
+                style={{ color: ACCENT_TEXT }}
+                title={d.path}
+              >
+                <FileText className="h-3 w-3 shrink-0" />
+                <span className="truncate">{d.name}</span>
+              </button>
+            ))}
+            {side.links.map((l, i) => {
+              const doc = side.documents.find((d) => d.doc_id === l.doc_id);
+              return (
+                <div key={i} className="mt-1.5">
+                  <div className="text-ink/80">
+                    {l.raw_label || relLabel(l.type)} · <span className="text-ink">{l.other}</span>
+                    {l.start ? <span className="text-ink/45">{` · ${l.start}`}</span> : null}
+                  </div>
+                  {l.quote &&
+                    (doc ? (
+                      <button
+                        onClick={() =>
+                          onOpenSource({ path: doc.path, page: 0, quote: l.quote, label: doc.name })
+                        }
+                        className="line-clamp-2 text-left italic text-ink/55 hover:underline"
+                      >
+                        „{l.quote}”
+                      </button>
+                    ) : (
+                      <div className="line-clamp-2 italic text-ink/55">„{l.quote}”</div>
+                    ))}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={() => onOpenPair(item.a, item.b)}
+        className="inline-flex items-center gap-1 text-[11px] hover:underline"
+        style={{ color: ACCENT_TEXT }}
+      >
+        <Network className="h-3 w-3" /> {tm("Open both in the graph")}
+      </button>
+    </div>
   );
 }
 

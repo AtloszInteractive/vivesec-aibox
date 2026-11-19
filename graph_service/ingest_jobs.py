@@ -541,7 +541,8 @@ class IngestWorker:
                 if "basis" in item and not any(view.document(d) for d in item["basis"]):
                     # A key-only pair rests on a record the caller cannot read.
                     continue
-                item = dict(item, a_label=na["label"], b_label=nb["label"])
+                item = dict(item, a_label=na["label"], b_label=nb["label"],
+                            a_subtype=na.get("subtype") or "", b_subtype=nb.get("subtype") or "")
                 item.pop("basis", None)
             out.append(item)
         return out

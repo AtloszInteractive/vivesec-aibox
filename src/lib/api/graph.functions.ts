@@ -138,6 +138,34 @@ export type GraphProfileChange =
   | { change: "synonyms"; relation: string; added: string[] }
   | { change: "pattern"; subtype: string; new_subtype: boolean };
 
+/** What the caller's visible documents say of one side of a review pair. */
+export type GraphReviewSide = {
+  subtype: string;
+  attributes: { name: string; value: string }[];
+  /** What the person holds: phone, ID card, vehicle, address. */
+  identifiers: { id: string; label: string; subtype: string }[];
+  documents: { doc_id: string; path: string; name: string }[];
+  links: {
+    type: string;
+    raw_label: string;
+    other: string;
+    other_id: string;
+    other_type: string;
+    start: string | null;
+    end: string | null;
+    quote: string;
+    doc_id: string;
+  }[];
+  counts: { documents: number; links: number };
+};
+
+export type GraphReviewField = {
+  name: string;
+  a: string[];
+  b: string[];
+  state: "same" | "conflict" | "different" | "a_only" | "b_only";
+};
+
 export type GraphReviewItem = {
   a: string;
   b: string;
@@ -147,6 +175,11 @@ export type GraphReviewItem = {
   names: string[];
   a_label?: string;
   b_label?: string;
+  a_subtype?: string;
+  b_subtype?: string;
+  a_info?: GraphReviewSide;
+  b_info?: GraphReviewSide;
+  fields?: GraphReviewField[];
 };
 
 export type GraphReviewList = {
@@ -156,6 +189,8 @@ export type GraphReviewList = {
   /** Every open pair in the caller's scope. */
   open_total: number;
   reasons: Record<string, number>;
+  /** Different roles linked by the name alone, left out unless asked for. */
+  role_mismatch?: number;
 };
 
 export type GraphReviewDecision = {
@@ -251,8 +286,11 @@ export const graphApi = {
       before?: string;
     },
   ) => adapterQueryLog(drive, filter),
-  reviewList: (drive: string, filter: { q?: string; reason?: string; offset?: number } = {}) =>
-    adapterGraph<GraphReviewList>("review/list", { limit: 200, ...filter }, drive),
+  // Every listed pair carries both sides' details, so a page stays small.
+  reviewList: (
+    drive: string,
+    filter: { q?: string; reason?: string; offset?: number; include_role_mismatch?: boolean } = {},
+  ) => adapterGraph<GraphReviewList>("review/list", { limit: 50, ...filter }, drive),
   reviewDecide: (drive: string, a: string, b: string, decision: "merge" | "separate") =>
     adapterGraph<{ decided: string }>("review/decide", { a, b, decision }, drive),
   reviewDecideMany: (

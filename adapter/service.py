@@ -4043,6 +4043,8 @@ class Handler(BaseHTTPRequestHandler):
         for key in ("q", "reason"):
             if payload.get(key):
                 body[key] = str(payload[key])[:200]
+        if payload.get("include_role_mismatch") is True:
+            body["include_role_mismatch"] = True
         res = self._graph_post("/review/list", body)
         if res is not None and self._log_graph(ctx, "graph:review", "", []):
             self._send(200, res)

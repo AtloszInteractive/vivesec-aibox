@@ -52,6 +52,7 @@ from extraction import fold  # noqa: E402
 import analytics  # noqa: E402
 import namesakes  # noqa: E402
 import queries  # noqa: E402
+import review_cards  # noqa: E402
 from graph_store import MemoryGraphStore, StoreError  # noqa: E402
 from ingest import IngestError, parse_document_payload  # noqa: E402
 from model import CORE_TYPES, RECORD_KIND  # noqa: E402
@@ -507,6 +508,11 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
     by = str(body.get("by") or "")[:200]
     if path == "/review/list":
         items = worker.open_review(view)
+        # Two roles linked by the name alone are two people (namesakes.py):
+        # counted, and listed only when asked for.
+        mismatched = [i for i in items if review_cards.role_mismatch(i)]
+        if not body.get("include_role_mismatch"):
+            items = [i for i in items if not review_cards.role_mismatch(i)]
         reasons = {}
         for item in items:
             reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1
@@ -516,9 +522,12 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
             items = [i for i in items if q in fold(i["a_label"]) or q in fold(i["b_label"])]
         if body.get("reason"):
             items = [i for i in items if i["reason"] == body["reason"]]
+        items = review_cards.order(items)
         offset = _int(body, "offset", 0, 0, 10 ** 7)
-        return {"review": items[offset:offset + _int(body, "limit", 100, 1, 1000)],
-                "total": len(items), "open_total": open_total, "reasons": reasons}
+        page = items[offset:offset + _int(body, "limit", 100, 1, 1000)]
+        return {"review": review_cards.enrich(view, page, state.holding_types()),
+                "total": len(items), "open_total": open_total, "reasons": reasons,
+                "role_mismatch": len(mismatched)}
     if path == "/review/decide":
         decision = body.get("decision")
         if decision not in ("merge", "separate"):
