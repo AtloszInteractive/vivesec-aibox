@@ -297,6 +297,11 @@ const M: Record<string, Tri> = {
   "Being read again…": ["Újraolvasás folyamatban…", "Læses igen…", "Wird erneut gelesen…"],
   "Reading again failed": ["Az újraolvasás nem sikerült", "Genlæsning mislykkedes", "Erneutes Lesen fehlgeschlagen"],
   "Reread finished": ["Újraolvasva", "Genlæst", "Erneut gelesen"],
+  "Some of these files came from an earlier sync and are not held on the AI Box: upload them again to read them.": [
+    "Néhány fájl egy korábbi szinkronból származik, és nincs az AI Boxon: töltsd fel újra, hogy beolvasható legyen.",
+    "Nogle af filerne kom fra en tidligere synkronisering og ligger ikke på AI Boxen: upload dem igen for at læse dem.",
+    "Einige dieser Dateien stammen aus einer früheren Synchronisierung und liegen nicht auf der AI Box: lade sie erneut hoch, um sie zu lesen.",
+  ],
   "Pages not read": ["Nem olvasott oldalak", "Sider, der ikke er læst", "Nicht gelesene Seiten"],
   "Only the first documents are listed; the counts cover all.": [
     "Csak az első dokumentumok szerepelnek a listában; a darabszámok mindet lefedik.",

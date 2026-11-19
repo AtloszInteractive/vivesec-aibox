@@ -436,6 +436,9 @@ class RereadHttpTest(StandaloneHttpCase):
         self.assertEqual((True, True, 1, "queued"),
                          (listed["can_reread"], listed["can_delete"], listed["rereading"],
                           scan["reread"]["state"]))
+        self.assertEqual({ROOM + "/scan.pdf": True, ROOM + "/other.txt": True,
+                          ROOM + "/gone.pdf": False},
+                         {d["source_path"]: d["stored"] for d in listed["documents"]})
         # Asked again while waiting: not queued twice.
         self.assertEqual(self.call("POST", "/api/v1/ui/index/reread",
                                    {"paths": [ROOM + "/scan.pdf"]})[1]["queued"], 0)

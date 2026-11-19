@@ -2781,6 +2781,9 @@ function UnreadableDocuments({
           const docs = (data?.documents ?? []).filter((d) => d.reason === reason);
           const shown = open[reason] ?? 0;
           const fixable = canReread && REREADABLE.has(reason);
+          // Indexed by an earlier sync, not held on the box: no reread, no download.
+          const stored = docs.filter((d) => d.stored).length;
+          const notHeld = docs.some((d) => d.stored === false);
           return (
             <div
               key={reason}
@@ -2793,14 +2796,14 @@ function UnreadableDocuments({
                 </span>
                 <span className="text-ink/50">{n}</span>
                 <span className="ml-auto flex flex-wrap gap-1.5">
-                  {fixable && (
+                  {fixable && stored > 0 && (
                     <button
                       onClick={() => reread({ reason })}
                       disabled={busy}
                       className={small}
                       style={{ color: ACCENT_TEXT }}
                     >
-                      {`${tm("Read all again")} (${n})`}
+                      {`${tm("Read all again")} (${stored})`}
                     </button>
                   )}
                   {docs.length > 0 && (
@@ -2815,6 +2818,13 @@ function UnreadableDocuments({
               </div>
               {SKIP_HELP[reason] && (
                 <div className="mt-1 text-[11px] text-ink/55">{tm(SKIP_HELP[reason])}</div>
+              )}
+              {canReread && notHeld && (
+                <div className="mt-1 text-[11px] text-ink/55">
+                  {tm(
+                    "Some of these files came from an earlier sync and are not held on the AI Box: upload them again to read them.",
+                  )}
+                </div>
               )}
               {shown > 0 && (
                 <div className="mt-2 space-y-1.5">
@@ -2838,15 +2848,22 @@ function UnreadableDocuments({
                               {tm(REREAD_STATE[d.reread.state] ?? d.reread.state)}
                             </span>
                           )}
-                          <button
-                            onClick={() =>
-                              onOpenSource({ path: d.source_path, page: 0, quote: "", label: name })
-                            }
-                            className={small}
-                          >
-                            {tm("Open")}
-                          </button>
-                          {fixable && (
+                          {d.stored !== false && (
+                            <button
+                              onClick={() =>
+                                onOpenSource({
+                                  path: d.source_path,
+                                  page: 0,
+                                  quote: "",
+                                  label: name,
+                                })
+                              }
+                              className={small}
+                            >
+                              {tm("Open")}
+                            </button>
+                          )}
+                          {fixable && d.stored && (
                             <button
                               onClick={() => reread({ paths: [d.source_path] })}
                               disabled={

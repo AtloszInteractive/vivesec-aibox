@@ -3624,6 +3624,14 @@ class Handler(BaseHTTPRequestHandler):
             state = REREAD.status(d.get("source_path") or "") if writer else None
             if state:
                 item["reread"] = {"state": state["state"], "error": state.get("error")}
+            if writer:
+                # Only a file the box holds can be read again; one indexed by an
+                # earlier sync is listed (and may be deleted) but not reread.
+                try:
+                    item["stored"] = STORE.kind(STORE.canonical(d.get("source_path") or "")) \
+                        == "file"
+                except drivestore.StoreError:
+                    item["stored"] = False
             listed.append(item)
         self._send(200, {"ok": True, "count": len(docs), "reasons": reasons,
                          "pages_skipped": sum(len(d.get("skipped_pages") or []) for d in docs),

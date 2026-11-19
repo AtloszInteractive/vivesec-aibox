@@ -1139,6 +1139,9 @@ export type AdapterSkipped = {
     skipped_pages?: { page: number; reason: string; quality: number | null }[];
     /** Standalone box: how far a reread of this stored file got. */
     reread?: { state: "queued" | "running" | "done" | "failed"; error?: string | null };
+    /** Standalone box, store writer: the box holds the file (only then it can
+     *  be read again; one indexed by an earlier sync can only be deleted). */
+    stored?: boolean;
   }[];
   truncated: boolean;
   /** Standalone box, store writer: the files can be read again / deleted. */

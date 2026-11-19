@@ -1352,7 +1352,9 @@ counts `queued`, `skipped` (outside the scope, invisible, not stored) and
 `refused` (queue full). The skipped list then carries `can_reread`,
 `can_delete` (the same writer right; deleting uses `/ui/store/delete`),
 `rereading` (still queued or running) and per document `reread {state, error}`
-(`queued`, `running`, `done`, `failed`; kept in memory only). Elsewhere the
+(`queued`, `running`, `done`, `failed`; kept in memory only) and `stored` (the
+box holds the file: only then it can be read again or downloaded; a document
+indexed by an earlier ViVeSecBox sync can only be deleted). Elsewhere the
 endpoint answers 404.
 
 #### Purpose-bound queries and the query log (concept 5.2-5.3)
