@@ -1151,9 +1151,17 @@ and an EU act after "(EU) " / "(EK) " (`2016/679`). A real number of that shape
 
 The BV hands over the result set of a periodic export run (FŐNIX base data,
 placements, the approved-contact list; later the intelligence log, ODIN, BvBank,
-JFK) as CSV or XLSX. These are read by rule, never by the model: no GPU time and
-no extraction error. A graph administrator (`ADAPTER_GRAPH_ADMINS`) sends one
-file per call:
+JFK). These are read by rule, never by the model: no GPU time and
+no extraction error. The file may be CSV/TSV, XLSX/XLSM, legacy XLS (xlrd in the
+graph image), ODS, JSON or JSON Lines, XML (the repeated record elements; a
+DOCTYPE is refused) or an SQL dump (`CREATE TABLE` / `INSERT ... VALUES` of
+MySQL/MariaDB, PostgreSQL `--inserts` or `COPY ... FROM stdin`, SQL Server
+scripts; only read as text, never executed) -- `graph_service/table_formats.py`.
+A file with several tables (sheets, SQL tables, XML record kinds) is read where
+the profile's `sheet` names, else where the header holds most of the source's
+columns; an unclear choice is refused with the table names.
+`/ui/graph/import/sources` also lists the accepted `formats`. A graph
+administrator (`ADAPTER_GRAPH_ADMINS`) sends one file per call:
 
 `POST /api/v1/ui/graph/import` `{source, as_of, folder, filename, content_b64,
 mode?, force?, wait?}`; `/ui/graph/import/sources` lists the sources,
@@ -1332,6 +1340,20 @@ the adapter checks every path again (scope + `_visible`), as it does for graph
 answers. The answer has `count`, `reasons` (counts per reason), `pages_skipped`
 and up to 500 `documents` with `reason`, `ocr_state` and `skipped_pages`; the
 UI shows it under Relationships › Processing ("Not readable for search").
+
+On a standalone box the files are held here (E27 S5), so a store writer
+(`ADAPTER_STORE_WRITERS`) can read them again without a resync:
+`POST /api/v1/ui/index/reread` with `{paths: [...]}` or `{reason: "..."}` (every
+skipped document of that reason in the caller's scope, at most 500) queues the
+stored files that are inside the scope and visible to the caller; each is
+indexed again exactly like a fresh upload (text, then OCR for pages without a
+text layer), one at a time in the background (`adapter/reread.py`). The answer
+counts `queued`, `skipped` (outside the scope, invisible, not stored) and
+`refused` (queue full). The skipped list then carries `can_reread`,
+`can_delete` (the same writer right; deleting uses `/ui/store/delete`),
+`rereading` (still queued or running) and per document `reread {state, error}`
+(`queued`, `running`, `done`, `failed`; kept in memory only). Elsewhere the
+endpoint answers 404.
 
 #### Purpose-bound queries and the query log (concept 5.2-5.3)
 

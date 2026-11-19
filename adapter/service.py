@@ -160,6 +160,7 @@ import person_summary  # noqa: E402
 import purpose  # noqa: E402
 import querylog  # noqa: E402
 import reprocess  # noqa: E402
+import reread  # noqa: E402
 import record_rag  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
@@ -1052,6 +1053,28 @@ def _store_unindex(path):
 
 
 UPLOADS = drivestore.UploadWorker(STORE, CLAMD, UPLOAD_SCAN, _store_index, _store_unindex)
+# A store writer sends unreadable stored documents through extraction again (E10b).
+
+
+def _reread_index(path):
+    """Index a stored file again. A delete that ran meanwhile wins: what this
+    put back into the index is removed again (as UploadWorker does)."""
+    if STORE.kind(path) != "file":
+        return {"status": "gone"}
+    res = _store_index(path)
+    if STORE.kind(path) != "file":
+        _store_unindex(path)
+        return {"status": "gone"}
+    return res
+
+
+REREAD = reread.Rereader(_reread_index)
+REREAD_MAX_PATHS = 500
+
+
+def _rereadable():
+    """Stored files can be read again only where the box holds them."""
+    return INTEGRATION == integration.MODE_STANDALONE and STORE.enabled
 
 # Administration of a standalone box (E27 S7): only callers whose verified
 # token carries the admin role (the authentication service's ADMIN_ROLE).
@@ -2550,6 +2573,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/watch/check": self._graph_watch_check,
                 "/api/v1/ui/graph/watch/seen": self._graph_watch_seen,
                 "/api/v1/ui/index/skipped": self._index_skipped,
+                "/api/v1/ui/index/reread": self._index_reread,
                 "/api/v1/ui/store/list": self._store_list,
                 "/api/v1/ui/store/upload": self._store_upload,
                 "/api/v1/ui/store/mkdir": self._store_mkdir,
@@ -3561,11 +3585,21 @@ class Handler(BaseHTTPRequestHandler):
                          "to": view["to"], "as_of": out["as_of"], "total": out["total"],
                          "records": out["records"]})
 
+    def _skipped_docs(self, req_scope, access):
+        res = rag_post_json("/index/skipped", {"corpus_ids": list(req_scope.corpus_ids),
+                                               "access": access.as_rag()})
+        visible = _visible(access)
+        return [d for d in res.get("skipped") or []
+                if req_scope.contains_path(d.get("source_path") or "")
+                and visible(d.get("source_path") or "")]
+
     def _index_skipped(self):
         """The documents of the caller's own scope the search cannot read --
         scans waiting for OCR or interrupted, unsupported or empty files, pages
         OCR skipped -- with the reason. The RAG filters by scope and ACL in its
-        query; the paths are checked here again, as for graph answers."""
+        query; the paths are checked here again, as for graph answers. On a
+        standalone box a store writer may read them again (`can_reread`), and
+        each listed document says how far its reread got."""
         if self._locked_guard():
             return
         vvs = self._read_vvs()
@@ -3577,22 +3611,65 @@ class Handler(BaseHTTPRequestHandler):
         if req_scope is None:
             return
         access = self._access()
-        res = rag_post_json("/index/skipped", {"corpus_ids": list(req_scope.corpus_ids),
-                                               "access": access.as_rag()})
-        visible = _visible(access)
-        docs = [d for d in res.get("skipped") or []
-                if req_scope.contains_path(d.get("source_path") or "")
-                and visible(d.get("source_path") or "")]
+        docs = self._skipped_docs(req_scope, access)
         reasons = {}
         for d in docs:
             reasons[d.get("reason") or "unknown"] = reasons.get(d.get("reason") or "unknown", 0) + 1
         limit = max(1, min(int(payload.get("limit") or SKIPPED_LIST_LIMIT), SKIPPED_LIST_LIMIT))
+        writer = _rereadable() and drivestore.may_write(STORE_WRITERS, access)
+        listed = []
+        for d in docs[:limit]:
+            item = {k: d.get(k) for k in ("source_path", "reason", "ocr_state", "skipped_pages",
+                                          "size") if d.get(k) is not None}
+            state = REREAD.status(d.get("source_path") or "") if writer else None
+            if state:
+                item["reread"] = {"state": state["state"], "error": state.get("error")}
+            listed.append(item)
         self._send(200, {"ok": True, "count": len(docs), "reasons": reasons,
                          "pages_skipped": sum(len(d.get("skipped_pages") or []) for d in docs),
-                         "documents": [{k: d.get(k) for k in ("source_path", "reason", "ocr_state",
-                                                              "skipped_pages", "size") if d.get(k)
-                                        is not None} for d in docs[:limit]],
-                         "truncated": len(docs) > limit})
+                         "documents": listed, "truncated": len(docs) > limit,
+                         "can_reread": writer, "can_delete": writer,
+                         "rereading": REREAD.pending() if writer else 0})
+
+    def _index_reread(self):
+        """A store writer of a standalone box sends unreadable stored documents
+        through extraction (OCR included) again: the listed `paths`, or every
+        document of the scope the search skipped for `reason`. Only files the
+        box holds, inside the scope and visible to the caller, are queued."""
+        if not _rereadable():
+            self._send(404, {"ok": False, "error": "not available in this mode"})
+            return
+        ctx = self._store_context(write=True)
+        if ctx is None:
+            return
+        payload = self._read_json()
+        req_scope, visible = ctx["scope"], ctx["visible"]
+        if isinstance(payload.get("paths"), list):
+            wanted = [str(p) for p in payload["paths"][:REREAD_MAX_PATHS] if p]
+        elif payload.get("reason"):
+            reason = str(payload["reason"])
+            wanted = [d["source_path"] for d in self._skipped_docs(req_scope, ctx["access"])
+                      if d.get("reason") == reason][:REREAD_MAX_PATHS]
+        else:
+            self._send(400, {"ok": False, "error": "paths or reason required"})
+            return
+        paths, skipped = [], []
+        for raw in wanted:
+            try:
+                path = STORE.canonical(raw)
+            except drivestore.StoreError:
+                skipped.append(raw)
+                continue
+            if not req_scope.contains_path(path) or not visible(path) \
+                    or STORE.kind(path) != "file":
+                skipped.append(raw)
+                continue
+            paths.append(path)
+        queued, refused = REREAD.submit(paths)
+        if queued:
+            STORE.event("reread", ctx["user"], queued[0], entries=len(queued))
+        self._send(200, {"ok": True, "queued": len(queued), "skipped": len(skipped),
+                         "refused": len(refused)})
 
     # -- relationship analysis (E26) ------------------------------------------
     def _graph_request(self, bound=False):
@@ -3936,7 +4013,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, res)
 
     def _graph_import(self):
-        """A graph administrator imports a periodic export (CSV/XLSX) of a
+        """A graph administrator imports a periodic export (graph_service/table_formats.py) of a
         structured source into a folder of their scope (E28). The records live
         in the graph -- the file is not stored on a drive or in the RAG; only the
         open text of a source the profile marks `rag` (E29) is copied to the RAG

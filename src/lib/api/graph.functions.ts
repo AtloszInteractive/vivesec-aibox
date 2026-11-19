@@ -6,7 +6,9 @@ import {
   adapterGraph,
   AdapterGraphError,
   adapterQueryLog,
+  adapterReread,
   adapterSkipped,
+  storeDelete,
   type AdapterQueryLog,
   type AdapterQueryLogRecord,
   type AdapterSkipped,
@@ -274,6 +276,10 @@ export const graphApi = {
   status: (drive: string) => adapterGraph<GraphStatus>("status", {}, drive),
   /** E10b: what the search cannot read in this scope (not a graph call). */
   skipped: (drive: string) => adapterSkipped(drive),
+  reread: (drive: string, target: { paths: string[] } | { reason: string }) =>
+    adapterReread(drive, target),
+  /** Standalone box: remove a stored file (index first, then the disk). */
+  deleteStored: (drive: string, path: string) => storeDelete(drive, path),
   /** The query log: the caller's own records, everyone's for a leader (not a graph call). */
   queryLog: (
     drive: string,
@@ -427,9 +433,10 @@ export const graphApi = {
     ),
   reprocessCancel: (drive: string) =>
     adapterGraph<{ run: GraphReprocessRun }>("reprocess/cancel", {}, drive),
-  /** E28: the structured sources of the profile (graph administrators). */
+  /** E28: the structured sources of the profile (graph administrators), and
+   *  the file types an export may come in. */
   importSources: (drive: string) =>
-    adapterGraph<{ sources: GraphImportSource[] }>("import/sources", {}, drive),
+    adapterGraph<{ sources: GraphImportSource[]; formats?: string[] }>("import/sources", {}, drive),
   /** E28: one periodic export into a folder; answers within `wait` seconds or
    *  with the job still running (then `importStatus`). */
   importRecords: (

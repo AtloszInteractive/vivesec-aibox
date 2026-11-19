@@ -375,19 +375,15 @@ def import_sources(state: State) -> dict:
     """The profile's structured sources, as an importer needs to know them: every
     column the mapping reads (the protected ones too: they are in the file), and
     whether the records' free text also goes into the search (`rag`, E29)."""
+    import structured_import
+
     out = []
     for s in state.profile.get("structured_sources") or []:
-        columns = {c for e in s["entities"] for c in [e["name"], *e["attributes"].values()] if c}
-        columns |= {c for r in s["relations"] for c in [r["start"], r["end"], *r["label"]] if c}
-        columns |= set(s["record_id"]) | set(s.get("text_columns") or [])
-        columns |= set((s.get("protected") or {}).get("columns") or [])
-        for extra in ((s.get("acl") or {}).get("column"), (s.get("deleted") or {}).get("column")):
-            if extra:
-                columns.add(extra)
+        columns = structured_import.source_columns(s)
         out.append({"id": s["id"], "label": s["label"], "title": s["title"], "mode": s["mode"],
                     "record_id": s["record_id"], "columns": sorted(columns),
                     "acl": bool(s.get("acl")), "rag": bool(s.get("rag"))})
-    return {"sources": out}
+    return {"sources": out, "formats": list(structured_import.table_formats.EXTENSIONS)}
 
 
 def import_rag(state: State, path: str, body: dict) -> dict:

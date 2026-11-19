@@ -215,28 +215,102 @@ const M: Record<string, Tri> = {
     "Alle dokumenter i dette omfang kan læses.",
     "Alle Dokumente in diesem Bereich sind lesbar.",
   ],
+  "These documents are not in the search, or only in part. Each group says why and what to do.": [
+    "Ezek a dokumentumok nincsenek a keresőben, vagy csak részben. Minden csoportnál látszik az ok és a teendő.",
+    "Disse dokumenter er ikke i søgningen eller kun delvist. Hver gruppe siger hvorfor, og hvad der kan gøres.",
+    "Diese Dokumente sind nicht oder nur teilweise in der Suche. Jede Gruppe nennt den Grund und was zu tun ist.",
+  ],
+  "These documents are not in the search, or only in part. Each group says why; a scan is read again after it is synced again from the ViVeSecBox.": [
+    "Ezek a dokumentumok nincsenek a keresőben, vagy csak részben. Minden csoportnál látszik az ok; egy szkennelt fájl a ViVeSecBoxból történő újraszinkron után olvasódik be újra.",
+    "Disse dokumenter er ikke i søgningen eller kun delvist. Hver gruppe siger hvorfor; en scanning læses igen, når den synkroniseres igen fra ViVeSecBox.",
+    "Diese Dokumente sind nicht oder nur teilweise in der Suche. Jede Gruppe nennt den Grund; ein Scan wird nach erneuter Synchronisierung aus der ViVeSecBox neu gelesen.",
+  ],
+  "The file holds only images of text. Reading it again runs OCR on its pages.": [
+    "A fájl csak a szöveg képét tartalmazza. Az újraolvasás OCR-rel olvassa be az oldalait.",
+    "Filen indeholder kun billeder af tekst. Genlæsning kører OCR på siderne.",
+    "Die Datei enthält nur Bilder von Text. Erneutes Lesen führt OCR auf den Seiten aus.",
+  ],
+  "OCR is reading it now or soon; nothing to do.": [
+    "Az OCR most vagy hamarosan beolvassa; nincs teendő.",
+    "OCR læser den nu eller snart; der er intet at gøre.",
+    "OCR liest sie gerade oder bald; nichts zu tun.",
+  ],
+  "A restart stopped the OCR. Reading it again finishes it.": [
+    "Egy újraindítás megszakította az OCR-t. Az újraolvasás befejezi.",
+    "En genstart stoppede OCR. Genlæsning gør den færdig.",
+    "Ein Neustart hat die OCR unterbrochen. Erneutes Lesen schließt sie ab.",
+  ],
+  "The OCR queue was full when it arrived. Reading it again queues it now.": [
+    "Amikor megérkezett, az OCR-sor tele volt. Az újraolvasás most sorba állítja.",
+    "OCR-køen var fuld, da den kom. Genlæsning sætter den i kø nu.",
+    "Die OCR-Warteschlange war voll, als sie ankam. Erneutes Lesen reiht sie jetzt ein.",
+  ],
+  "The OCR stopped with an error. Read it again; if it fails again, replace the file.": [
+    "Az OCR hibával leállt. Olvasd be újra; ha ismét hibázik, cseréld le a fájlt.",
+    "OCR stoppede med en fejl. Læs den igen; fejler den igen, så erstat filen.",
+    "Die OCR ist mit einem Fehler abgebrochen. Lies sie erneut; schlägt es wieder fehl, ersetze die Datei.",
+  ],
+  "OCR found no readable text (a blank or very poor scan). Replace it with a better scan.": [
+    "Az OCR sem talált olvasható szöveget (üres vagy nagyon gyenge szkennelés). Cseréld le jobb minőségű szkennelésre.",
+    "OCR fandt ingen læsbar tekst (en tom eller meget dårlig scanning). Erstat den med en bedre scanning.",
+    "Die OCR hat keinen lesbaren Text gefunden (leerer oder sehr schlechter Scan). Ersetze ihn durch einen besseren Scan.",
+  ],
+  "Some pages were too poor to read; the rest is searchable. A better scan fixes it.": [
+    "Néhány oldal túl gyenge minőségű volt; a többi kereshető. Egy jobb szkennelés megoldja.",
+    "Nogle sider var for dårlige til at læse; resten er søgbar. En bedre scanning løser det.",
+    "Einige Seiten waren zu schlecht lesbar; der Rest ist durchsuchbar. Ein besserer Scan behebt es.",
+  ],
+  "The search cannot read this file type. Save it as PDF, DOCX or text.": [
+    "A kereső nem tudja olvasni ezt a fájltípust. Mentsd el PDF, DOCX vagy szöveges formában.",
+    "Søgningen kan ikke læse denne filtype. Gem den som PDF, DOCX eller tekst.",
+    "Die Suche kann diesen Dateityp nicht lesen. Speichere ihn als PDF, DOCX oder Text.",
+  ],
+  "The file is empty. Delete it or upload it again.": [
+    "A fájl üres. Töröld, vagy töltsd fel újra.",
+    "Filen er tom. Slet den, eller upload den igen.",
+    "Die Datei ist leer. Lösche sie oder lade sie erneut hoch.",
+  ],
+  "The file is larger than the search reads. Split it into smaller files.": [
+    "A fájl nagyobb annál, amit a kereső beolvas. Bontsd kisebb fájlokra.",
+    "Filen er større, end søgningen læser. Del den op i mindre filer.",
+    "Die Datei ist größer, als die Suche liest. Teile sie in kleinere Dateien auf.",
+  ],
+  "The content does not match the file type or is damaged. Upload a good copy.": [
+    "A tartalom nem felel meg a fájltípusnak, vagy sérült. Tölts fel egy ép példányt.",
+    "Indholdet passer ikke til filtypen eller er beskadiget. Upload en god kopi.",
+    "Der Inhalt passt nicht zum Dateityp oder ist beschädigt. Lade eine intakte Kopie hoch.",
+  ],
+  "The AI Box has no reader for this format installed.": [
+    "Az AI Boxon nincs telepítve olvasó ehhez a formátumhoz.",
+    "AI Boxen har ingen læser til dette format installeret.",
+    "Auf der AI Box ist kein Leser für dieses Format installiert.",
+  ],
+  "Read all again": ["Mind újraolvasása", "Læs alle igen", "Alle erneut lesen"],
+  "Show the documents": ["Dokumentumok mutatása", "Vis dokumenterne", "Dokumente anzeigen"],
+  "Hide the documents": ["Dokumentumok elrejtése", "Skjul dokumenterne", "Dokumente ausblenden"],
+  "Read again": ["Újraolvasás", "Læs igen", "Erneut lesen"],
+  "Delete the file?": ["Törlöd a fájlt?", "Slet filen?", "Datei löschen?"],
+  "Show more": ["Továbbiak", "Vis flere", "Mehr anzeigen"],
+  "Queued to be read again": ["Újraolvasásra sorba állítva", "Sat i kø til genlæsning", "Zum erneuten Lesen eingereiht"],
+  "The action failed.": ["A művelet nem sikerült.", "Handlingen mislykkedes.", "Die Aktion ist fehlgeschlagen."],
+  "Waiting to be read again": ["Újraolvasásra vár", "Venter på genlæsning", "Wartet auf erneutes Lesen"],
+  "Being read again…": ["Újraolvasás folyamatban…", "Læses igen…", "Wird erneut gelesen…"],
+  "Reading again failed": ["Az újraolvasás nem sikerült", "Genlæsning mislykkedes", "Erneutes Lesen fehlgeschlagen"],
+  "Reread finished": ["Újraolvasva", "Genlæst", "Erneut gelesen"],
   "Pages not read": ["Nem olvasott oldalak", "Sider, der ikke er læst", "Nicht gelesene Seiten"],
   "Only the first documents are listed; the counts cover all.": [
     "Csak az első dokumentumok szerepelnek a listában; a darabszámok mindet lefedik.",
     "Kun de første dokumenter er vist; tallene dækker dem alle.",
     "Nur die ersten Dokumente sind aufgeführt; die Zahlen umfassen alle.",
   ],
-  "No text layer — resync to read it with OCR": [
-    "Nincs szövegréteg – újraszinkronnal OCR-rel olvasható",
-    "Intet tekstlag – synkronisér igen for at læse det med OCR",
-    "Keine Textebene – erneut synchronisieren, um sie per OCR zu lesen",
+  "No text layer (scanned image)": [
+    "Nincs szövegréteg (szkennelt kép)",
+    "Intet tekstlag (scannet billede)",
+    "Keine Textebene (gescanntes Bild)",
   ],
   "Waiting for OCR": ["OCR-re vár", "Venter på OCR", "Wartet auf OCR"],
-  "OCR interrupted — resync needed": [
-    "Az OCR megszakadt – újraszinkron szükséges",
-    "OCR blev afbrudt – ny synkronisering kræves",
-    "OCR unterbrochen – erneute Synchronisierung nötig",
-  ],
-  "OCR deferred — resync needed": [
-    "Az OCR elhalasztva – újraszinkron szükséges",
-    "OCR udsat – ny synkronisering kræves",
-    "OCR zurückgestellt – erneute Synchronisierung nötig",
-  ],
+  "OCR interrupted": ["Az OCR megszakadt", "OCR blev afbrudt", "OCR unterbrochen"],
+  "OCR deferred": ["Az OCR elhalasztva", "OCR udsat", "OCR zurückgestellt"],
   "OCR failed": ["Az OCR sikertelen", "OCR mislykkedes", "OCR fehlgeschlagen"],
   "No text recognised": ["Nem ismerhető fel szöveg", "Ingen tekst genkendt", "Kein Text erkannt"],
   "Some pages could not be read": [
@@ -261,11 +335,15 @@ const M: Record<string, Tri> = {
   "no text": ["nincs szöveg", "ingen tekst", "kein Text"],
   failed: ["sikertelen", "mislykkedes", "fehlgeschlagen"],
   // ---- Reprocessing after a domain profile change (Relationships › Processing) ----
-  "Domain profile version": [
-    "Domainprofil-verzió",
-    "Domæneprofilversion",
-    "Version des Domänenprofils",
+  "Reprocessing": ["Újrafeldolgozás", "Genbehandling", "Erneute Verarbeitung"],
+  "To reprocess": ["Újrafeldolgozandó", "Skal genbehandles", "Neu zu verarbeiten"],
+  "Reprocessing reads them again with the current profile and the language model, one at a time, without holding up the questions.": [
+    "Az újrafeldolgozás az aktuális profillal és a nyelvi modellel olvassa be őket újra, egyenként, a kérdések feltartása nélkül.",
+    "Genbehandlingen læser dem igen med den aktuelle profil og sprogmodellen, én ad gangen, uden at forsinke spørgsmålene.",
+    "Die erneute Verarbeitung liest sie mit dem aktuellen Profil und dem Sprachmodell neu ein, einzeln, ohne die Fragen aufzuhalten.",
   ],
+  "Nothing to reprocess.": ["Nincs újrafeldolgozandó dokumentum.", "Der er intet at genbehandle.", "Nichts neu zu verarbeiten."],
+  "Limit to": ["Szűkítés", "Begræns til", "Beschränken auf"],
   "Current profile": ["Jelenlegi profil", "Nuværende profil", "Aktuelles Profil"],
   "Extracted with an older or unknown profile": [
     "Régebbi vagy ismeretlen profillal feldolgozva",
@@ -306,11 +384,13 @@ const M: Record<string, Tri> = {
   ],
   Sent: ["Elküldve", "Sendt", "Gesendet"],
   Missing: ["Hiányzik", "Mangler", "Fehlt"],
-  "Folder (optional), e.g. /storage/drives/…": [
-    "Mappa (nem kötelező), pl. /storage/drives/…",
-    "Mappe (valgfri), f.eks. /storage/drives/…",
-    "Ordner (optional), z. B. /storage/drives/…",
-  ],
+  // ---- Folder picker ----
+  "Every folder": ["Minden mappa", "Alle mapper", "Alle Ordner"],
+  "Not chosen": ["Nincs kiválasztva", "Ikke valgt", "Nicht gewählt"],
+  Change: ["Módosítás", "Skift", "Ändern"],
+  "The folders could not be listed.": ["A mappákat nem sikerült listázni.", "Mapperne kunne ikke vises.", "Die Ordner konnten nicht aufgelistet werden."],
+  "No subfolders.": ["Nincs almappa.", "Ingen undermapper.", "Keine Unterordner."],
+  "Choose this folder": ["Ez a mappa", "Vælg denne mappe", "Diesen Ordner wählen"],
   Stop: ["Leállítás", "Stop", "Anhalten"],
   Reprocess: ["Újrafeldolgozás", "Genbehandl", "Neu verarbeiten"],
   "The ViVeSecBox is not connected: the files cannot be fetched again.": [
@@ -320,11 +400,11 @@ const M: Record<string, Tri> = {
   ],
   // ---- E28: structured import (Relationships › Processing) ----
   "Structured import": ["Strukturált betöltés", "Struktureret import", "Strukturierter Import"],
-  "Periodic exports (CSV, XLSX) are read by the domain profile's rules, without the language model.":
+  "Load a register export (for example a database dump or a spreadsheet). The box reads it by the domain profile's rules, without the language model.":
     [
-      "Az időszakos exportokat (CSV, XLSX) a domainprofil szabályai olvassák be, nyelvi modell nélkül.",
-      "Periodiske eksporter (CSV, XLSX) læses efter domæneprofilens regler, uden sprogmodel.",
-      "Periodische Exporte (CSV, XLSX) werden nach den Regeln des Domänenprofils gelesen, ohne Sprachmodell.",
+      "Nyilvántartási export betöltése (például adatbázis-mentés vagy táblázat). A box a szakterületi profil szabályai szerint olvassa be, nyelvi modell nélkül.",
+      "Indlæs en registereksport (f.eks. et databasedump eller et regneark). Boksen læser den efter domæneprofilens regler, uden sprogmodel.",
+      "Einen Registerexport laden (z. B. einen Datenbank-Dump oder eine Tabelle). Die Box liest ihn nach den Regeln des Domänenprofils, ohne Sprachmodell.",
     ],
   "No structured source in the profile.": [
     "A profilban nincs strukturált forrás.",
@@ -338,20 +418,33 @@ const M: Record<string, Tri> = {
     "Der Freitext gelangt auch in die Suche.",
   ],
   "Target folder": ["Célmappa", "Målmappe", "Zielordner"],
+  "Whoever may see this folder sees its records too.": [
+    "Aki ezt a mappát láthatja, a rekordjait is látja.",
+    "Den, der må se denne mappe, ser også dens poster.",
+    "Wer diesen Ordner sehen darf, sieht auch seine Datensätze.",
+  ],
   "Export date": ["Az export dátuma", "Eksportdato", "Exportdatum"],
+  "An older export never overwrites a newer one.": [
+    "Régebbi export soha nem írja felül az újabbat.",
+    "En ældre eksport overskriver aldrig en nyere.",
+    "Ein älterer Export überschreibt nie einen neueren.",
+  ],
   Mode: ["Mód", "Tilstand", "Modus"],
-  "As in the profile": ["A profil szerint", "Som i profilen", "Wie im Profil"],
-  "Changes only (delta)": [
-    "Csak a változások (delta)",
-    "Kun ændringer (delta)",
-    "Nur Änderungen (Delta)",
+  "The file holds": ["A fájl tartalma", "Filen indeholder", "Die Datei enthält"],
+  "Only the changes": ["Csak a változások", "Kun ændringerne", "Nur die Änderungen"],
+  "New and changed records, and those marked deleted. Records the file does not list stay.": [
+    "Az új és módosult rekordok, valamint a törlésre jelöltek. A fájlban nem szereplő rekordok megmaradnak.",
+    "Nye og ændrede poster samt dem, der er markeret som slettet. Poster, som filen ikke indeholder, bliver.",
+    "Neue und geänderte Datensätze sowie die als gelöscht markierten. Datensätze, die die Datei nicht enthält, bleiben.",
   ],
-  "Full state (full)": ["Teljes állapot (full)", "Fuld tilstand (full)", "Vollständiger Stand (full)"],
-  "Full mode removes the source's records of this folder that the file no longer lists.": [
-    "Teljes módban törlődnek a mappa e forrásból származó rekordjai, amelyeket a fájl már nem tartalmaz.",
-    "I fuld tilstand fjernes kildens poster i denne mappe, som filen ikke længere indeholder.",
-    "Im vollständigen Modus werden die Datensätze der Quelle in diesem Ordner entfernt, die die Datei nicht mehr enthält.",
+  "The whole register": ["A teljes nyilvántartás", "Hele registret", "Das gesamte Register"],
+  "Every record of the source for this folder. Records the file no longer lists are removed.": [
+    "A forrás összes rekordja ehhez a mappához. Ami már nincs a fájlban, törlődik.",
+    "Alle kildens poster for denne mappe. Poster, som filen ikke længere indeholder, fjernes.",
+    "Alle Datensätze der Quelle für diesen Ordner. Was die Datei nicht mehr enthält, wird entfernt.",
   ],
+  "as in the profile": ["a profil szerint", "som i profilen", "wie im Profil"],
+  Accepted: ["Elfogadott formátumok", "Accepterede formater", "Akzeptierte Formate"],
   "Export file": ["Exportfájl", "Eksportfil", "Exportdatei"],
   Import: ["Betöltés", "Importér", "Importieren"],
   "Importing…": ["Betöltés…", "Importerer…", "Wird importiert…"],

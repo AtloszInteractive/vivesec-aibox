@@ -1,7 +1,8 @@
 """Periodic structured exports -> graph records, by configured mapping (E28).
 
 The BV hands over the result set of an export run for a period (FŐNIX base
-data, placements, the approved-contact list ...) as CSV or XLSX. A source in
+data, placements, the approved-contact list ...) as a spreadsheet, a data dump
+or markup (table_formats.py). A source in
 the domain profile (`structured_sources`, domain_profile.py) says which column
 is the record id, which columns make which entity and relation, the code lists
 that turn codes into text, and the record's own access rule. The rows are read
@@ -49,10 +50,8 @@ source, so the rows of one entry share it.
 """
 from __future__ import annotations
 
-import csv
 import hashlib
 import hmac
-import io
 import json
 import os
 import re
@@ -61,6 +60,7 @@ from domain_profile import normalize_value
 from extraction import LocalEntity, fold
 from ingest import parse_document_payload
 from model import KEY_ONLY_ATTR, PERSON_KEY_ATTR, PROTECTED_DIR, RECORD_KIND
+import table_formats
 from person_key import iso_date, person_key
 
 RECORDS_DIR = "~records"
@@ -77,70 +77,61 @@ class StructuredImportError(ValueError):
 
 # -- reading the file ---------------------------------------------------------------
 
-def _cell(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    if hasattr(value, "year") and hasattr(value, "month"):
-        return iso_date(value)
-    return " ".join(str(value).split())
+def source_columns(source: dict) -> set[str]:
+    """Every column the source's mapping reads (the protected ones too: they are
+    in the file) -- what an importer must provide, and what picks the table of a
+    file that holds several."""
+    columns = {c for e in source["entities"] for c in [e["name"], *e["attributes"].values()]
+               if c}
+    columns |= {c for r in source["relations"] for c in [r["start"], r["end"], *r["label"]]
+                if c}
+    columns |= set(source["record_id"]) | set(source.get("text_columns") or [])
+    columns |= set((source.get("protected") or {}).get("columns") or [])
+    for extra in ((source.get("acl") or {}).get("column"),
+                  (source.get("deleted") or {}).get("column")):
+        if extra:
+            columns.add(extra)
+    return columns
 
 
-def _decode(raw: bytes) -> str:
-    for enc in ("utf-8-sig", "cp1250"):
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            continue
-    raise StructuredImportError("the CSV is neither UTF-8 nor Windows-1250 text")
+def _pick(tables, sheet, expected):
+    """The table to import: the one the profile names (`sheet`), the only one,
+    or the one whose header holds most of the expected columns."""
+    if sheet:
+        named = {fold(name): (name, rows) for name, rows in tables}
+        if fold(sheet) in named:
+            return named[fold(sheet)]
+        if len(tables) == 1 and not tables[0][0]:
+            return tables[0]  # a CSV or a JSON list has one table and no sheets
+        raise StructuredImportError("the file has no sheet or table %r (it has: %s)"
+                                    % (sheet, ", ".join(n for n, _ in tables) or "-"))
+    tables = [(name, rows) for name, rows in tables if rows]
+    if len(tables) == 1:
+        return tables[0]
+    if not tables:
+        raise StructuredImportError("the file is empty")
+    want = {fold(c) for c in expected or ()}
+    scored = sorted(((len(want & {fold(h) for h in rows[0][1]}), i) for i, (_, rows)
+                     in enumerate(tables)), reverse=True)
+    best, second = scored[0], scored[1]
+    if not best[0] or best[0] == second[0]:
+        raise StructuredImportError(
+            "the file holds several tables and none matches the source's columns "
+            "clearly (%s); name the one to read in the profile (sheet)"
+            % ", ".join(n for n, _ in tables))
+    return tables[best[1]]
 
 
-def read_table(raw: bytes, filename: str, sheet: str | None = None
+def read_table(raw: bytes, filename: str, sheet: str | None = None, expected=None
                ) -> tuple[list[str], list[tuple[int, list[str]]]]:
-    """(header, [(row number, cells)]) of a CSV/TSV or XLSX export; row numbers
-    as the user sees them (the header is row 1 of a CSV)."""
+    """(header, [(row number, cells)]) of an export (table_formats.EXTENSIONS);
+    row numbers as the user sees them (the header is row 1 of a CSV)."""
     ext = os.path.splitext(filename or "")[1].lower()
-    rows: list[tuple[int, list[str]]] = []
-    if ext in (".xlsx", ".xlsm"):
-        try:
-            import openpyxl
-        except ImportError:
-            raise StructuredImportError("XLSX import needs openpyxl")
-        try:
-            wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-        except Exception as e:  # noqa: BLE001 - any parser failure is a bad file
-            raise StructuredImportError("not a readable XLSX file: %s" % type(e).__name__)
-        try:
-            if sheet:
-                names = {fold(n): n for n in wb.sheetnames}
-                if fold(sheet) not in names:
-                    raise StructuredImportError("the workbook has no sheet %r" % sheet)
-                ws = wb[names[fold(sheet)]]
-            else:
-                ws = wb.worksheets[0]
-            for n, values in enumerate(ws.iter_rows(values_only=True), 1):
-                cells = [_cell(v) for v in values]
-                if any(cells):
-                    rows.append((n, cells))
-                if len(rows) > MAX_ROWS + 1:
-                    raise StructuredImportError("more than %d rows" % MAX_ROWS)
-        finally:
-            wb.close()
-    elif ext in (".csv", ".tsv", ".txt"):
-        text = _decode(raw)
-        first = next((line for line in text.splitlines() if line.strip()), "")
-        sep = max((";", "\t", ","), key=first.count) if ext != ".tsv" else "\t"
-        if first.count(sep) < 1:
-            raise StructuredImportError("the CSV header has no ';', ',' or tab separated columns")
-        for n, cells in enumerate(csv.reader(io.StringIO(text), delimiter=sep), 1):
-            cells = [_cell(c) for c in cells]
-            if any(cells):
-                rows.append((n, cells))
-            if len(rows) > MAX_ROWS + 1:
-                raise StructuredImportError("more than %d rows" % MAX_ROWS)
-    else:
-        raise StructuredImportError("only CSV, TSV and XLSX exports can be imported")
+    try:
+        tables = table_formats.tables_of(raw, ext, MAX_ROWS)
+    except table_formats.FormatError as e:
+        raise StructuredImportError(str(e))
+    _, rows = _pick(tables, sheet, expected)
     if not rows:
         raise StructuredImportError("the file is empty")
     header = rows[0][1]

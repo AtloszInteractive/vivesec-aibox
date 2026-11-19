@@ -372,8 +372,9 @@ class IngestWorker:
             return {"status": "failed", "error": "the profile has no source %r" % req["source"]}
         salt = person_key.load_salt()
         try:
-            header, rows = structured_import.read_table(raw, req.get("filename") or "",
-                                                        source.get("sheet"))
+            header, rows = structured_import.read_table(
+                raw, req.get("filename") or "", source.get("sheet"),
+                structured_import.source_columns(source))
             plan = structured_import.plan_import(profile, source, header, rows, salt)
         except structured_import.StructuredImportError as e:
             return {"status": "failed", "error": str(e)}

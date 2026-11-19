@@ -1137,9 +1137,42 @@ export type AdapterSkipped = {
     ocr_state?: string;
     size?: number;
     skipped_pages?: { page: number; reason: string; quality: number | null }[];
+    /** Standalone box: how far a reread of this stored file got. */
+    reread?: { state: "queued" | "running" | "done" | "failed"; error?: string | null };
   }[];
   truncated: boolean;
+  /** Standalone box, store writer: the files can be read again / deleted. */
+  can_reread?: boolean;
+  can_delete?: boolean;
+  /** Rereads still queued or running. */
+  rereading?: number;
 };
+
+/** Standalone box: read stored documents again (text, then OCR) -- the given
+ *  paths, or every skipped document of one reason in the caller's scope. */
+export async function adapterReread(
+  drive: string,
+  target: { paths: string[] } | { reason: string },
+): Promise<{ queued: number; skipped: number; refused: number }> {
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/index/reread`, {
+    method: "POST",
+    headers: vvsHeaders(drive, demoUser()),
+    body: JSON.stringify(target),
+    signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS),
+  });
+  const j = await safeJson(res);
+  if (!res.ok) {
+    throw new AdapterGraphError(
+      (j.error as string) ?? `ui/index/reread HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return {
+    queued: Number(j.queued) || 0,
+    skipped: Number(j.skipped) || 0,
+    refused: Number(j.refused) || 0,
+  };
+}
 
 export async function adapterSkipped(drive: string): Promise<AdapterSkipped> {
   const res = await apiFetch(`${adapterUrl()}/api/v1/ui/index/skipped`, {
