@@ -209,6 +209,9 @@ export function graphFailure(err: unknown): GraphFailure {
 
 type WithDocs<T> = T & { documents: GraphDocuments };
 
+/** Entities one neighbourhood may bring (the graph service allows 2000). */
+export const NEIGHBOURHOOD_LIMIT = 2000;
+
 function query<T>(drive: string, name: string, params: Record<string, unknown>) {
   return adapterGraph<WithDocs<T>>("query", { query: name, params }, drive);
 }
@@ -219,11 +222,12 @@ export const graphApi = {
   entity: (drive: string, id: string) =>
     query<{ entity: GraphNode; edges: GraphEdge[] }>(drive, "entity", { id }),
   neighborhood: (drive: string, id: string, hops: number) =>
-    query<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean }>(drive, "neighborhood", {
-      id,
-      hops,
-      limit: 150,
-    }),
+    query<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean; compact?: boolean }>(
+      drive,
+      "neighborhood",
+      // A large answer comes without quotes (E26f); `entity` brings them.
+      { id, hops, limit: NEIGHBOURHOOD_LIMIT, compact: true },
+    ),
   path: (drive: string, a: string, b: string) =>
     query<{ path: { nodes: GraphNode[]; edges: GraphEdge[]; hops: number } | null }>(
       drive,
@@ -345,6 +349,7 @@ export const graphApi = {
         drives: req.drives?.length ? req.drives : undefined,
         audit_id: req.auditId,
         shared_contact: req.sharedContact || undefined,
+        compact: true,
       },
       drive,
     ),
@@ -622,6 +627,8 @@ export type GraphInvestigationView = {
   edges: GraphEdge[];
   documents: GraphDocuments;
   truncated: boolean;
+  /** Over 300 nodes: the evidence without quotes (E26f). */
+  compact?: boolean;
   rows: GraphInvestigationRow[];
   start: string;
   levels: number;

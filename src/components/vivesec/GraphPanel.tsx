@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
+  ChevronRight,
   Download,
   ExternalLink,
   Eye,
@@ -22,7 +23,7 @@ import {
 } from "lucide-react";
 import { useLang } from "./i18n";
 import { GraphCanvas, type Emphasis, type ExportRequest } from "./GraphCanvas";
-import { mergeGraphs } from "./graph-model";
+import { mergeGraphs, withDetails } from "./graph-model";
 import { pairKey, TYPE_COLOR, TYPE_NAME, type RelationInfo } from "./graph-style";
 import { saveToDrive } from "@/lib/api/rag.functions";
 import { AdapterGraphError } from "@/lib/rag/adapter-client";
@@ -78,12 +79,13 @@ const STATUS_TEXT: Record<string, string> = {
 
 type Tab = "explore" | "review" | "processing" | "profile" | "querylog";
 /** Nodes the picture may hold before an added neighbourhood replaces it. */
-const MAX_PICTURE = 400;
+const MAX_PICTURE = 5000;
 type Graph = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   documents: GraphDocuments;
   truncated?: boolean;
+  compact?: boolean;
 };
 
 const byDate = (x: GraphEdge, y: GraphEdge) => (x.start ?? "").localeCompare(y.start ?? "");
@@ -470,6 +472,44 @@ function ExploreTab({
       ? graph.edges.filter((e) => pairKey(e) === selectedEdge).sort(byDate)
       : [];
 
+  // A compact (large) picture has no quotes: the opened node or relation gets
+  // its full copy from the box, once per copy shown.
+  const detailed = useRef(new WeakSet<object>());
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  useEffect(() => {
+    if (!graph?.compact) return;
+    const todo: object[] = pairEdges.filter((e) => !detailed.current.has(e));
+    const id = todo.length
+      ? pairEdges[0].a
+      : !pairEdges.length && focusNode && !detailed.current.has(focusNode)
+        ? focusNode.id
+        : null;
+    if (!id) return;
+    if (!todo.length && focusNode) todo.push(focusNode);
+    const asked = detailed.current;
+    for (const o of todo) asked.add(o);
+    let live = true;
+    let done = false;
+    setLoadingDetails(true);
+    void run(() => graphApi.entity(drive, id)).then((res) => {
+      done = true;
+      if (!live) return;
+      setLoadingDetails(false);
+      if (!res) return;
+      asked.add(res.entity);
+      for (const e of res.edges) asked.add(e);
+      setGraph((g) => (g ? withDetails(g, res) : g));
+    });
+    return () => {
+      live = false;
+      // Left before the answer came: asked again when shown again.
+      if (!done) for (const o of todo) asked.delete(o);
+      setLoadingDetails(false);
+    };
+    // the opened node or relation of this picture
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, focus, selectedEdge, drive]);
+
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -602,7 +642,7 @@ function ExploreTab({
             <div className="absolute bottom-2 left-3 text-[11px] text-ink/45">
               {investigating
                 ? tm("The investigation was cut; more people may exist.")
-                : tm("Showing the first 150 entities.")}
+                : tm("Showing the first 2000 entities.")}
             </div>
           )}
         </div>
@@ -611,6 +651,11 @@ function ExploreTab({
         className="hidden w-[360px] shrink-0 flex-col overflow-y-auto border-l border-ink/5 md:flex"
         style={{ backgroundColor: PANEL }}
       >
+        {loadingDetails && (
+          <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] text-ink/55">
+            <Loader2 className="h-3 w-3 animate-spin" /> {tm("Loading the evidence…")}
+          </div>
+        )}
         {pairEdges.length > 0 && graph ? (
           <EdgeSheet
             edges={pairEdges}
@@ -917,17 +962,20 @@ function EntitySheet({
       )}
       <DossierActions drive={drive} node={node} />
       <Section title={tm("Relations")}>
-        {edges.map((e) => (
-          <button
-            key={e.id}
-            onClick={() => onEdge(pairKey(e))}
-            className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-ink/5"
-          >
-            <span className="shrink-0 text-ink/55">{relLabel(e.type)}</span>
-            <span className="min-w-0 flex-1 truncate">{other(e)?.label ?? ""}</span>
-            {e.start && <span className="shrink-0 text-[10px] text-ink/45">{e.start}</span>}
-          </button>
-        ))}
+        <div className="divide-y divide-ink/10 border-y border-ink/10">
+          {edges.map((e) => (
+            <button
+              key={e.id}
+              onClick={() => onEdge(pairKey(e))}
+              className="group flex w-full items-center gap-2 px-1 py-2 text-left text-xs hover:bg-ink/5"
+            >
+              <span className="shrink-0 text-ink/55">{relLabel(e.type)}</span>
+              <span className="min-w-0 flex-1 truncate">{other(e)?.label ?? ""}</span>
+              {e.start && <span className="shrink-0 text-[10px] text-ink/45">{e.start}</span>}
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink/30 group-hover:text-ink/70" />
+            </button>
+          ))}
+        </div>
       </Section>
       <Section title={tm("Timeline")}>
         {notice}

@@ -1005,7 +1005,12 @@ const M: Record<string, Tri> = {
   "Connection to…": ["Kapcsolat ehhez…", "Forbindelse til…", "Verbindung zu…"],
   "Find the shortest chain of relations to another entity": ["A legrövidebb kapcsolati lánc keresése egy másik entitáshoz", "Find den korteste kæde af relationer til en anden enhed", "Kürzeste Beziehungskette zu einer anderen Entität finden"],
   "No connection found within 6 steps.": ["6 lépésen belül nincs kapcsolat.", "Ingen forbindelse inden for 6 trin.", "Keine Verbindung innerhalb von 6 Schritten."],
-  "Showing the first 150 entities.": ["Az első 150 entitás látható.", "Viser de første 150 enheder.", "Die ersten 150 Entitäten werden angezeigt."],
+  "Showing the first 2000 entities.": ["Az első 2000 entitás látható.", "Viser de første 2000 enheder.", "Die ersten 2000 Entitäten werden angezeigt."],
+  // ---- E26f: WebGL relationship picture ----
+  "Loading the picture…": ["A kép betöltése…", "Indlæser billedet…", "Bild wird geladen…"],
+  "Loading the evidence…": ["A bizonyítékok betöltése…", "Indlæser beviserne…", "Belege werden geladen…"],
+  "Drag to move, scroll to zoom": ["Húzással mozgatás, görgővel nagyítás", "Træk for at flytte, rul for at zoome", "Ziehen zum Verschieben, Scrollen zum Zoomen"],
+  "Graphics acceleration (WebGL) is not available here: the simplified view is shown.": ["A grafikus gyorsítás (WebGL) itt nem érhető el, ezért az egyszerűsített nézet látható.", "Grafikacceleration (WebGL) er ikke tilgængelig her: den forenklede visning vises.", "Grafikbeschleunigung (WebGL) ist hier nicht verfügbar: Die vereinfachte Ansicht wird angezeigt."],
   "Dossier": ["Dosszié", "Dossier", "Dossier"],
   // ---- E26b: investigation table export (BV 1.5 / 2.5) ----
   "Export to Excel": ["Exportálás Excelbe", "Eksportér til Excel", "Nach Excel exportieren"],
