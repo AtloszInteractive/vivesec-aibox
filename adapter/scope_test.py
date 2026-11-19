@@ -285,6 +285,15 @@ class NarrowScopeTest(unittest.TestCase):
         self.assertEqual(self.scope.narrow([FINANCE]).session_scope,
                          scope.resolve(FINANCE).session_scope)
 
+    def test_narrowed_scope_remembers_the_entitled_one(self):
+        # Named threads are keyed by the entitled scope and store the selection.
+        narrowed = self.scope.narrow([HR])
+        self.assertEqual(narrowed.base.session_scope, self.scope.session_scope)
+        self.assertEqual(narrowed.selection, [corpus.norm(HR)])
+        self.assertEqual(self.scope.narrow([]).selection, [])
+        self.assertEqual(self.scope.narrow([HR, FINANCE]).selection,
+                         sorted([corpus.norm(FINANCE), corpus.norm(HR)]))
+
     def test_an_unentitled_drive_is_refused(self):
         with self.assertRaises(ValueError):
             self.scope.narrow(["/storage/drives/legal/"])

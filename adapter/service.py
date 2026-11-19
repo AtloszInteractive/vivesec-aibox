@@ -1636,7 +1636,8 @@ def _answer(*args, **kwargs):
 def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                  params=None, agent=None, history_snapshot=None, cancel_event=None,
                  progress_callback=None, req_scope=None, profile="grounded",
-                 conversation_id=None, access=None, job_id=None, stage_callback=None):
+                 conversation_id=None, access=None, job_id=None, stage_callback=None,
+                 thread_scope=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -1659,6 +1660,10 @@ def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=
     if action is not None:
         profile = "grounded"
     session_scope = chat_policy.history_scope(req_scope.session_scope, profile)
+    if conversation_id and thread_scope:
+        # A named thread lives under the entitled (un-narrowed) scope; the
+        # handler already checked that it was started with this selection.
+        session_scope = thread_scope
     if action == "search" and mode == "files":
         return {**_file_search(req_scope, query, access), "profile": "grounded"}
     # The UI never sends `lang`: detect it from the question so the guard, the
@@ -2022,7 +2027,8 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
                                      cancel_event, progress, req_scope,
                                      (job.get("request") or {}).get("profile", "grounded"),
                                      (job.get("request") or {}).get("conversation_id") or None,
-                                     access=access, job_id=job_id, stage_callback=stage)
+                                     access=access, job_id=job_id, stage_callback=stage,
+                                     thread_scope=(job.get("request") or {}).get("thread_scope"))
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -2872,20 +2878,35 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": str(error)})
         return None
 
+    @staticmethod
+    def _thread_scope(req_scope, profile):
+        """History namespace of the named threads: the ENTITLED scope, so the
+        list does not change with the drive selection; each thread carries its
+        own selection instead (Scope.selection)."""
+        return chat_policy.history_scope(req_scope.base.session_scope, profile)
+
     def _conversation_for(self, payload, user, req_scope, profile):
         """The thread a /ui/query or /ui/ask addresses: the body's optional
         `conversation_id`, validated against the caller's (user, scope, profile)
-        namespace. Returns None for the default thread, the id when it exists,
-        or False after sending 404 -- an id from another scope or user does not
-        exist as far as this caller is concerned (fail-closed, like jobs)."""
+        namespace. Returns (None, None) for the default thread, (id, history
+        namespace) for a named thread, or False after the refusal was sent:
+        404 for an id from another user, scope or profile (it does not exist as
+        far as this caller is concerned, fail-closed like jobs), 409 when the
+        thread was started with a different drive selection -- its history
+        must not reach a scope it was not built in."""
         conversation_id = str(payload.get("conversation_id") or "").strip()
         if not conversation_id or conversation_id == conversations.DEFAULT_ID:
-            return None
-        session_scope = chat_policy.history_scope(req_scope.session_scope, profile)
-        if not SESSIONS.exists(user, session_scope, conversation_id):
+            return None, None
+        thread_scope = self._thread_scope(req_scope, profile)
+        selection = SESSIONS.selection(user, thread_scope, conversation_id)
+        if selection is None:
             self._send(404, {"ok": False, "error": "unknown conversation_id"})
             return False
-        return conversation_id
+        if selection != req_scope.selection:
+            self._send(409, {"ok": False, "error": "conversation_scope_mismatch",
+                             "drives": selection})
+            return False
+        return conversation_id, thread_scope
 
     def _query(self):
         if self._locked_guard():
@@ -2900,14 +2921,16 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, parsed[5])
         if profile is None:
             return
-        conversation_id = self._conversation_for(payload, parsed[0], req_scope, profile)
-        if conversation_id is False:
+        thread = self._conversation_for(payload, parsed[0], req_scope, profile)
+        if thread is False:
             return
+        conversation_id, thread_scope = thread
         bound = self._purpose_for(payload)
         if bound is None:
             return
         result = _answer(*parsed, req_scope=req_scope, profile=profile,
-                         conversation_id=conversation_id, access=self._access())
+                         conversation_id=conversation_id, access=self._access(),
+                         thread_scope=thread_scope)
         if not _log_query(parsed[0], parsed[1], req_scope, parsed[5] or "ask", bound, parsed[2],
                           _answer_summary(result), access=self._access()):
             self._send(503, {"ok": False, "error": "query log unavailable"})
@@ -2930,14 +2953,16 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, parsed[5])
         if profile is None:
             return
-        conversation_id = self._conversation_for(payload, user, req_scope, profile)
-        if conversation_id is False:
+        thread = self._conversation_for(payload, user, req_scope, profile)
+        if thread is False:
             return
+        conversation_id, thread_scope = thread
         bound = self._purpose_for(payload)
         if bound is None:
             return
         history_snapshot = SESSIONS.history(
-            user, chat_policy.history_scope(req_scope.session_scope, profile), conversation_id)
+            user, thread_scope or chat_policy.history_scope(req_scope.session_scope, profile),
+            conversation_id)
         # Where the request was STARTED decides where its result belongs: a chat
         # question answers in the conversation, a quick action in the job list.
         origin = (str(payload.get("origin") or "chat")).strip().lower()
@@ -2948,7 +2973,7 @@ class Handler(BaseHTTPRequestHandler):
                    "params": parsed[8], "agent": parsed[9],
                    "scope_drives": list(req_scope.drive_roots),
                    "origin": origin, "history": history_snapshot, "profile": profile,
-                   "conversation_id": conversation_id,
+                   "conversation_id": conversation_id, "thread_scope": thread_scope,
                    "access": self._access().to_dict(), "purpose": bound}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
@@ -3106,9 +3131,12 @@ class Handler(BaseHTTPRequestHandler):
     # query string (measured 2026-09-10). An id that belongs to another user,
     # scope or profile is reported as unknown (404), never as forbidden.
     def _conversation_scope(self, payload):
-        """(user, history scope) of the caller for the thread endpoints, or None
-        after the error was sent. The profile namespaces the scope exactly as
-        it does for the chat history (chat_policy.history_scope)."""
+        """(user, thread namespace, drive selection) of the caller for the
+        thread endpoints, or None after the error was sent. The namespace is
+        the entitled scope, so the list shows every thread whatever drives are
+        selected now; the profile namespaces it exactly as it does for the chat
+        history (chat_policy.history_scope). The body's `drives` is validated
+        like on a query and is what a new thread is started with."""
         if self._locked_guard():
             return None
         identity = self._read_vvs()
@@ -3121,7 +3149,7 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, None)
         if profile is None:
             return None
-        return user, chat_policy.history_scope(req_scope.session_scope, profile)
+        return user, self._thread_scope(req_scope, profile), req_scope.selection
 
     @staticmethod
     def _conversation_id_of(payload):
@@ -3133,7 +3161,7 @@ class Handler(BaseHTTPRequestHandler):
         owner = self._conversation_scope(payload)
         if owner is None:
             return
-        self._send(200, {"ok": True, "conversations": SESSIONS.list(*owner)})
+        self._send(200, {"ok": True, "conversations": SESSIONS.list(owner[0], owner[1])})
 
     def _conversations_create(self):
         payload = self._read_json()
@@ -3141,7 +3169,7 @@ class Handler(BaseHTTPRequestHandler):
         if owner is None:
             return
         title = str(payload.get("title") or "").strip()
-        created = SESSIONS.create(owner[0], owner[1], title=title or None)
+        created = SESSIONS.create(owner[0], owner[1], title=title or None, drives=owner[2])
         self._send(200, {"ok": True, "conversation": created})
 
     def _conversations_get(self):

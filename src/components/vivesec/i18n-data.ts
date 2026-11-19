@@ -136,6 +136,8 @@ const M: Record<string, Tri> = {
   // ---- Conversation threads (F1) ----
   "Conversations": ["Beszélgetések", "Samtaler", "Unterhaltungen"],
   "Current conversation": ["Aktuális beszélgetés", "Aktuel samtale", "Aktuelle Unterhaltung"],
+  "Earlier ongoing conversation": ["Korábbi aktuális beszélgetés", "Tidligere igangværende samtale", "Frühere laufende Unterhaltung"],
+  "The selected drives changed, so a new conversation was started.": ["A kiválasztott drive-ok megváltoztak, ezért új beszélgetés indult.", "De valgte drev er ændret, så en ny samtale er startet.", "Die ausgewählten Laufwerke haben sich geändert, daher wurde eine neue Unterhaltung begonnen."],
   "New conversation": ["Új beszélgetés", "Ny samtale", "Neue Unterhaltung"],
   "Rename conversation": ["Beszélgetés átnevezése", "Omdøb samtale", "Unterhaltung umbenennen"],
   "Delete conversation": ["Beszélgetés törlése", "Slet samtale", "Unterhaltung löschen"],

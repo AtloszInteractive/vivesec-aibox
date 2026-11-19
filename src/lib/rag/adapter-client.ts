@@ -292,6 +292,8 @@ export type AdapterConversationSummary = {
   id: string;
   title: string;
   title_source?: "" | "fallback" | "auto" | "user";
+  /** The drive selection the thread was started with; [] = not narrowed. */
+  drives?: string[];
   created_ts: number | null;
   updated_ts: number | null;
   turn_count: number;
@@ -840,8 +842,10 @@ export function adapterDeleteJob(jobId: string, scope: Pick<AdapterAskInput, "dr
 // Persistent conversation threads (F1). Every call is a POST with the
 // parameters in the body: the ViVeSecBox tunnel drops query strings. A thread
 // is only visible to the (user, scope, profile) that created it; anything else
-// answers 404, which the UI treats as "fall back to the default thread".
-type ConversationScope = Pick<AdapterAskInput, "drive" | "user" | "profile">;
+// answers 404, which the UI treats as "fall back to the default thread". The
+// list does not depend on the drive selection: each thread keeps the one it was
+// created with (`drives`) and can only be continued under it (409 otherwise).
+type ConversationScope = Pick<AdapterAskInput, "drive" | "user" | "profile" | "drives">;
 
 async function conversationCall(
   operation: "list" | "create" | "get" | "rename" | "delete",
@@ -852,7 +856,11 @@ async function conversationCall(
   const res = await apiFetch(`${adapterUrl()}/api/v1/ui/conversations/${operation}`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ ...body, profile: scope.profile }),
+    body: JSON.stringify({
+      ...body,
+      profile: scope.profile,
+      drives: scope.drives?.length ? scope.drives : undefined,
+    }),
     signal: AbortSignal.timeout(FILES_TIMEOUT_MS),
   });
   return { status: res.status, body: await safeJson(res) };

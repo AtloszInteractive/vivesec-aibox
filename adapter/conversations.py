@@ -13,7 +13,12 @@ Two kinds of thread live side by side:
   exactly as before;
 * named threads -- ``<conversations_dir>/<scope-hash>/<id>.json`` plus an
   ``index.json`` per scope holding the list-view fields (title, timestamps,
-  turn count), so listing never has to read the threads themselves.
+  turn count, drive selection), so listing never has to read the threads.
+
+A named thread also remembers the drive selection (``drives``) it was started
+with -- the client's narrowing of the entitled scope, [] for none. The caller
+keys named threads by the entitled scope and only lets a thread be continued
+under exactly that selection, so its history never reaches a different one.
 
 Storage keeps up to ``max_stored_turns`` exchanges per thread; ``history()``
 still hands the model only the last ``max_turns`` exchanges (the pre-thread
@@ -142,10 +147,11 @@ class ConversationStore:
         os.replace(tmp, path)
 
     # -- records -------------------------------------------------------------------
-    def _new_record(self, user, scope, conversation_id, title=""):
+    def _new_record(self, user, scope, conversation_id, title="", drives=None):
         now = self._clock()
         return {"id": conversation_id, "user": user or "", "drive": scope or "",
                 "title": title or "", "title_source": "user" if title else "",
+                "drives": sorted(drives or []),
                 "created_ts": now, "updated_ts": now, "turns": [], "_ts": now}
 
     def _load(self, key, user, scope, conversation_id):
@@ -165,6 +171,7 @@ class ConversationStore:
                   "drive": data.get("drive", scope or ""),
                   "title": data.get("title") or "",
                   "title_source": data.get("title_source") or "",
+                  "drives": sorted(str(d) for d in data.get("drives") or []),
                   "created_ts": float(data.get("created_ts") or mtime),
                   "updated_ts": float(data.get("updated_ts") or mtime),
                   "turns": list(data.get("turns", [])), "_ts": self._clock()}
@@ -191,6 +198,7 @@ class ConversationStore:
         payload = {field: record[field] for field in
                    ("id", "user", "drive", "title", "title_source",
                     "created_ts", "updated_ts", "turns")}
+        payload["drives"] = record.get("drives") or []
         self._write_json(path, payload)
         self._index_put(key, record)
 
@@ -199,6 +207,7 @@ class ConversationStore:
     def _summary(record):
         return {"id": record["id"], "title": record.get("title") or "",
                 "title_source": record.get("title_source") or "",
+                "drives": list(record.get("drives") or []),
                 "created_ts": record.get("created_ts"), "updated_ts": record.get("updated_ts"),
                 "turn_count": len(record.get("turns") or []) // 2}
 
@@ -301,6 +310,13 @@ class ConversationStore:
             _, record = self._get(user, scope, conversation_id)
             return record is not None
 
+    def selection(self, user, scope, conversation_id):
+        """The drive selection a named thread was started with ([] = none), or
+        None when the thread is unknown to this (user, scope)."""
+        with self._lock:
+            _, record = self._get(user, scope, conversation_id)
+            return None if record is None else list(record.get("drives") or [])
+
     def list(self, user, scope):
         """Thread summaries for the list view, most recently updated first. The
         default thread is listed once it has content."""
@@ -321,10 +337,11 @@ class ConversationStore:
             entries.sort(key=lambda entry: entry.get("updated_ts") or 0, reverse=True)
             return entries
 
-    def create(self, user, scope, title=None):
+    def create(self, user, scope, title=None, drives=None):
         with self._lock:
             key = scope_key(user, scope)
-            record = self._new_record(user, scope, new_id(), (title or "").strip()[:TITLE_MAX_CHARS])
+            record = self._new_record(user, scope, new_id(),
+                                      (title or "").strip()[:TITLE_MAX_CHARS], drives)
             self._mem[(key, record["id"])] = record
             self._persist(key, record)
             self._enforce_cap(key)
@@ -374,6 +391,7 @@ class ConversationStore:
     def _public(record):
         return {"id": record["id"], "title": record.get("title") or "",
                 "title_source": record.get("title_source") or "",
+                "drives": list(record.get("drives") or []),
                 "created_ts": record.get("created_ts"), "updated_ts": record.get("updated_ts"),
                 "turn_count": len(record.get("turns") or []) // 2,
                 "turns": copy.deepcopy(record.get("turns") or [])}

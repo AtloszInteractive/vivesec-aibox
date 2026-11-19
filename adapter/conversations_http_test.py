@@ -87,8 +87,10 @@ class ConversationsHttpTest(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
 
-    def request(self, path, body, user="thread-user", drive="/storage/drives/finance", method="POST"):
+    def request(self, path, body, user="thread-user", drive="/storage/drives/finance", method="POST",
+                extra=None):
         headers = {"Content-Type": "application/json", "VVS-User": user, "VVS-Drive": vvs(drive)}
+        headers.update(extra or {})
         url = "http://127.0.0.1:%d%s" % (self.server.server_port,
                                           path if path.startswith("/") else "/api/v1/ui/" + path)
         request = urllib.request.Request(
@@ -220,6 +222,43 @@ class ConversationsHttpTest(unittest.TestCase):
         self.assertEqual((code, polled["conversation_id"]), (200, cid))
         got = self.request("conversations/get", {"conversation_id": cid})[1]["conversation"]
         self.assertEqual(got["turn_count"], 1)
+
+    def test_thread_keeps_its_drive_selection(self):
+        # Two entitled drives; the thread is started narrowed to HR. The list
+        # must show it whatever is selected now, but it may only be continued
+        # under the selection it was started with.
+        wide = {"extra": {"VVS-Other-Drives": vvs("/storage/drives/hr")}}
+        hr = ["/storage/drives/hr"]
+        code, created = self.request("conversations/create", {"drives": hr}, **wide)
+        self.assertEqual(code, 200)
+        cid = created["conversation"]["id"]
+        self.assertEqual(created["conversation"]["drives"], hr)
+        for selection in ({}, {"drives": ["/storage/drives/finance"]}):
+            with self.subTest(list_selection=selection):
+                listed = self.request("conversations/list", selection, **wide)[1]["conversations"]
+                self.assertEqual([(c["id"], c["drives"]) for c in listed], [(cid, hr)])
+        code, result = self.request("query", {"query": "How much revenue?", "drives": hr,
+                                              "conversation_id": cid}, **wide)
+        self.assertEqual((code, result.get("conversation_id")), (200, cid))
+        code, submitted = self.request("ask", {"query": "And the plan?", "drives": hr,
+                                               "conversation_id": cid}, **wide)
+        self.assertEqual(code, 202, submitted)
+        job = self.service.JOBS.wait("thread-user", "/storage/drives/finance", submitted["job_id"], 5)
+        self.assertEqual(job["status"], "done")
+        got = self.request("conversations/get", {"conversation_id": cid}, **wide)[1]["conversation"]
+        self.assertEqual(got["turn_count"], 2)
+        # A different selection must not get the thread's history (fail-closed).
+        calls = self.chat.call_count
+        for selection in ({}, {"drives": ["/storage/drives/finance"]}):
+            for path in ("query", "ask"):
+                with self.subTest(path=path, selection=selection):
+                    code, refused = self.request(path, dict(selection, query="Hi", conversation_id=cid),
+                                                 **wide)
+                    self.assertEqual((code, refused["error"]), (409, "conversation_scope_mismatch"))
+                    self.assertEqual(refused["drives"], hr)
+        self.assertEqual(self.chat.call_count, calls)
+        # Without the second drive the entitled scope differs: the thread is gone.
+        self.assertEqual(self.request("conversations/list", {})[1]["conversations"], [])
 
     # -- titles ---------------------------------------------------------------------------------
     def test_first_exchange_titles_the_thread(self):

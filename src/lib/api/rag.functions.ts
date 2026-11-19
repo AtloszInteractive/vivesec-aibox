@@ -388,7 +388,8 @@ export type ConversationSummary = AdapterConversationSummary;
 export type Conversation = AdapterConversation;
 export type ConversationTurn = AdapterConversationTurn;
 
-type ConversationScope = { drive?: string; profile?: ChatProfile };
+// Search scope selection a new thread is started with (create only).
+type ConversationScope = { drive?: string; profile?: ChatProfile; drives?: string[] };
 
 export function listConversations(scope: ConversationScope): Promise<ConversationSummary[] | null> {
   return adapterListConversations(scope);
