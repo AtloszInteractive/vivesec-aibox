@@ -2555,9 +2555,11 @@ function ViveSecAppInner() {
           fontFamily: "Arial, 'Liberation Sans', 'Nimbus Sans', Helvetica, sans-serif",
         }}
       >
-        {/* Header */}
+        {/* Header. Its menus open into the area below, so while one is open
+          the header is lifted above the relationship view (z-[60]); only
+          then, because the mobile drawers are meant to cover it. */}
         <header
-          className="z-30 shrink-0 border-b border-ink/5"
+          className="z-30 shrink-0 border-b border-ink/5 has-[[aria-expanded=true]]:z-[65]"
           style={{ backgroundColor: "var(--header)" }}
         >
           <div className="flex items-center gap-3 px-4 py-2">
