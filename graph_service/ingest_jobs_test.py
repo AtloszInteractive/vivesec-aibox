@@ -17,6 +17,15 @@ NOTE_1 = "Kovács János (szül. 1980. 01. 02.) a 102. zárkában van elhelyezve
 NOTE_2 = "Kovács János és Nagy Éva 2026. 03. 12-én találkozott."
 
 
+def newer_rules(profile: dict) -> dict:
+    """The next profile version with a changed extraction rule (a change of the
+    structured sources alone keeps the documents current)."""
+    out = domain_profile.validate(profile)
+    out["version"] += 1
+    out["relation_types"][-1]["synonyms"] = out["relation_types"][-1]["synonyms"] + ["újszó"]
+    return out
+
+
 class FakeLLM:
     calls = 0
     seconds = 0.0
@@ -160,7 +169,7 @@ class IngestWorkerTest(unittest.TestCase):
         self.assertFalse(self.post("/ingest/document",
                                    doc("d1", "c1", NOTE_1 + " ")).get("unchanged"))
         self.assertTrue(worker.wait_idle())
-        newer = dict(self.state.profile, version=self.state.profile["version"] + 1)
+        newer = newer_rules(self.state.profile)
         self.post("/profile/set", {"profile": newer})
         self.assertFalse(self.post("/ingest/document",
                                    doc("d1", "c1", NOTE_1 + " ")).get("unchanged"))
@@ -225,7 +234,7 @@ class IngestWorkerTest(unittest.TestCase):
         old = domain_profile.profile_tag(self.state.profile)
         out = self.post("/documents/profile", scope)
         self.assertEqual((old, {old: 2}, 0), (out["current"], out["counts"], out["stale_total"]))
-        newer = dict(self.state.profile, version=self.state.profile["version"] + 1)
+        newer = newer_rules(self.state.profile)
         self.post("/profile/set", {"profile": newer})
         out = self.post("/documents/profile", scope)
         self.assertEqual(["/c1/d1.txt", "/c2/d2.txt"], [d["source_path"] for d in out["stale"]])

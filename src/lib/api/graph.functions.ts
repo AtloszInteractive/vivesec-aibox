@@ -470,6 +470,29 @@ export const graphApi = {
   /** E29: how far the search copy of a folder's records got. */
   importRag: (drive: string, folder: string) =>
     adapterGraph<{ folder: string; rag: GraphImportRag }>("import/rag", { folder }, drive),
+  /** E28b: how a file fits each structured source (graph administrators). */
+  importInspect: (drive: string, file: GraphSampleFile) =>
+    adapterGraph<GraphImportInspect>("import/inspect", sampleBody(file), drive, 120_000),
+  /** E28b: a draft of a new source from a sample file. The local model reads
+   *  its first rows (waiting its turn on the GPU); the draft has no cell value. */
+  importLearn: (drive: string, file: GraphSampleFile) =>
+    adapterGraph<GraphSourceDraft>("import/learn", sampleBody(file), drive, 660_000),
+  /** The next profile version with the accepted draft as a new source:
+   *  validated, not saved (saveProfile saves it). */
+  importLearnApply: (drive: string, draft: GraphSourceDraft, name: string) =>
+    adapterGraph<{ profile: GraphProfile; source: { id: string; label: GraphLabel } }>(
+      "import/learn/apply",
+      { draft, name },
+      drive,
+    ),
+  /** The next profile version with other names of a source's columns
+   *  ({column of the source: its name in the file}); not saved. */
+  importAliasesApply: (drive: string, source: string, aliases: Record<string, string>) =>
+    adapterGraph<{ profile: GraphProfile; changes: { column: string; alias: string }[] }>(
+      "import/aliases/apply",
+      { source, aliases },
+      drive,
+    ),
   /** Watchlist pilot: the caller's watched entities in this scope. */
   watchList: (drive: string) =>
     adapterGraph<{ items: GraphWatchItem[]; max_items: number; max_days: number }>(
@@ -540,8 +563,100 @@ export type GraphImportSource = {
   mode: "delta" | "full";
   record_id: string[];
   columns: string[];
+  /** Other names of its columns (an export renamed them), E28b. */
+  aliases?: Record<string, string[]>;
   acl: boolean;
   /** Its records' free text also goes into the search (E29). */
+  rag?: boolean;
+};
+
+/** A sample or export file sent to the box for inspection or learning. */
+export type GraphSampleFile = { filename: string; contentB64: string; sheet?: string };
+
+function sampleBody(file: GraphSampleFile): Record<string, unknown> {
+  return { filename: file.filename, content_b64: file.contentB64, sheet: file.sheet || undefined };
+}
+
+/** How a file fits one structured source (graph_service source_learning.py). */
+export type GraphImportFit = {
+  id: string;
+  label: GraphLabel;
+  title: string;
+  /** full: every column found; partial: only optional ones missing; none:
+   *  a column the import needs is missing. */
+  fit: "full" | "partial" | "none";
+  matched: number;
+  total: number;
+  missing_required: string[];
+  missing_optional: string[];
+  /** Columns of the file the source does not read. */
+  unused: string[];
+  /** Columns found by another name. */
+  aliased: string[];
+};
+
+export type GraphImportInspect = {
+  tables: string[];
+  sheet: string;
+  header: string[];
+  rows: number;
+  sources: GraphImportFit[];
+  /** The source the file fits best, if any fits. */
+  best: string | null;
+};
+
+export const SOURCE_ROLES = [
+  "record_id",
+  "person",
+  "birth_date",
+  "birth_place",
+  "mother_name",
+  "id_number",
+  "registry_number",
+  "phone",
+  "email",
+  "address",
+  "start_date",
+  "end_date",
+  "relation_label",
+  "deleted",
+  "text",
+  "ignore",
+] as const;
+export type GraphSourceRole = (typeof SOURCE_ROLES)[number];
+
+/** One column of a learnt draft: what it is, and never a value of it. */
+export type GraphDraftColumn = {
+  column: string;
+  role: GraphSourceRole;
+  /** person: its role (a person subtype of the profile). */
+  subtype: string;
+  /** Properties, phone, e-mail, address: the person column they belong to. */
+  of: string;
+  /** phone, e-mail, address: the relation linking the person to it. */
+  relation?: string;
+  kind: "empty" | "date" | "number" | "email" | "phone" | "text";
+  source: "model" | "rule";
+};
+
+export type GraphDraftRelation = {
+  type: string;
+  from: string;
+  to: string;
+  start: string;
+  end: string;
+  label: string;
+};
+
+export type GraphSourceDraft = {
+  header: string[];
+  sheet: string;
+  tables: string[];
+  rows: number;
+  columns: GraphDraftColumn[];
+  relations: GraphDraftRelation[];
+  name: string;
+  model: "used" | "unused" | "off" | "failed";
   rag?: boolean;
 };
 

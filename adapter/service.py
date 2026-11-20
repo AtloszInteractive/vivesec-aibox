@@ -2565,6 +2565,10 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
                 "/api/v1/ui/graph/import": self._graph_import,
                 "/api/v1/ui/graph/import/sources": self._graph_import_sources,
+                "/api/v1/ui/graph/import/inspect": self._graph_import_inspect,
+                "/api/v1/ui/graph/import/learn": self._graph_import_learn,
+                "/api/v1/ui/graph/import/learn/apply": self._graph_import_learn_apply,
+                "/api/v1/ui/graph/import/aliases/apply": self._graph_import_aliases_apply,
                 "/api/v1/ui/graph/import/status": self._graph_import_status,
                 "/api/v1/ui/graph/import/rag": self._graph_import_rag,
                 "/api/v1/ui/graph/watch/list": self._graph_watch_list,
@@ -4019,6 +4023,49 @@ class Handler(BaseHTTPRequestHandler):
         res = self._graph_post("/import/sources", {})
         if res is not None:
             self._send(200, res)
+
+    def _graph_import_learning(self, path, keys):
+        """E28b (graph source_learning.py), for a graph administrator: which
+        source a file fits (inspect), a draft of a new source from a sample file
+        (learn: the local model reads its first rows; the answer and this log
+        carry no cell value), and the next profile version with an accepted
+        draft or with other names of a source's columns (apply: validated, not
+        saved -- the administrator saves it through profile/set)."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload = ctx[0], ctx[1]
+        if not self._graph_admin(user):
+            return
+        body = {k: payload[k] for k in keys if payload.get(k) is not None}
+        if path == "/import/learn":
+            body["model"] = payload.get("model", True) is not False
+        try:
+            # The one model call of learn waits its turn on the GPU.
+            res = GRAPH.post(path, body, timeout=max(GRAPH.timeout, 600)
+                             if path == "/import/learn" else GRAPH.timeout)
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return
+        if path == "/import/learn":
+            sys.stderr.write("[adapter] graph: source learning (%d columns, model %s) by %s\n"
+                             % (len(res.get("columns") or []), res.get("model"), user))
+        elif path != "/import/inspect":
+            sys.stderr.write("[adapter] graph: %s -> profile v%s (unsaved) by %s\n" % (
+                path, (res.get("profile") or {}).get("version"), user))
+        self._send(200, dict(res, ok=True))
+
+    def _graph_import_inspect(self):
+        self._graph_import_learning("/import/inspect", ("filename", "content_b64", "sheet"))
+
+    def _graph_import_learn(self):
+        self._graph_import_learning("/import/learn", ("filename", "content_b64", "sheet"))
+
+    def _graph_import_learn_apply(self):
+        self._graph_import_learning("/import/learn/apply", ("draft", "name"))
+
+    def _graph_import_aliases_apply(self):
+        self._graph_import_learning("/import/aliases/apply", ("source", "aliases"))
 
     def _graph_import(self):
         """A graph administrator imports a periodic export (graph_service/table_formats.py) of a

@@ -17,6 +17,7 @@ import {
   Settings2,
   ShieldAlert,
   Split,
+  Sparkles,
   Undo2,
   Upload,
   X,
@@ -35,6 +36,7 @@ import {
   type GraphEvidence,
   type GraphFailure,
   type GraphImportAnswer,
+  type GraphImportInspect,
   type GraphImportRag,
   type GraphImportSource,
   type GraphLabel,
@@ -44,6 +46,7 @@ import {
   type GraphReviewField,
   type GraphReviewItem,
   type GraphReviewList,
+  type GraphSampleFile,
   type GraphStatus,
   type GraphTimelineItem,
   type GraphWatermark,
@@ -57,6 +60,7 @@ import {
 import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
 import { FolderPicker } from "./FolderPicker";
 import { ProfileSuggestions } from "./ProfileSuggestions";
+import { AssignColumns, LearnSource } from "./SourceLearning";
 
 const PANEL = "var(--surface-3)";
 const BG = "var(--surface-2)";
@@ -228,7 +232,13 @@ export function GraphPanel({
             />
           )}
           {tab === "processing" && (
-            <ProcessingTab drive={drive} canEdit={canEdit} onOpenSource={onOpenSource} />
+            <ProcessingTab
+              drive={drive}
+              canEdit={canEdit}
+              profile={profile}
+              onProfileSaved={loadProfile}
+              onOpenSource={onOpenSource}
+            />
           )}
           {tab === "profile" && (
             <ProfileTab
@@ -2057,10 +2067,14 @@ function QueryLogTab({ drive }: { drive: string }) {
 function ProcessingTab({
   drive,
   canEdit,
+  profile,
+  onProfileSaved,
   onOpenSource,
 }: {
   drive: string;
   canEdit: boolean;
+  profile: GraphProfile | null;
+  onProfileSaved: () => Promise<void>;
   onOpenSource: (source: GraphSource) => void;
 }) {
   const { tm } = useLang();
@@ -2135,7 +2149,12 @@ function ProcessingTab({
           </div>
         </>
       )}
-      <ImportSection drive={drive} canEdit={canEdit} />
+      <ImportSection
+        drive={drive}
+        canEdit={canEdit}
+        profile={profile}
+        onProfileSaved={onProfileSaved}
+      />
       <ReprocessSection drive={drive} canEdit={canEdit} />
       <UnreadableDocuments drive={drive} onOpenSource={onOpenSource} />
     </div>
@@ -2167,7 +2186,17 @@ function toBase64(buffer: ArrayBuffer): string {
  *  the answer is the change it made, and (E29) how far the search copy of the
  *  folder's records got. A full export that would remove too much is refused
  *  first and can be repeated on purpose. */
-function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+function ImportSection({
+  drive,
+  canEdit,
+  profile,
+  onProfileSaved,
+}: {
+  drive: string;
+  canEdit: boolean;
+  profile: GraphProfile | null;
+  onProfileSaved: () => Promise<void>;
+}) {
   const { tm, lang } = useLang();
   const code = lang.toLowerCase() as keyof GraphLabel;
   const { run: call, notice } = useFailure();
@@ -2183,16 +2212,77 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
   const [refused, setRefused] = useState("");
   const [answer, setAnswer] = useState<GraphImportAnswer | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // E28b: the chosen file as sent to the box, how it fits the sources, and
+  // the panel that learns a new source or matches renamed columns.
+  const [sample, setSample] = useState<GraphSampleFile | null>(null);
+  const [inspect, setInspect] = useState<GraphImportInspect | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [panel, setPanel] = useState<"learn" | "assign" | null>(null);
+  const [saved, setSaved] = useState("");
 
-  useEffect(() => {
-    if (!canEdit) return;
-    void call(() => graphApi.importSources(drive)).then((res) => {
+  const loadSources = useCallback(
+    async (select?: string) => {
+      const res = await call(() => graphApi.importSources(drive));
       if (!res) return;
       setSources(res.sources);
       if (res.formats?.length) setFormats(res.formats);
-      setSourceId((current) => current || res.sources[0]?.id || "");
-    });
-  }, [drive, canEdit, call]);
+      setSourceId((current) => select || current || res.sources[0]?.id || "");
+    },
+    [drive, call],
+  );
+  useEffect(() => {
+    if (canEdit) void loadSources();
+  }, [canEdit, loadSources]);
+
+  const check = useCallback(
+    async (file: GraphSampleFile, keepSource = false) => {
+      setInspecting(true);
+      try {
+        const res = await graphApi.importInspect(drive, file);
+        setInspect(res);
+        // A file that does not fit the chosen source picks the one it fits.
+        if (res.best && !keepSource) {
+          setSourceId((current) =>
+            res.sources.find((s) => s.id === current)?.fit === "full" ? current : res.best!,
+          );
+        }
+      } catch (err) {
+        setInspect(null);
+        if (err instanceof AdapterGraphError && err.status === 400)
+          setError(`${tm("The file could not be read.")} ${err.message}`);
+      } finally {
+        setInspecting(false);
+      }
+    },
+    [drive, tm],
+  );
+
+  async function choose(next: File | null) {
+    setFile(next);
+    setSample(null);
+    setInspect(null);
+    setPanel(null);
+    setSaved("");
+    setError("");
+    setAnswer(null);
+    setRefused("");
+    if (!next) return;
+    if (next.size > IMPORT_MAX_BYTES) {
+      setError(tm("The file is larger than 50 MB."));
+      return;
+    }
+    const chosen = { filename: next.name, contentB64: toBase64(await next.arrayBuffer()) };
+    setSample(chosen);
+    await check(chosen);
+  }
+
+  async function afterSave(message: string, select?: string) {
+    setPanel(null);
+    setSaved(message);
+    await onProfileSaved();
+    await loadSources(select);
+    if (sample) await check(sample, true);
+  }
 
   // The search copy is aligned after the import; follow it until it settles.
   const ragFolder = answer?.import.source_path;
@@ -2215,12 +2305,8 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
   const effectiveMode = mode || source?.mode || "delta";
 
   async function start(force = false) {
-    if (!source || !file || !folder.trim()) {
+    if (!source || !file || !sample || !folder.trim()) {
       setError(tm("Choose a source, a target folder and a file."));
-      return;
-    }
-    if (file.size > IMPORT_MAX_BYTES) {
-      setError(tm("The file is larger than 50 MB."));
       return;
     }
     setBusy(true);
@@ -2232,8 +2318,8 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
         source: source.id,
         asOf,
         folder: folder.trim(),
-        filename: file.name,
-        contentB64: toBase64(await file.arrayBuffer()),
+        filename: sample.filename,
+        contentB64: sample.contentB64,
         mode: mode || undefined,
         force,
       });
@@ -2246,13 +2332,34 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
       setAnswer(res);
     } catch (err) {
       if (err instanceof AdapterGraphError && err.status === 409) setRefused(err.message);
-      else if (err instanceof AdapterGraphError && err.status !== 503)
+      else if (err instanceof AdapterGraphError && err.status !== 503) {
         setError(`${tm("The import failed.")} ${err.message}`);
-      else await call(() => Promise.reject(err));
+        // What the file lacks, and the way out (match its columns, new source).
+        if (!inspect) await check(sample, true);
+      } else await call(() => Promise.reject(err));
     } finally {
       setBusy(false);
     }
   }
+
+  const fit = inspect?.sources.find((s) => s.id === sourceId) ?? null;
+  const sourceName = (s: { label: GraphLabel; title: string }) =>
+    s.label[code] ?? s.label.en ?? s.title;
+  const learnButton = (primary: boolean) => (
+    <button
+      onClick={() => setPanel("learn")}
+      disabled={busy || !profile}
+      className={
+        primary
+          ? "inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
+          : "inline-flex items-center gap-1.5 rounded-lg border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10 disabled:opacity-50"
+      }
+      style={primary ? { backgroundColor: ACCENT, color: ON_ACCENT } : undefined}
+    >
+      <Sparkles className="h-3.5 w-3.5" />
+      {tm("Add a new source from this file")}
+    </button>
+  );
 
   const stats = answer?.import.stats;
   const rag = answer?.rag;
@@ -2270,109 +2377,116 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
           "Load a register export (for example a database dump or a spreadsheet). The box reads it by the domain profile's rules, without the language model.",
         )}
       </div>
-      {sources && sources.length === 0 && (
-        <div className="mt-2 text-xs text-ink/55">{tm("No structured source in the profile.")}</div>
-      )}
-      {sources && sources.length > 0 && (
+      {sources && (
         <div
           className="mt-2 space-y-2 rounded-xl border border-ink/10 p-2.5 text-xs"
           style={{ backgroundColor: PANEL }}
         >
-          <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-ink/60">{tm("Source")}</span>
-            <select
-              value={sourceId}
-              onChange={(e) => {
-                setSourceId(e.target.value);
-                setMode("");
-              }}
-              disabled={busy}
-              className={`${input} flex-1`}
-            >
-              {sources.map((s) => (
-                <option key={s.id} value={s.id} className="bg-surface-2">
-                  {s.label[code] ?? s.label.en ?? s.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          {source && (
-            <div className="pl-0 text-[11px] text-ink/50 sm:pl-30">
-              <span className="text-ink/60">{tm("Expected columns")}:</span>{" "}
-              {source.columns.join(", ")}
-              {source.rag && (
-                <div className="mt-0.5" style={{ color: ACCENT_TEXT }}>
-                  {tm("Its free text also goes into the search.")}
-                </div>
-              )}
+          {sources.length === 0 && (
+            <div className="text-ink/55">
+              {tm("No structured source in the profile yet. Choose a sample file to add one.")}
             </div>
           )}
-          <div className="flex flex-wrap items-start gap-2">
-            <span className="w-28 shrink-0 pt-0.5 text-ink/60">{tm("Target folder")}</span>
-            <div className="min-w-0 flex-1">
-              <FolderPicker drive={drive} value={folder} onChange={setFolder} disabled={busy} />
-              <div className="mt-0.5 text-[11px] text-ink/50">
-                {tm("Whoever may see this folder sees its records too.")}
+          {sources.length > 0 && (
+            <>
+              <label className="flex flex-wrap items-center gap-2">
+                <span className="w-28 shrink-0 text-ink/60">{tm("Source")}</span>
+                <select
+                  value={sourceId}
+                  onChange={(e) => {
+                    setSourceId(e.target.value);
+                    setMode("");
+                    setPanel(null);
+                  }}
+                  disabled={busy}
+                  className={`${input} flex-1`}
+                >
+                  {sources.map((s) => (
+                    <option key={s.id} value={s.id} className="bg-surface-2">
+                      {sourceName(s)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {source && (
+                <div className="pl-0 text-[11px] text-ink/50 sm:pl-30">
+                  <span className="text-ink/60">{tm("Expected columns")}:</span>{" "}
+                  {source.columns.join(", ")}
+                  {source.rag && (
+                    <div className="mt-0.5" style={{ color: ACCENT_TEXT }}>
+                      {tm("Its free text also goes into the search.")}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex flex-wrap items-start gap-2">
+                <span className="w-28 shrink-0 pt-0.5 text-ink/60">{tm("Target folder")}</span>
+                <div className="min-w-0 flex-1">
+                  <FolderPicker drive={drive} value={folder} onChange={setFolder} disabled={busy} />
+                  <div className="mt-0.5 text-[11px] text-ink/50">
+                    {tm("Whoever may see this folder sees its records too.")}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-          <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-ink/60">{tm("Export date")}</span>
-            <input
-              type="date"
-              value={asOf}
-              onChange={(e) => setAsOf(e.target.value)}
-              disabled={busy}
-              className={input}
-            />
-            <span className="text-[11px] text-ink/50">
-              {tm("An older export never overwrites a newer one.")}
-            </span>
-          </label>
-          <div className="flex flex-wrap items-start gap-2">
-            <span className="w-28 shrink-0 text-ink/60">{tm("The file holds")}</span>
-            <div className="min-w-0 flex-1 space-y-1.5">
-              {(
-                [
-                  [
-                    "delta",
-                    "Only the changes",
-                    "New and changed records, and those marked deleted. Records the file does not list stay.",
-                  ],
-                  [
-                    "full",
-                    "The whole register",
-                    "Every record of the source for this folder. Records the file no longer lists are removed.",
-                  ],
-                ] as const
-              ).map(([value, title, hint]) => (
-                <label key={value} className="flex cursor-pointer items-start gap-2">
-                  <input
-                    type="radio"
-                    name="import-mode"
-                    checked={effectiveMode === value}
-                    onChange={() => setMode(value)}
-                    disabled={busy}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    <span className="text-ink">{tm(title)}</span>
-                    {source?.mode === value && (
-                      <span className="text-ink/45">{` (${tm("as in the profile")})`}</span>
-                    )}
-                    <span className="block text-[11px] text-ink/50">{tm(hint)}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
+              <label className="flex flex-wrap items-center gap-2">
+                <span className="w-28 shrink-0 text-ink/60">{tm("Export date")}</span>
+                <input
+                  type="date"
+                  value={asOf}
+                  onChange={(e) => setAsOf(e.target.value)}
+                  disabled={busy}
+                  className={input}
+                />
+                <span className="text-[11px] text-ink/50">
+                  {tm("An older export never overwrites a newer one.")}
+                </span>
+              </label>
+              <div className="flex flex-wrap items-start gap-2">
+                <span className="w-28 shrink-0 text-ink/60">{tm("The file holds")}</span>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  {(
+                    [
+                      [
+                        "delta",
+                        "Only the changes",
+                        "New and changed records, and those marked deleted. Records the file does not list stay.",
+                      ],
+                      [
+                        "full",
+                        "The whole register",
+                        "Every record of the source for this folder. Records the file no longer lists are removed.",
+                      ],
+                    ] as const
+                  ).map(([value, title, hint]) => (
+                    <label key={value} className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="radio"
+                        name="import-mode"
+                        checked={effectiveMode === value}
+                        onChange={() => setMode(value)}
+                        disabled={busy}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="text-ink">{tm(title)}</span>
+                        {source?.mode === value && (
+                          <span className="text-ink/45">{` (${tm("as in the profile")})`}</span>
+                        )}
+                        <span className="block text-[11px] text-ink/50">{tm(hint)}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
           <label className="flex flex-wrap items-center gap-2">
             <span className="w-28 shrink-0 text-ink/60">{tm("Export file")}</span>
             <input
               ref={fileRef}
               type="file"
               accept={formats.join(",")}
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => void choose(e.target.files?.[0] ?? null)}
               disabled={busy}
               className="min-w-0 flex-1 text-xs text-ink/70 file:mr-2 file:rounded-md file:border-0 file:bg-ink/10 file:px-2 file:py-1 file:text-xs file:text-ink"
             />
@@ -2380,22 +2494,110 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
           <div className="pl-0 text-[11px] text-ink/50 sm:pl-30">
             {`${tm("Accepted")}: ${formats.map((f) => f.slice(1).toUpperCase()).join(", ")}`}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => void start()}
-              disabled={busy || !source || !file}
-              className="rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
-              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
-            >
-              {tm("Import")}
-            </button>
-            {busy && (
-              <span className="inline-flex items-center gap-1.5 text-ink/60">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {tm("Importing…")}
-              </span>
-            )}
-          </div>
+          {inspecting && (
+            <div className="flex items-center gap-2 text-ink/60">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {tm("Checking the file's columns…")}
+            </div>
+          )}
+          {inspect && !inspecting && fit && (
+            <div className="space-y-1.5 text-[11px]">
+              {fit.fit === "full" && (
+                <div className="text-ink/60">{tm("The file has every column of this source.")}</div>
+              )}
+              {fit.missing_required.length > 0 && (
+                <div className="text-amber-700 dark:text-amber-300">
+                  {`${tm("The file lacks columns this source needs")}: ${fit.missing_required.join(", ")}`}
+                </div>
+              )}
+              {fit.missing_optional.length > 0 && (
+                <div className="text-ink/60">
+                  {`${tm("Missing columns (the import goes on without them)")}: ${fit.missing_optional.join(", ")}`}
+                </div>
+              )}
+              {fit.aliased.length > 0 && (
+                <div className="text-ink/50">
+                  {`${tm("Found by another name")}: ${fit.aliased.join(", ")}`}
+                </div>
+              )}
+              {fit.fit !== "full" && fit.unused.length > 0 && panel !== "assign" && (
+                <button
+                  onClick={() => setPanel("assign")}
+                  disabled={busy}
+                  className="rounded-lg border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10 disabled:opacity-50"
+                >
+                  {tm("Match the renamed columns")}
+                </button>
+              )}
+            </div>
+          )}
+          {inspect && !inspecting && !inspect.best && panel !== "learn" && (
+            <div className="space-y-1.5 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2">
+              <div className="text-[11.5px] text-amber-800 dark:text-amber-100">
+                {tm(
+                  "This file fits no source of the profile. The box can learn a new source from it: you check what each column is.",
+                )}
+              </div>
+              {learnButton(true)}
+            </div>
+          )}
+          {inspect && !inspecting && inspect.best && panel !== "learn" && learnButton(false)}
+          {panel === "assign" && fit && (
+            <AssignColumns
+              drive={drive}
+              fit={fit}
+              sourceName={sourceName(fit)}
+              onCancel={() => setPanel(null)}
+              onSaved={(version) =>
+                afterSave(
+                  tm("The column names were saved (profile version {v}).").replace(
+                    "{v}",
+                    String(version),
+                  ),
+                )
+              }
+            />
+          )}
+          {panel === "learn" && sample && profile && (
+            <LearnSource
+              drive={drive}
+              file={sample}
+              profile={profile}
+              code={code}
+              onCancel={() => setPanel(null)}
+              onSaved={(id, version) =>
+                afterSave(
+                  tm(
+                    "Saved as a new source (profile version {v}). The file can be imported now.",
+                  ).replace("{v}", String(version)),
+                  id,
+                )
+              }
+            />
+          )}
+          {saved && (
+            <div className="text-[11px]" style={{ color: ACCENT_TEXT }}>
+              {saved}
+            </div>
+          )}
+          {sources.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void start()}
+                disabled={busy || !source || !sample || panel !== null}
+                className="rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
+                style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+              >
+                {tm("Import")}
+              </button>
+              {busy && (
+                <span className="inline-flex items-center gap-1.5 text-ink/60">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {tm("Importing…")}
+                </span>
+              )}
+            </div>
+          )}
           {error && <div className="text-[11px] text-amber-700 dark:text-amber-300">{error}</div>}
           {refused && (
             <div className="space-y-1.5 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2">

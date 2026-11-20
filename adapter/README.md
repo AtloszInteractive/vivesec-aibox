@@ -1187,6 +1187,40 @@ seconds (default 60). `graph-corpus/structured_import_run.py` calls it on a box
   assumption until BV sends samples. Subtypes and relations marked
   `structured_only` (contact, facility, unit, `CONTACT_OF`) stay out of the
   extraction prompts, so the model reads documents exactly as before.
+- **Learning a source from a sample file (E28b).** A standalone box cannot
+  know in advance which exports it gets. For a graph administrator:
+  `POST /api/v1/ui/graph/import/inspect {filename, content_b64, sheet?}` says how
+  the file fits each source (`fit`: `full`, `partial` = only optional columns
+  missing, `none` = a column the import needs is missing; the missing columns,
+  the file's columns no source reads, `best`).
+  `/ui/graph/import/learn {filename, content_b64, sheet?, model?}` returns a
+  draft of a new source: per column a role (record id, person name with its
+  role = person subtype, birth date and place, mother's name, personal ID and
+  registry number of a person, phone / e-mail / address with the relation
+  linking them to the person, start and end date, nature of the relation,
+  deleted mark, free text, not used) and the relations every row states. The
+  local model (`GRAPH_LLM_URL`, behind the GPU broker) sees the header and the
+  first 6 rows; when it is off or fails, name rules (HU/EN/DE/DA wording) and
+  the shape of the values decide. The draft carries only the header, row count
+  and shape hints (dates, numbers ...), never a cell; neither the graph nor
+  the adapter logs anything of the file. `/ui/graph/import/learn/apply {draft,
+  name}` builds the source (dates and relation texts no relation reads are
+  kept as text columns, `person_key` when name and the three birth fields are
+  there) and returns the next profile version, validated but unsaved; the UI
+  then saves it through `/ui/graph/profile/set`, which validates it again.
+- **Renamed columns (E28b).** A source's `column_aliases` (`{column: [other
+  names]}`) match an export that renamed a column; the record text keeps the
+  profile's column name, so the records do not change.
+  `/ui/graph/import/aliases/apply {source, aliases: {column: name in the
+  file}}` returns the next profile version with them (unsaved, as above). An
+  alias may not be another column of the source nor stand for two columns.
+- **Profile versions and reprocessing.** A change of the structured sources
+  alone (a new source, an alias) keeps the profile's `extraction_version`
+  (saved with `extraction_rules`, a fingerprint of the rules extraction reads;
+  a profile file whose rules no longer match it falls back to its own
+  version), so the documents' profile tag (`bv@7/e5`) stays current and
+  nothing is listed for reprocessing; any other change moves it to the new
+  version (`/profile/set` answers `reprocess_required`).
 - **Records.** Each row becomes its own graph document: id from source + record
   id (the idempotency key), path `<folder>/~records/<source>/<hash>`, tag
   `record:<source>@<as_of>`, its row as `Column: value` text (codes with their

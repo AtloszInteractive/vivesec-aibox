@@ -8,6 +8,7 @@ profile instead of being silently ignored.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -83,8 +84,32 @@ EXTRACTOR_REVISION = 5
 
 
 def profile_tag(profile: dict) -> str:
-    """"bv@3/e3": the profile and extractor revision a document is extracted with."""
-    return "%s@%s/e%d" % (profile["id"], profile["version"], EXTRACTOR_REVISION)
+    """"bv@3/e3": the profile and extractor revision a document is extracted with.
+    The profile part is the version whose extraction rules it uses: a change of
+    the structured sources alone (a new source, a column's other name) keeps
+    `extraction_version`, so documents do not turn stale."""
+    return "%s@%s/e%d" % (profile["id"], profile.get("extraction_version") or profile["version"],
+                          EXTRACTOR_REVISION)
+
+
+# What does not change how documents are extracted and resolved.
+_NOT_EXTRACTION = ("version", "extraction_version", "extraction_rules", "name", "description",
+                   "structured_sources")
+
+
+def extraction_rules(profile: dict) -> str:
+    """A fingerprint of the parts of a validated profile extraction reads."""
+    basis = {k: v for k, v in profile.items() if k not in _NOT_EXTRACTION}
+    text = json.dumps(basis, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def extraction_version(current: dict, new: dict) -> int:
+    """The extraction version of `new` replacing `current`: carried over when only
+    the parts extraction does not read changed, else its own version."""
+    if current.get("id") == new["id"] and extraction_rules(current) == extraction_rules(new):
+        return min(new["version"], current.get("extraction_version") or current["version"])
+    return new["version"]
 
 
 def reversed_by_subtypes(spec: dict, sub_a: str, sub_b: str) -> bool:
@@ -113,13 +138,18 @@ def relation_line(r: dict) -> str:
 def validate(raw: dict) -> dict:
     _keys(raw, ("id", "version", "name", "description", "entity_subtypes", "identifier_patterns",
                 "relation_types", "resolution", "cooccurrence", "table_mappings",
-                "structured_sources", "protected_principals"), "profile")
+                "structured_sources", "protected_principals", "extraction_version",
+                "extraction_rules"), "profile")
     if not isinstance(raw.get("id"), str) or not _ID.match(raw["id"]):
         raise ProfileError("profile.id must be a lowercase identifier")
     if not isinstance(raw.get("version"), int) or raw["version"] < 1:
         raise ProfileError("profile.version must be a positive integer")
     out = {"id": raw["id"], "version": raw["version"], "name": _label(raw.get("name"), "profile"),
            "description": str(raw.get("description", ""))}
+    ev = raw.get("extraction_version")
+    if ev is not None and (isinstance(ev, bool) or not isinstance(ev, int)
+                           or not 1 <= ev <= raw["version"]):
+        raise ProfileError("profile.extraction_version must be 1..version")
     # Who sees protected data (E29: an informant's identity, only the FEFO): group
     # or role principals, matched only against a membership the directory answered
     # without error. A protected relation or record part needs them.
@@ -286,6 +316,13 @@ def validate(raw: dict) -> dict:
     sources = _structured_sources(raw.get("structured_sources"), out)
     if sources:
         out["structured_sources"] = sources
+    # An older extraction version holds only while the extraction rules are the
+    # ones it was recorded with: a profile file edited by hand (or any other
+    # change of the rules) falls back to its own version, so documents turn stale.
+    if ev is not None and ev != raw["version"] \
+            and raw.get("extraction_rules") == extraction_rules(out):
+        out["extraction_version"] = ev
+        out["extraction_rules"] = raw["extraction_rules"]
     return out
 
 
@@ -328,7 +365,7 @@ def _structured_sources(raw, profile: dict) -> list[dict]:
         where = "structured_sources[%d]" % i
         _keys(s, ("id", "label", "title", "record_id", "mode", "deleted", "sheet", "codelists",
                   "entities", "relations", "acl", "full_max_delete", "text_columns",
-                  "protected", "rag", "title_column"), where)
+                  "protected", "rag", "title_column", "column_aliases"), where)
         if not isinstance(s.get("id"), str) or not _ID.match(s["id"]) or s["id"] in seen:
             raise ProfileError("%s.id must be a unique lowercase identifier" % where)
         seen.add(s["id"])
@@ -509,7 +546,58 @@ def _structured_sources(raw, profile: dict) -> list[dict]:
                 raise ProfileError("%s.title_column must be a text column or the name column "
                                    "of an open entity" % where)
             src["title_column"] = column
+        aliases = _column_aliases(s.get("column_aliases"), src, where)
+        if aliases:
+            src["column_aliases"] = aliases
         out.append(src)
+    return out
+
+
+MAX_ALIASES = 10
+
+
+def source_columns(source: dict) -> set[str]:
+    """Every column a validated source reads (the protected ones too: they are
+    in the file)."""
+    columns = {c for e in source["entities"] for c in [e["name"], *e["attributes"].values()]
+               if c}
+    columns |= {c for r in source["relations"] for c in [r["start"], r["end"], *r["label"]]
+                if c}
+    columns |= set(source["record_id"]) | set(source.get("text_columns") or [])
+    columns |= set((source.get("protected") or {}).get("columns") or [])
+    for extra in ((source.get("acl") or {}).get("column"),
+                  (source.get("deleted") or {}).get("column"), source.get("title_column")):
+        if extra:
+            columns.add(extra)
+    return columns
+
+
+def _column_aliases(raw, src: dict, where: str) -> dict:
+    """{column the source reads: [other names of it]}: an export that renamed a
+    column is matched by one of these when the column itself is missing. An
+    alias may not be another column of the source nor stand for two columns,
+    so a header never reads ambiguously."""
+    if raw is None:
+        return {}
+    at = where + ".column_aliases"
+    if not isinstance(raw, dict):
+        raise ProfileError("%s must map columns to lists of other names" % at)
+    columns = {_fold(c): c for c in source_columns(src)}
+    out, taken = {}, set(columns)
+    for column, names in raw.items():
+        canonical = columns.get(_fold(str(column)))
+        if canonical is None:
+            raise ProfileError("%s: %r is not a column of the source" % (at, column))
+        if not isinstance(names, list) or not 1 <= len(names) <= MAX_ALIASES:
+            raise ProfileError("%s.%s must list 1..%d other names" % (at, column, MAX_ALIASES))
+        clean = []
+        for name in names:
+            name = _column(name, "%s.%s" % (at, column))
+            if _fold(name) in taken:
+                raise ProfileError("%s: %r already names a column of the source" % (at, name))
+            taken.add(_fold(name))
+            clean.append(name)
+        out.setdefault(canonical, []).extend(clean)
     return out
 
 

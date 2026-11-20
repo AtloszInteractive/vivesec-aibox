@@ -692,7 +692,7 @@ export async function adapterSubmitJob(input: AdapterAskInput): Promise<AdapterJ
   if (!jobId) throw new AdapterError("ui/ask returned no job_id", 502);
   return {
     jobId,
-    status: ((ask.job_status as AdapterJobStatus | undefined) ?? "queued"),
+    status: (ask.job_status as AdapterJobStatus | undefined) ?? "queued",
     queuePosition: typeof ask.queue_position === "number" ? ask.queue_position : null,
   };
 }
@@ -775,7 +775,8 @@ export async function adapterListJobs(
   if (res.status === 404 && typeof body.error === "string" && body.error.startsWith("Not found")) {
     return null;
   }
-  if (!res.ok) throw new AdapterError((body.error as string) ?? `ui/jobs HTTP ${res.status}`, res.status);
+  if (!res.ok)
+    throw new AdapterError((body.error as string) ?? `ui/jobs HTTP ${res.status}`, res.status);
   return Array.isArray(body.jobs) ? (body.jobs as AdapterJobSummary[]) : [];
 }
 
@@ -790,7 +791,8 @@ export async function adapterGetJob(
     body: JSON.stringify({ job_id: jobId }),
   });
   const body = await safeJson(res);
-  if (!res.ok) throw new AdapterError((body.error as string) ?? `ui/jobs/get HTTP ${res.status}`, res.status);
+  if (!res.ok)
+    throw new AdapterError((body.error as string) ?? `ui/jobs/get HTTP ${res.status}`, res.status);
   const job = (body.job ?? {}) as Record<string, unknown>;
   const request = (job.request ?? {}) as Record<string, unknown>;
   return {
@@ -821,21 +823,34 @@ async function adapterJobMutation(
     body: JSON.stringify({ job_id: jobId }),
   });
   const body = await safeJson(res);
-  if (!res.ok) throw new AdapterError((body.error as string) ?? `ui/jobs/${operation} HTTP ${res.status}`, res.status);
+  if (!res.ok)
+    throw new AdapterError(
+      (body.error as string) ?? `ui/jobs/${operation} HTTP ${res.status}`,
+      res.status,
+    );
   return body;
 }
 
-export function adapterMarkJobSeen(jobId: string, scope: Pick<AdapterAskInput, "drive" | "user"> = {}) {
+export function adapterMarkJobSeen(
+  jobId: string,
+  scope: Pick<AdapterAskInput, "drive" | "user"> = {},
+) {
   return adapterJobMutation("seen", jobId, scope);
 }
 
-export function adapterCancelJob(jobId: string, scope: Pick<AdapterAskInput, "drive" | "user"> = {}) {
+export function adapterCancelJob(
+  jobId: string,
+  scope: Pick<AdapterAskInput, "drive" | "user"> = {},
+) {
   return adapterJobMutation("cancel", jobId, scope);
 }
 
 /** Drop a finished run from the job list. The box refuses (409) while the job
  *  is still queued or running -- cancel it first. */
-export function adapterDeleteJob(jobId: string, scope: Pick<AdapterAskInput, "drive" | "user"> = {}) {
+export function adapterDeleteJob(
+  jobId: string,
+  scope: Pick<AdapterAskInput, "drive" | "user"> = {},
+) {
   return adapterJobMutation("delete", jobId, scope);
 }
 
@@ -877,7 +892,9 @@ export async function adapterListConversations(
   if (status >= 400) {
     throw new AdapterError((body.error as string) ?? `conversations/list HTTP ${status}`, status);
   }
-  return Array.isArray(body.conversations) ? (body.conversations as AdapterConversationSummary[]) : [];
+  return Array.isArray(body.conversations)
+    ? (body.conversations as AdapterConversationSummary[])
+    : [];
 }
 
 export async function adapterCreateConversation(
@@ -896,7 +913,11 @@ export async function adapterGetConversation(
   conversationId: string,
   scope: ConversationScope = {},
 ): Promise<AdapterConversation | null> {
-  const { status, body } = await conversationCall("get", { conversation_id: conversationId }, scope);
+  const { status, body } = await conversationCall(
+    "get",
+    { conversation_id: conversationId },
+    scope,
+  );
   if (status === 404) return null;
   if (status >= 400 || !body.conversation) {
     throw new AdapterError((body.error as string) ?? `conversations/get HTTP ${status}`, status);
@@ -910,7 +931,10 @@ export async function adapterRenameConversation(
   scope: ConversationScope = {},
 ): Promise<void> {
   const { status, body } = await conversationCall(
-    "rename", { conversation_id: conversationId, title }, scope);
+    "rename",
+    { conversation_id: conversationId, title },
+    scope,
+  );
   if (status >= 400) {
     throw new AdapterError((body.error as string) ?? `conversations/rename HTTP ${status}`, status);
   }
@@ -920,7 +944,11 @@ export async function adapterDeleteConversation(
   conversationId: string,
   scope: ConversationScope = {},
 ): Promise<void> {
-  const { status, body } = await conversationCall("delete", { conversation_id: conversationId }, scope);
+  const { status, body } = await conversationCall(
+    "delete",
+    { conversation_id: conversationId },
+    scope,
+  );
   if (status >= 400 && status !== 404) {
     throw new AdapterError((body.error as string) ?? `conversations/delete HTTP ${status}`, status);
   }
@@ -1093,6 +1121,10 @@ export async function adapterGraph<T>(
     | "reprocess/cancel"
     | "import"
     | "import/sources"
+    | "import/inspect"
+    | "import/learn"
+    | "import/learn/apply"
+    | "import/aliases/apply"
     | "import/status"
     | "import/rag"
     | "watch/list"
@@ -1368,9 +1400,7 @@ export type AdapterFeedbackResult = {
 };
 
 /** POST /api/v1/ui/feedback — rate one generated answer (up/down). */
-export async function adapterFeedback(
-  input: AdapterFeedbackInput,
-): Promise<AdapterFeedbackResult> {
+export async function adapterFeedback(input: AdapterFeedbackInput): Promise<AdapterFeedbackResult> {
   const drive = input.drive ?? demoDrive();
   const user = input.user ?? demoUser();
   const res = await apiFetch(`${adapterUrl()}/api/v1/ui/feedback`, {
@@ -1505,8 +1535,10 @@ export async function adapterDriveFile(input: {
     try {
       const binary = atob(document.content_b64);
       const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-      const contentType = typeof document.content_type === "string"
-        ? document.content_type : "application/octet-stream";
+      const contentType =
+        typeof document.content_type === "string"
+          ? document.content_type
+          : "application/octet-stream";
       return { ok: true, blob: new Blob([bytes], { type: contentType }), contentType };
     } catch {
       return { ok: false, error: "Invalid base64 document content" };

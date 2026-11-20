@@ -374,7 +374,7 @@ class IngestWorker:
         try:
             header, rows = structured_import.read_table(
                 raw, req.get("filename") or "", source.get("sheet"),
-                structured_import.source_columns(source))
+                structured_import.expected_columns(source))
             plan = structured_import.plan_import(profile, source, header, rows, salt)
         except structured_import.StructuredImportError as e:
             return {"status": "failed", "error": str(e)}

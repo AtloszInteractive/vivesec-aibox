@@ -56,6 +56,7 @@ import json
 import os
 import re
 
+import domain_profile
 from domain_profile import normalize_value
 from extraction import LocalEntity, fold
 from ingest import parse_document_payload
@@ -81,17 +82,31 @@ def source_columns(source: dict) -> set[str]:
     """Every column the source's mapping reads (the protected ones too: they are
     in the file) -- what an importer must provide, and what picks the table of a
     file that holds several."""
-    columns = {c for e in source["entities"] for c in [e["name"], *e["attributes"].values()]
-               if c}
-    columns |= {c for r in source["relations"] for c in [r["start"], r["end"], *r["label"]]
-                if c}
-    columns |= set(source["record_id"]) | set(source.get("text_columns") or [])
-    columns |= set((source.get("protected") or {}).get("columns") or [])
-    for extra in ((source.get("acl") or {}).get("column"),
-                  (source.get("deleted") or {}).get("column")):
-        if extra:
-            columns.add(extra)
-    return columns
+    return domain_profile.source_columns(source)
+
+
+def expected_columns(source: dict) -> set[str]:
+    """The source's columns and their other names (`column_aliases`): what may
+    turn up in a file's header for it."""
+    out = source_columns(source)
+    for names in (source.get("column_aliases") or {}).values():
+        out |= set(names)
+    return out
+
+
+def header_index(source: dict, header: list[str]) -> dict[str, int]:
+    """{column the source reads (folded): index in the header}, by its own name
+    first and else by one of its other names."""
+    col = {fold(h): k for k, h in enumerate(header) if h}
+    aliases = {fold(c): names for c, names in (source.get("column_aliases") or {}).items()}
+    out = {}
+    for name in source_columns(source):
+        k = col.get(fold(name))
+        if k is None:
+            k = next((col[fold(a)] for a in aliases.get(fold(name), ()) if fold(a) in col), None)
+        if k is not None:
+            out[fold(name)] = k
+    return out
 
 
 def _pick(tables, sheet, expected):
@@ -258,7 +273,10 @@ def _render(header, cell, decoded, cols) -> tuple[str, dict]:
 
 def plan_import(profile: dict, source: dict, header: list[str], rows, salt: bytes | None) -> Plan:
     plan = Plan()
-    col = {fold(h): k for k, h in enumerate(header) if h}
+    col = header_index(source, header)
+    # The record text names each column as the profile does, so an export that
+    # renamed one (matched by an alias) leaves the records unchanged.
+    shown_header = list(header)
     used = set()
 
     def need(name, required):
@@ -273,6 +291,8 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
                 plan.missing_columns.append(name)
             return None
         used.add(k)
+        if fold(header[k]) != fold(name):
+            shown_header[k] = name  # found by another name
         return k
 
     id_cols = [need(c, True) for c in source["record_id"]]
@@ -350,9 +370,9 @@ def plan_import(profile: dict, source: dict, header: list[str], rows, salt: byte
                     decoded[k] = decode(cell(k), r["label_codelist"], n)[1]
         open_cols = [k for k in range(len(header))
                      if k in used and k not in id_cols and k != del_col and k not in hidden]
-        rec.text, rec.offsets = _render(header, cell, decoded, open_cols)
+        rec.text, rec.offsets = _render(shown_header, cell, decoded, open_cols)
         if prot_refs or hidden:
-            rec.ptext, rec.poffsets = _render(header, cell, decoded, [
+            rec.ptext, rec.poffsets = _render(shown_header, cell, decoded, [
                 k for k in range(len(header)) if k in shown and k not in id_cols and k != del_col])
         if rec.deleted:
             plan.records.setdefault(rid, rec)
