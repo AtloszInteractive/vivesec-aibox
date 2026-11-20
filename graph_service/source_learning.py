@@ -307,8 +307,8 @@ def _learn_prompt(profile: dict) -> str:
         "NOT a separate person), id_number (a personal ID number), registry_number (the "
         "person's number in an institution's own register): properties of the person whose "
         "name is in column `of`\n"
-        "- phone, email, address: a phone number, e-mail address or postal address of the "
-        "person in column `of`\n"
+        "- phone, email, address: the person's own phone number, e-mail address or postal "
+        "address; the person is in column `of`\n"
         "- start_date / end_date: when the row's relation started (or happened) / ended\n"
         "- relation_label: text or a code saying what the relation of the row is (e.g. "
         "kinship)\n"
@@ -417,8 +417,11 @@ def learn(profile: dict, raw: bytes, filename: str, sheet: str | None = None, ll
         if roles[a] in OWNED_ROLES and roles[b] == "person":
             a, b = b, a
         if roles[a] == "person" and roles[b] in OWNED_ROLES:
-            if _fits(spec, "person", OWNED_ROLES[roles[b]]):
+            # A person's own phone, e-mail or address is held, not called.
+            if spec.get("holding") and _fits(spec, "person", OWNED_ROLES[roles[b]]):
                 of[b], holding[b] = a, spec["id"]
+            else:
+                of[b] = a
         elif roles[a] == "person" and roles[b] == "person" and _fits(spec, "person", "person"):
             if (spec["id"], a, b) not in model_rels:
                 model_rels.append((spec["id"], a, b))

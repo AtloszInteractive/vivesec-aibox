@@ -111,7 +111,8 @@ class LearnTest(unittest.TestCase):
         got = roles(draft)
         self.assertEqual("used", draft["model"])
         self.assertEqual(("person", "visitor"), got["Kapcsolattartó neve"][:2])
-        self.assertEqual(("phone", "", "Fogvatartott neve", "CALLED"), got["Mobil"])
+        # Its own phone is held (USES), not called: the model's CALLED gives the owner only.
+        self.assertEqual(("phone", "", "Fogvatartott neve", "USES"), got["Mobil"])
         self.assertEqual("ignore", got["Megjegyzés"][0])
         # What the model left out or got wrong stays with the rules.
         self.assertEqual(("address", "RESIDES_AT"), (got["Lakcím"][0], got["Lakcím"][3]))
