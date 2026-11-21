@@ -144,6 +144,8 @@ export type AdapterPurposeConfig = {
   require: "any" | "all";
   legalBases: string[];
   caseRefPattern: string | null;
+  /** A case reference of the expected form, shown as the example. */
+  caseRefExample?: string | null;
 };
 
 /** What this box offers (ADAPTER_APP_MODE): analyst = chat + relationships only. */
@@ -155,6 +157,8 @@ export type AdapterApp = {
   purpose: AdapterPurposeConfig;
   /** The watchlist pilot (ADAPTER_WATCHLIST=on). */
   watchlist: boolean;
+  /** The screen language a new user starts with (ADAPTER_UI_LANGUAGE). */
+  defaultLanguage?: string;
 };
 
 function readPurpose(raw: unknown): AdapterPurposeConfig {
@@ -170,6 +174,8 @@ function readPurpose(raw: unknown): AdapterPurposeConfig {
     require: v.require === "all" ? "all" : "any",
     legalBases: Array.isArray(v.legal_bases) ? v.legal_bases.map(String) : [],
     caseRefPattern: typeof v.case_ref_pattern === "string" ? v.case_ref_pattern : null,
+    caseRefExample:
+      typeof v.case_ref_example === "string" && v.case_ref_example ? v.case_ref_example : null,
   };
 }
 
@@ -209,6 +215,8 @@ export function purposeIncomplete(config: AdapterPurposeConfig, value: RequestPu
 function readApp(raw: unknown): AdapterApp {
   const v = (raw ?? {}) as Record<string, unknown>;
   const purpose = readPurpose(v.purpose);
+  const defaultLanguage =
+    typeof v.default_language === "string" && v.default_language ? v.default_language : undefined;
   // An adapter without the block is a workspace box.
   if (v.mode !== "analyst") {
     return {
@@ -218,6 +226,7 @@ function readApp(raw: unknown): AdapterApp {
       orchestrator: false,
       purpose,
       watchlist: false,
+      defaultLanguage,
     };
   }
   return {
@@ -227,6 +236,7 @@ function readApp(raw: unknown): AdapterApp {
     orchestrator: Boolean(v.orchestrator),
     purpose,
     watchlist: v.watchlist === true,
+    defaultLanguage,
   };
 }
 
@@ -326,6 +336,8 @@ export type AdapterJobSummary = {
   action?: AdapterAction | null;
   query?: string;
   files?: string[];
+  /** Chat questions (?origin=chat): the thread the question was asked in. */
+  conversation_id?: string | null;
   created?: number;
   started?: number | null;
   finished?: number | null;
@@ -765,9 +777,11 @@ export async function adapterPollJob(
 
 export async function adapterListJobs(
   scope: Pick<AdapterAskInput, "drive" | "user"> = {},
+  origin: "background" | "chat" = "background",
 ): Promise<AdapterJobSummary[] | null> {
   const { headers } = jobScope(scope);
-  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/jobs`, { headers });
+  const query = origin === "chat" ? "?origin=chat" : "";
+  const res = await apiFetch(`${adapterUrl()}/api/v1/ui/jobs${query}`, { headers });
   const body = await safeJson(res);
   // Only the adapter's own 404 means "this box has no job store". A 404 from
   // an intermediary (tunnel / proxy while the box is unreachable) is a
@@ -957,8 +971,11 @@ export async function adapterDeleteConversation(
 export async function adapterAsk(
   input: AdapterAskInput,
   onProgress?: (progress: AdapterJobProgress) => void,
+  options: AdapterAskOptions = {},
 ): Promise<AdapterAnswer> {
   const submitted = await adapterSubmitJob(input);
+  options.onSubmitted?.(submitted.jobId);
+  if (options.untilDone) return adapterFollowJob(submitted.jobId, input, onProgress);
   // A time budget, not a count: a job reporting its phase is polled more often.
   const deadline = Date.now() + MAX_POLLS * POLL_TIMEOUT_S * 1000;
   let timeout = 5; // short at first, so a long job shows its phase early
@@ -969,6 +986,47 @@ export async function adapterAsk(
     timeout = polled.progress?.phase ? 5 : POLL_TIMEOUT_S;
   }
   throw new AdapterJobContinuesError(submitted.jobId);
+}
+
+export type AdapterAskOptions = {
+  /** Called with the job id as soon as the box accepted the question. */
+  onSubmitted?: (jobId: string) => void;
+  /** Follow the job until it ends (a chat question) instead of handing it to
+   *  the job list after the poll budget. */
+  untilDone?: boolean;
+};
+
+const FOLLOW_RETRIES = 6;
+const FOLLOW_RETRY_MS = 5_000;
+
+/** Long-polls one job until it ends, however long it runs. A few failed polls
+ *  in a row (a tunnel hiccup, a restarting UI server) are waited out; an
+ *  unknown job or a lasting outage ends the wait with the error. */
+export async function adapterFollowJob(
+  jobId: string,
+  scope: Pick<AdapterAskInput, "drive" | "user"> = {},
+  onProgress?: (progress: AdapterJobProgress) => void,
+): Promise<AdapterAnswer> {
+  let timeout = 5;
+  let failures = 0;
+  for (;;) {
+    let polled: Awaited<ReturnType<typeof adapterPollJob>>;
+    try {
+      polled = await adapterPollJob(jobId, scope, timeout);
+    } catch (error) {
+      // An answer the box gave (a failed job, an unknown id) is final; only a
+      // lost connection or a gateway without the box is waited out.
+      const status = error instanceof AdapterError ? error.status : 0;
+      const transient = status === 0 || status === 502 || status === 503 || status === 504;
+      if (!transient || ++failures > FOLLOW_RETRIES) throw error;
+      await new Promise((resolve) => setTimeout(resolve, FOLLOW_RETRY_MS));
+      continue;
+    }
+    failures = 0;
+    if (polled.answer) return polled.answer;
+    if (polled.progress && onProgress) onProgress(polled.progress);
+    timeout = polled.progress?.phase ? 5 : POLL_TIMEOUT_S;
+  }
 }
 
 /** POST /api/v1/index/get/children — the box sync read (no identity, no ACL).

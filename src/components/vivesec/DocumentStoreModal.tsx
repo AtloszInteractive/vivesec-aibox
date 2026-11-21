@@ -34,6 +34,7 @@ import {
 } from "@/lib/rag/adapter-client";
 import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
 import { useLang } from "./i18n";
+import { formatDateTime } from "./date-format";
 
 const PANEL = "var(--surface-3)";
 const BG = "var(--surface-1)";
@@ -137,7 +138,7 @@ export function DocumentStoreModal({
   onClose: () => void;
   onOpen: (path: string) => void;
 }) {
-  const { tm } = useLang();
+  const { tm, lang } = useLang();
   const [mounted, setMounted] = useState(false);
   const [info, setInfo] = useState<StoreInfo | null | undefined>(undefined);
   const [room, setRoom] = useState("");
@@ -660,7 +661,7 @@ export function DocumentStoreModal({
                       {entry.file ? formatSize(entry.size) : ""}
                     </td>
                     <td className="hidden whitespace-nowrap px-3 py-2 text-ink/60 md:table-cell">
-                      {entry.modified ? new Date(entry.modified).toLocaleString() : ""}
+                      {entry.modified ? formatDateTime(entry.modified, lang) : ""}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-[11.5px]">
                       {entry.file &&

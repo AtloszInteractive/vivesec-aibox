@@ -127,6 +127,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import acl  # noqa: E402
 import acl_admin  # noqa: E402
+import aggregate  # noqa: E402
 import analysis_checkpoint  # noqa: E402
 import build_info  # noqa: E402
 import clamd  # noqa: E402
@@ -701,6 +702,20 @@ def _parse_app_mode(raw):
 
 
 APP_MODE = _parse_app_mode(os.environ.get("ADAPTER_APP_MODE"))
+UI_LANGUAGES = ("en", "hu", "da", "de")
+
+
+def _parse_ui_language(raw):
+    """The screen language a new user starts with (they can still switch).
+    Empty or unknown: none, and the browser's language decides."""
+    value = (raw or "").strip().lower()
+    if value and value not in UI_LANGUAGES:
+        sys.stderr.write("[adapter] unknown ADAPTER_UI_LANGUAGE %r -> browser language\n" % raw)
+        return ""
+    return value
+
+
+UI_LANGUAGE = _parse_ui_language(os.environ.get("ADAPTER_UI_LANGUAGE"))
 ORCHESTRATOR_MAX_FACTS = max(1, int(os.environ.get("ADAPTER_ORCHESTRATOR_MAX_FACTS", "40") or 40))
 # Proactive chat (proactive.py): next-question suggestions and evidence
 # observations under an analyst answer. Only "off" switches them off.
@@ -897,7 +912,8 @@ def app_settings():
     analyst = APP_MODE == APP_ANALYST
     return {"mode": APP_MODE, "drive_browser": not analyst, "quick_actions": not analyst,
             "orchestrator": analyst and GRAPH.enabled, "purpose": purpose.public(PURPOSE),
-            "watchlist": analyst and GRAPH.enabled and WATCHLIST}
+            "watchlist": analyst and GRAPH.enabled and WATCHLIST,
+            "default_language": UI_LANGUAGE or None}
 
 
 def _answer_summary(result):
@@ -1887,6 +1903,21 @@ def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=
         if conf is not None:
             conf["score"] = 0
             conf["band"] = "red"
+    # A count or total from the few passages a search returned is not the
+    # count over the documents: said under the answer, never green.
+    counting_note = None
+    if (action is None and not analysing and deep_call is None and not chat_only
+            and (answer or "").strip() not in (llm.refusal(lang),
+                                               confidence.standard_refusal(lang),
+                                               _generation_incomplete_message(lang))
+            and aggregate.asks_for_count(query)
+            and not aggregate.counted_by_graph(orchestrated[1] if orchestrated else None)):
+        counting_note = aggregate.partial_note(contexts, lang)
+        if counting_note and conf is not None:
+            conf["score"] = min(conf["score"], 84)
+            if conf["band"] == confidence.GREEN:
+                conf["band"] = confidence.AMBER
+            conf["degraded"] = list(conf.get("degraded") or []) + ["partial_count"]
     _, citations = llm.build_context(contexts)
     if profile == "hybrid" and answer:
         valid_refs = {str(citation["ref"]) for citation in citations}
@@ -1920,6 +1951,8 @@ def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=
         # What the full reading covered (or could not), as is.
         display = display + "\n\n" + "\n".join(
             "> " + line for line in deep_note[0]["text"].split("\n") if line.strip())
+    if display and counting_note:
+        display = display + "\n\n> " + counting_note
     if display:
         display = display + "\n\n" + (confidence.footer(conf, citations, aid, lang)
                 if conf is not None else
@@ -2460,7 +2493,7 @@ class Handler(BaseHTTPRequestHandler):
             self._scope_info()
             return
         if path == "/api/v1/ui/jobs":
-            self._jobs_list()
+            self._jobs_list(query)
             return
         if path == "/api/v1/ui/insight":
             self._ui_insight()
@@ -3059,18 +3092,23 @@ class Handler(BaseHTTPRequestHandler):
             result["job_id"] = job_id
         self._send(code, result)
 
-    def _jobs_list(self):
+    def _jobs_list(self, query=None):
+        """The caller's background jobs; with ?origin=chat their chat questions
+        instead, so a reloaded page can follow a long answer still running."""
         identity = self._read_vvs()
         if identity is None:
             return
         user, drive = identity
+        origin = (urllib.parse.parse_qs(query or "").get("origin") or ["background"])[0]
+        origin = "chat" if origin == "chat" else "background"
         jobs = []
         for job in JOBS.list(user, drive):
             request = job.get("request") or {}
-            if request.get("origin") != "background":
+            if (request.get("origin") or "chat") != origin:
                 continue
             jobs.append({"job_id": job.get("job_id"), "status": job.get("status"),
                          "action": request.get("action"), "query": request.get("query"),
+                         "conversation_id": request.get("conversation_id"),
                          # A stopped analysis can be run again from the list (E10a).
                          "files": list(request.get("files") or []),
                          "created": job.get("created"), "started": job.get("started"),

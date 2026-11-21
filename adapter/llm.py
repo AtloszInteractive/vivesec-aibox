@@ -138,6 +138,10 @@ GROUNDING_RULES = (
     "CONTEXT only covers PART of it, say which part CONTEXT actually covers "
     "and do NOT present that part as if it were the whole. A ranking or total "
     "taken from one month is not a ranking or total for the half-year.\n"
+    "- When the question selects rows or records by several conditions (e.g. a "
+    "material AND a status), check EVERY condition on each row; list each row "
+    "you use with the values of all its condition fields, and say how many "
+    "rows the answer is based on.\n"
     "- Cite the source of each fact with its [#n] marker.\n"
     "- Do not repeat sentences; answer once and concisely.\n"
 )
@@ -803,6 +807,11 @@ def generate(question, contexts, lang=None, history=None, task=None,
         "CONTEXT:\n%s\n\n%sQUESTION: %s\nAnswer using only the context above. "
         "Use only numbers that appear verbatim in CONTEXT, and cite [#n]." %
         (context_tagged, search_notes(contexts), question))
+    if lang:
+        # Last, where it weighs most: an English task template and English
+        # notes otherwise pull the whole answer into English.
+        user += ("\nWrite the whole answer in %s, section headings and labels included; "
+                 "keep quoted text, names and numbers as they are written." % lang)
     try:
         chat_kwargs = {"history": history, "num_ctx": num_ctx}
         if cancel_event is not None:

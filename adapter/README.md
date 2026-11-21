@@ -807,8 +807,20 @@ fake extraction model; proves plumbing and filtering, not extraction quality).
 The box offers chat + relationships only. Quick actions (`action` in the body)
 and `/ui/files/children` answer 403, a typed `/summary` is plain text, and
 `/api/v1/status` reports `app {mode, drive_browser, quick_actions,
-orchestrator}` so the UI hides the drive browser, the results column and the
-slash menu. Source viewing (`/ui/file`) and saving (`/ui/save`) stay.
+orchestrator, default_language}` so the UI hides the drive browser, the results
+column and the slash menu. `default_language` (`ADAPTER_UI_LANGUAGE`, `hu|en|da|de`,
+empty: the browser's language) is the screen language a user starts with until
+they pick one. Source viewing (`/ui/file`) and saving (`/ui/save`) stay.
+
+**Counts from a search** (`aggregate.py`): a plain question that asks for a count,
+a total, an average or all of something (hány, összesen, how many, total, i alt,
+insgesamt ...) and was answered from the retrieved passages -- not from a full
+reading (`read_all`) and not from a graph `count`/`most_connected` -- gets a
+note under the answer, as is, naming how many passages of how many documents it
+rests on; its confidence is at most amber (`degraded: partial_count`). An answer
+with fields left as `?` (task templates) is at most amber too
+(`unfilled_fields`). Two separate records of one name are named under the answer
+as well (the planner's namesake note, also in `caveat`).
 
 **Proactive chat** (`proactive.py`, `ADAPTER_PROACTIVE`, default `on`): an
 answer the planner built with graph tools also carries `suggestions` (at most 4
@@ -1348,7 +1360,11 @@ The reading holds the heavy scheduler slot (`HeavyScheduler.slot`), so its
 model calls queue with the other heavy jobs; cancelling the job stops it before
 the next group. The job reports `progress_phase` (`queued`, `collect`, `read`,
 `condense`, `write`) with `progress_done`/`progress_total` in `/ui/poll` and
-`/ui/jobs`, and the UI shows them in the waiting bubble and the job list. The
+`/ui/jobs`, and the UI shows them in the waiting bubble and the job list. A chat
+question keeps its bubble until the answer arrives, however long the reading
+takes, with a Stop button (`/ui/jobs/cancel`); `/ui/jobs?origin=chat` lists the
+caller's chat questions with their `conversation_id`, so a reloaded page puts a
+running question back into its conversation and follows it. The
 response carries `deep {terms, matched, read, documents, groups, findings,
 condensed, partial, seconds}`.
 Tests: `deep_test`, `scheduler_test`, `graph_integration_test`; RAG side:
@@ -1404,12 +1420,15 @@ review list and a dossier export -- must carry `case_ref` (ügyszám) and/or
 `both`; an unknown value means `both`. BV (2026-11-13): the case reference is
 mandatory, a legal basis is not needed, and the form is year/number[/sub-number]:
 `ADAPTER_PURPOSE_FIELDS=case_ref`,
-`ADAPTER_CASE_REF_PATTERN=(?:19|20)\d{2}/\d{1,7}(?:/\d{1,5})?`. Status and
+`ADAPTER_CASE_REF_PATTERN=(?:19|20)\d{2}/\d{1,7}(?:/\d{1,5})?`,
+`ADAPTER_CASE_REF_EXAMPLE=2026/1113/2310` (shown as the example in the case
+reference field and its error; one the pattern refuses is not shown). Status and
 processing views need none. `/status` reports `app.purpose {mode, fields,
-require, legal_bases, case_ref_pattern}` (`require`: `any` or `all` of the
-fields); the UI asks for the purpose once per browser session (a chip in the chat
-header, a dialog showing only the fields asked for) and sends it with every such
-call.
+require, legal_bases, case_ref_pattern, case_ref_example}` (`require`: `any` or
+`all` of the fields); the UI asks for the purpose once per browser session (a
+chip in the chat header, a dialog showing only the fields asked for; the
+relationship view says at once that it is missing and opens the dialog on a
+428) and sends it with every such call.
 
 With `optional` or `required` each of those queries is written to the query log
 (`querylog.py`): an append-only daily JSONL under `ADAPTER_QUERY_LOG_DIR` with

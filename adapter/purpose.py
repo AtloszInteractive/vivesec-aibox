@@ -13,6 +13,8 @@ log (querylog.py); neither changes what the caller may see.
   ADAPTER_LEGAL_BASES        allowed legal bases, separated by ';' (empty: free text)
   ADAPTER_CASE_REF_PATTERN   regular expression a case reference must match in full
                              (empty: any); an invalid pattern matches nothing
+  ADAPTER_CASE_REF_EXAMPLE   a case reference shown as the example of the form
+                             (e.g. 2026/1113/2310); one the pattern refuses is not shown
 """
 import os
 import re
@@ -58,8 +60,14 @@ def settings(env=None):
             sys.stderr.write("[adapter] invalid ADAPTER_CASE_REF_PATTERN (%s): no case reference "
                              "is accepted\n" % error)
             pattern = _NOTHING
+    example = (env.get("ADAPTER_CASE_REF_EXAMPLE", "") or "").strip()[:MAX_CASE_REF]
+    if example and (_CONTROL.search(example) or (pattern and not pattern.fullmatch(example))):
+        # A wrong example would teach a form the box then refuses.
+        sys.stderr.write("[adapter] ADAPTER_CASE_REF_EXAMPLE %r does not match "
+                         "ADAPTER_CASE_REF_PATTERN: not shown\n" % example)
+        example = ""
     return {"mode": mode, "fields": fields, "legal_bases": bases, "pattern": pattern,
-            "pattern_text": pattern_text}
+            "pattern_text": pattern_text, "example": example}
 
 
 def offered(config):
@@ -74,7 +82,8 @@ def public(config):
     return {"mode": config["mode"], "fields": offered(config),
             "require": "any" if config.get("fields", "any") == "any" else "all",
             "legal_bases": list(config["legal_bases"]),
-            "case_ref_pattern": config["pattern_text"] or None}
+            "case_ref_pattern": config["pattern_text"] or None,
+            "case_ref_example": config.get("example") or None}
 
 
 def parse(payload, config):

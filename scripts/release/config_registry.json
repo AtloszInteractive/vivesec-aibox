@@ -2981,6 +2981,25 @@
       "internal": false
     },
     {
+      "name": "ADAPTER_UI_LANGUAGE",
+      "component": "adapter",
+      "category": "chat",
+      "type": "enum",
+      "default": null,
+      "allowed": "en | hu | da | de | empty",
+      "values": [
+        "en",
+        "hu",
+        "da",
+        "de"
+      ],
+      "fail_safe": "Empty or unknown: no box default, the browser's language decides (English when it is none of the four).",
+      "impact": "The screen language a user starts with until they pick one in the menu (/status app.default_language). Set hu on a Hungarian box: a browser in English would otherwise start the UI in English.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "ADAPTER_ORCHESTRATOR_MAX_FACTS",
       "component": "adapter",
       "category": "chat",
@@ -3572,6 +3591,19 @@
       "allowed": "regular expression",
       "fail_safe": "Empty accepts any case reference (at most 64 characters); an invalid pattern accepts none.",
       "impact": "The form a case reference must have in full (e.g. BV-\\d{4}/\\d+). To be supplied by the customer.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "ADAPTER_CASE_REF_EXAMPLE",
+      "component": "adapter",
+      "category": "security",
+      "type": "string",
+      "default": "",
+      "allowed": "a case reference of at most 64 characters",
+      "fail_safe": "Empty shows no example; one ADAPTER_CASE_REF_PATTERN refuses is not shown (a warning is logged).",
+      "impact": "Shown as the example of the expected form in the case reference field and its error message (BV: 2026/1113/2310). Never sent with a query.",
       "change": "restart",
       "secret": false,
       "internal": false

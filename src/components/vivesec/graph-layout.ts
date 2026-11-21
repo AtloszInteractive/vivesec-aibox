@@ -216,6 +216,8 @@ export function project(
   const sp = Math.sin(pitch);
   const y2 = p.y * cp - z1 * sp;
   const z2 = p.y * sp + z1 * cp;
+  // No camera distance (no layout yet): a flat view instead of 0/0.
+  if (!(distance > 0)) return { x: x1, y: y2, scale: 1, depth: -z2 };
   const scale = distance / Math.max(distance * 0.15, distance + z2);
   return { x: x1 * scale, y: y2 * scale, scale, depth: -z2 };
 }

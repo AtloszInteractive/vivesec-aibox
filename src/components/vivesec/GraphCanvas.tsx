@@ -211,14 +211,22 @@ export function GraphCanvas({
   const useGl = gl === true && !glFailed;
 
   useEffect(() => {
-    setGl(webglAvailable());
+    const available = webglAvailable();
+    setGl(available);
+    // Without a graphics card every turn redraws the whole SVG picture: it
+    // stands still until the user asks it to turn.
+    if (!available) setSpin(false);
   }, []);
   useEffect(() => {
     if (!useGl || Gl) return;
     let live = true;
     import("./GraphGL")
       .then((m) => live && setGlComponent(() => m.GraphGL as unknown as GlComponent))
-      .catch(() => live && setGlFailed(true));
+      .catch(() => {
+        if (!live) return;
+        setGlFailed(true);
+        setSpin(false);
+      });
     return () => {
       live = false;
     };
@@ -395,9 +403,11 @@ export function GraphCanvas({
   // The WebGL picture's positions on screen, while it is saved as a file.
   const deep = Boolean(layout3d) || snapshot?.dims === "3d";
 
-  const maxMentions = Math.max(1, ...nodes.map((n) => n.mentions));
+  const maxMentions = Math.max(1, ...nodes.map((n) => n.mentions || 0));
   const fitted = useRef<{ key: string; frame: Frame3 } | null>(null);
-  const frameKey = `${mode}|${nodesKey}|${snapshot ? "snapshot" : ""}`;
+  // Whether a layout exists belongs in the key: the frame of the first paint
+  // (before WebGL was ruled out) has no points and must not outlive it.
+  const frameKey = `${mode}|${svgOn ? "svg" : "gl"}|${nodesKey}|${snapshot ? "snapshot" : ""}`;
   const computedFrame = useMemo((): Frame3 => {
     if (snapshot) return { minX: 0, minY: 0, w: snapshot.w, h: snapshot.h, distance: 0 };
     if (layout3d) {
@@ -444,7 +454,7 @@ export function GraphCanvas({
       return out;
     }
     for (const n of nodes) {
-      const r = (8 + 7 * Math.sqrt(n.mentions / maxMentions)) * unit;
+      const r = (8 + 7 * Math.sqrt((n.mentions || 0) / maxMentions)) * unit;
       if (layout3d) {
         const p = layout3d.get(n.id);
         if (!p) continue;
@@ -806,7 +816,10 @@ export function GraphCanvas({
             onHover={setHover}
             onPins={setGlPins}
             onInteract={() => setSpin(false)}
-            onFail={() => setGlFailed(true)}
+            onFail={() => {
+              setGlFailed(true);
+              setSpin(false);
+            }}
           />
         ) : (
           <div

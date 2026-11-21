@@ -50,6 +50,7 @@ class AnalyzeFullTest(unittest.TestCase):
             guard.start()
             self.addCleanup(guard.stop)
         self.calls = []
+        self.prompts = []
         chat = patch.object(llm, "_chat", side_effect=self.chat)
         chat.start()
         self.addCleanup(chat.stop)
@@ -65,6 +66,7 @@ class AnalyzeFullTest(unittest.TestCase):
 
     def chat(self, system, user, **opts):
         self.calls.append((system, opts))
+        self.prompts.append(user)
         if system == deep.SECTION_SYSTEM:
             return json.dumps({"findings": [{"excerpt": 1, "quote": "a bérlő a díjat havonta fizeti",
                                              "note": "Havi díjfizetés."}]}), 0, 0
@@ -151,6 +153,14 @@ class AnalyzeFullTest(unittest.TestCase):
         self.assertEqual(1, len(self.calls))
         self.assertNotIn("deep", result)
         self.assertNotIn("Teljes lefedetts\u00e9g\u0171", result["answer"])
+
+    def test_the_analysis_is_asked_in_the_language_of_the_screen(self):
+        self.document = chunks(4)
+        self.analyze()
+        # After the English task template, where the model weighs it most.
+        self.assertTrue(self.prompts[-1].endswith(
+            "Write the whole answer in Hungarian, section headings and labels included; "
+            "keep quoted text, names and numbers as they are written."))
 
     def test_switched_off_the_window_cuts_as_before(self):
         with patch.object(self.service, "ANALYZE_FULL", False), \
