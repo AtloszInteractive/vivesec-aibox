@@ -52,9 +52,12 @@ class FakeRag:
     def __init__(self):
         self.calls = []
         self.contents = {}
+        self.skipped = []
 
     def post_json(self, path, body):
         self.calls.append((path, body))
+        if path == "/index/skipped":
+            return {"skipped": list(self.skipped)}
         if path == "/index/upsert/file/check":
             if body["path"].endswith(".csv") and body["size"] > 1000:
                 return {"token": None, "reason": "too_large"}
@@ -399,6 +402,78 @@ class StoreHttpTest(StandaloneHttpCase):
         with patch.object(self.service, "REPROCESS_SOURCE_DIR", ""):
             self.assertEqual(self.service._reprocess_source(), "store")
             self.assertTrue(self.service._reprocess_source_ready())
+
+
+class RereadHttpTest(StandaloneHttpCase):
+    """E10b: a store writer reads unreadable stored documents again."""
+
+    def setUp(self):
+        super().setUp()
+        import reread
+        self.reread = reread.Rereader(self.service._reread_index, autostart=False)
+        patcher = patch.object(self.service, "REREAD", self.reread)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for name in ("scan.pdf", "other.txt"):
+            self.assertEqual(self.upload(ROOM + "/" + name)[0], 202)
+        self.worker.drain()
+        self.rag.skipped = [
+            {"source_path": ROOM + "/scan.pdf", "reason": "ocr_interrupted"},
+            {"source_path": ROOM + "/other.txt", "reason": "extraction_empty"},
+            {"source_path": ROOM + "/gone.pdf", "reason": "ocr_interrupted"},  # not stored
+            {"source_path": OTHER + "/x.pdf", "reason": "ocr_interrupted"},  # outside
+        ]
+
+    def checks(self):
+        return len(self.rag.paths("/index/upsert/file/check"))
+
+    def test_a_reason_queues_the_stored_files_of_the_scope_and_they_are_indexed_again(self):
+        before = self.checks()
+        status, body = self.call("POST", "/api/v1/ui/index/reread", {"reason": "ocr_interrupted"})
+        self.assertEqual((status, body["queued"], body["skipped"]), (200, 1, 1), body)
+        status, listed = self.call("POST", "/api/v1/ui/index/skipped", {})
+        scan = [d for d in listed["documents"] if d["source_path"] == ROOM + "/scan.pdf"][0]
+        self.assertEqual((True, True, 1, "queued"),
+                         (listed["can_reread"], listed["can_delete"], listed["rereading"],
+                          scan["reread"]["state"]))
+        self.assertEqual({ROOM + "/scan.pdf": True, ROOM + "/other.txt": True,
+                          ROOM + "/gone.pdf": False},
+                         {d["source_path"]: d["stored"] for d in listed["documents"]})
+        # Asked again while waiting: not queued twice.
+        self.assertEqual(self.call("POST", "/api/v1/ui/index/reread",
+                                   {"paths": [ROOM + "/scan.pdf"]})[1]["queued"], 0)
+        self.assertTrue(self.reread.run_once())
+        self.assertFalse(self.reread.run_once())
+        self.assertEqual(self.checks(), before + 1)
+        self.assertEqual("done", self.reread.status(ROOM + "/scan.pdf")["state"])
+
+    def test_paths_outside_the_scope_or_not_stored_are_skipped(self):
+        status, body = self.call("POST", "/api/v1/ui/index/reread", {
+            "paths": [ROOM + "/other.txt", OTHER + "/x.pdf", ROOM + "/../other/x.pdf",
+                      ROOM + "/missing.pdf", ROOM]})
+        self.assertEqual((status, body["queued"], body["skipped"]), (200, 1, 4), body)
+        self.assertEqual(self.call("POST", "/api/v1/ui/index/reread", {})[0], 400)
+
+    def test_a_file_deleted_while_queued_is_not_indexed_again(self):
+        self.call("POST", "/api/v1/ui/index/reread", {"paths": [ROOM + "/other.txt"]})
+        self.assertEqual(self.call("POST", "/api/v1/ui/store/delete",
+                                   {"path": ROOM + "/other.txt"})[0], 200)
+        before = self.checks()
+        self.assertTrue(self.reread.run_once())
+        self.assertEqual(self.checks(), before)
+        self.assertIsNone(self.mirror.get(ROOM + "/other.txt"))
+
+    def test_a_reader_may_not_and_an_integrated_box_cannot(self):
+        status, listed = self.call("POST", "/api/v1/ui/index/skipped", {},
+                                   user="bob", roles=("reader",))
+        self.assertEqual((200, False), (status, listed["can_reread"]))
+        self.assertNotIn("reread", listed["documents"][0])
+        self.assertEqual(self.call("POST", "/api/v1/ui/index/reread", {"reason": "x"},
+                                   user="bob", roles=("reader",))[0], 403)
+        with patch.object(self.service, "INTEGRATION", integration.MODE_VIVESECBOX):
+            self.assertEqual(self.call("POST", "/api/v1/ui/index/reread",
+                                       {"reason": "ocr_interrupted"})[0], 404)
+        self.assertEqual(self.reread.pending(), 0)
 
 
 if __name__ == "__main__":

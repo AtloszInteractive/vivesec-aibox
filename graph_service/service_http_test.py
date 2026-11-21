@@ -82,9 +82,43 @@ class ServiceHttpTest(unittest.TestCase):
         profile = domain_profile.load("bv")
         self.assertEqual(409, self.post("/profile/set", {"profile": profile})[0])
         profile["version"] += 1
+        profile["relation_types"][-1]["synonyms"] = ["része"]
         status, body = self.post("/profile/set", {"profile": profile})
         self.assertEqual((200, True), (status, body["reprocess_required"]))
         self.assertEqual(profile["version"], self.state.profile["version"])
+
+    def test_a_structured_source_change_keeps_documents_current(self):
+        profile = domain_profile.load("bv")
+        tag = domain_profile.profile_tag(profile)
+        profile["version"] += 1
+        profile["structured_sources"][0]["title"] = "FŐNIX"
+        status, body = self.post("/profile/set", {"profile": profile})
+        self.assertEqual((200, False), (status, body["reprocess_required"]))
+        self.assertEqual(tag, domain_profile.profile_tag(self.state.profile))
+        # A later extraction change moves the tag to its own version.
+        profile = json.loads(json.dumps(self.state.profile))
+        profile["version"] += 1
+        profile["relation_types"][-1]["synonyms"] = ["része"]
+        status, body = self.post("/profile/set", {"profile": profile})
+        self.assertEqual((200, True), (status, body["reprocess_required"]))
+        self.assertEqual("bv@%d/e%d" % (profile["version"], domain_profile.EXTRACTOR_REVISION),
+                         domain_profile.profile_tag(self.state.profile))
+        self.assertNotIn("extraction_version", self.state.profile)
+
+    def test_a_carried_extraction_version_needs_the_same_rules(self):
+        profile = domain_profile.load("bv")
+        profile["version"] += 1
+        profile["structured_sources"][0]["title"] = "FŐNIX"
+        self.post("/profile/set", {"profile": profile})
+        saved = json.loads(json.dumps(self.state.profile))
+        self.assertEqual(saved, domain_profile.validate(json.loads(json.dumps(saved))))
+        # The saved file edited by hand: new rules, a higher version, the old marks kept.
+        saved["version"] += 1
+        saved["relation_types"][-1]["synonyms"] = ["része"]
+        edited = domain_profile.validate(saved)
+        self.assertNotIn("extraction_version", edited)
+        self.assertEqual("bv@%d/e%d" % (saved["version"], domain_profile.EXTRACTOR_REVISION),
+                         domain_profile.profile_tag(edited))
 
     def test_api_key_is_enforced_when_set(self):
         old = service.API_KEY

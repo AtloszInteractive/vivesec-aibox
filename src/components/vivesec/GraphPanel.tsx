@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
+  ChevronRight,
   Download,
   ExternalLink,
   Eye,
@@ -16,13 +17,14 @@ import {
   Settings2,
   ShieldAlert,
   Split,
+  Sparkles,
   Undo2,
   Upload,
   X,
 } from "lucide-react";
 import { useLang } from "./i18n";
 import { GraphCanvas, type Emphasis, type ExportRequest } from "./GraphCanvas";
-import { mergeGraphs } from "./graph-model";
+import { mergeGraphs, withDetails } from "./graph-model";
 import { pairKey, TYPE_COLOR, TYPE_NAME, type RelationInfo } from "./graph-style";
 import { saveToDrive } from "@/lib/api/rag.functions";
 import { AdapterGraphError } from "@/lib/rag/adapter-client";
@@ -34,14 +36,17 @@ import {
   type GraphEvidence,
   type GraphFailure,
   type GraphImportAnswer,
+  type GraphImportInspect,
   type GraphImportRag,
   type GraphImportSource,
   type GraphLabel,
   type GraphNode,
   type GraphProfile,
   type GraphReviewDecision,
+  type GraphReviewField,
   type GraphReviewItem,
   type GraphReviewList,
+  type GraphSampleFile,
   type GraphStatus,
   type GraphTimelineItem,
   type GraphWatermark,
@@ -53,7 +58,9 @@ import {
   type QueryLogRecord,
 } from "@/lib/api/graph.functions";
 import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "./brand";
+import { FolderPicker } from "./FolderPicker";
 import { ProfileSuggestions } from "./ProfileSuggestions";
+import { AssignColumns, LearnSource } from "./SourceLearning";
 
 const PANEL = "var(--surface-3)";
 const BG = "var(--surface-2)";
@@ -78,12 +85,13 @@ const STATUS_TEXT: Record<string, string> = {
 
 type Tab = "explore" | "review" | "processing" | "profile" | "querylog";
 /** Nodes the picture may hold before an added neighbourhood replaces it. */
-const MAX_PICTURE = 400;
+const MAX_PICTURE = 5000;
 type Graph = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   documents: GraphDocuments;
   truncated?: boolean;
+  compact?: boolean;
 };
 
 const byDate = (x: GraphEdge, y: GraphEdge) => (x.start ?? "").localeCompare(y.start ?? "");
@@ -108,6 +116,8 @@ export function GraphPanel({
   const { tm, lang } = useLang();
   const code = lang.toLowerCase() as keyof GraphLabel;
   const [tab, setTab] = useState<Tab>("explore");
+  /** People the Explore tab opens with (a review pair to look at). */
+  const [exploreSeed, setExploreSeed] = useState<string[] | null>(null);
   const [profile, setProfile] = useState<GraphProfile | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [failure, setFailure] = useState<GraphFailure | null>(null);
@@ -199,6 +209,8 @@ export function GraphPanel({
             <ExploreTab
               drive={drive}
               initial={initial ?? null}
+              seed={exploreSeed}
+              onSeedUsed={() => setExploreSeed(null)}
               relLabel={relLabel}
               relInfo={relInfo}
               subtypeLabel={subtypeLabel}
@@ -206,8 +218,28 @@ export function GraphPanel({
               onOpenSource={onOpenSource}
             />
           )}
-          {tab === "review" && <ReviewTab drive={drive} canEdit={canEdit} />}
-          {tab === "processing" && <ProcessingTab drive={drive} canEdit={canEdit} />}
+          {tab === "review" && (
+            <ReviewTab
+              drive={drive}
+              canEdit={canEdit}
+              relLabel={relLabel}
+              subtypeLabel={subtypeLabel}
+              onOpenSource={onOpenSource}
+              onOpenPair={(a, b) => {
+                setExploreSeed([a, b]);
+                setTab("explore");
+              }}
+            />
+          )}
+          {tab === "processing" && (
+            <ProcessingTab
+              drive={drive}
+              canEdit={canEdit}
+              profile={profile}
+              onProfileSaved={loadProfile}
+              onOpenSource={onOpenSource}
+            />
+          )}
           {tab === "profile" && (
             <ProfileTab
               drive={drive}
@@ -261,6 +293,8 @@ function useFailure() {
 function ExploreTab({
   drive,
   initial,
+  seed,
+  onSeedUsed,
   relLabel,
   relInfo,
   subtypeLabel,
@@ -269,6 +303,8 @@ function ExploreTab({
 }: {
   drive: string;
   initial: GraphInvestigationView | null;
+  seed: string[] | null;
+  onSeedUsed: () => void;
   relLabel: (type: string) => string;
   relInfo: (type: string) => RelationInfo;
   subtypeLabel: (sub: string) => string;
@@ -295,6 +331,32 @@ function ExploreTab({
   // Two nodes picked with Shift+click, and the path or common relations found.
   const [picked, setPicked] = useState<string[]>([]);
   const [emphasis, setEmphasis] = useState<Emphasis | null>(null);
+
+  // A review pair opened here: both people with their relations, picked, so
+  // "path" and "common relations" work on them right away.
+  useEffect(() => {
+    if (!seed?.length) return;
+    const ids = seed;
+    onSeedUsed();
+    void (async () => {
+      setBusy(true);
+      const parts = await run(() =>
+        Promise.all(ids.map((id) => graphApi.neighborhood(drive, id, 1))),
+      );
+      setBusy(false);
+      if (!parts?.length) return;
+      remember();
+      setGraph(parts.slice(1).reduce((all, part) => mergeGraphs(all, part), parts[0]));
+      setFocus(ids[0]);
+      setPicked(ids.slice(0, 2));
+      setSelectedEdge(null);
+      setEmphasis(null);
+      setPathNote(null);
+      setInvestigating(false);
+    })();
+    // Runs once per seed; remember() reads the picture on screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed]);
 
   function remember() {
     if (graph) setHistory((h) => [...h.slice(-19), { graph, focus }]);
@@ -470,6 +532,44 @@ function ExploreTab({
       ? graph.edges.filter((e) => pairKey(e) === selectedEdge).sort(byDate)
       : [];
 
+  // A compact (large) picture has no quotes: the opened node or relation gets
+  // its full copy from the box, once per copy shown.
+  const detailed = useRef(new WeakSet<object>());
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  useEffect(() => {
+    if (!graph?.compact) return;
+    const todo: object[] = pairEdges.filter((e) => !detailed.current.has(e));
+    const id = todo.length
+      ? pairEdges[0].a
+      : !pairEdges.length && focusNode && !detailed.current.has(focusNode)
+        ? focusNode.id
+        : null;
+    if (!id) return;
+    if (!todo.length && focusNode) todo.push(focusNode);
+    const asked = detailed.current;
+    for (const o of todo) asked.add(o);
+    let live = true;
+    let done = false;
+    setLoadingDetails(true);
+    void run(() => graphApi.entity(drive, id)).then((res) => {
+      done = true;
+      if (!live) return;
+      setLoadingDetails(false);
+      if (!res) return;
+      asked.add(res.entity);
+      for (const e of res.edges) asked.add(e);
+      setGraph((g) => (g ? withDetails(g, res) : g));
+    });
+    return () => {
+      live = false;
+      // Left before the answer came: asked again when shown again.
+      if (!done) for (const o of todo) asked.delete(o);
+      setLoadingDetails(false);
+    };
+    // the opened node or relation of this picture
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, focus, selectedEdge, drive]);
+
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -602,7 +702,7 @@ function ExploreTab({
             <div className="absolute bottom-2 left-3 text-[11px] text-ink/45">
               {investigating
                 ? tm("The investigation was cut; more people may exist.")
-                : tm("Showing the first 150 entities.")}
+                : tm("Showing the first 2000 entities.")}
             </div>
           )}
         </div>
@@ -611,6 +711,11 @@ function ExploreTab({
         className="hidden w-[360px] shrink-0 flex-col overflow-y-auto border-l border-ink/5 md:flex"
         style={{ backgroundColor: PANEL }}
       >
+        {loadingDetails && (
+          <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] text-ink/55">
+            <Loader2 className="h-3 w-3 animate-spin" /> {tm("Loading the evidence…")}
+          </div>
+        )}
         {pairEdges.length > 0 && graph ? (
           <EdgeSheet
             edges={pairEdges}
@@ -917,17 +1022,20 @@ function EntitySheet({
       )}
       <DossierActions drive={drive} node={node} />
       <Section title={tm("Relations")}>
-        {edges.map((e) => (
-          <button
-            key={e.id}
-            onClick={() => onEdge(pairKey(e))}
-            className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-ink/5"
-          >
-            <span className="shrink-0 text-ink/55">{relLabel(e.type)}</span>
-            <span className="min-w-0 flex-1 truncate">{other(e)?.label ?? ""}</span>
-            {e.start && <span className="shrink-0 text-[10px] text-ink/45">{e.start}</span>}
-          </button>
-        ))}
+        <div className="divide-y divide-ink/10 border-y border-ink/10">
+          {edges.map((e) => (
+            <button
+              key={e.id}
+              onClick={() => onEdge(pairKey(e))}
+              className="group flex w-full items-center gap-2 px-1 py-2 text-left text-xs hover:bg-ink/5"
+            >
+              <span className="shrink-0 text-ink/55">{relLabel(e.type)}</span>
+              <span className="min-w-0 flex-1 truncate">{other(e)?.label ?? ""}</span>
+              {e.start && <span className="shrink-0 text-[10px] text-ink/45">{e.start}</span>}
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-ink/30 group-hover:text-ink/70" />
+            </button>
+          ))}
+        </div>
       </Section>
       <Section title={tm("Timeline")}>
         {notice}
@@ -1149,7 +1257,16 @@ function useReasonText() {
   );
 }
 
-function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+type ReviewProps = {
+  drive: string;
+  canEdit: boolean;
+  relLabel: (type: string) => string;
+  subtypeLabel: (sub: string) => string;
+  onOpenSource: (source: GraphSource) => void;
+  onOpenPair: (a: string, b: string) => void;
+};
+
+function ReviewTab(props: ReviewProps) {
   const { tm } = useLang();
   const [view, setView] = useState<ReviewView>("open");
   return (
@@ -1168,16 +1285,19 @@ function ReviewTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
           </button>
         ))}
       </div>
-      {view === "open" ? (
-        <OpenReview drive={drive} canEdit={canEdit} />
-      ) : (
-        <DecidedReview drive={drive} />
-      )}
+      {view === "open" ? <OpenReview {...props} /> : <DecidedReview drive={props.drive} />}
     </div>
   );
 }
 
-function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+function OpenReview({
+  drive,
+  canEdit,
+  relLabel,
+  subtypeLabel,
+  onOpenSource,
+  onOpenPair,
+}: ReviewProps) {
   const { tm } = useLang();
   const reason = useReasonText();
   const { run, notice } = useFailure();
@@ -1187,6 +1307,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [why, setWhy] = useState("");
+  const [roles, setRoles] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [done, setDone] = useState<Record<string, Decision>>({});
   const [confirm, setConfirm] = useState<Decision | null>(null);
@@ -1204,6 +1325,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
         graphApi.reviewList(drive, {
           q: applied || undefined,
           reason: why || undefined,
+          include_role_mismatch: roles || undefined,
           offset,
         }),
       );
@@ -1217,7 +1339,7 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
         setConfirm(null);
       }
     },
-    [drive, run, applied, why],
+    [drive, run, applied, why, roles],
   );
   useEffect(() => {
     void load();
@@ -1314,6 +1436,17 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
             <option key={r} value={r}>{`${reason(r)} (${n})`}</option>
           ))}
         </select>
+        {Boolean(list?.role_mismatch) && (
+          <label
+            className="flex cursor-pointer items-center gap-1.5 text-xs text-ink/70"
+            title={tm(
+              "An inmate and a visitor of the same name are taken as two people unless more than the name links them.",
+            )}
+          >
+            <input type="checkbox" checked={roles} onChange={() => setRoles((v) => !v)} />
+            {`${tm("Also pairs of different roles")} (${list?.role_mismatch ?? 0})`}
+          </label>
+        )}
       </div>
       {canEdit && pending.length > 0 && (
         <div
@@ -1416,6 +1549,13 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
                   {reason(item.reason)} · {Math.round(item.score * 100)}%
                 </span>
               </div>
+              <PairDetails
+                item={item}
+                relLabel={relLabel}
+                subtypeLabel={subtypeLabel}
+                onOpenSource={onOpenSource}
+                onOpenPair={onOpenPair}
+              />
               {state ? (
                 <div
                   className="mt-2 flex items-center gap-3 text-xs"
@@ -1463,6 +1603,135 @@ function OpenReview({ drive, canEdit }: { drive: string; canEdit: boolean }) {
         </button>
       )}
     </>
+  );
+}
+
+const FIELD_STATE: Record<GraphReviewField["state"], { text: string; className: string }> = {
+  same: { text: "Matches", className: "text-emerald-700 dark:text-emerald-300" },
+  conflict: { text: "Conflicts", className: "text-rose-700 dark:text-rose-300" },
+  different: { text: "Differs", className: "text-ink/60" },
+  a_only: { text: "Only in record 1", className: "text-ink/50" },
+  b_only: { text: "Only in record 2", className: "text-ink/50" },
+};
+
+/** What tells the two records of a review pair apart: the stated details side
+ *  by side, then each record's role, sources and relations. */
+function PairDetails({
+  item,
+  relLabel,
+  subtypeLabel,
+  onOpenSource,
+  onOpenPair,
+}: {
+  item: GraphReviewItem;
+  relLabel: (type: string) => string;
+  subtypeLabel: (sub: string) => string;
+  onOpenSource: (source: GraphSource) => void;
+  onOpenPair: (a: string, b: string) => void;
+}) {
+  const { tm } = useLang();
+  if (!item.a_info || !item.b_info) return null;
+  const fields = item.fields ?? [];
+  const fieldName = (name: string) =>
+    name === "identifiers" ? tm("Phones, documents, addresses") : tm(name);
+  return (
+    <div className="mt-2 space-y-2">
+      {fields.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-[11px]">
+            <thead className="text-ink/45">
+              <tr>
+                <th className="py-0.5 pr-3 font-normal" />
+                <th className="py-0.5 pr-3 font-normal">{tm("Record 1")}</th>
+                <th className="py-0.5 pr-3 font-normal">{tm("Record 2")}</th>
+                <th className="py-0.5 font-normal" />
+              </tr>
+            </thead>
+            <tbody>
+              {fields.map((f) => (
+                <tr key={f.name} className="border-t border-ink/5">
+                  <td className="py-0.5 pr-3 text-ink/60">{fieldName(f.name)}</td>
+                  <td className="py-0.5 pr-3 text-ink">{f.a.join(", ") || "—"}</td>
+                  <td className="py-0.5 pr-3 text-ink">{f.b.join(", ") || "—"}</td>
+                  <td className={`py-0.5 whitespace-nowrap ${FIELD_STATE[f.state].className}`}>
+                    {tm(FIELD_STATE[f.state].text)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="text-[11px] text-ink/50">
+          {tm("Neither record states a birth date, a mother's name or an identifier.")}
+        </div>
+      )}
+      <div className="grid gap-2 md:grid-cols-2">
+        {(
+          [
+            [tm("Record 1"), item.a_info],
+            [tm("Record 2"), item.b_info],
+          ] as const
+        ).map(([title, side]) => (
+          <div key={title} className="rounded-lg border border-ink/10 bg-shade/20 p-2 text-[11px]">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-ink/50">{title}</span>
+              <span className="rounded-full border border-ink/15 px-1.5 py-px text-ink/80">
+                {(side.subtype && subtypeLabel(side.subtype)) ||
+                  side.subtype ||
+                  tm("No role given")}
+              </span>
+              <span className="ml-auto text-ink/45">
+                {`${side.counts.documents} ${tm("documents")} · ${side.counts.links} ${tm("relations")}`}
+              </span>
+            </div>
+            {side.documents.map((d) => (
+              <button
+                key={d.doc_id}
+                onClick={() => onOpenSource({ path: d.path, page: 0, quote: "", label: d.name })}
+                className="mt-1 flex max-w-full items-center gap-1 truncate hover:underline"
+                style={{ color: ACCENT_TEXT }}
+                title={d.path}
+              >
+                <FileText className="h-3 w-3 shrink-0" />
+                <span className="truncate">{d.name}</span>
+              </button>
+            ))}
+            {side.links.map((l, i) => {
+              const doc = side.documents.find((d) => d.doc_id === l.doc_id);
+              return (
+                <div key={i} className="mt-1.5">
+                  <div className="text-ink/80">
+                    {l.raw_label || relLabel(l.type)} · <span className="text-ink">{l.other}</span>
+                    {l.start ? <span className="text-ink/45">{` · ${l.start}`}</span> : null}
+                  </div>
+                  {l.quote &&
+                    (doc ? (
+                      <button
+                        onClick={() =>
+                          onOpenSource({ path: doc.path, page: 0, quote: l.quote, label: doc.name })
+                        }
+                        className="line-clamp-2 text-left italic text-ink/55 hover:underline"
+                      >
+                        „{l.quote}”
+                      </button>
+                    ) : (
+                      <div className="line-clamp-2 italic text-ink/55">„{l.quote}”</div>
+                    ))}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={() => onOpenPair(item.a, item.b)}
+        className="inline-flex items-center gap-1 text-[11px] hover:underline"
+        style={{ color: ACCENT_TEXT }}
+      >
+        <Network className="h-3 w-3" /> {tm("Open both in the graph")}
+      </button>
+    </div>
   );
 }
 
@@ -1795,7 +2064,19 @@ function QueryLogTab({ drive }: { drive: string }) {
 
 /* ------------------------------------------------------------- Processing */
 
-function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+function ProcessingTab({
+  drive,
+  canEdit,
+  profile,
+  onProfileSaved,
+  onOpenSource,
+}: {
+  drive: string;
+  canEdit: boolean;
+  profile: GraphProfile | null;
+  onProfileSaved: () => Promise<void>;
+  onOpenSource: (source: GraphSource) => void;
+}) {
   const { tm } = useLang();
   const { run, notice } = useFailure();
   const [status, setStatus] = useState<GraphStatus | null>(null);
@@ -1868,14 +2149,21 @@ function ProcessingTab({ drive, canEdit }: { drive: string; canEdit: boolean }) 
           </div>
         </>
       )}
-      <ImportSection drive={drive} canEdit={canEdit} />
+      <ImportSection
+        drive={drive}
+        canEdit={canEdit}
+        profile={profile}
+        onProfileSaved={onProfileSaved}
+      />
       <ReprocessSection drive={drive} canEdit={canEdit} />
-      <UnreadableDocuments drive={drive} />
+      <UnreadableDocuments drive={drive} onOpenSource={onOpenSource} />
     </div>
   );
 }
 
 const IMPORT_MAX_BYTES = 50 * 1024 * 1024;
+/** Until the box says otherwise (import/sources `formats`). */
+const IMPORT_FORMATS = [".csv", ".tsv", ".txt", ".xlsx", ".xlsm"];
 const RAG_STATE: Record<GraphImportRag["state"], string> = {
   none: "",
   pending: "Waiting",
@@ -1898,11 +2186,22 @@ function toBase64(buffer: ArrayBuffer): string {
  *  the answer is the change it made, and (E29) how far the search copy of the
  *  folder's records got. A full export that would remove too much is refused
  *  first and can be repeated on purpose. */
-function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) {
+function ImportSection({
+  drive,
+  canEdit,
+  profile,
+  onProfileSaved,
+}: {
+  drive: string;
+  canEdit: boolean;
+  profile: GraphProfile | null;
+  onProfileSaved: () => Promise<void>;
+}) {
   const { tm, lang } = useLang();
   const code = lang.toLowerCase() as keyof GraphLabel;
   const { run: call, notice } = useFailure();
   const [sources, setSources] = useState<GraphImportSource[] | null>(null);
+  const [formats, setFormats] = useState<string[]>(IMPORT_FORMATS);
   const [sourceId, setSourceId] = useState("");
   const [folder, setFolder] = useState(drive.replace(/\/+$/, ""));
   const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
@@ -1913,15 +2212,77 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
   const [refused, setRefused] = useState("");
   const [answer, setAnswer] = useState<GraphImportAnswer | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // E28b: the chosen file as sent to the box, how it fits the sources, and
+  // the panel that learns a new source or matches renamed columns.
+  const [sample, setSample] = useState<GraphSampleFile | null>(null);
+  const [inspect, setInspect] = useState<GraphImportInspect | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [panel, setPanel] = useState<"learn" | "assign" | null>(null);
+  const [saved, setSaved] = useState("");
 
-  useEffect(() => {
-    if (!canEdit) return;
-    void call(() => graphApi.importSources(drive)).then((res) => {
+  const loadSources = useCallback(
+    async (select?: string) => {
+      const res = await call(() => graphApi.importSources(drive));
       if (!res) return;
       setSources(res.sources);
-      setSourceId((current) => current || res.sources[0]?.id || "");
-    });
-  }, [drive, canEdit, call]);
+      if (res.formats?.length) setFormats(res.formats);
+      setSourceId((current) => select || current || res.sources[0]?.id || "");
+    },
+    [drive, call],
+  );
+  useEffect(() => {
+    if (canEdit) void loadSources();
+  }, [canEdit, loadSources]);
+
+  const check = useCallback(
+    async (file: GraphSampleFile, keepSource = false) => {
+      setInspecting(true);
+      try {
+        const res = await graphApi.importInspect(drive, file);
+        setInspect(res);
+        // A file that does not fit the chosen source picks the one it fits.
+        if (res.best && !keepSource) {
+          setSourceId((current) =>
+            res.sources.find((s) => s.id === current)?.fit === "full" ? current : res.best!,
+          );
+        }
+      } catch (err) {
+        setInspect(null);
+        if (err instanceof AdapterGraphError && err.status === 400)
+          setError(`${tm("The file could not be read.")} ${err.message}`);
+      } finally {
+        setInspecting(false);
+      }
+    },
+    [drive, tm],
+  );
+
+  async function choose(next: File | null) {
+    setFile(next);
+    setSample(null);
+    setInspect(null);
+    setPanel(null);
+    setSaved("");
+    setError("");
+    setAnswer(null);
+    setRefused("");
+    if (!next) return;
+    if (next.size > IMPORT_MAX_BYTES) {
+      setError(tm("The file is larger than 50 MB."));
+      return;
+    }
+    const chosen = { filename: next.name, contentB64: toBase64(await next.arrayBuffer()) };
+    setSample(chosen);
+    await check(chosen);
+  }
+
+  async function afterSave(message: string, select?: string) {
+    setPanel(null);
+    setSaved(message);
+    await onProfileSaved();
+    await loadSources(select);
+    if (sample) await check(sample, true);
+  }
 
   // The search copy is aligned after the import; follow it until it settles.
   const ragFolder = answer?.import.source_path;
@@ -1941,14 +2302,11 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
 
   if (!canEdit) return null;
   const source = sources?.find((s) => s.id === sourceId) ?? null;
+  const effectiveMode = mode || source?.mode || "delta";
 
   async function start(force = false) {
-    if (!source || !file || !folder.trim()) {
+    if (!source || !file || !sample || !folder.trim()) {
       setError(tm("Choose a source, a target folder and a file."));
-      return;
-    }
-    if (file.size > IMPORT_MAX_BYTES) {
-      setError(tm("The file is larger than 50 MB."));
       return;
     }
     setBusy(true);
@@ -1960,8 +2318,8 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
         source: source.id,
         asOf,
         folder: folder.trim(),
-        filename: file.name,
-        contentB64: toBase64(await file.arrayBuffer()),
+        filename: sample.filename,
+        contentB64: sample.contentB64,
         mode: mode || undefined,
         force,
       });
@@ -1974,13 +2332,34 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
       setAnswer(res);
     } catch (err) {
       if (err instanceof AdapterGraphError && err.status === 409) setRefused(err.message);
-      else if (err instanceof AdapterGraphError && err.status !== 503)
+      else if (err instanceof AdapterGraphError && err.status !== 503) {
         setError(`${tm("The import failed.")} ${err.message}`);
-      else await call(() => Promise.reject(err));
+        // What the file lacks, and the way out (match its columns, new source).
+        if (!inspect) await check(sample, true);
+      } else await call(() => Promise.reject(err));
     } finally {
       setBusy(false);
     }
   }
+
+  const fit = inspect?.sources.find((s) => s.id === sourceId) ?? null;
+  const sourceName = (s: { label: GraphLabel; title: string }) =>
+    s.label[code] ?? s.label.en ?? s.title;
+  const learnButton = (primary: boolean) => (
+    <button
+      onClick={() => setPanel("learn")}
+      disabled={busy || !profile}
+      className={
+        primary
+          ? "inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
+          : "inline-flex items-center gap-1.5 rounded-lg border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10 disabled:opacity-50"
+      }
+      style={primary ? { backgroundColor: ACCENT, color: ON_ACCENT } : undefined}
+    >
+      <Sparkles className="h-3.5 w-3.5" />
+      {tm("Add a new source from this file")}
+    </button>
+  );
 
   const stats = answer?.import.stats;
   const rag = answer?.rag;
@@ -1995,115 +2374,230 @@ function ImportSection({ drive, canEdit }: { drive: string; canEdit: boolean }) 
       {notice}
       <div className="text-xs text-ink/55">
         {tm(
-          "Periodic exports (CSV, XLSX) are read by the domain profile's rules, without the language model.",
+          "Load a register export (for example a database dump or a spreadsheet). The box reads it by the domain profile's rules, without the language model.",
         )}
       </div>
-      {sources && sources.length === 0 && (
-        <div className="mt-2 text-xs text-ink/55">{tm("No structured source in the profile.")}</div>
-      )}
-      {sources && sources.length > 0 && (
+      {sources && (
         <div
           className="mt-2 space-y-2 rounded-xl border border-ink/10 p-2.5 text-xs"
           style={{ backgroundColor: PANEL }}
         >
-          <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-ink/60">{tm("Source")}</span>
-            <select
-              value={sourceId}
-              onChange={(e) => setSourceId(e.target.value)}
-              disabled={busy}
-              className={`${input} flex-1`}
-            >
-              {sources.map((s) => (
-                <option key={s.id} value={s.id} className="bg-surface-2">
-                  {s.label[code] ?? s.label.en ?? s.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          {source && (
-            <div className="pl-0 text-[11px] text-ink/50 sm:pl-30">
-              <span className="text-ink/60">{tm("Expected columns")}:</span>{" "}
-              {source.columns.join(", ")}
-              {source.rag && (
-                <div className="mt-0.5" style={{ color: ACCENT_TEXT }}>
-                  {tm("Its free text also goes into the search.")}
-                </div>
-              )}
+          {sources.length === 0 && (
+            <div className="text-ink/55">
+              {tm("No structured source in the profile yet. Choose a sample file to add one.")}
             </div>
           )}
-          <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-ink/60">{tm("Target folder")}</span>
-            <input
-              value={folder}
-              onChange={(e) => setFolder(e.target.value)}
-              disabled={busy}
-              className={`${input} flex-1`}
-            />
-          </label>
-          <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-ink/60">{tm("Export date")}</span>
-            <input
-              type="date"
-              value={asOf}
-              onChange={(e) => setAsOf(e.target.value)}
-              disabled={busy}
-              className={input}
-            />
-          </label>
-          <label className="flex flex-wrap items-center gap-2">
-            <span className="w-28 shrink-0 text-ink/60">{tm("Mode")}</span>
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as "" | "delta" | "full")}
-              disabled={busy}
-              className={input}
-            >
-              <option value="" className="bg-surface-2">
-                {`${tm("As in the profile")} (${source?.mode ?? "delta"})`}
-              </option>
-              <option value="delta" className="bg-surface-2">
-                {tm("Changes only (delta)")}
-              </option>
-              <option value="full" className="bg-surface-2">
-                {tm("Full state (full)")}
-              </option>
-            </select>
-          </label>
-          {(mode || source?.mode) === "full" && (
-            <div className="text-[11px] text-amber-700/90 dark:text-amber-300/90">
-              {tm(
-                "Full mode removes the source's records of this folder that the file no longer lists.",
+          {sources.length > 0 && (
+            <>
+              <label className="flex flex-wrap items-center gap-2">
+                <span className="w-28 shrink-0 text-ink/60">{tm("Source")}</span>
+                <select
+                  value={sourceId}
+                  onChange={(e) => {
+                    setSourceId(e.target.value);
+                    setMode("");
+                    setPanel(null);
+                  }}
+                  disabled={busy}
+                  className={`${input} flex-1`}
+                >
+                  {sources.map((s) => (
+                    <option key={s.id} value={s.id} className="bg-surface-2">
+                      {sourceName(s)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {source && (
+                <div className="pl-0 text-[11px] text-ink/50 sm:pl-30">
+                  <span className="text-ink/60">{tm("Expected columns")}:</span>{" "}
+                  {source.columns.join(", ")}
+                  {source.rag && (
+                    <div className="mt-0.5" style={{ color: ACCENT_TEXT }}>
+                      {tm("Its free text also goes into the search.")}
+                    </div>
+                  )}
+                </div>
               )}
-            </div>
+              <div className="flex flex-wrap items-start gap-2">
+                <span className="w-28 shrink-0 pt-0.5 text-ink/60">{tm("Target folder")}</span>
+                <div className="min-w-0 flex-1">
+                  <FolderPicker drive={drive} value={folder} onChange={setFolder} disabled={busy} />
+                  <div className="mt-0.5 text-[11px] text-ink/50">
+                    {tm("Whoever may see this folder sees its records too.")}
+                  </div>
+                </div>
+              </div>
+              <label className="flex flex-wrap items-center gap-2">
+                <span className="w-28 shrink-0 text-ink/60">{tm("Export date")}</span>
+                <input
+                  type="date"
+                  value={asOf}
+                  onChange={(e) => setAsOf(e.target.value)}
+                  disabled={busy}
+                  className={input}
+                />
+                <span className="text-[11px] text-ink/50">
+                  {tm("An older export never overwrites a newer one.")}
+                </span>
+              </label>
+              <div className="flex flex-wrap items-start gap-2">
+                <span className="w-28 shrink-0 text-ink/60">{tm("The file holds")}</span>
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  {(
+                    [
+                      [
+                        "delta",
+                        "Only the changes",
+                        "New and changed records, and those marked deleted. Records the file does not list stay.",
+                      ],
+                      [
+                        "full",
+                        "The whole register",
+                        "Every record of the source for this folder. Records the file no longer lists are removed.",
+                      ],
+                    ] as const
+                  ).map(([value, title, hint]) => (
+                    <label key={value} className="flex cursor-pointer items-start gap-2">
+                      <input
+                        type="radio"
+                        name="import-mode"
+                        checked={effectiveMode === value}
+                        onChange={() => setMode(value)}
+                        disabled={busy}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="text-ink">{tm(title)}</span>
+                        {source?.mode === value && (
+                          <span className="text-ink/45">{` (${tm("as in the profile")})`}</span>
+                        )}
+                        <span className="block text-[11px] text-ink/50">{tm(hint)}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
           <label className="flex flex-wrap items-center gap-2">
             <span className="w-28 shrink-0 text-ink/60">{tm("Export file")}</span>
             <input
               ref={fileRef}
               type="file"
-              accept=".csv,.tsv,.txt,.xlsx,.xlsm"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              accept={formats.join(",")}
+              onChange={(e) => void choose(e.target.files?.[0] ?? null)}
               disabled={busy}
               className="min-w-0 flex-1 text-xs text-ink/70 file:mr-2 file:rounded-md file:border-0 file:bg-ink/10 file:px-2 file:py-1 file:text-xs file:text-ink"
             />
           </label>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => void start()}
-              disabled={busy || !source || !file}
-              className="rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
-              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
-            >
-              {tm("Import")}
-            </button>
-            {busy && (
-              <span className="inline-flex items-center gap-1.5 text-ink/60">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {tm("Importing…")}
-              </span>
-            )}
+          <div className="pl-0 text-[11px] text-ink/50 sm:pl-30">
+            {`${tm("Accepted")}: ${formats.map((f) => f.slice(1).toUpperCase()).join(", ")}`}
           </div>
+          {inspecting && (
+            <div className="flex items-center gap-2 text-ink/60">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {tm("Checking the file's columns…")}
+            </div>
+          )}
+          {inspect && !inspecting && fit && (
+            <div className="space-y-1.5 text-[11px]">
+              {fit.fit === "full" && (
+                <div className="text-ink/60">{tm("The file has every column of this source.")}</div>
+              )}
+              {fit.missing_required.length > 0 && (
+                <div className="text-amber-700 dark:text-amber-300">
+                  {`${tm("The file lacks columns this source needs")}: ${fit.missing_required.join(", ")}`}
+                </div>
+              )}
+              {fit.missing_optional.length > 0 && (
+                <div className="text-ink/60">
+                  {`${tm("Missing columns (the import goes on without them)")}: ${fit.missing_optional.join(", ")}`}
+                </div>
+              )}
+              {fit.aliased.length > 0 && (
+                <div className="text-ink/50">
+                  {`${tm("Found by another name")}: ${fit.aliased.join(", ")}`}
+                </div>
+              )}
+              {fit.fit !== "full" && fit.unused.length > 0 && panel !== "assign" && (
+                <button
+                  onClick={() => setPanel("assign")}
+                  disabled={busy}
+                  className="rounded-lg border border-ink/15 px-3 py-1 text-xs hover:bg-ink/10 disabled:opacity-50"
+                >
+                  {tm("Match the renamed columns")}
+                </button>
+              )}
+            </div>
+          )}
+          {inspect && !inspecting && !inspect.best && panel !== "learn" && (
+            <div className="space-y-1.5 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2">
+              <div className="text-[11.5px] text-amber-800 dark:text-amber-100">
+                {tm(
+                  "This file fits no source of the profile. The box can learn a new source from it: you check what each column is.",
+                )}
+              </div>
+              {learnButton(true)}
+            </div>
+          )}
+          {inspect && !inspecting && inspect.best && panel !== "learn" && learnButton(false)}
+          {panel === "assign" && fit && (
+            <AssignColumns
+              drive={drive}
+              fit={fit}
+              sourceName={sourceName(fit)}
+              onCancel={() => setPanel(null)}
+              onSaved={(version) =>
+                afterSave(
+                  tm("The column names were saved (profile version {v}).").replace(
+                    "{v}",
+                    String(version),
+                  ),
+                )
+              }
+            />
+          )}
+          {panel === "learn" && sample && profile && (
+            <LearnSource
+              drive={drive}
+              file={sample}
+              profile={profile}
+              code={code}
+              onCancel={() => setPanel(null)}
+              onSaved={(id, version) =>
+                afterSave(
+                  tm(
+                    "Saved as a new source (profile version {v}). The file can be imported now.",
+                  ).replace("{v}", String(version)),
+                  id,
+                )
+              }
+            />
+          )}
+          {saved && (
+            <div className="text-[11px]" style={{ color: ACCENT_TEXT }}>
+              {saved}
+            </div>
+          )}
+          {sources.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void start()}
+                disabled={busy || !source || !sample || panel !== null}
+                className="rounded-lg px-3 py-1 text-xs font-medium disabled:opacity-50"
+                style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+              >
+                {tm("Import")}
+              </button>
+              {busy && (
+                <span className="inline-flex items-center gap-1.5 text-ink/60">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {tm("Importing…")}
+                </span>
+              )}
+            </div>
+          )}
           {error && <div className="text-[11px] text-amber-700 dark:text-amber-300">{error}</div>}
           {refused && (
             <div className="space-y-1.5 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2">
@@ -2243,7 +2737,7 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
     <div className="mt-6">
       <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink/45">
         <Settings2 className="h-3.5 w-3.5" />
-        {tm("Domain profile version")}
+        {tm("Reprocessing")}
       </div>
       {notice}
       <div className="text-xs text-ink/70">
@@ -2295,32 +2789,47 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
         </div>
       )}
       {canEdit && data.can_start && (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <input
-            value={folder}
-            onChange={(e) => setFolder(e.target.value)}
-            disabled={running}
-            placeholder={tm("Folder (optional), e.g. /storage/drives/…")}
-            className="min-w-0 flex-1 rounded-lg border border-ink/15 bg-shade/30 px-2 py-1 text-xs text-ink outline-none focus:border-ink/30"
-          />
-          {running ? (
-            <button
-              onClick={() => void act(() => graphApi.reprocessCancel(drive))}
-              disabled={busy}
-              className="rounded-lg border border-ink/15 px-3 py-1 text-xs transition hover:bg-ink/10 disabled:opacity-50"
-            >
-              {tm("Stop")}
-            </button>
-          ) : (
-            <button
-              onClick={() => void act(() => graphApi.reprocessStart(drive, folder.trim()))}
-              disabled={busy || !(data.stale_total || data.absent_total) || !data.source_ready}
-              className="rounded-lg px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
-              style={{ backgroundColor: ACCENT }}
-            >
-              {tm("Reprocess")}
-            </button>
-          )}
+        <div
+          className="mt-2 space-y-2 rounded-xl border border-ink/10 p-2.5 text-xs"
+          style={{ backgroundColor: PANEL }}
+        >
+          <div className="text-ink/70">
+            {data.stale_total || data.absent_total
+              ? `${tm("To reprocess")}: ${data.stale_total + data.absent_total} · ${tm(
+                  "Reprocessing reads them again with the current profile and the language model, one at a time, without holding up the questions.",
+                )}`
+              : tm("Nothing to reprocess.")}
+          </div>
+          <div className="flex flex-wrap items-start gap-2">
+            <span className="w-28 shrink-0 pt-0.5 text-ink/60">{tm("Limit to")}</span>
+            <FolderPicker
+              drive={drive}
+              value={folder}
+              onChange={setFolder}
+              allowAll
+              disabled={running}
+            />
+          </div>
+          <div>
+            {running ? (
+              <button
+                onClick={() => void act(() => graphApi.reprocessCancel(drive))}
+                disabled={busy}
+                className="rounded-lg border border-ink/15 px-3 py-1 text-xs transition hover:bg-ink/10 disabled:opacity-50"
+              >
+                {tm("Stop")}
+              </button>
+            ) : (
+              <button
+                onClick={() => void act(() => graphApi.reprocessStart(drive, folder.trim()))}
+                disabled={busy || !(data.stale_total || data.absent_total) || !data.source_ready}
+                className="rounded-lg px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+                style={{ backgroundColor: ACCENT }}
+              >
+                {tm("Reprocess")}
+              </button>
+            )}
+          </div>
         </div>
       )}
       {canEdit && data.can_start && !data.source_ready && (
@@ -2332,13 +2841,14 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
   );
 }
 
-/** E10b: why a document of this scope is not in the search -- reason
- *  counts, and the documents with any pages OCR could not read. */
+/** E10b: why a document of this scope is not in the search -- grouped by
+ *  reason, each with what it means and what can be done. On a standalone box a
+ *  store writer reads the files again (OCR included) or deletes them here. */
 const SKIP_REASON: Record<string, string> = {
-  extraction_empty: "No text layer — resync to read it with OCR",
+  extraction_empty: "No text layer (scanned image)",
   ocr_pending: "Waiting for OCR",
-  ocr_interrupted: "OCR interrupted — resync needed",
-  ocr_deferred: "OCR deferred — resync needed",
+  ocr_interrupted: "OCR interrupted",
+  ocr_deferred: "OCR deferred",
   ocr_failed: "OCR failed",
   ocr_no_text: "No text recognised",
   ocr_pages_skipped: "Some pages could not be read",
@@ -2348,17 +2858,52 @@ const SKIP_REASON: Record<string, string> = {
   invalid_content: "Invalid content",
   extractor_unavailable: "No reader for this format on the AI Box",
 };
+/** What a reason means and what to do about it. */
+const SKIP_HELP: Record<string, string> = {
+  extraction_empty: "The file holds only images of text. Reading it again runs OCR on its pages.",
+  ocr_pending: "OCR is reading it now or soon; nothing to do.",
+  ocr_interrupted: "A restart stopped the OCR. Reading it again finishes it.",
+  ocr_deferred: "The OCR queue was full when it arrived. Reading it again queues it now.",
+  ocr_failed: "The OCR stopped with an error. Read it again; if it fails again, replace the file.",
+  ocr_no_text:
+    "OCR found no readable text (a blank or very poor scan). Replace it with a better scan.",
+  ocr_pages_skipped:
+    "Some pages were too poor to read; the rest is searchable. A better scan fixes it.",
+  unsupported_type: "The search cannot read this file type. Save it as PDF, DOCX or text.",
+  empty_content: "The file is empty. Delete it or upload it again.",
+  too_large: "The file is larger than the search reads. Split it into smaller files.",
+  invalid_content: "The content does not match the file type or is damaged. Upload a good copy.",
+  extractor_unavailable: "The AI Box has no reader for this format installed.",
+};
+/** Reasons a fresh reading of the stored file can fix. */
+const REREADABLE = new Set(["extraction_empty", "ocr_interrupted", "ocr_deferred", "ocr_failed"]);
+const REREAD_STATE: Record<string, string> = {
+  queued: "Waiting to be read again",
+  running: "Being read again…",
+  done: "Reread finished",
+  failed: "Reading again failed",
+};
 const PAGE_REASON: Record<string, string> = {
   low_quality: "low quality",
   no_text: "no text",
   failed: "failed",
 };
+const GROUP_SHOWN = 20;
 
-function UnreadableDocuments({ drive }: { drive: string }) {
+function UnreadableDocuments({
+  drive,
+  onOpenSource,
+}: {
+  drive: string;
+  onOpenSource: (source: GraphSource) => void;
+}) {
   const { tm } = useLang();
   const [data, setData] = useState<IndexSkipped | null>(null);
   const [failed, setFailed] = useState(false);
-  const [reason, setReason] = useState<string | null>(null);
+  const [open, setOpen] = useState<Record<string, number>>({});
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -2368,14 +2913,46 @@ function UnreadableDocuments({ drive }: { drive: string }) {
       setFailed(true);
     }
   }, [drive]);
+  const rereading = data?.rereading ?? 0;
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 30000);
+    // Faster while rereads are running, so their outcome shows up.
+    const timer = setInterval(() => void load(), rereading ? 5000 : 30000);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, rereading]);
 
-  const reasons = Object.entries(data?.reasons ?? {}).sort((a, b) => b[1] - a[1]);
-  const shown = (data?.documents ?? []).filter((d) => !reason || d.reason === reason);
+  async function act(work: () => Promise<unknown>, done?: (out: unknown) => string) {
+    setBusy(true);
+    setNote("");
+    try {
+      const out = await work();
+      if (done) setNote(done(out));
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : tm("The action failed."));
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+      await load();
+    }
+  }
+
+  function reread(target: { paths: string[] } | { reason: string }) {
+    void act(
+      () => graphApi.reread(drive, target),
+      (out) => {
+        const res = out as { queued: number; skipped: number };
+        return `${tm("Queued to be read again")}: ${res.queued}${
+          res.skipped ? ` · ${tm("Skipped")}: ${res.skipped}` : ""
+        }`;
+      },
+    );
+  }
+
+  const canReread = Boolean(data?.can_reread);
+  const canDelete = Boolean(data?.can_delete);
+  const groups = Object.entries(data?.reasons ?? {}).sort((a, b) => b[1] - a[1]);
+  const small =
+    "rounded-md border border-ink/15 px-2 py-0.5 text-[11px] transition hover:bg-ink/10 disabled:opacity-50";
   return (
     <div className="mt-6">
       <div className="mb-1.5 flex items-center gap-2 text-[11px] uppercase tracking-wide text-ink/45">
@@ -2387,44 +2964,177 @@ function UnreadableDocuments({ drive }: { drive: string }) {
       {data && data.count === 0 && (
         <div className="text-xs text-ink/55">{tm("Every document in this scope is readable.")}</div>
       )}
-      {reasons.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {reasons.map(([key, n]) => (
-            <button
-              key={key}
-              onClick={() => setReason(reason === key ? null : key)}
-              className={`rounded-full border px-2 py-0.5 text-[11px] transition ${reason === key ? "border-transparent text-white" : "border-ink/15 text-ink/70 hover:bg-ink/10"}`}
-              style={reason === key ? { backgroundColor: ACCENT } : undefined}
-            >
-              {tm(SKIP_REASON[key] ?? key)}: {n}
-            </button>
-          ))}
+      {data && data.count > 0 && (
+        <div className="mb-2 text-xs text-ink/55">
+          {tm(
+            canReread
+              ? "These documents are not in the search, or only in part. Each group says why and what to do."
+              : "These documents are not in the search, or only in part. Each group says why; a scan is read again after it is synced again from the ViVeSecBox.",
+          )}
         </div>
       )}
-      <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
-        {shown.map((d) => (
-          <div key={d.source_path} className="text-xs">
-            <div className="flex items-center gap-2">
-              <span className="min-w-0 flex-1 truncate" title={d.source_path}>
-                {d.source_path.split("/").pop()}
-              </span>
-              <span className="shrink-0 text-amber-700/90 dark:text-amber-300/90">
-                {tm(SKIP_REASON[d.reason] ?? d.reason)}
-              </span>
-            </div>
-            {!!d.skipped_pages?.length && (
-              <div className="pl-2 text-[11px] text-ink/50">
-                {tm("Pages not read")}:{" "}
-                {d.skipped_pages
-                  .map(
-                    (p) =>
-                      `${p.page} (${tm(PAGE_REASON[p.reason] ?? p.reason)}${p.quality != null ? ` ${p.quality}%` : ""})`,
-                  )
-                  .join(", ")}
+      {note && (
+        <div className="mb-2 text-xs" style={{ color: ACCENT_TEXT }}>
+          {note}
+        </div>
+      )}
+      <div className="space-y-2">
+        {groups.map(([reason, n]) => {
+          const docs = (data?.documents ?? []).filter((d) => d.reason === reason);
+          const shown = open[reason] ?? 0;
+          const fixable = canReread && REREADABLE.has(reason);
+          // Indexed by an earlier sync, not held on the box: no reread, no download.
+          const stored = docs.filter((d) => d.stored).length;
+          const notHeld = docs.some((d) => d.stored === false);
+          return (
+            <div
+              key={reason}
+              className="rounded-xl border border-ink/10 p-2.5 text-xs"
+              style={{ backgroundColor: PANEL }}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-amber-700/90 dark:text-amber-300/90">
+                  {tm(SKIP_REASON[reason] ?? reason)}
+                </span>
+                <span className="text-ink/50">{n}</span>
+                <span className="ml-auto flex flex-wrap gap-1.5">
+                  {fixable && stored > 0 && (
+                    <button
+                      onClick={() => reread({ reason })}
+                      disabled={busy}
+                      className={small}
+                      style={{ color: ACCENT_TEXT }}
+                    >
+                      {`${tm("Read all again")} (${stored})`}
+                    </button>
+                  )}
+                  {docs.length > 0 && (
+                    <button
+                      onClick={() => setOpen((o) => ({ ...o, [reason]: shown ? 0 : GROUP_SHOWN }))}
+                      className={small}
+                    >
+                      {tm(shown ? "Hide the documents" : "Show the documents")}
+                    </button>
+                  )}
+                </span>
               </div>
-            )}
-          </div>
-        ))}
+              {SKIP_HELP[reason] && (
+                <div className="mt-1 text-[11px] text-ink/55">{tm(SKIP_HELP[reason])}</div>
+              )}
+              {canReread && notHeld && (
+                <div className="mt-1 text-[11px] text-ink/55">
+                  {tm(
+                    "Some of these files came from an earlier sync and are not held on the AI Box: upload them again to read them.",
+                  )}
+                </div>
+              )}
+              {shown > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {docs.slice(0, shown).map((d) => {
+                    const name = d.source_path.split("/").pop() ?? d.source_path;
+                    return (
+                      <div key={d.source_path} className="border-t border-ink/5 pt-1.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate" title={d.source_path}>
+                            {name}
+                          </span>
+                          {d.reread && (
+                            <span
+                              className={
+                                d.reread.state === "failed"
+                                  ? "text-amber-700 dark:text-amber-300"
+                                  : "text-ink/55"
+                              }
+                              title={d.reread.error ?? undefined}
+                            >
+                              {tm(REREAD_STATE[d.reread.state] ?? d.reread.state)}
+                            </span>
+                          )}
+                          {d.stored !== false && (
+                            <button
+                              onClick={() =>
+                                onOpenSource({
+                                  path: d.source_path,
+                                  page: 0,
+                                  quote: "",
+                                  label: name,
+                                })
+                              }
+                              className={small}
+                            >
+                              {tm("Open")}
+                            </button>
+                          )}
+                          {fixable && d.stored && (
+                            <button
+                              onClick={() => reread({ paths: [d.source_path] })}
+                              disabled={
+                                busy ||
+                                d.reread?.state === "queued" ||
+                                d.reread?.state === "running"
+                              }
+                              className={small}
+                            >
+                              {tm("Read again")}
+                            </button>
+                          )}
+                          {canDelete &&
+                            (confirm === d.source_path ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="text-ink/60">{tm("Delete the file?")}</span>
+                                <button
+                                  onClick={() =>
+                                    void act(
+                                      () => graphApi.deleteStored(drive, d.source_path),
+                                      () => `${tm("Deleted")}: ${name}`,
+                                    )
+                                  }
+                                  disabled={busy}
+                                  className="rounded-md bg-rose-600 px-2 py-0.5 text-[11px] text-white disabled:opacity-50"
+                                >
+                                  {tm("Delete")}
+                                </button>
+                                <button onClick={() => setConfirm(null)} className={small}>
+                                  {tm("Cancel")}
+                                </button>
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => setConfirm(d.source_path)}
+                                disabled={busy}
+                                className={small}
+                              >
+                                {tm("Delete")}
+                              </button>
+                            ))}
+                        </div>
+                        {!!d.skipped_pages?.length && (
+                          <div className="pl-2 text-[11px] text-ink/50">
+                            {tm("Pages not read")}:{" "}
+                            {d.skipped_pages
+                              .map(
+                                (p) =>
+                                  `${p.page} (${tm(PAGE_REASON[p.reason] ?? p.reason)}${p.quality != null ? ` ${p.quality}%` : ""})`,
+                              )
+                              .join(", ")}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {docs.length > shown && (
+                    <button
+                      onClick={() => setOpen((o) => ({ ...o, [reason]: shown + GROUP_SHOWN * 5 }))}
+                      className={small}
+                    >
+                      {`${tm("Show more")} (${docs.length - shown})`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       {data?.truncated && (
         <div className="mt-1 text-[11px] text-ink/45">

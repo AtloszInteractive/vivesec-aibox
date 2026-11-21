@@ -112,6 +112,24 @@ class ConversationStoreTest(unittest.TestCase):
                                             conversation_id="../evil"))
         self.assertEqual(self.store.list("u1", "scope-a"), [])
 
+    def test_thread_keeps_its_drive_selection_across_reload(self):
+        cid = self.store.create("u1", "scope-a", drives=["/d/hr", "/d/fin"])["id"]
+        self.store.record("u1", "scope-a", "Q", "A", conversation_id=cid)
+        self.store.flush_memory()
+        reloaded = self.make()
+        self.assertEqual(reloaded.selection("u1", "scope-a", cid), ["/d/fin", "/d/hr"])
+        self.assertEqual(reloaded.list("u1", "scope-a")[0]["drives"], ["/d/fin", "/d/hr"])
+        self.assertIsNone(reloaded.selection("u2", "scope-a", cid))
+        # A thread from before the selection was stored counts as un-narrowed.
+        path = os.path.join(self.tmp.name, "conversations",
+                            conversations.scope_key("u1", "scope-a"), cid + ".json")
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        del data["drives"]
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        self.assertEqual(self.make().selection("u1", "scope-a", cid), [])
+
     def test_thread_hidden_from_other_user_scope_and_profile(self):
         cid = self.store.create("u1", "scope-a", title="Mine")["id"]
         self.store.record("u1", "scope-a", "Q", "A", conversation_id=cid)

@@ -160,6 +160,7 @@ import person_summary  # noqa: E402
 import purpose  # noqa: E402
 import querylog  # noqa: E402
 import reprocess  # noqa: E402
+import reread  # noqa: E402
 import record_rag  # noqa: E402
 import provision  # noqa: E402
 import scheduler  # noqa: E402
@@ -1052,6 +1053,28 @@ def _store_unindex(path):
 
 
 UPLOADS = drivestore.UploadWorker(STORE, CLAMD, UPLOAD_SCAN, _store_index, _store_unindex)
+# A store writer sends unreadable stored documents through extraction again (E10b).
+
+
+def _reread_index(path):
+    """Index a stored file again. A delete that ran meanwhile wins: what this
+    put back into the index is removed again (as UploadWorker does)."""
+    if STORE.kind(path) != "file":
+        return {"status": "gone"}
+    res = _store_index(path)
+    if STORE.kind(path) != "file":
+        _store_unindex(path)
+        return {"status": "gone"}
+    return res
+
+
+REREAD = reread.Rereader(_reread_index)
+REREAD_MAX_PATHS = 500
+
+
+def _rereadable():
+    """Stored files can be read again only where the box holds them."""
+    return INTEGRATION == integration.MODE_STANDALONE and STORE.enabled
 
 # Administration of a standalone box (E27 S7): only callers whose verified
 # token carries the admin role (the authentication service's ADMIN_ROLE).
@@ -1636,7 +1659,8 @@ def _answer(*args, **kwargs):
 def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=None,
                  params=None, agent=None, history_snapshot=None, cancel_event=None,
                  progress_callback=None, req_scope=None, profile="grounded",
-                 conversation_id=None, access=None, job_id=None, stage_callback=None):
+                 conversation_id=None, access=None, job_id=None, stage_callback=None,
+                 thread_scope=None):
     """Run the agentic query pipeline for one (user, drive) turn: retrieve
     context (corpus = the VVS-Drive hard filter), synthesize a grounded answer
     with the conversation history, and record the exchange. Shared by the sync
@@ -1659,6 +1683,10 @@ def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=
     if action is not None:
         profile = "grounded"
     session_scope = chat_policy.history_scope(req_scope.session_scope, profile)
+    if conversation_id and thread_scope:
+        # A named thread lives under the entitled (un-narrowed) scope; the
+        # handler already checked that it was started with this selection.
+        session_scope = thread_scope
     if action == "search" and mode == "files":
         return {**_file_search(req_scope, query, access), "profile": "grounded"}
     # The UI never sends `lang`: detect it from the question so the guard, the
@@ -2022,7 +2050,8 @@ def _job_worker(job_id, user, drive, query, top_k, lang, action=None, mode=None,
                                      cancel_event, progress, req_scope,
                                      (job.get("request") or {}).get("profile", "grounded"),
                                      (job.get("request") or {}).get("conversation_id") or None,
-                                     access=access, job_id=job_id, stage_callback=stage)
+                                     access=access, job_id=job_id, stage_callback=stage,
+                                     thread_scope=(job.get("request") or {}).get("thread_scope"))
     except llm.GenerationCancelled as e:
         code, payload = 499, {"ok": False, "error": str(e)}
     except RagError as e:
@@ -2536,6 +2565,10 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/reprocess/cancel": self._graph_reprocess_cancel,
                 "/api/v1/ui/graph/import": self._graph_import,
                 "/api/v1/ui/graph/import/sources": self._graph_import_sources,
+                "/api/v1/ui/graph/import/inspect": self._graph_import_inspect,
+                "/api/v1/ui/graph/import/learn": self._graph_import_learn,
+                "/api/v1/ui/graph/import/learn/apply": self._graph_import_learn_apply,
+                "/api/v1/ui/graph/import/aliases/apply": self._graph_import_aliases_apply,
                 "/api/v1/ui/graph/import/status": self._graph_import_status,
                 "/api/v1/ui/graph/import/rag": self._graph_import_rag,
                 "/api/v1/ui/graph/watch/list": self._graph_watch_list,
@@ -2544,6 +2577,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/graph/watch/check": self._graph_watch_check,
                 "/api/v1/ui/graph/watch/seen": self._graph_watch_seen,
                 "/api/v1/ui/index/skipped": self._index_skipped,
+                "/api/v1/ui/index/reread": self._index_reread,
                 "/api/v1/ui/store/list": self._store_list,
                 "/api/v1/ui/store/upload": self._store_upload,
                 "/api/v1/ui/store/mkdir": self._store_mkdir,
@@ -2872,20 +2906,35 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": str(error)})
         return None
 
+    @staticmethod
+    def _thread_scope(req_scope, profile):
+        """History namespace of the named threads: the ENTITLED scope, so the
+        list does not change with the drive selection; each thread carries its
+        own selection instead (Scope.selection)."""
+        return chat_policy.history_scope(req_scope.base.session_scope, profile)
+
     def _conversation_for(self, payload, user, req_scope, profile):
         """The thread a /ui/query or /ui/ask addresses: the body's optional
         `conversation_id`, validated against the caller's (user, scope, profile)
-        namespace. Returns None for the default thread, the id when it exists,
-        or False after sending 404 -- an id from another scope or user does not
-        exist as far as this caller is concerned (fail-closed, like jobs)."""
+        namespace. Returns (None, None) for the default thread, (id, history
+        namespace) for a named thread, or False after the refusal was sent:
+        404 for an id from another user, scope or profile (it does not exist as
+        far as this caller is concerned, fail-closed like jobs), 409 when the
+        thread was started with a different drive selection -- its history
+        must not reach a scope it was not built in."""
         conversation_id = str(payload.get("conversation_id") or "").strip()
         if not conversation_id or conversation_id == conversations.DEFAULT_ID:
-            return None
-        session_scope = chat_policy.history_scope(req_scope.session_scope, profile)
-        if not SESSIONS.exists(user, session_scope, conversation_id):
+            return None, None
+        thread_scope = self._thread_scope(req_scope, profile)
+        selection = SESSIONS.selection(user, thread_scope, conversation_id)
+        if selection is None:
             self._send(404, {"ok": False, "error": "unknown conversation_id"})
             return False
-        return conversation_id
+        if selection != req_scope.selection:
+            self._send(409, {"ok": False, "error": "conversation_scope_mismatch",
+                             "drives": selection})
+            return False
+        return conversation_id, thread_scope
 
     def _query(self):
         if self._locked_guard():
@@ -2900,14 +2949,16 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, parsed[5])
         if profile is None:
             return
-        conversation_id = self._conversation_for(payload, parsed[0], req_scope, profile)
-        if conversation_id is False:
+        thread = self._conversation_for(payload, parsed[0], req_scope, profile)
+        if thread is False:
             return
+        conversation_id, thread_scope = thread
         bound = self._purpose_for(payload)
         if bound is None:
             return
         result = _answer(*parsed, req_scope=req_scope, profile=profile,
-                         conversation_id=conversation_id, access=self._access())
+                         conversation_id=conversation_id, access=self._access(),
+                         thread_scope=thread_scope)
         if not _log_query(parsed[0], parsed[1], req_scope, parsed[5] or "ask", bound, parsed[2],
                           _answer_summary(result), access=self._access()):
             self._send(503, {"ok": False, "error": "query log unavailable"})
@@ -2930,14 +2981,16 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, parsed[5])
         if profile is None:
             return
-        conversation_id = self._conversation_for(payload, user, req_scope, profile)
-        if conversation_id is False:
+        thread = self._conversation_for(payload, user, req_scope, profile)
+        if thread is False:
             return
+        conversation_id, thread_scope = thread
         bound = self._purpose_for(payload)
         if bound is None:
             return
         history_snapshot = SESSIONS.history(
-            user, chat_policy.history_scope(req_scope.session_scope, profile), conversation_id)
+            user, thread_scope or chat_policy.history_scope(req_scope.session_scope, profile),
+            conversation_id)
         # Where the request was STARTED decides where its result belongs: a chat
         # question answers in the conversation, a quick action in the job list.
         origin = (str(payload.get("origin") or "chat")).strip().lower()
@@ -2948,7 +3001,7 @@ class Handler(BaseHTTPRequestHandler):
                    "params": parsed[8], "agent": parsed[9],
                    "scope_drives": list(req_scope.drive_roots),
                    "origin": origin, "history": history_snapshot, "profile": profile,
-                   "conversation_id": conversation_id,
+                   "conversation_id": conversation_id, "thread_scope": thread_scope,
                    "access": self._access().to_dict(), "purpose": bound}
         JOBS.create(job_id, user, drive, request)
         action, mode = parsed[5], parsed[6]
@@ -3106,9 +3159,12 @@ class Handler(BaseHTTPRequestHandler):
     # query string (measured 2026-09-10). An id that belongs to another user,
     # scope or profile is reported as unknown (404), never as forbidden.
     def _conversation_scope(self, payload):
-        """(user, history scope) of the caller for the thread endpoints, or None
-        after the error was sent. The profile namespaces the scope exactly as
-        it does for the chat history (chat_policy.history_scope)."""
+        """(user, thread namespace, drive selection) of the caller for the
+        thread endpoints, or None after the error was sent. The namespace is
+        the entitled scope, so the list shows every thread whatever drives are
+        selected now; the profile namespaces it exactly as it does for the chat
+        history (chat_policy.history_scope). The body's `drives` is validated
+        like on a query and is what a new thread is started with."""
         if self._locked_guard():
             return None
         identity = self._read_vvs()
@@ -3121,7 +3177,7 @@ class Handler(BaseHTTPRequestHandler):
         profile = self._profile_for(payload, None)
         if profile is None:
             return None
-        return user, chat_policy.history_scope(req_scope.session_scope, profile)
+        return user, self._thread_scope(req_scope, profile), req_scope.selection
 
     @staticmethod
     def _conversation_id_of(payload):
@@ -3133,7 +3189,7 @@ class Handler(BaseHTTPRequestHandler):
         owner = self._conversation_scope(payload)
         if owner is None:
             return
-        self._send(200, {"ok": True, "conversations": SESSIONS.list(*owner)})
+        self._send(200, {"ok": True, "conversations": SESSIONS.list(owner[0], owner[1])})
 
     def _conversations_create(self):
         payload = self._read_json()
@@ -3141,7 +3197,7 @@ class Handler(BaseHTTPRequestHandler):
         if owner is None:
             return
         title = str(payload.get("title") or "").strip()
-        created = SESSIONS.create(owner[0], owner[1], title=title or None)
+        created = SESSIONS.create(owner[0], owner[1], title=title or None, drives=owner[2])
         self._send(200, {"ok": True, "conversation": created})
 
     def _conversations_get(self):
@@ -3533,11 +3589,21 @@ class Handler(BaseHTTPRequestHandler):
                          "to": view["to"], "as_of": out["as_of"], "total": out["total"],
                          "records": out["records"]})
 
+    def _skipped_docs(self, req_scope, access):
+        res = rag_post_json("/index/skipped", {"corpus_ids": list(req_scope.corpus_ids),
+                                               "access": access.as_rag()})
+        visible = _visible(access)
+        return [d for d in res.get("skipped") or []
+                if req_scope.contains_path(d.get("source_path") or "")
+                and visible(d.get("source_path") or "")]
+
     def _index_skipped(self):
         """The documents of the caller's own scope the search cannot read --
         scans waiting for OCR or interrupted, unsupported or empty files, pages
         OCR skipped -- with the reason. The RAG filters by scope and ACL in its
-        query; the paths are checked here again, as for graph answers."""
+        query; the paths are checked here again, as for graph answers. On a
+        standalone box a store writer may read them again (`can_reread`), and
+        each listed document says how far its reread got."""
         if self._locked_guard():
             return
         vvs = self._read_vvs()
@@ -3549,22 +3615,73 @@ class Handler(BaseHTTPRequestHandler):
         if req_scope is None:
             return
         access = self._access()
-        res = rag_post_json("/index/skipped", {"corpus_ids": list(req_scope.corpus_ids),
-                                               "access": access.as_rag()})
-        visible = _visible(access)
-        docs = [d for d in res.get("skipped") or []
-                if req_scope.contains_path(d.get("source_path") or "")
-                and visible(d.get("source_path") or "")]
+        docs = self._skipped_docs(req_scope, access)
         reasons = {}
         for d in docs:
             reasons[d.get("reason") or "unknown"] = reasons.get(d.get("reason") or "unknown", 0) + 1
         limit = max(1, min(int(payload.get("limit") or SKIPPED_LIST_LIMIT), SKIPPED_LIST_LIMIT))
+        writer = _rereadable() and drivestore.may_write(STORE_WRITERS, access)
+        listed = []
+        for d in docs[:limit]:
+            item = {k: d.get(k) for k in ("source_path", "reason", "ocr_state", "skipped_pages",
+                                          "size") if d.get(k) is not None}
+            state = REREAD.status(d.get("source_path") or "") if writer else None
+            if state:
+                item["reread"] = {"state": state["state"], "error": state.get("error")}
+            if writer:
+                # Only a file the box holds can be read again; one indexed by an
+                # earlier sync is listed (and may be deleted) but not reread.
+                try:
+                    item["stored"] = STORE.kind(STORE.canonical(d.get("source_path") or "")) \
+                        == "file"
+                except drivestore.StoreError:
+                    item["stored"] = False
+            listed.append(item)
         self._send(200, {"ok": True, "count": len(docs), "reasons": reasons,
                          "pages_skipped": sum(len(d.get("skipped_pages") or []) for d in docs),
-                         "documents": [{k: d.get(k) for k in ("source_path", "reason", "ocr_state",
-                                                              "skipped_pages", "size") if d.get(k)
-                                        is not None} for d in docs[:limit]],
-                         "truncated": len(docs) > limit})
+                         "documents": listed, "truncated": len(docs) > limit,
+                         "can_reread": writer, "can_delete": writer,
+                         "rereading": REREAD.pending() if writer else 0})
+
+    def _index_reread(self):
+        """A store writer of a standalone box sends unreadable stored documents
+        through extraction (OCR included) again: the listed `paths`, or every
+        document of the scope the search skipped for `reason`. Only files the
+        box holds, inside the scope and visible to the caller, are queued."""
+        if not _rereadable():
+            self._send(404, {"ok": False, "error": "not available in this mode"})
+            return
+        ctx = self._store_context(write=True)
+        if ctx is None:
+            return
+        payload = self._read_json()
+        req_scope, visible = ctx["scope"], ctx["visible"]
+        if isinstance(payload.get("paths"), list):
+            wanted = [str(p) for p in payload["paths"][:REREAD_MAX_PATHS] if p]
+        elif payload.get("reason"):
+            reason = str(payload["reason"])
+            wanted = [d["source_path"] for d in self._skipped_docs(req_scope, ctx["access"])
+                      if d.get("reason") == reason][:REREAD_MAX_PATHS]
+        else:
+            self._send(400, {"ok": False, "error": "paths or reason required"})
+            return
+        paths, skipped = [], []
+        for raw in wanted:
+            try:
+                path = STORE.canonical(raw)
+            except drivestore.StoreError:
+                skipped.append(raw)
+                continue
+            if not req_scope.contains_path(path) or not visible(path) \
+                    or STORE.kind(path) != "file":
+                skipped.append(raw)
+                continue
+            paths.append(path)
+        queued, refused = REREAD.submit(paths)
+        if queued:
+            STORE.event("reread", ctx["user"], queued[0], entries=len(queued))
+        self._send(200, {"ok": True, "queued": len(queued), "skipped": len(skipped),
+                         "refused": len(refused)})
 
     # -- relationship analysis (E26) ------------------------------------------
     def _graph_request(self, bound=False):
@@ -3618,13 +3735,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"ok": False, "error": "query must be one of %s with object params"
                                                    % sorted(graph.QUERIES)})
             return
+        params = dict(params)
+        compact = params.pop("compact", None) is True and name == "neighborhood"
         res = self._graph_post("/query/" + name, dict(params, **scope_body))
         if res is None or not self._graph_cites_visible(res, req_scope, access):
             return
         if not self._log_graph(ctx, "graph:" + name, json.dumps(params, sort_keys=True),
                                [d.get("source_path") for d in (res.get("documents") or {}).values()]):
             return
-        self._send(200, res)
+        self._send(200, graph.compact_picture(res) if compact else res)
 
     def _graph_cites_visible(self, res, req_scope, access):
         """Second line of defence, as for RAG contexts: the graph's copy of the
@@ -3905,8 +4024,51 @@ class Handler(BaseHTTPRequestHandler):
         if res is not None:
             self._send(200, res)
 
+    def _graph_import_learning(self, path, keys):
+        """E28b (graph source_learning.py), for a graph administrator: which
+        source a file fits (inspect), a draft of a new source from a sample file
+        (learn: the local model reads its first rows; the answer and this log
+        carry no cell value), and the next profile version with an accepted
+        draft or with other names of a source's columns (apply: validated, not
+        saved -- the administrator saves it through profile/set)."""
+        ctx = self._graph_request()
+        if ctx is None:
+            return
+        user, payload = ctx[0], ctx[1]
+        if not self._graph_admin(user):
+            return
+        body = {k: payload[k] for k in keys if payload.get(k) is not None}
+        if path == "/import/learn":
+            body["model"] = payload.get("model", True) is not False
+        try:
+            # The one model call of learn waits its turn on the GPU.
+            res = GRAPH.post(path, body, timeout=max(GRAPH.timeout, 600)
+                             if path == "/import/learn" else GRAPH.timeout)
+        except graph.GraphError as e:
+            self._send(e.status, e.body)
+            return
+        if path == "/import/learn":
+            sys.stderr.write("[adapter] graph: source learning (%d columns, model %s) by %s\n"
+                             % (len(res.get("columns") or []), res.get("model"), user))
+        elif path != "/import/inspect":
+            sys.stderr.write("[adapter] graph: %s -> profile v%s (unsaved) by %s\n" % (
+                path, (res.get("profile") or {}).get("version"), user))
+        self._send(200, dict(res, ok=True))
+
+    def _graph_import_inspect(self):
+        self._graph_import_learning("/import/inspect", ("filename", "content_b64", "sheet"))
+
+    def _graph_import_learn(self):
+        self._graph_import_learning("/import/learn", ("filename", "content_b64", "sheet"))
+
+    def _graph_import_learn_apply(self):
+        self._graph_import_learning("/import/learn/apply", ("draft", "name"))
+
+    def _graph_import_aliases_apply(self):
+        self._graph_import_learning("/import/aliases/apply", ("source", "aliases"))
+
     def _graph_import(self):
-        """A graph administrator imports a periodic export (CSV/XLSX) of a
+        """A graph administrator imports a periodic export (graph_service/table_formats.py) of a
         structured source into a folder of their scope (E28). The records live
         in the graph -- the file is not stored on a drive or in the RAG; only the
         open text of a source the profile marks `rag` (E29) is copied to the RAG
@@ -4013,6 +4175,8 @@ class Handler(BaseHTTPRequestHandler):
         for key in ("q", "reason"):
             if payload.get(key):
                 body[key] = str(payload[key])[:200]
+        if payload.get("include_role_mismatch") is True:
+            body["include_role_mismatch"] = True
         res = self._graph_post("/review/list", body)
         if res is not None and self._log_graph(ctx, "graph:review", "", []):
             self._send(200, res)
@@ -4207,6 +4371,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         sys.stderr.write("[adapter] graph: investigation subgraph (%d nodes, %d edges) by %s\n"
                          % (len(sub["nodes"]), len(sub["edges"]), user))
+        if ctx[1].get("compact") is True:
+            sub = graph.compact_picture(sub)
         self._send(200, dict(sub, ok=True, start=start, levels=levels,
                              shared_contact=built["shared_contact"]))
 

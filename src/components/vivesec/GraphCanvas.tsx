@@ -1,46 +1,22 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ComponentType, type Ref } from "react";
 import {
-  Banknote,
-  BadgeCheck,
   Box,
-  Building,
-  Building2,
-  CalendarClock,
   CalendarRange,
-  Car,
-  ClipboardList,
-  Contact,
   Crosshair,
-  DoorClosed,
   Download,
-  Eye,
-  Hash,
-  House,
-  IdCard,
   Info,
-  Landmark,
-  LayoutGrid,
+  Loader2,
   Lock,
-  Mail,
-  MapPin,
   Maximize,
   Minimize,
   Network,
-  Package,
   Pause,
-  Phone,
   Pin,
   PinOff,
   Play,
   Search,
-  TriangleAlert,
-  User,
-  UserLock,
-  UserRound,
-  Users,
   ZoomIn,
   ZoomOut,
-  type LucideIcon,
 } from "lucide-react";
 import type {
   GraphDocuments,
@@ -65,10 +41,20 @@ import {
   findNodes,
   isProtectedEdge,
   isProtectedNode,
-  type EdgeSource,
 } from "./graph-model";
 import { downloadPicture, pictureSvg } from "./graph-export";
-import { pairKey, TYPE_COLOR, TYPE_NAME, type RelationInfo } from "./graph-style";
+import {
+  DASH,
+  FADED,
+  PROTECTED,
+  pairKey,
+  SUBTYPE_ICON,
+  TYPE_COLOR,
+  TYPE_ICON,
+  TYPE_NAME,
+  type RelationInfo,
+} from "./graph-style";
+import type { GlHandle, GlNode, GlPair, GlSnapshot, GlView } from "./GraphGL";
 
 type Graph = { nodes: GraphNode[]; edges: GraphEdge[]; documents: GraphDocuments };
 type Mode = "2d" | "3d";
@@ -87,42 +73,40 @@ const LEGEND_KEY = "vvs.graph.legend";
 /** A band in the background colour behind text, `px` user units per screen pixel. */
 const halo = (px: number) =>
   ({ stroke: "var(--surface-2)", strokeWidth: 3 * px, paintOrder: "stroke" }) as const;
-const FADED = 0.13;
-const PROTECTED = "#F43F5E";
-const DASH: Record<EdgeSource, string | undefined> = {
-  register: undefined,
-  text: "7 4",
-  comention: "2 3",
-};
-const SUBTYPE_ICON: Record<string, LucideIcon> = {
-  inmate: UserLock,
-  visitor: UserRound,
-  staff: BadgeCheck,
-  contact: Contact,
-  institution: Landmark,
-  facility: Building,
-  unit: LayoutGrid,
-  cell: DoorClosed,
-  address: House,
-  phone: Phone,
-  id_card: IdCard,
-  vehicle_plate: Car,
-  bank_account: Banknote,
-  case_number: Hash,
-  email: Mail,
-  incident: TriangleAlert,
-  meeting: Users,
-  intel_report: Eye,
-  odin_entry: ClipboardList,
-};
-const TYPE_ICON: Record<GraphNode["type"], LucideIcon> = {
-  person: User,
-  organization: Building2,
-  place: MapPin,
-  identifier: Hash,
-  event: CalendarClock,
-  object: Package,
-};
+
+type GlComponent = ComponentType<{
+  ref?: Ref<GlHandle>;
+  dims: 2 | 3;
+  nodes: GlNode[];
+  pairs: GlPair[];
+  view: GlView;
+  spin: boolean;
+  onNode: (id: string, shift: boolean) => void;
+  onExpand: (id: string) => void;
+  onEdge: (key: string) => void;
+  onCluster: (id: string) => void;
+  onHover: (id: string | null) => void;
+  onPins: (ids: string[]) => void;
+  onInteract: () => void;
+  onFail: () => void;
+}>;
+
+/** WebGL with a real graphics card; a software renderer (a virtual desktop
+ *  without a GPU) counts as none: the SVG view is lighter there. */
+function webglAvailable(): boolean {
+  try {
+    const canvas = document.createElement("canvas");
+    const options = { failIfMajorPerformanceCaveat: true };
+    return Boolean(canvas.getContext("webgl2", options) ?? canvas.getContext("webgl", options));
+  } catch {
+    return false;
+  }
+}
+
+/** SVG layout rounds for `n` nodes: the full count up to 600, fewer above
+ *  (the O(n^2) layout is only the fallback for browsers without WebGL). */
+const svgRounds = (n: number, full: number) =>
+  n <= 600 ? full : Math.max(30, Math.round(full * (600 / n) ** 2));
 
 function storedMode(): Mode {
   try {
@@ -213,6 +197,32 @@ export function GraphCanvas({
   const [range, setRange] = useState<[number, number]>([0, 0]);
   const [undated, setUndated] = useState(true);
   const [playing, setPlaying] = useState(false);
+  // WebGL (E26f) is decided in the browser: null until then, so neither the
+  // server render nor the first paint lays out an SVG picture for nothing.
+  const [gl, setGl] = useState<boolean | null>(null);
+  const [glFailed, setGlFailed] = useState(false);
+  const [Gl, setGlComponent] = useState<GlComponent | null>(null);
+  const glRef = useRef<GlHandle>(null);
+  const [glPins, setGlPins] = useState<string[]>([]);
+  const [snapshot, setSnapshot] = useState<
+    (GlSnapshot & { dims: Mode; format: "png" | "svg"; mark: GraphWatermark }) | null
+  >(null);
+  const svgOn = gl === false || glFailed;
+  const useGl = gl === true && !glFailed;
+
+  useEffect(() => {
+    setGl(webglAvailable());
+  }, []);
+  useEffect(() => {
+    if (!useGl || Gl) return;
+    let live = true;
+    import("./GraphGL")
+      .then((m) => live && setGlComponent(() => m.GraphGL as unknown as GlComponent))
+      .catch(() => live && setGlFailed(true));
+    return () => {
+      live = false;
+    };
+  }, [useGl, Gl]);
 
   useEffect(() => {
     setMode(storedMode());
@@ -244,7 +254,7 @@ export function GraphCanvas({
   }, []);
   // The 3D picture turns slowly until the user takes it in hand.
   useEffect(() => {
-    if (mode !== "3d" || !spin || hovered) return;
+    if (mode !== "3d" || !spin || hovered || !svgOn) return;
     let frame = 0;
     const tick = () => {
       setRot((r) => ({ ...r, yaw: r.yaw + 0.004 }));
@@ -252,7 +262,7 @@ export function GraphCanvas({
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [mode, spin, hovered]);
+  }, [mode, spin, hovered, svgOn]);
   // Playing the period: its end moves on month by month.
   useEffect(() => {
     if (!playing) return;
@@ -297,6 +307,7 @@ export function GraphCanvas({
       ...(focus ? [focus] : []),
       ...picked,
       ...pinned.keys(),
+      ...glPins,
       ...(emphasis?.nodes ?? []),
       ...matches,
     ]);
@@ -315,6 +326,7 @@ export function GraphCanvas({
     focus,
     picked,
     pinned,
+    glPins,
     emphasis,
     matches,
   ]);
@@ -352,37 +364,42 @@ export function GraphCanvas({
   const nodesKey = nodes.map((n) => n.id).join("|");
   const edgesKey = display.edges.map((e) => e.id).join("|");
   const layout2d = useMemo(() => {
+    if (!svgOn) return new Map<string, Point>();
     const ids = nodes.map((n) => n.id);
     const known = ids.filter((id) => placed.current.has(id)).length;
     const warm = ids.length > 0 && known >= 0.3 * ids.length;
-    return layoutGraph(ids, display.edges, focusRef.current, 260, {
+    return layoutGraph(ids, display.edges, focusRef.current, svgRounds(ids.length, 260), {
       seed: warm ? placed.current : undefined,
       fixed: pinnedRef.current,
     });
     // by content: a new array with the same nodes and edges keeps the picture
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodesKey, edgesKey]);
+  }, [svgOn, nodesKey, edgesKey]);
   useEffect(() => {
     placed.current = new Map([...placed.current, ...layout2d]);
   }, [layout2d]);
   const layout3d = useMemo(
     () =>
-      mode === "3d"
+      svgOn && mode === "3d"
         ? layoutGraph3d(
             nodes.map((n) => n.id),
             display.edges,
             null,
+            svgRounds(nodes.length, 220),
           )
         : null,
     // by content, as the 2D layout
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, nodesKey, edgesKey],
+    [svgOn, mode, nodesKey, edgesKey],
   );
+  // The WebGL picture's positions on screen, while it is saved as a file.
+  const deep = Boolean(layout3d) || snapshot?.dims === "3d";
 
   const maxMentions = Math.max(1, ...nodes.map((n) => n.mentions));
   const fitted = useRef<{ key: string; frame: Frame3 } | null>(null);
-  const frameKey = `${mode}|${nodesKey}`;
+  const frameKey = `${mode}|${nodesKey}|${snapshot ? "snapshot" : ""}`;
   const computedFrame = useMemo((): Frame3 => {
+    if (snapshot) return { minX: 0, minY: 0, w: snapshot.w, h: snapshot.h, distance: 0 };
     if (layout3d) {
       const far = Math.max(
         60,
@@ -404,19 +421,28 @@ export function GraphCanvas({
       h: Math.max(...ys, 0) + pad - minY,
       distance: 0,
     };
-  }, [layout2d, layout3d]);
+  }, [layout2d, layout3d, snapshot]);
   // The picture keeps its frame while the same nodes move (a pinned node, a
   // settled layout); it is fitted again when nodes come or go.
   if (fitted.current?.key !== frameKey) fitted.current = { key: frameKey, frame: computedFrame };
   const frame = fitted.current.frame;
   // User units per CSS pixel at zoom 1 (the viewBox is fitted into the box), and
   // per screen pixel now: text, strokes and circles keep their size on screen.
+  // A WebGL snapshot is already in screen pixels and drawn as it is.
   const unit = Math.max(frame.w / size.w, frame.h / size.h);
-  const px = unit / view.k;
-  const k = view.k;
+  const k = snapshot ? 1 : view.k;
+  const px = unit / k;
+  const shift = snapshot ? { x: 0, y: 0 } : view;
 
   const points = useMemo(() => {
     const out = new Map<string, Pt>();
+    if (snapshot) {
+      for (const n of nodes) {
+        const p = snapshot.points.get(n.id);
+        if (p) out.set(n.id, p);
+      }
+      return out;
+    }
     for (const n of nodes) {
       const r = (8 + 7 * Math.sqrt(n.mentions / maxMentions)) * unit;
       if (layout3d) {
@@ -430,13 +456,24 @@ export function GraphCanvas({
       }
     }
     return out;
-  }, [nodes, layout2d, layout3d, rot, frame.distance, unit, maxMentions, pinned, dragging]);
+  }, [
+    nodes,
+    layout2d,
+    layout3d,
+    rot,
+    frame.distance,
+    unit,
+    maxMentions,
+    pinned,
+    dragging,
+    snapshot,
+  ]);
 
   // Nearness 0..1 in 3D: the far side of the picture is drawn fainter.
   const depths = [...points.values()].map((p) => p.depth);
-  const dMin = Math.min(0, ...depths);
-  const dMax = Math.max(0, ...depths);
-  const near = (p: Pt) => (layout3d && dMax > dMin ? (p.depth - dMin) / (dMax - dMin) : 1);
+  const dMin = Math.min(snapshot ? Infinity : 0, ...depths);
+  const dMax = Math.max(snapshot ? -Infinity : 0, ...depths);
+  const near = (p: Pt) => (deep && dMax > dMin ? (p.depth - dMin) / (dMax - dMin) : 1);
 
   const current = matches.length ? matches[match % matches.length] : null;
   const selectedPair = selectedEdge ? pairs.find(([key]) => key === selectedEdge)?.[1] : undefined;
@@ -489,8 +526,21 @@ export function GraphCanvas({
       .map((c) => c.hub);
     if (hubs.length) setOpenHubs((open) => new Set([...open, ...hubs]));
   }, [matches, display.clusters]);
+  // In WebGL the camera flies to the found name.
+  useEffect(() => {
+    if (current && useGl) glRef.current?.flyTo(current);
+  }, [current, useGl, Gl]);
 
   const showEdgeLabels = pairs.length <= 40;
+  const pairText = (list: GraphEdge[]) => {
+    const counts = new Map<string, number>();
+    for (const x of list) counts.set(x.type, (counts.get(x.type) ?? 0) + 1);
+    return (
+      [...counts.entries()]
+        .map(([type, n]) => (n > 1 ? `${relLabel(type)} ×${n}` : relLabel(type)))
+        .join(", ") + (list.length === 1 && list[0].start ? ` · ${list[0].start}` : "")
+    );
+  };
   // Edge labels: always for the selected pair and the lines of the node under the
   // pointer, for every pair only while the picture is small.
   const edgeLabels = useMemo(() => {
@@ -502,18 +552,13 @@ export function GraphCanvas({
       if (!p || !q) continue;
       const lit = pairLit(key, first, second);
       if (!lit && (!showEdgeLabels || highlight)) continue;
-      const counts = new Map<string, number>();
-      for (const x of list) counts.set(x.type, (counts.get(x.type) ?? 0) + 1);
-      const text =
-        [...counts.entries()]
-          .map(([type, n]) => (n > 1 ? `${relLabel(type)} ×${n}` : relLabel(type)))
-          .join(", ") + (list.length === 1 && list[0].start ? ` · ${list[0].start}` : "");
+      const text = pairText(list);
       // Away from the focused node, where every line starts.
       const t = first === focus ? 0.62 : second === focus ? 0.38 : 0.5;
       out.set(key, { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t - 3 * px, text, lit });
     }
     return out;
-    // pairLit reads the same inputs
+    // pairLit and pairText read the same inputs
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     pairs,
@@ -527,6 +572,81 @@ export function GraphCanvas({
     focus,
     px,
   ]);
+
+  // The WebGL scene: every drawn node and pair (the time filter only hides
+  // pairs, so the layout holds still while the period moves) and what is lit.
+  const glNodes = useMemo(
+    (): GlNode[] =>
+      useGl
+        ? nodes.map((n) => {
+            const cluster = display.clusters.get(n.id);
+            return {
+              id: n.id,
+              type: n.type,
+              subtype: n.subtype,
+              label: nodeLabel(n),
+              title: cluster
+                ? `${clusterLabel(n.id)} — ${tm("Click to show them one by one")}`
+                : `${n.label} — ${subtypeLabel(n.subtype) || tm(TYPE_NAME[n.type])}`,
+              weight: Math.sqrt(n.mentions / maxMentions),
+              cluster: cluster?.members.length ?? 0,
+              secret: !cluster && isProtectedNode(graph.documents, n),
+            };
+          })
+        : [],
+    // nodeLabel and clusterLabel read the clusters and the labels
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [useGl, nodes, display.clusters, maxMentions, graph.documents, tm, subtypeLabel],
+  );
+  const glPairs = useMemo((): GlPair[] => {
+    if (!useGl) return [];
+    const grouped = new Map<string, GraphEdge[]>();
+    for (const e of display.edges) grouped.set(pairKey(e), [...(grouped.get(pairKey(e)) ?? []), e]);
+    return [...grouped.entries()].map(([key, list]) => {
+      const [first, second] = key.split("|");
+      return {
+        key,
+        a: first,
+        b: second,
+        count: list.length,
+        dash: edgeSource(list),
+        secret: list.some((e) => isProtectedEdge(graph.documents, e)),
+        forward: list.some((e) => e.a === first && relInfo(e.type).directed),
+        backward: list.some((e) => e.a === second && relInfo(e.type).directed),
+        grouped: key.includes("cluster:"),
+        label: pairText(list),
+      };
+    });
+    // pairText reads relLabel
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useGl, display.edges, graph.documents, relInfo, relLabel]);
+  const glView = useMemo(
+    (): GlView => ({
+      focus,
+      hover,
+      current,
+      picked,
+      highlight,
+      live,
+      selectedEdge,
+      emphasisPairs: hover ? null : (emphasis?.pairs ?? null),
+      shown: timed ? new Set(pairs.map(([key]) => key)) : null,
+      edgeLabels: showEdgeLabels,
+    }),
+    [
+      focus,
+      hover,
+      current,
+      picked,
+      highlight,
+      live,
+      selectedEdge,
+      emphasis,
+      timed,
+      pairs,
+      showEdgeLabels,
+    ],
+  );
 
   const labelled = useMemo(() => {
     const out = [];
@@ -585,42 +705,73 @@ export function GraphCanvas({
     [graph],
   );
 
-  const drawnPairs = layout3d
+  const drawnPairs = deep
     ? [...pairs].sort(([, x], [, y]) => {
         const dx = (points.get(x[0].a)?.depth ?? 0) + (points.get(x[0].b)?.depth ?? 0);
         const dy = (points.get(y[0].a)?.depth ?? 0) + (points.get(y[0].b)?.depth ?? 0);
         return dx - dy;
       })
     : pairs;
-  const drawnNodes = layout3d
+  const drawnNodes = deep
     ? [...nodes].sort((x, y) => (points.get(x.id)?.depth ?? 0) - (points.get(y.id)?.depth ?? 0))
     : nodes;
 
-  async function exportPicture(format: "png" | "svg") {
+  /** The SVG picture on screen as a file, with the watermark the box gave. */
+  async function writePicture(format: "png" | "svg", mark: GraphWatermark) {
     const svg = svgRef.current;
-    if (!svg || exporting) return;
+    if (!svg) return;
+    const background =
+      window
+        .getComputedStyle(box.current ?? document.documentElement)
+        .getPropertyValue("--surface-2")
+        .trim() || "#ffffff";
+    const lines = [
+      `${tm("Exported by")}: ${mark.user} · ${tm("Case reference")}: ${mark.case_ref || "—"} · ${mark.at}`,
+      tm("ViVeSec AI Box relationship view. The export is in the query log."),
+    ];
+    const stamp = mark.at.replace(/[^0-9]/g, "").slice(0, 12);
+    await downloadPicture(
+      pictureSvg(svg, frame, unit, background, lines),
+      format,
+      `kapcsolatok_${stamp}`,
+    );
+  }
+
+  async function exportPicture(format: "png" | "svg") {
+    if (exporting || (!svgOn && !glRef.current)) return;
     setExportOpen(false);
     setExporting(true);
+    let handedOver = false;
     try {
       const mark = await onExport({ format, view: mode, nodes: nodes.length, edges: edges.length });
       if (!mark) return;
-      const background =
-        window.getComputedStyle(document.documentElement).getPropertyValue("--surface-2").trim() ||
-        "#ffffff";
-      const lines = [
-        `${tm("Exported by")}: ${mark.user} · ${tm("Case reference")}: ${mark.case_ref || "—"} · ${mark.at}`,
-        tm("ViVeSec AI Box relationship view. The export is in the query log."),
-      ];
-      const stamp = mark.at.replace(/[^0-9]/g, "").slice(0, 12);
-      await downloadPicture(
-        pictureSvg(svg, frame, unit, background, lines),
-        format,
-        `kapcsolatok_${stamp}`,
-      );
+      if (!svgOn && glRef.current) {
+        // WebGL: the nodes where they are on screen, drawn once as SVG (below).
+        setSnapshot({ ...glRef.current.snapshot(), dims: mode, format, mark });
+        handedOver = true;
+        return;
+      }
+      await writePicture(format, mark);
     } finally {
-      setExporting(false);
+      if (!handedOver) setExporting(false);
     }
   }
+  useEffect(() => {
+    if (!snapshot) return;
+    let live = true;
+    void writePicture(snapshot.format, snapshot.mark)
+      .catch((err) => console.error("[graph] export", err))
+      .finally(() => {
+        if (!live) return;
+        setSnapshot(null);
+        setExporting(false);
+      });
+    return () => {
+      live = false;
+    };
+    // once the snapshot is drawn
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
 
   // User units per screen pixel: the viewBox is fitted ("meet") into the box.
   const screenScale = () => px;
@@ -634,314 +785,354 @@ export function GraphCanvas({
       className="relative h-full w-full"
       style={fullscreen ? { backgroundColor: "var(--surface-2)" } : undefined}
     >
-      <svg
-        ref={svgRef}
-        className={`h-full w-full ${layout3d ? "cursor-move" : "cursor-grab active:cursor-grabbing"}`}
-        viewBox={`${frame.minX} ${frame.minY} ${frame.w} ${frame.h}`}
-        style={{ color: "var(--foreground)" }}
-        onWheel={(e) => {
-          const next = Math.min(6, Math.max(0.3, k * (e.deltaY < 0 ? 1.12 : 0.89)));
-          setView((v) => ({ ...v, k: next }));
-        }}
-        onPointerDown={(e) => {
-          moved.current = false;
-          setSpin(false);
-          drag.current = {
-            x: e.clientX,
-            y: e.clientY,
-            vx: view.x,
-            vy: view.y,
-            yaw: rot.yaw,
-            pitch: rot.pitch,
-          };
-        }}
-        onPointerMove={(e) => {
-          const d = drag.current;
-          if (!d) return;
-          const ddx = e.clientX - d.x;
-          const ddy = e.clientY - d.y;
-          if (Math.abs(ddx) + Math.abs(ddy) > 4) moved.current = true;
-          if (d.node && d.start && !layout3d) {
-            if (!moved.current) return;
+      {useGl &&
+        (Gl ? (
+          <Gl
+            ref={glRef}
+            dims={mode === "3d" ? 3 : 2}
+            nodes={glNodes}
+            pairs={glPairs}
+            view={glView}
+            spin={spin}
+            onNode={onNode}
+            onExpand={onExpand}
+            onEdge={onEdge}
+            onCluster={(id) => {
+              const c = display.clusters.get(id);
+              if (!c) return;
+              setHover(null);
+              setOpenHubs((open) => new Set(open).add(c.hub));
+            }}
+            onHover={setHover}
+            onPins={setGlPins}
+            onInteract={() => setSpin(false)}
+            onFail={() => setGlFailed(true)}
+          />
+        ) : (
+          <div
+            className="absolute inset-0 flex items-center justify-center gap-2 text-xs text-ink/60"
+            style={{ backgroundColor: "var(--surface-2)" }}
+          >
+            <Loader2 className="h-4 w-4 animate-spin" /> {tm("Loading the picture…")}
+          </div>
+        ))}
+      {(svgOn || snapshot) && (
+        <svg
+          ref={svgRef}
+          className={`h-full w-full ${layout3d ? "cursor-move" : "cursor-grab active:cursor-grabbing"}`}
+          viewBox={`${frame.minX} ${frame.minY} ${frame.w} ${frame.h}`}
+          style={{
+            color: "var(--foreground)",
+            ...(snapshot
+              ? { position: "absolute", inset: 0, visibility: "hidden", pointerEvents: "none" }
+              : {}),
+          }}
+          onWheel={(e) => {
+            const next = Math.min(6, Math.max(0.3, k * (e.deltaY < 0 ? 1.12 : 0.89)));
+            setView((v) => ({ ...v, k: next }));
+          }}
+          onPointerDown={(e) => {
+            moved.current = false;
+            setSpin(false);
+            drag.current = {
+              x: e.clientX,
+              y: e.clientY,
+              vx: view.x,
+              vy: view.y,
+              yaw: rot.yaw,
+              pitch: rot.pitch,
+            };
+          }}
+          onPointerMove={(e) => {
+            const d = drag.current;
+            if (!d) return;
+            const ddx = e.clientX - d.x;
+            const ddy = e.clientY - d.y;
+            if (Math.abs(ddx) + Math.abs(ddy) > 4) moved.current = true;
+            if (d.node && d.start && !layout3d) {
+              if (!moved.current) return;
+              const scale = screenScale();
+              setDragging({
+                id: d.node,
+                at: { x: d.start.x + ddx * scale, y: d.start.y + ddy * scale },
+              });
+              return;
+            }
+            if (layout3d && !e.shiftKey) {
+              setRot({
+                yaw: d.yaw + ddx * 0.008,
+                pitch: Math.max(-1.45, Math.min(1.45, d.pitch + ddy * 0.008)),
+              });
+              return;
+            }
             const scale = screenScale();
-            setDragging({
-              id: d.node,
-              at: { x: d.start.x + ddx * scale, y: d.start.y + ddy * scale },
-            });
-            return;
-          }
-          if (layout3d && !e.shiftKey) {
-            setRot({
-              yaw: d.yaw + ddx * 0.008,
-              pitch: Math.max(-1.45, Math.min(1.45, d.pitch + ddy * 0.008)),
-            });
-            return;
-          }
-          const scale = screenScale();
-          setView((v) => ({ ...v, x: d.vx + ddx * scale, y: d.vy + ddy * scale }));
-        }}
-        onPointerUp={() => {
-          if (dragging) {
-            // A dragged node stays where it was dropped.
-            setPinned((pins) => new Map(pins).set(dragging.id, dragging.at));
+            setView((v) => ({ ...v, x: d.vx + ddx * scale, y: d.vy + ddy * scale }));
+          }}
+          onPointerUp={() => {
+            if (dragging) {
+              // A dragged node stays where it was dropped.
+              setPinned((pins) => new Map(pins).set(dragging.id, dragging.at));
+              setDragging(null);
+            }
+            drag.current = null;
+          }}
+          onPointerLeave={() => {
+            drag.current = null;
             setDragging(null);
-          }
-          drag.current = null;
-        }}
-        onPointerLeave={() => {
-          drag.current = null;
-          setDragging(null);
-        }}
-      >
-        <defs>
-          {(["n", "a", "p"] as const).map((kind) => (
-            <marker
-              key={kind}
-              id={`${uid}-arrow-${kind}`}
-              viewBox="0 0 8 8"
-              refX={8}
-              refY={4}
-              markerWidth={7 * unit}
-              markerHeight={7 * unit}
-              markerUnits="userSpaceOnUse"
-              orient="auto-start-reverse"
-            >
-              <path
-                d="M0,0 L8,4 L0,8 z"
-                style={{ fill: kind === "a" ? ACCENT_TEXT : kind === "p" ? PROTECTED : inkA(0.5) }}
-              />
-            </marker>
-          ))}
-        </defs>
-        <g
-          transform={`translate(${view.x} ${view.y}) translate(${frame.minX + frame.w / 2} ${
-            frame.minY + frame.h / 2
-          }) scale(${k}) translate(${-(frame.minX + frame.w / 2)} ${-(frame.minY + frame.h / 2)})`}
+          }}
         >
-          {drawnPairs.map(([key, list]) => {
-            const [first, second] = key.split("|");
-            const p = points.get(first);
-            const q = points.get(second);
-            if (!p || !q) return null;
-            const active = key === selectedEdge;
-            const lit = pairLit(key, first, second);
-            const faded = highlight !== null && !lit;
-            const secret = list.some((e) => isProtectedEdge(graph.documents, e));
-            const forward = list.some((e) => e.a === first && relInfo(e.type).directed);
-            const backward = list.some((e) => e.a === second && relInfo(e.type).directed);
-            const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
-            const ux = (q.x - p.x) / len;
-            const uy = (q.y - p.y) / len;
-            const x1 = p.x + ux * p.r;
-            const y1 = p.y + uy * p.r;
-            const x2 = q.x - ux * q.r;
-            const y2 = q.y - uy * q.r;
-            const depthFade = layout3d ? 0.35 + 0.65 * ((near(p) + near(q)) / 2) : 1;
-            const tone = lit ? "a" : secret ? "p" : "n";
-            const marker = `url(#${uid}-arrow-${tone})`;
-            const grouped = key.includes("cluster:");
-            return (
-              <g
-                key={key}
-                onClick={() => !moved.current && !grouped && onEdge(key)}
-                className={grouped ? undefined : "cursor-pointer"}
-                opacity={(faded ? FADED : 1) * depthFade}
+          <defs>
+            {(["n", "a", "p"] as const).map((kind) => (
+              <marker
+                key={kind}
+                id={`${uid}-arrow-${kind}`}
+                viewBox="0 0 8 8"
+                refX={8}
+                refY={4}
+                markerWidth={7 * unit}
+                markerHeight={7 * unit}
+                markerUnits="userSpaceOnUse"
+                orient="auto-start-reverse"
               >
-                <line
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  stroke="transparent"
-                  strokeWidth={10}
-                  vectorEffect="non-scaling-stroke"
+                <path
+                  d="M0,0 L8,4 L0,8 z"
+                  style={{
+                    fill: kind === "a" ? ACCENT_TEXT : kind === "p" ? PROTECTED : inkA(0.5),
+                  }}
                 />
-                <line
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  style={{ stroke: lit ? ACCENT_TEXT : secret ? PROTECTED : inkA(0.32) }}
-                  strokeWidth={
-                    (active ? 2.4 : lit ? 1.8 : 1.2) + Math.min(list.length - 1, 4) * 0.5
-                  }
-                  strokeDasharray={DASH[edgeSource(list)]}
-                  vectorEffect="non-scaling-stroke"
-                  markerEnd={forward ? marker : undefined}
-                  markerStart={backward ? marker : undefined}
-                />
-              </g>
-            );
-          })}
-          {drawnNodes.map((n) => {
-            const p = points.get(n.id);
-            if (!p) return null;
-            const cluster = display.clusters.get(n.id);
-            const isFocus = n.id === focus;
-            const isPicked = picked.includes(n.id);
-            const faded = dim(n.id);
-            const Icon = SUBTYPE_ICON[n.subtype] ?? TYPE_ICON[n.type];
-            const icon = p.r * 1.15;
-            const showIcon = p.r / px >= 7;
-            const secret = !cluster && isProtectedNode(graph.documents, n);
-            const pin = pinned.has(n.id);
-            return (
-              <g
-                key={n.id}
-                onPointerDown={(e) => {
-                  if (layout3d || e.shiftKey || cluster) return;
-                  e.stopPropagation();
-                  moved.current = false;
-                  setSpin(false);
-                  drag.current = {
-                    x: e.clientX,
-                    y: e.clientY,
-                    vx: view.x,
-                    vy: view.y,
-                    yaw: rot.yaw,
-                    pitch: rot.pitch,
-                    node: n.id,
-                    start: { x: p.x, y: p.y },
-                  };
-                }}
-                onClick={(e) => {
-                  if (moved.current) return;
-                  if (cluster) {
-                    setHover(null);
-                    setOpenHubs((open) => new Set(open).add(cluster.hub));
-                  } else onNode(n.id, e.shiftKey);
-                }}
-                onDoubleClick={() => !cluster && onExpand(n.id)}
-                onPointerEnter={() => setHover(n.id)}
-                onPointerLeave={() => setHover((h) => (h === n.id ? null : h))}
-                className="cursor-pointer"
-                opacity={(faded ? FADED : 1) * (layout3d ? 0.45 + 0.55 * near(p) : 1)}
-              >
-                {(isPicked || n.id === current) && (
+              </marker>
+            ))}
+          </defs>
+          <g
+            transform={`translate(${shift.x} ${shift.y}) translate(${frame.minX + frame.w / 2} ${
+              frame.minY + frame.h / 2
+            }) scale(${k}) translate(${-(frame.minX + frame.w / 2)} ${-(frame.minY + frame.h / 2)})`}
+          >
+            {drawnPairs.map(([key, list]) => {
+              const [first, second] = key.split("|");
+              const p = points.get(first);
+              const q = points.get(second);
+              if (!p || !q) return null;
+              const active = key === selectedEdge;
+              const lit = pairLit(key, first, second);
+              const faded = highlight !== null && !lit;
+              const secret = list.some((e) => isProtectedEdge(graph.documents, e));
+              const forward = list.some((e) => e.a === first && relInfo(e.type).directed);
+              const backward = list.some((e) => e.a === second && relInfo(e.type).directed);
+              const len = Math.hypot(q.x - p.x, q.y - p.y) || 1;
+              const ux = (q.x - p.x) / len;
+              const uy = (q.y - p.y) / len;
+              const x1 = p.x + ux * p.r;
+              const y1 = p.y + uy * p.r;
+              const x2 = q.x - ux * q.r;
+              const y2 = q.y - uy * q.r;
+              const depthFade = deep ? 0.35 + 0.65 * ((near(p) + near(q)) / 2) : 1;
+              const tone = lit ? "a" : secret ? "p" : "n";
+              const marker = `url(#${uid}-arrow-${tone})`;
+              const grouped = key.includes("cluster:");
+              return (
+                <g
+                  key={key}
+                  onClick={() => !moved.current && !grouped && onEdge(key)}
+                  className={grouped ? undefined : "cursor-pointer"}
+                  opacity={(faded ? FADED : 1) * depthFade}
+                >
+                  <line
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    stroke="transparent"
+                    strokeWidth={10}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <line
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    style={{ stroke: lit ? ACCENT_TEXT : secret ? PROTECTED : inkA(0.32) }}
+                    strokeWidth={
+                      (active ? 2.4 : lit ? 1.8 : 1.2) + Math.min(list.length - 1, 4) * 0.5
+                    }
+                    strokeDasharray={DASH[edgeSource(list)]}
+                    vectorEffect="non-scaling-stroke"
+                    markerEnd={forward ? marker : undefined}
+                    markerStart={backward ? marker : undefined}
+                  />
+                </g>
+              );
+            })}
+            {drawnNodes.map((n) => {
+              const p = points.get(n.id);
+              if (!p) return null;
+              const cluster = display.clusters.get(n.id);
+              const isFocus = n.id === focus;
+              const isPicked = picked.includes(n.id);
+              const faded = dim(n.id);
+              const Icon = SUBTYPE_ICON[n.subtype] ?? TYPE_ICON[n.type];
+              const icon = p.r * 1.15;
+              const showIcon = p.r / px >= 7;
+              const secret = !cluster && isProtectedNode(graph.documents, n);
+              const pin = pinned.has(n.id);
+              return (
+                <g
+                  key={n.id}
+                  onPointerDown={(e) => {
+                    if (layout3d || e.shiftKey || cluster) return;
+                    e.stopPropagation();
+                    moved.current = false;
+                    setSpin(false);
+                    drag.current = {
+                      x: e.clientX,
+                      y: e.clientY,
+                      vx: view.x,
+                      vy: view.y,
+                      yaw: rot.yaw,
+                      pitch: rot.pitch,
+                      node: n.id,
+                      start: { x: p.x, y: p.y },
+                    };
+                  }}
+                  onClick={(e) => {
+                    if (moved.current) return;
+                    if (cluster) {
+                      setHover(null);
+                      setOpenHubs((open) => new Set(open).add(cluster.hub));
+                    } else onNode(n.id, e.shiftKey);
+                  }}
+                  onDoubleClick={() => !cluster && onExpand(n.id)}
+                  onPointerEnter={() => setHover(n.id)}
+                  onPointerLeave={() => setHover((h) => (h === n.id ? null : h))}
+                  className="cursor-pointer"
+                  opacity={(faded ? FADED : 1) * (deep ? 0.45 + 0.55 * near(p) : 1)}
+                >
+                  {(isPicked || n.id === current) && (
+                    <circle
+                      cx={p.x}
+                      cy={p.y}
+                      r={p.r + 4 * px}
+                      fill="none"
+                      style={{ stroke: ACCENT_TEXT }}
+                      strokeWidth={2.5}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+                  {cluster && (
+                    <circle
+                      cx={p.x}
+                      cy={p.y}
+                      r={p.r + 3.5 * px}
+                      fill="none"
+                      stroke={TYPE_COLOR[n.type]}
+                      strokeWidth={1.5}
+                      strokeDasharray="3 2"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
                   <circle
                     cx={p.x}
                     cy={p.y}
-                    r={p.r + 4 * px}
-                    fill="none"
-                    style={{ stroke: ACCENT_TEXT }}
-                    strokeWidth={2.5}
+                    r={p.r}
+                    fill={TYPE_COLOR[n.type]}
+                    fillOpacity={isFocus || highlight?.has(n.id) ? 1 : 0.88}
+                    stroke="rgba(0,0,0,0.4)"
+                    style={isFocus ? { stroke: "var(--ink)" } : undefined}
+                    strokeWidth={isFocus ? 2.5 : 1}
                     vectorEffect="non-scaling-stroke"
                   />
-                )}
-                {cluster && (
-                  <circle
-                    cx={p.x}
-                    cy={p.y}
-                    r={p.r + 3.5 * px}
-                    fill="none"
-                    stroke={TYPE_COLOR[n.type]}
-                    strokeWidth={1.5}
-                    strokeDasharray="3 2"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                )}
-                <circle
-                  cx={p.x}
-                  cy={p.y}
-                  r={p.r}
-                  fill={TYPE_COLOR[n.type]}
-                  fillOpacity={isFocus || highlight?.has(n.id) ? 1 : 0.88}
-                  stroke="rgba(0,0,0,0.4)"
-                  style={isFocus ? { stroke: "var(--ink)" } : undefined}
-                  strokeWidth={isFocus ? 2.5 : 1}
-                  vectorEffect="non-scaling-stroke"
-                />
-                {showIcon &&
-                  (cluster ? (
-                    <text
-                      x={p.x}
-                      y={p.y + 3.5 * px}
-                      textAnchor="middle"
-                      fontSize={10 * px}
-                      fontWeight={700}
-                      fill="rgba(0,0,0,0.7)"
-                    >
-                      {cluster.members.length}
-                    </text>
-                  ) : (
-                    <Icon
-                      x={p.x - icon / 2}
-                      y={p.y - icon / 2}
-                      width={icon}
-                      height={icon}
-                      color="rgba(0,0,0,0.62)"
-                      strokeWidth={2.2}
-                      absoluteStrokeWidth={false}
+                  {showIcon &&
+                    (cluster ? (
+                      <text
+                        x={p.x}
+                        y={p.y + 3.5 * px}
+                        textAnchor="middle"
+                        fontSize={10 * px}
+                        fontWeight={700}
+                        fill="rgba(0,0,0,0.7)"
+                      >
+                        {cluster.members.length}
+                      </text>
+                    ) : (
+                      <Icon
+                        x={p.x - icon / 2}
+                        y={p.y - icon / 2}
+                        width={icon}
+                        height={icon}
+                        color="rgba(0,0,0,0.62)"
+                        strokeWidth={2.2}
+                        absoluteStrokeWidth={false}
+                        pointerEvents="none"
+                      />
+                    ))}
+                  {secret && (
+                    <g pointerEvents="none">
+                      <circle
+                        cx={p.x + p.r * 0.75}
+                        cy={p.y - p.r * 0.75}
+                        r={6 * px}
+                        fill={PROTECTED}
+                      />
+                      <Lock
+                        x={p.x + p.r * 0.75 - 4 * px}
+                        y={p.y - p.r * 0.75 - 4 * px}
+                        width={8 * px}
+                        height={8 * px}
+                        color="#fff"
+                        strokeWidth={2.6}
+                      />
+                    </g>
+                  )}
+                  {pin && (
+                    <Pin
+                      x={p.x - p.r - 6 * px}
+                      y={p.y - p.r - 6 * px}
+                      width={10 * px}
+                      height={10 * px}
+                      style={{ color: ACCENT_TEXT }}
+                      strokeWidth={2.4}
                       pointerEvents="none"
                     />
-                  ))}
-                {secret && (
-                  <g pointerEvents="none">
-                    <circle
-                      cx={p.x + p.r * 0.75}
-                      cy={p.y - p.r * 0.75}
-                      r={6 * px}
-                      fill={PROTECTED}
-                    />
-                    <Lock
-                      x={p.x + p.r * 0.75 - 4 * px}
-                      y={p.y - p.r * 0.75 - 4 * px}
-                      width={8 * px}
-                      height={8 * px}
-                      color="#fff"
-                      strokeWidth={2.6}
-                    />
-                  </g>
-                )}
-                {pin && (
-                  <Pin
-                    x={p.x - p.r - 6 * px}
-                    y={p.y - p.r - 6 * px}
-                    width={10 * px}
-                    height={10 * px}
-                    style={{ color: ACCENT_TEXT }}
-                    strokeWidth={2.4}
-                    pointerEvents="none"
-                  />
-                )}
-                {labelled.has(n.id) && (
+                  )}
+                  {labelled.has(n.id) && (
+                    <text
+                      x={p.x}
+                      y={p.y + p.r + 11 * px}
+                      textAnchor="middle"
+                      fontSize={10 * px}
+                      fontWeight={isFocus || hover === n.id || isPicked ? 600 : undefined}
+                      style={{ fill: "var(--foreground)", ...halo(px) }}
+                    >
+                      {nodeLabel(n)}
+                    </text>
+                  )}
+                  <title>
+                    {cluster
+                      ? `${clusterLabel(n.id)} — ${tm("Click to show them one by one")}`
+                      : `${n.label} — ${subtypeLabel(n.subtype) || tm(TYPE_NAME[n.type])}`}
+                  </title>
+                </g>
+              );
+            })}
+            {[...edgeLabels].map(
+              ([key, label]) =>
+                labelled.has(`edge:${key}`) && (
                   <text
-                    x={p.x}
-                    y={p.y + p.r + 11 * px}
+                    key={key}
+                    x={label.x}
+                    y={label.y}
                     textAnchor="middle"
-                    fontSize={10 * px}
-                    fontWeight={isFocus || hover === n.id || isPicked ? 600 : undefined}
-                    style={{ fill: "var(--foreground)", ...halo(px) }}
+                    fontSize={9 * px}
+                    className="pointer-events-none"
+                    style={{ fill: label.lit ? ACCENT_TEXT : inkText(0.6), ...halo(px) }}
                   >
-                    {nodeLabel(n)}
+                    {label.text}
                   </text>
-                )}
-                <title>
-                  {cluster
-                    ? `${clusterLabel(n.id)} — ${tm("Click to show them one by one")}`
-                    : `${n.label} — ${subtypeLabel(n.subtype) || tm(TYPE_NAME[n.type])}`}
-                </title>
-              </g>
-            );
-          })}
-          {[...edgeLabels].map(
-            ([key, label]) =>
-              labelled.has(`edge:${key}`) && (
-                <text
-                  key={key}
-                  x={label.x}
-                  y={label.y}
-                  textAnchor="middle"
-                  fontSize={9 * px}
-                  className="pointer-events-none"
-                  style={{ fill: label.lit ? ACCENT_TEXT : inkText(0.6), ...halo(px) }}
-                >
-                  {label.text}
-                </text>
-              ),
-          )}
-        </g>
-      </svg>
+                ),
+            )}
+          </g>
+        </svg>
+      )}
 
       <div className="absolute right-3 top-3 flex flex-col items-end gap-1.5">
         <div className="flex items-center gap-1.5">
@@ -990,14 +1181,22 @@ export function GraphCanvas({
         <button
           className={button}
           title={tm("Zoom in")}
-          onClick={() => setView((v) => ({ ...v, k: Math.min(6, v.k * 1.25) }))}
+          onClick={() =>
+            useGl
+              ? glRef.current?.zoom(1.25)
+              : setView((v) => ({ ...v, k: Math.min(6, v.k * 1.25) }))
+          }
         >
           <ZoomIn className="h-3.5 w-3.5" />
         </button>
         <button
           className={button}
           title={tm("Zoom out")}
-          onClick={() => setView((v) => ({ ...v, k: Math.max(0.3, v.k / 1.25) }))}
+          onClick={() =>
+            useGl
+              ? glRef.current?.zoom(1 / 1.25)
+              : setView((v) => ({ ...v, k: Math.max(0.3, v.k / 1.25) }))
+          }
         >
           <ZoomOut className="h-3.5 w-3.5" />
         </button>
@@ -1005,6 +1204,10 @@ export function GraphCanvas({
           className={button}
           title={tm("Fit to view")}
           onClick={() => {
+            if (useGl) {
+              glRef.current?.fit();
+              return;
+            }
             fitted.current = null;
             setView({ k: 1, x: 0, y: 0 });
           }}
@@ -1040,11 +1243,11 @@ export function GraphCanvas({
             {spin ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </button>
         )}
-        {pinned.size > 0 && (
+        {(useGl ? glPins.length > 0 : pinned.size > 0) && (
           <button
             className={button}
             title={tm("Release pinned nodes")}
-            onClick={() => setPinned(new Map())}
+            onClick={() => (useGl ? glRef.current?.releasePins() : setPinned(new Map()))}
           >
             <PinOff className="h-3.5 w-3.5" />
           </button>
@@ -1116,9 +1319,14 @@ export function GraphCanvas({
         </button>
       </div>
 
-      {mode === "3d" && (
+      {(mode === "3d" || useGl) && (
         <div className="pointer-events-none absolute left-3 top-3 text-[11px] text-ink/45">
-          {tm("Drag to rotate, scroll to zoom")}
+          {tm(mode === "3d" ? "Drag to rotate, scroll to zoom" : "Drag to move, scroll to zoom")}
+        </div>
+      )}
+      {gl !== null && svgOn && (
+        <div className="pointer-events-none absolute bottom-2 right-3 max-w-[50%] text-right text-[11px] text-ink/45">
+          {tm("Graphics acceleration (WebGL) is not available here: the simplified view is shown.")}
         </div>
       )}
 

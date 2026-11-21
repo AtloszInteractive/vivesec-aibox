@@ -18,6 +18,9 @@ request and sends it with every query (corpus_ids + access).
            POST /review/history  /review/undo (decisions, newest first; take one back)
   import   POST /import/sources  /import/records (a periodic CSV/XLSX export of a
            structured source, by the profile's mapping)  /import/status
+           POST /import/inspect (which source a file fits)  /import/learn (a draft of a
+           new source from a sample file, E28b)  /import/learn/apply  /import/aliases/apply
+           (-> next profile version, unsaved)
   queries  POST /query/find  /query/mentioned  /query/entity  /query/path  /query/common
            POST /query/copresence  /query/shared  /query/timeline
            POST /query/neighborhood  /query/communities  /query/ranking
@@ -52,6 +55,7 @@ from extraction import fold  # noqa: E402
 import analytics  # noqa: E402
 import namesakes  # noqa: E402
 import queries  # noqa: E402
+import review_cards  # noqa: E402
 from graph_store import MemoryGraphStore, StoreError  # noqa: E402
 from ingest import IngestError, parse_document_payload  # noqa: E402
 from model import CORE_TYPES, RECORD_KIND  # noqa: E402
@@ -374,19 +378,52 @@ def import_sources(state: State) -> dict:
     """The profile's structured sources, as an importer needs to know them: every
     column the mapping reads (the protected ones too: they are in the file), and
     whether the records' free text also goes into the search (`rag`, E29)."""
+    import structured_import
+
     out = []
     for s in state.profile.get("structured_sources") or []:
-        columns = {c for e in s["entities"] for c in [e["name"], *e["attributes"].values()] if c}
-        columns |= {c for r in s["relations"] for c in [r["start"], r["end"], *r["label"]] if c}
-        columns |= set(s["record_id"]) | set(s.get("text_columns") or [])
-        columns |= set((s.get("protected") or {}).get("columns") or [])
-        for extra in ((s.get("acl") or {}).get("column"), (s.get("deleted") or {}).get("column")):
-            if extra:
-                columns.add(extra)
+        columns = structured_import.source_columns(s)
         out.append({"id": s["id"], "label": s["label"], "title": s["title"], "mode": s["mode"],
                     "record_id": s["record_id"], "columns": sorted(columns),
+                    "aliases": s.get("column_aliases") or {},
                     "acl": bool(s.get("acl")), "rag": bool(s.get("rag"))})
-    return {"sources": out}
+    return {"sources": out, "formats": list(structured_import.table_formats.EXTENSIONS)}
+
+
+def _sample_file(body: dict) -> tuple[bytes, str, str | None]:
+    try:
+        raw = base64.b64decode(_id(body, "content_b64"), validate=True)
+    except (binascii.Error, ValueError):
+        raise HttpError(400, "content_b64 is not valid base64")
+    sheet = body.get("sheet")
+    return raw, _id(body, "filename")[:300], sheet if isinstance(sheet, str) and sheet else None
+
+
+def import_learning(state: State, path: str, body: dict) -> dict:
+    """E28b (source_learning.py): which source a file fits, a draft of a new
+    source from a sample file (the local model sees its first rows; the answer
+    carries no cell value), and the next profile version with an accepted
+    draft or with other names of a source's columns -- unsaved, the
+    administrator saves it through /profile/set."""
+    import source_learning
+    from structured_import import StructuredImportError
+
+    try:
+        if path == "/import/inspect":
+            return source_learning.inspect(state.profile, *_sample_file(body))
+        if path == "/import/learn":
+            llm = state.worker.llm if state.worker is not None and body.get("model", True) \
+                else None
+            return source_learning.learn(state.profile, *_sample_file(body), llm=llm)
+        if path == "/import/learn/apply":
+            profile, source = source_learning.apply_draft(state.profile, body.get("draft"),
+                                                          body.get("name"))
+            return {"profile": profile, "source": source}
+        profile, changes = source_learning.apply_aliases(state.profile, _id(body, "source"),
+                                                         body.get("aliases"))
+        return {"profile": profile, "changes": changes}
+    except (StructuredImportError, domain_profile.ProfileError) as e:
+        raise HttpError(400, str(e))
 
 
 def import_rag(state: State, path: str, body: dict) -> dict:
@@ -507,6 +544,11 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
     by = str(body.get("by") or "")[:200]
     if path == "/review/list":
         items = worker.open_review(view)
+        # Two roles linked by the name alone are two people (namesakes.py):
+        # counted, and listed only when asked for.
+        mismatched = [i for i in items if review_cards.role_mismatch(i)]
+        if not body.get("include_role_mismatch"):
+            items = [i for i in items if not review_cards.role_mismatch(i)]
         reasons = {}
         for item in items:
             reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1
@@ -516,9 +558,12 @@ def handle_extract(state: State, path: str, body: dict) -> dict:
             items = [i for i in items if q in fold(i["a_label"]) or q in fold(i["b_label"])]
         if body.get("reason"):
             items = [i for i in items if i["reason"] == body["reason"]]
+        items = review_cards.order(items)
         offset = _int(body, "offset", 0, 0, 10 ** 7)
-        return {"review": items[offset:offset + _int(body, "limit", 100, 1, 1000)],
-                "total": len(items), "open_total": open_total, "reasons": reasons}
+        page = items[offset:offset + _int(body, "limit", 100, 1, 1000)]
+        return {"review": review_cards.enrich(view, page, state.holding_types()),
+                "total": len(items), "open_total": open_total, "reasons": reasons,
+                "role_mismatch": len(mismatched)}
     if path == "/review/decide":
         decision = body.get("decision")
         if decision not in ("merge", "separate"):
@@ -592,6 +637,9 @@ def handle_post(state: State, path: str, body: dict) -> dict:
         return handle_extract(state, path, body)
     if path == "/import/sources":
         return import_sources(state)
+    if path in ("/import/inspect", "/import/learn", "/import/learn/apply",
+                "/import/aliases/apply"):
+        return import_learning(state, path, body)
     if path in ("/import/rag/list", "/import/rag/get"):
         return import_rag(state, path, body)
     if path == "/documents/profile":
@@ -627,6 +675,13 @@ def handle_post(state: State, path: str, body: dict) -> dict:
             if profile["version"] <= state.profile["version"] and profile["id"] == state.profile["id"]:
                 raise HttpError(409, "profile version must increase (current %d)"
                                 % state.profile["version"])
+            before = domain_profile.profile_tag(state.profile)
+            ev = domain_profile.extraction_version(state.profile, profile)
+            profile.pop("extraction_version", None)
+            profile.pop("extraction_rules", None)
+            if ev != profile["version"]:
+                profile["extraction_version"] = ev
+                profile["extraction_rules"] = domain_profile.extraction_rules(profile)
             if PROFILE_PATH:
                 tmp = PROFILE_PATH + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
@@ -635,8 +690,10 @@ def handle_post(state: State, path: str, body: dict) -> dict:
                     os.replace(PROFILE_PATH, PROFILE_PATH + ".prev")
                 os.replace(tmp, PROFILE_PATH)
             state.profile = profile
-        # Existing graph content is not rewritten; changed rules apply on reprocessing.
-        return {"profile": profile, "persisted": bool(PROFILE_PATH), "reprocess_required": True}
+        # Existing graph content is not rewritten; changed rules apply on reprocessing,
+        # needed only when the extraction rules changed (not for structured sources).
+        return {"profile": profile, "persisted": bool(PROFILE_PATH),
+                "reprocess_required": domain_profile.profile_tag(profile) != before}
     if path == "/graph/document/put":
         try:
             doc, entities, mentions, relations = parse_document_payload(body, state.profile)

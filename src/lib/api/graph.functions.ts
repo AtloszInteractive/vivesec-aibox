@@ -6,7 +6,9 @@ import {
   adapterGraph,
   AdapterGraphError,
   adapterQueryLog,
+  adapterReread,
   adapterSkipped,
+  storeDelete,
   type AdapterQueryLog,
   type AdapterQueryLogRecord,
   type AdapterSkipped,
@@ -138,6 +140,34 @@ export type GraphProfileChange =
   | { change: "synonyms"; relation: string; added: string[] }
   | { change: "pattern"; subtype: string; new_subtype: boolean };
 
+/** What the caller's visible documents say of one side of a review pair. */
+export type GraphReviewSide = {
+  subtype: string;
+  attributes: { name: string; value: string }[];
+  /** What the person holds: phone, ID card, vehicle, address. */
+  identifiers: { id: string; label: string; subtype: string }[];
+  documents: { doc_id: string; path: string; name: string }[];
+  links: {
+    type: string;
+    raw_label: string;
+    other: string;
+    other_id: string;
+    other_type: string;
+    start: string | null;
+    end: string | null;
+    quote: string;
+    doc_id: string;
+  }[];
+  counts: { documents: number; links: number };
+};
+
+export type GraphReviewField = {
+  name: string;
+  a: string[];
+  b: string[];
+  state: "same" | "conflict" | "different" | "a_only" | "b_only";
+};
+
 export type GraphReviewItem = {
   a: string;
   b: string;
@@ -147,6 +177,11 @@ export type GraphReviewItem = {
   names: string[];
   a_label?: string;
   b_label?: string;
+  a_subtype?: string;
+  b_subtype?: string;
+  a_info?: GraphReviewSide;
+  b_info?: GraphReviewSide;
+  fields?: GraphReviewField[];
 };
 
 export type GraphReviewList = {
@@ -156,6 +191,8 @@ export type GraphReviewList = {
   /** Every open pair in the caller's scope. */
   open_total: number;
   reasons: Record<string, number>;
+  /** Different roles linked by the name alone, left out unless asked for. */
+  role_mismatch?: number;
 };
 
 export type GraphReviewDecision = {
@@ -209,6 +246,9 @@ export function graphFailure(err: unknown): GraphFailure {
 
 type WithDocs<T> = T & { documents: GraphDocuments };
 
+/** Entities one neighbourhood may bring (the graph service allows 2000). */
+export const NEIGHBOURHOOD_LIMIT = 2000;
+
 function query<T>(drive: string, name: string, params: Record<string, unknown>) {
   return adapterGraph<WithDocs<T>>("query", { query: name, params }, drive);
 }
@@ -219,11 +259,12 @@ export const graphApi = {
   entity: (drive: string, id: string) =>
     query<{ entity: GraphNode; edges: GraphEdge[] }>(drive, "entity", { id }),
   neighborhood: (drive: string, id: string, hops: number) =>
-    query<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean }>(drive, "neighborhood", {
-      id,
-      hops,
-      limit: 150,
-    }),
+    query<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean; compact?: boolean }>(
+      drive,
+      "neighborhood",
+      // A large answer comes without quotes (E26f); `entity` brings them.
+      { id, hops, limit: NEIGHBOURHOOD_LIMIT, compact: true },
+    ),
   path: (drive: string, a: string, b: string) =>
     query<{ path: { nodes: GraphNode[]; edges: GraphEdge[]; hops: number } | null }>(
       drive,
@@ -235,6 +276,10 @@ export const graphApi = {
   status: (drive: string) => adapterGraph<GraphStatus>("status", {}, drive),
   /** E10b: what the search cannot read in this scope (not a graph call). */
   skipped: (drive: string) => adapterSkipped(drive),
+  reread: (drive: string, target: { paths: string[] } | { reason: string }) =>
+    adapterReread(drive, target),
+  /** Standalone box: remove a stored file (index first, then the disk). */
+  deleteStored: (drive: string, path: string) => storeDelete(drive, path),
   /** The query log: the caller's own records, everyone's for a leader (not a graph call). */
   queryLog: (
     drive: string,
@@ -247,8 +292,11 @@ export const graphApi = {
       before?: string;
     },
   ) => adapterQueryLog(drive, filter),
-  reviewList: (drive: string, filter: { q?: string; reason?: string; offset?: number } = {}) =>
-    adapterGraph<GraphReviewList>("review/list", { limit: 200, ...filter }, drive),
+  // Every listed pair carries both sides' details, so a page stays small.
+  reviewList: (
+    drive: string,
+    filter: { q?: string; reason?: string; offset?: number; include_role_mismatch?: boolean } = {},
+  ) => adapterGraph<GraphReviewList>("review/list", { limit: 50, ...filter }, drive),
   reviewDecide: (drive: string, a: string, b: string, decision: "merge" | "separate") =>
     adapterGraph<{ decided: string }>("review/decide", { a, b, decision }, drive),
   reviewDecideMany: (
@@ -345,6 +393,7 @@ export const graphApi = {
         drives: req.drives?.length ? req.drives : undefined,
         audit_id: req.auditId,
         shared_contact: req.sharedContact || undefined,
+        compact: true,
       },
       drive,
     ),
@@ -384,9 +433,10 @@ export const graphApi = {
     ),
   reprocessCancel: (drive: string) =>
     adapterGraph<{ run: GraphReprocessRun }>("reprocess/cancel", {}, drive),
-  /** E28: the structured sources of the profile (graph administrators). */
+  /** E28: the structured sources of the profile (graph administrators), and
+   *  the file types an export may come in. */
   importSources: (drive: string) =>
-    adapterGraph<{ sources: GraphImportSource[] }>("import/sources", {}, drive),
+    adapterGraph<{ sources: GraphImportSource[]; formats?: string[] }>("import/sources", {}, drive),
   /** E28: one periodic export into a folder; answers within `wait` seconds or
    *  with the job still running (then `importStatus`). */
   importRecords: (
@@ -420,6 +470,29 @@ export const graphApi = {
   /** E29: how far the search copy of a folder's records got. */
   importRag: (drive: string, folder: string) =>
     adapterGraph<{ folder: string; rag: GraphImportRag }>("import/rag", { folder }, drive),
+  /** E28b: how a file fits each structured source (graph administrators). */
+  importInspect: (drive: string, file: GraphSampleFile) =>
+    adapterGraph<GraphImportInspect>("import/inspect", sampleBody(file), drive, 120_000),
+  /** E28b: a draft of a new source from a sample file. The local model reads
+   *  its first rows (waiting its turn on the GPU); the draft has no cell value. */
+  importLearn: (drive: string, file: GraphSampleFile) =>
+    adapterGraph<GraphSourceDraft>("import/learn", sampleBody(file), drive, 660_000),
+  /** The next profile version with the accepted draft as a new source:
+   *  validated, not saved (saveProfile saves it). */
+  importLearnApply: (drive: string, draft: GraphSourceDraft, name: string) =>
+    adapterGraph<{ profile: GraphProfile; source: { id: string; label: GraphLabel } }>(
+      "import/learn/apply",
+      { draft, name },
+      drive,
+    ),
+  /** The next profile version with other names of a source's columns
+   *  ({column of the source: its name in the file}); not saved. */
+  importAliasesApply: (drive: string, source: string, aliases: Record<string, string>) =>
+    adapterGraph<{ profile: GraphProfile; changes: { column: string; alias: string }[] }>(
+      "import/aliases/apply",
+      { source, aliases },
+      drive,
+    ),
   /** Watchlist pilot: the caller's watched entities in this scope. */
   watchList: (drive: string) =>
     adapterGraph<{ items: GraphWatchItem[]; max_items: number; max_days: number }>(
@@ -490,8 +563,100 @@ export type GraphImportSource = {
   mode: "delta" | "full";
   record_id: string[];
   columns: string[];
+  /** Other names of its columns (an export renamed them), E28b. */
+  aliases?: Record<string, string[]>;
   acl: boolean;
   /** Its records' free text also goes into the search (E29). */
+  rag?: boolean;
+};
+
+/** A sample or export file sent to the box for inspection or learning. */
+export type GraphSampleFile = { filename: string; contentB64: string; sheet?: string };
+
+function sampleBody(file: GraphSampleFile): Record<string, unknown> {
+  return { filename: file.filename, content_b64: file.contentB64, sheet: file.sheet || undefined };
+}
+
+/** How a file fits one structured source (graph_service source_learning.py). */
+export type GraphImportFit = {
+  id: string;
+  label: GraphLabel;
+  title: string;
+  /** full: every column found; partial: only optional ones missing; none:
+   *  a column the import needs is missing. */
+  fit: "full" | "partial" | "none";
+  matched: number;
+  total: number;
+  missing_required: string[];
+  missing_optional: string[];
+  /** Columns of the file the source does not read. */
+  unused: string[];
+  /** Columns found by another name. */
+  aliased: string[];
+};
+
+export type GraphImportInspect = {
+  tables: string[];
+  sheet: string;
+  header: string[];
+  rows: number;
+  sources: GraphImportFit[];
+  /** The source the file fits best, if any fits. */
+  best: string | null;
+};
+
+export const SOURCE_ROLES = [
+  "record_id",
+  "person",
+  "birth_date",
+  "birth_place",
+  "mother_name",
+  "id_number",
+  "registry_number",
+  "phone",
+  "email",
+  "address",
+  "start_date",
+  "end_date",
+  "relation_label",
+  "deleted",
+  "text",
+  "ignore",
+] as const;
+export type GraphSourceRole = (typeof SOURCE_ROLES)[number];
+
+/** One column of a learnt draft: what it is, and never a value of it. */
+export type GraphDraftColumn = {
+  column: string;
+  role: GraphSourceRole;
+  /** person: its role (a person subtype of the profile). */
+  subtype: string;
+  /** Properties, phone, e-mail, address: the person column they belong to. */
+  of: string;
+  /** phone, e-mail, address: the relation linking the person to it. */
+  relation?: string;
+  kind: "empty" | "date" | "number" | "email" | "phone" | "text";
+  source: "model" | "rule";
+};
+
+export type GraphDraftRelation = {
+  type: string;
+  from: string;
+  to: string;
+  start: string;
+  end: string;
+  label: string;
+};
+
+export type GraphSourceDraft = {
+  header: string[];
+  sheet: string;
+  tables: string[];
+  rows: number;
+  columns: GraphDraftColumn[];
+  relations: GraphDraftRelation[];
+  name: string;
+  model: "used" | "unused" | "off" | "failed";
   rag?: boolean;
 };
 
@@ -622,6 +787,8 @@ export type GraphInvestigationView = {
   edges: GraphEdge[];
   documents: GraphDocuments;
   truncated: boolean;
+  /** Over 300 nodes: the evidence without quotes (E26f). */
+  compact?: boolean;
   rows: GraphInvestigationRow[];
   start: string;
   levels: number;

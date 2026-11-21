@@ -125,6 +125,19 @@ class Scope:
         # write target or the audit key.
         self.active_corpus_id = active_corpus_id or corpus.corpus_id_of_drive(
             self.active_root)
+        # The entitled scope a narrowed one was cut from (None: not narrowed).
+        self._base = None
+
+    @property
+    def base(self):
+        """The entitled scope before the client's `drives` narrowing."""
+        return self._base or self
+
+    @property
+    def selection(self):
+        """The client's drive selection as stored with a conversation thread:
+        the sorted roots it narrowed to, [] when it did not narrow."""
+        return sorted(self.drive_roots) if self._base is not None else []
 
     @property
     def corpus_id(self):
@@ -195,8 +208,10 @@ class Scope:
             return self
         roots = [root for root in self.drive_roots if root in wanted]
         ids = [self.corpus_ids[self.drive_roots.index(root)] for root in roots]
-        return Scope(self.active_drive, roots, ids, self.source,
-                     self.active_corpus_id)
+        narrowed = Scope(self.active_drive, roots, ids, self.source,
+                         self.active_corpus_id)
+        narrowed._base = self.base
+        return narrowed
 
     def __len__(self):
         return len(self.drive_roots)

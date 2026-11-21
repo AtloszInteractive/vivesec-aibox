@@ -651,6 +651,12 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   `access` itself (the client's own values are overwritten). Every document an
   answer cites is re-checked against the current policy; a hidden one (the
   graph's ACL copy lags) fails the call with 503 and schedules a resync.
+  `neighborhood` takes `params.compact: true` (E26f, large pictures): when the
+  answer holds more than 300 nodes (`graph.COMPACT_ABOVE`), each edge keeps one
+  evidence item per document and method with an empty `quote`, and the answer
+  carries `compact: true`; smaller answers are unchanged. The check and the
+  query log run on the full answer first; the client fetches the quotes of a
+  node with `entity` when it opens it.
 - **Chat**: a plain question (no quick action) that names entities the graph
   knows (`/query/mentioned`: names with Hungarian case endings, identifier
   patterns) gets the path between the first two and their direct relations as
@@ -1032,7 +1038,7 @@ drive delivery and the stored-copy download, refusals).
 #### Investigation subgraph (`/ui/graph/investigation/graph`, BV 1.3 / 2.3)
 
 `POST /api/v1/ui/graph/investigation/graph` `{start, levels, drives?,
-audit_id?}` returns the same investigation as a subgraph in the
+audit_id?, compact?}` returns the same investigation as a subgraph in the
 `/query/neighborhood` shape, `{nodes, edges, documents, truncated}`, so the
 Relationships view draws it unchanged, plus `rows` (`id, level, name, role,
 path, also` per row), `start` and `levels`. It is rebuilt exactly like the
@@ -1047,7 +1053,8 @@ through it (people, shared entities, held identifiers). The subgraph is not
 part of the answer (`Run.investigation_graphs` stays server-side). Purpose
 binding and errors as for the spreadsheet; the query-log kind is
 `graph:investigation` (start, levels, audit id and the row/node/edge counts as
-the question hash; every document of the subgraph in `sources`).
+the question hash; every document of the subgraph in `sources`). With
+`compact: true` a subgraph over 300 nodes comes compact as for `neighborhood`.
 
 Tests: `orchestrator_test.InvestigateTest.test_the_subgraph_*` (nodes and
 edges, hidden evidence and everything reached only through it absent) and
@@ -1144,9 +1151,17 @@ and an EU act after "(EU) " / "(EK) " (`2016/679`). A real number of that shape
 
 The BV hands over the result set of a periodic export run (FŐNIX base data,
 placements, the approved-contact list; later the intelligence log, ODIN, BvBank,
-JFK) as CSV or XLSX. These are read by rule, never by the model: no GPU time and
-no extraction error. A graph administrator (`ADAPTER_GRAPH_ADMINS`) sends one
-file per call:
+JFK). These are read by rule, never by the model: no GPU time and
+no extraction error. The file may be CSV/TSV, XLSX/XLSM, legacy XLS (xlrd in the
+graph image), ODS, JSON or JSON Lines, XML (the repeated record elements; a
+DOCTYPE is refused) or an SQL dump (`CREATE TABLE` / `INSERT ... VALUES` of
+MySQL/MariaDB, PostgreSQL `--inserts` or `COPY ... FROM stdin`, SQL Server
+scripts; only read as text, never executed) -- `graph_service/table_formats.py`.
+A file with several tables (sheets, SQL tables, XML record kinds) is read where
+the profile's `sheet` names, else where the header holds most of the source's
+columns; an unclear choice is refused with the table names.
+`/ui/graph/import/sources` also lists the accepted `formats`. A graph
+administrator (`ADAPTER_GRAPH_ADMINS`) sends one file per call:
 
 `POST /api/v1/ui/graph/import` `{source, as_of, folder, filename, content_b64,
 mode?, force?, wait?}`; `/ui/graph/import/sources` lists the sources,
@@ -1172,6 +1187,40 @@ seconds (default 60). `graph-corpus/structured_import_run.py` calls it on a box
   assumption until BV sends samples. Subtypes and relations marked
   `structured_only` (contact, facility, unit, `CONTACT_OF`) stay out of the
   extraction prompts, so the model reads documents exactly as before.
+- **Learning a source from a sample file (E28b).** A standalone box cannot
+  know in advance which exports it gets. For a graph administrator:
+  `POST /api/v1/ui/graph/import/inspect {filename, content_b64, sheet?}` says how
+  the file fits each source (`fit`: `full`, `partial` = only optional columns
+  missing, `none` = a column the import needs is missing; the missing columns,
+  the file's columns no source reads, `best`).
+  `/ui/graph/import/learn {filename, content_b64, sheet?, model?}` returns a
+  draft of a new source: per column a role (record id, person name with its
+  role = person subtype, birth date and place, mother's name, personal ID and
+  registry number of a person, phone / e-mail / address with the relation
+  linking them to the person, start and end date, nature of the relation,
+  deleted mark, free text, not used) and the relations every row states. The
+  local model (`GRAPH_LLM_URL`, behind the GPU broker) sees the header and the
+  first 6 rows; when it is off or fails, name rules (HU/EN/DE/DA wording) and
+  the shape of the values decide. The draft carries only the header, row count
+  and shape hints (dates, numbers ...), never a cell; neither the graph nor
+  the adapter logs anything of the file. `/ui/graph/import/learn/apply {draft,
+  name}` builds the source (dates and relation texts no relation reads are
+  kept as text columns, `person_key` when name and the three birth fields are
+  there) and returns the next profile version, validated but unsaved; the UI
+  then saves it through `/ui/graph/profile/set`, which validates it again.
+- **Renamed columns (E28b).** A source's `column_aliases` (`{column: [other
+  names]}`) match an export that renamed a column; the record text keeps the
+  profile's column name, so the records do not change.
+  `/ui/graph/import/aliases/apply {source, aliases: {column: name in the
+  file}}` returns the next profile version with them (unsaved, as above). An
+  alias may not be another column of the source nor stand for two columns.
+- **Profile versions and reprocessing.** A change of the structured sources
+  alone (a new source, an alias) keeps the profile's `extraction_version`
+  (saved with `extraction_rules`, a fingerprint of the rules extraction reads;
+  a profile file whose rules no longer match it falls back to its own
+  version), so the documents' profile tag (`bv@7/e5`) stays current and
+  nothing is listed for reprocessing; any other change moves it to the new
+  version (`/profile/set` answers `reprocess_required`).
 - **Records.** Each row becomes its own graph document: id from source + record
   id (the idempotency key), path `<folder>/~records/<source>/<hash>`, tag
   `record:<source>@<as_of>`, its row as `Column: value` text (codes with their
@@ -1325,6 +1374,22 @@ the adapter checks every path again (scope + `_visible`), as it does for graph
 answers. The answer has `count`, `reasons` (counts per reason), `pages_skipped`
 and up to 500 `documents` with `reason`, `ocr_state` and `skipped_pages`; the
 UI shows it under Relationships › Processing ("Not readable for search").
+
+On a standalone box the files are held here (E27 S5), so a store writer
+(`ADAPTER_STORE_WRITERS`) can read them again without a resync:
+`POST /api/v1/ui/index/reread` with `{paths: [...]}` or `{reason: "..."}` (every
+skipped document of that reason in the caller's scope, at most 500) queues the
+stored files that are inside the scope and visible to the caller; each is
+indexed again exactly like a fresh upload (text, then OCR for pages without a
+text layer), one at a time in the background (`adapter/reread.py`). The answer
+counts `queued`, `skipped` (outside the scope, invisible, not stored) and
+`refused` (queue full). The skipped list then carries `can_reread`,
+`can_delete` (the same writer right; deleting uses `/ui/store/delete`),
+`rereading` (still queued or running) and per document `reread {state, error}`
+(`queued`, `running`, `done`, `failed`; kept in memory only) and `stored` (the
+box holds the file: only then it can be read again or downloaded; a document
+indexed by an earlier ViVeSecBox sync can only be deleted). Elsewhere the
+endpoint answers 404.
 
 #### Purpose-bound queries and the query log (concept 5.2-5.3)
 

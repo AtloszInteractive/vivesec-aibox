@@ -9,6 +9,8 @@ export type ViewGraph = {
   edges: GraphEdge[];
   documents: GraphDocuments;
   truncated?: boolean;
+  /** Evidence without quotes (a large picture, E26f). */
+  compact?: boolean;
 };
 
 /** `b` added to `a`: one node per id (the newer copy), one edge per id. */
@@ -23,6 +25,23 @@ export function mergeGraphs<T extends ViewGraph>(a: T, b: ViewGraph): T {
     edges: [...edges.values()],
     documents: { ...a.documents, ...(b.documents ?? {}) },
     truncated: Boolean(a.truncated || b.truncated),
+    compact: Boolean(a.compact || b.compact),
+  };
+}
+
+/** The full copy of one entity and its relations (the `entity` query) put into
+ *  a compact picture (E26f): the node and the edges already in the picture get
+ *  their quotes; nothing new is added, so the picture keeps its shape. */
+export function withDetails<T extends ViewGraph>(
+  graph: T,
+  details: { entity: GraphNode; edges: GraphEdge[]; documents: GraphDocuments },
+): T {
+  const full = new Map(details.edges.map((e) => [e.id, e]));
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) => (n && n.id === details.entity.id ? details.entity : n)),
+    edges: graph.edges.map((e) => full.get(e.id) ?? e),
+    documents: { ...graph.documents, ...(details.documents ?? {}) },
   };
 }
 

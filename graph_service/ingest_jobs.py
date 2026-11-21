@@ -372,8 +372,9 @@ class IngestWorker:
             return {"status": "failed", "error": "the profile has no source %r" % req["source"]}
         salt = person_key.load_salt()
         try:
-            header, rows = structured_import.read_table(raw, req.get("filename") or "",
-                                                        source.get("sheet"))
+            header, rows = structured_import.read_table(
+                raw, req.get("filename") or "", source.get("sheet"),
+                structured_import.expected_columns(source))
             plan = structured_import.plan_import(profile, source, header, rows, salt)
         except structured_import.StructuredImportError as e:
             return {"status": "failed", "error": str(e)}
@@ -541,7 +542,8 @@ class IngestWorker:
                 if "basis" in item and not any(view.document(d) for d in item["basis"]):
                     # A key-only pair rests on a record the caller cannot read.
                     continue
-                item = dict(item, a_label=na["label"], b_label=nb["label"])
+                item = dict(item, a_label=na["label"], b_label=nb["label"],
+                            a_subtype=na.get("subtype") or "", b_subtype=nb.get("subtype") or "")
                 item.pop("basis", None)
             out.append(item)
         return out

@@ -552,6 +552,15 @@ class GraphIntegrationTest(unittest.TestCase):
         self.assertNotIn("Titkos", blob)
         self.assertNotIn("raktár", blob)
         self.assertEqual([PUBLIC], [d["source_path"] for d in hood["documents"].values()])
+        self.assertNotIn("compact", hood)
+        # A large picture asked compact keeps its relations and documents, not the quotes.
+        with patch.object(graph, "COMPACT_ABOVE", 0):
+            status, small = self.query("lars", "neighborhood", id=kovacs, hops=2, compact=True)
+        self.assertEqual((200, True), (status, small.get("compact")), small)
+        self.assertEqual(({e["id"] for e in hood["edges"]}, hood["documents"]),
+                         ({e["id"] for e in small["edges"]}, small["documents"]))
+        self.assertTrue(any(ev["quote"] for e in hood["edges"] for ev in e["evidence"]))
+        self.assertEqual({""}, {ev["quote"] for e in small["edges"] for ev in e["evidence"]})
         status, found = self.query("hanna", "find", text="Titkos", types=["person"])
         status, control = self.query("hanna", "neighborhood", id=found["entities"][0]["id"])
         self.assertIn("Kovács János", json.dumps(control, ensure_ascii=False))
@@ -836,6 +845,12 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertEqual(("MET", True), (edge["type"], {edge["a"], edge["b"]} <= ids))
             self.assertEqual({PUBLIC}, {d["source_path"] for d in out["documents"].values()})
             self.assertEqual(set(out["documents"]), {ev["doc_id"] for ev in edge["evidence"]})
+            with patch.object(graph, "COMPACT_ABOVE", 0):
+                status, small = self.investigation_graph("lars", {"drives": [DRIVE],
+                                                                  "compact": True})
+            self.assertEqual((200, True, out["documents"]),
+                             (status, small.get("compact"), small["documents"]), small)
+            self.assertEqual({""}, {ev["quote"] for e in small["edges"] for ev in e["evidence"]})
             self.assertEqual([("Kovács János", 0), ("Nagy Éva", 1)],
                              [(r["name"], r["level"]) for r in out["rows"]])
             self.assertEqual(("Kovács János", 2, False),
@@ -1213,6 +1228,44 @@ class GraphIntegrationTest(unittest.TestCase):
                                 {"items": [dict(item, id="MET")]}, user="hanna")
         self.assertEqual(400, status)
 
+    def test_a_graph_admin_learns_a_new_source_from_a_sample_file(self):
+        """E28b: inspect, learn (the model's answer carries no cell), apply,
+        save as the next version, import with it; aliases for a renamed column."""
+        paths = ("inspect", "learn", "learn/apply", "aliases/apply")
+        for path in paths:
+            status, _ = self.call("/api/v1/ui/graph/import/" + path, {}, user="lars")
+            self.assertEqual(403, status, path)
+        text = ("Sorszám;Látogató neve;Fogvatartott neve;Látogatás napja\n"
+                "L-1;Lator Laura;Fogoly Ferenc;2026-03-12\n")
+        file = {"filename": "latogatasok.csv",
+                "content_b64": base64.b64encode(text.encode("utf-8")).decode("ascii")}
+        status, out = self.call("/api/v1/ui/graph/import/inspect", file, user="hanna")
+        self.assertEqual((200, None), (status, out["best"]), out)
+        status, draft = self.call("/api/v1/ui/graph/import/learn", file, user="hanna")
+        self.assertEqual((200, "used"), (status, draft["model"]), draft)
+        self.assertNotIn("Lator Laura", json.dumps(draft, ensure_ascii=False))
+        self.assertEqual([("VISITED", "Látogató neve", "Fogvatartott neve", "Látogatás napja")],
+                         [(r["type"], r["from"], r["to"], r["start"])
+                          for r in draft["relations"]])
+        status, applied = self.call("/api/v1/ui/graph/import/learn/apply",
+                                    {"draft": draft, "name": "Látogatások"}, user="hanna")
+        self.assertEqual(200, status, applied)
+        status, saved = self.call("/api/v1/ui/graph/profile/set",
+                                  {"profile": applied["profile"]}, user="hanna")
+        self.assertEqual(200, status, saved)
+        body = dict(file, source=applied["source"]["id"], as_of="2026-11-20",
+                    folder=DRIVE + "/hr", wait=60)
+        status, out = self.call("/api/v1/ui/graph/import", body, user="hanna")
+        self.assertEqual((200, 1), (status, out["import"]["stats"]["created"]), out)
+        status, out = self.call("/api/v1/ui/graph/import/aliases/apply",
+                                {"source": applied["source"]["id"],
+                                 "aliases": {"Sorszám": "Azonosító"}}, user="hanna")
+        self.assertEqual((200, [{"column": "Sorszám", "alias": "Azonosító"}]),
+                         (status, out["changes"]), out)
+        status, out = self.call("/api/v1/ui/graph/import/learn/apply",
+                                {"draft": {}, "name": "x"}, user="hanna")
+        self.assertEqual(400, status, out)
+
     def test_a_profile_change_is_reprocessed_from_the_file_source(self):
         import reprocess
 
@@ -1232,7 +1285,11 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertEqual((200, 0, False, "local"), (status, out["stale_total"],
                                                          out["can_start"], out["source"]))
             _, prof = self.call("/api/v1/ui/graph/profile/get", {}, user="hanna")
-            newer = dict(prof["profile"], version=prof["profile"]["version"] + 1)
+            newer = json.loads(json.dumps(prof["profile"]))
+            newer["version"] += 1
+            # A change of the extraction rules (a structured source alone would not do).
+            newer["relation_types"][-1]["synonyms"] = newer["relation_types"][-1]["synonyms"] \
+                + ["része"]
             status, _ = self.call("/api/v1/ui/graph/profile/set", {"profile": newer}, user="hanna")
             self.assertEqual(200, status)
             # Counts cover only what the caller may see.

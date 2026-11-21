@@ -879,11 +879,19 @@ function ViveSecAppInner() {
     : chatPolicy.default_profile;
   const [messageProfiles, setMessageProfiles] = useState<Record<string, ChatProfile>>({});
   /* ---------- Conversation threads (F1) ----------
-     A thread lives on the box, scoped to (user, drive, profile). `null` is the
-     default thread — the single conversation that existed before threads, so a
-     box without the endpoints behaves exactly as it used to. */
+     A thread lives on the box, scoped to (user, drive, profile). `null` is a
+     new conversation that is not saved yet: the box creates the thread with the
+     first chat question, so every conversation lands in the list and an
+     untouched "New conversation" leaves nothing behind. "default" is the
+     pre-thread rolling conversation, still listed while it has content. A box
+     without the endpoints keeps using that default thread for `null`. */
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  /** The drive selection the open thread belongs to (the box refuses any other). */
+  const [conversationDrives, setConversationDrives] = useState<string[]>([]);
+  /** The thread being created for the first question, so a quick second
+   *  question joins it instead of starting another one. */
+  const pendingThreadRef = useRef<Promise<string | null> | null>(null);
   const [conversationsSupported, setConversationsSupported] = useState<boolean | null>(null);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const [threadBusy, setThreadBusy] = useState(false);
@@ -1087,12 +1095,6 @@ function ViveSecAppInner() {
       cancelled = true;
     };
   }, [drive, boxState]);
-
-  const toggleScopeDrive = useCallback((path: string) => {
-    setSelectedDrives((current) =>
-      current.includes(path) ? current.filter((p) => p !== path) : [...current, path],
-    );
-  }, []);
 
   /** Metadata for every file seen so far, keyed by box path. Browsing only
    *  loads one folder at a time, but citations point anywhere in the drive. */
@@ -1710,45 +1712,98 @@ function ViveSecAppInner() {
     [chatProfile, resultIds, senderName],
   );
 
+  /** An empty, not yet saved conversation: the box creates its thread with
+   *  the first chat question (runLive). */
+  const startDraft = useCallback(() => {
+    pendingThreadRef.current = null;
+    setConversationId(null);
+    setConversationDrives([]);
+    showConversation([]);
+  }, [showConversation]);
+
   const openConversation = useCallback(
-    async (id: string | null) => {
+    async (id: string) => {
       setThreadsOpen(false);
       setThreadBusy(true);
       try {
-        const conversation = id ? await getConversation(id, threadScope) : null;
-        if (id && !conversation) {
-          // Deleted or never visible to this scope: fall back to the default
-          // thread rather than leaving the UI pointing at nothing.
+        const conversation = await getConversation(id, threadScope);
+        if (!conversation) {
+          // Deleted or never visible to this scope: start a new conversation
+          // rather than leaving the UI pointing at nothing.
           toast.error(tm("This conversation is no longer available."));
-          setConversationId(null);
+          startDraft();
           void refreshConversations();
-          showConversation([]);
           return;
         }
+        pendingThreadRef.current = null;
         setConversationId(id);
-        showConversation(conversation?.turns ?? []);
+        // The box only continues a thread under the selection it was started with.
+        const drives = conversation.drives ?? [];
+        setConversationDrives(drives);
+        setSelectedDrives(drives);
+        showConversation(conversation.turns);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : tm("The conversation could not be opened."));
       } finally {
         setThreadBusy(false);
       }
     },
-    [refreshConversations, showConversation, threadScope, tm],
+    [refreshConversations, showConversation, startDraft, threadScope, tm],
   );
 
-  async function newConversation() {
+  function newConversation() {
     setThreadsOpen(false);
-    setThreadBusy(true);
-    try {
-      const created = await createConversation(threadScope);
-      setConversationId(created.id);
-      showConversation([]);
-      await refreshConversations();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : tm("The conversation could not be started."));
-    } finally {
-      setThreadBusy(false);
+    startDraft();
+  }
+
+  /** The thread the next chat question belongs to: the open one, or a new one
+   *  created now with the current drive selection. Null = the default thread
+   *  (no thread support on this box, or the creation failed). */
+  function threadForQuestion(): Promise<string | null> {
+    if (conversationId !== null || !conversationsSupported) {
+      return Promise.resolve(conversationId);
     }
+    if (!pendingThreadRef.current) {
+      const drives = [...selectedDrives];
+      const pending = createConversation({ ...threadScope, drives })
+        .then((created) => {
+          // Superseded by "New conversation" meanwhile: the question still
+          // belongs to the thread made for it, the screen no longer does.
+          if (pendingThreadRef.current !== pending) return created.id;
+          setConversationId(created.id);
+          setConversationDrives(created.drives ?? drives);
+          void refreshConversations();
+          return created.id;
+        })
+        .catch((error: unknown) => {
+          if (pendingThreadRef.current === pending) pendingThreadRef.current = null;
+          toast.error(
+            error instanceof Error ? error.message : tm("The conversation could not be started."),
+          );
+          return null;
+        });
+      pendingThreadRef.current = pending;
+    }
+    return pendingThreadRef.current;
+  }
+
+  /** A changed drive selection cannot continue the open thread (its history
+   *  was built in another scope), so it starts a new conversation. */
+  function changeScopeSelection(next: string[]) {
+    setSelectedDrives(next);
+    const key = (drives: string[]) => [...drives].sort().join("\u0000");
+    if (conversationId !== null && key(next) !== key(conversationDrives)) {
+      startDraft();
+      toast.info(tm("The selected drives changed, so a new conversation was started."));
+    }
+  }
+
+  function toggleScopeDrive(path: string) {
+    changeScopeSelection(
+      selectedDrives.includes(path)
+        ? selectedDrives.filter((p) => p !== path)
+        : [...selectedDrives, path],
+    );
   }
 
   async function renameThread(id: string, title: string) {
@@ -1766,10 +1821,7 @@ function ViveSecAppInner() {
     setThreadDialog(null);
     try {
       await deleteConversation(id, threadScope);
-      if (id === conversationId) {
-        setConversationId(null);
-        showConversation([]);
-      }
+      if (id === conversationId) startDraft();
       await refreshConversations();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tm("The conversation could not be deleted."));
@@ -1784,15 +1836,24 @@ function ViveSecAppInner() {
     if (!drive || boxState !== "online") return;
     let cancelled = false;
     const storageKey = `vivesec_conversation:${chatProfile}:${drive}`;
+    // A thread still being created for the previous drive or profile must
+    // not be handed to the next question asked here.
+    if (restoredRef.current !== storageKey) pendingThreadRef.current = null;
     void refreshConversations()
       .then((list) => {
-        if (cancelled || restoredRef.current === storageKey) return;
-        restoredRef.current = storageKey;
-        if (!list) return;
-        const saved = window.localStorage.getItem(storageKey);
-        if (saved && saved !== "default" && list.some((c) => c.id === saved)) {
-          void openConversation(saved);
+        if (cancelled || !list) return;
+        if (restoredRef.current !== storageKey) {
+          restoredRef.current = storageKey;
+          const saved = window.localStorage.getItem(storageKey);
+          if (saved && saved !== "default" && list.some((c) => c.id === saved)) {
+            void openConversation(saved);
+            return;
+          }
         }
+        // A thread of the previous drive or profile is not addressable here.
+        setConversationId((current) =>
+          current !== null && list.some((c) => c.id === current) ? current : null,
+        );
       })
       .catch(() => {
         if (!cancelled) setConversationsSupported(false);
@@ -1808,7 +1869,7 @@ function ViveSecAppInner() {
     if (!drive) return;
     const storageKey = `vivesec_conversation:${chatProfile}:${drive}`;
     if (restoredRef.current !== storageKey) return;
-    window.localStorage.setItem(storageKey, conversationId ?? "default");
+    window.localStorage.setItem(storageKey, conversationId ?? "");
   }, [conversationId, chatProfile, drive]);
 
   const activeConversation = conversations.find((c) => c.id === conversationId) ?? null;
@@ -2045,6 +2106,9 @@ function ViveSecAppInner() {
     // query would be rejected (400).
     const query = action ? brief || `#${action}` : cmd ? brief || cmd.slice(1) : v;
     const label = cmd ? (rest ? `${cmd} ${rest}` : cmd).slice(0, 90) : v.slice(0, 80);
+    // Quick actions are standalone commands and keep using the default
+    // thread; only chat turns belong to the conversation on screen.
+    const threadId = pane === "chat" && !action ? await threadForQuestion() : null;
     const requestData = {
       query,
       profile: action || pane === "results" ? "grounded" as const : chatProfile,
@@ -2062,9 +2126,7 @@ function ViveSecAppInner() {
       extra: extras?.extra || undefined,
       files: extras?.files?.length ? extras.files : undefined,
       drives: selectedDrives.length ? selectedDrives : undefined,
-      // Quick actions are standalone commands and keep using the default
-      // thread; only chat turns belong to the conversation on screen.
-      conversationId: pane === "chat" && conversationId && !action ? conversationId : undefined,
+      conversationId: threadId ?? undefined,
     };
     if (pane === "results" && jobsSupported === true) {
       try {
@@ -2146,6 +2208,14 @@ function ViveSecAppInner() {
       // The box asked for the purpose, or refused the one given (its setting
       // changed under the tab): ask again, with the value to correct.
       if (/purpose_(required|invalid)/.test(detail)) setPurposeDialog(true);
+      // The thread vanished or belongs to another selection: the next question
+      // starts a new one instead of failing the same way again.
+      if (threadId && /unknown conversation_id|conversation_scope_mismatch/.test(detail)) {
+        pendingThreadRef.current = null;
+        setConversationId(null);
+        setConversationDrives([]);
+        void refreshConversations();
+      }
       setMessages((all) =>
         all.map((m) =>
           m.id === loadingId
@@ -2485,9 +2555,11 @@ function ViveSecAppInner() {
           fontFamily: "Arial, 'Liberation Sans', 'Nimbus Sans', Helvetica, sans-serif",
         }}
       >
-        {/* Header */}
+        {/* Header. Its menus open into the area below, so while one is open
+          the header is lifted above the relationship view (z-[60]); only
+          then, because the mobile drawers are meant to cover it. */}
         <header
-          className="z-30 shrink-0 border-b border-ink/5"
+          className="z-30 shrink-0 border-b border-ink/5 has-[[aria-expanded=true]]:z-[65]"
           style={{ backgroundColor: "var(--header)" }}
         >
           <div className="flex items-center gap-3 px-4 py-2">
@@ -2610,7 +2682,13 @@ function ViveSecAppInner() {
                       <List className="h-3.5 w-3.5 shrink-0" style={{ color: ACCENT_TEXT }} />
                       <span className="truncate">
                         {activeConversation?.title ||
-                          tm(conversationId ? "Untitled conversation" : "Current conversation")}
+                          tm(
+                            conversationId === "default"
+                              ? "Earlier ongoing conversation"
+                              : activeConversation && activeConversation.turn_count > 0
+                                ? "Untitled conversation"
+                                : "Current conversation",
+                          )}
                       </span>
                       <ChevronDown
                         className={`h-3 w-3 shrink-0 text-ink/45 transition-transform ${threadsOpen ? "rotate-180" : ""}`}
@@ -2618,7 +2696,7 @@ function ViveSecAppInner() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void newConversation()}
+                      onClick={() => newConversation()}
                       disabled={threadBusy || boxState !== "online"}
                       className="inline-flex min-h-8 items-center gap-1 rounded-md border border-ink/10 px-2 text-[11px] text-ink/70 transition hover:bg-ink/10 disabled:opacity-50"
                       title={tm("New conversation")}
@@ -2634,57 +2712,59 @@ function ViveSecAppInner() {
                           aria-label={tm("Conversations")}
                           className="absolute left-0 top-full z-50 mt-2 max-h-80 w-80 overflow-y-auto rounded-xl border border-ink/10 bg-surface-3 py-1 shadow-2xl shadow-shade/60"
                         >
-                          <button
-                            type="button"
-                            onClick={() => void openConversation(null)}
-                            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition hover:bg-ink/5 ${conversationId === null ? "bg-ink/[0.06] text-ink" : "text-ink/70"}`}
-                          >
-                            {tm("Current conversation")}
-                          </button>
-                          {conversations
-                            .filter((c) => c.id !== "default")
-                            .map((c) => (
-                              <div
-                                key={c.id}
-                                className={`group flex items-center gap-1 px-1 ${c.id === conversationId ? "bg-ink/[0.06]" : ""}`}
+                          {conversations.map((c) => (
+                            <div
+                              key={c.id}
+                              className={`group flex items-center gap-1 px-1 ${c.id === conversationId ? "bg-ink/[0.06]" : ""}`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => void openConversation(c.id)}
+                                className="min-w-0 flex-1 px-2 py-2 text-left"
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => void openConversation(c.id)}
-                                  className="min-w-0 flex-1 px-2 py-2 text-left"
-                                >
-                                  <div className="truncate text-[12px] text-ink">
-                                    {c.title || tm("Untitled conversation")}
-                                  </div>
-                                  <div className="text-[10.5px] text-ink/45">
-                                    {c.turn_count} {tm("turns")}
-                                  </div>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setThreadsOpen(false);
-                                    setThreadDialog({ mode: "rename", id: c.id, title: c.title });
-                                  }}
-                                  className="rounded p-1 text-ink/45 opacity-0 transition hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
-                                  title={tm("Rename conversation")}
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setThreadsOpen(false);
-                                    setThreadDialog({ mode: "delete", id: c.id, title: c.title });
-                                  }}
-                                  className="rounded p-1 text-ink/45 opacity-0 transition hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
-                                  title={tm("Delete conversation")}
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                          {conversations.filter((c) => c.id !== "default").length === 0 && (
+                                <div className="truncate text-[12px] text-ink">
+                                  {c.title ||
+                                    tm(
+                                      c.id === "default"
+                                        ? "Earlier ongoing conversation"
+                                        : "Untitled conversation",
+                                    )}
+                                </div>
+                                <div className="truncate text-[10.5px] text-ink/45">
+                                  {c.id === "default" && c.title
+                                    ? `${tm("Earlier ongoing conversation")} · `
+                                    : ""}
+                                  {c.turn_count} {tm("turns")}
+                                  {c.drives?.length
+                                    ? ` · ${c.drives.map((d) => d.split("/").pop()).join(", ")}`
+                                    : ""}
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setThreadsOpen(false);
+                                  setThreadDialog({ mode: "rename", id: c.id, title: c.title });
+                                }}
+                                className="rounded p-1 text-ink/45 opacity-0 transition hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
+                                title={tm("Rename conversation")}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setThreadsOpen(false);
+                                  setThreadDialog({ mode: "delete", id: c.id, title: c.title });
+                                }}
+                                className="rounded p-1 text-ink/45 opacity-0 transition hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
+                                title={tm("Delete conversation")}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                          {conversations.length === 0 && (
                             <div className="px-3 py-2 text-[11px] text-ink/45">
                               {tm("No saved conversations yet.")}
                             </div>
@@ -3485,7 +3565,7 @@ function ViveSecAppInner() {
                 scopeDrives={scopeDrives}
                 selectedDrives={selectedDrives}
                 onToggleScopeDrive={toggleScopeDrive}
-                onClearScope={() => setSelectedDrives([])}
+                onClearScope={() => changeScopeSelection([])}
                 onInsertFile={(f) => {
                   setPickerOpen(false);
                   setMessages((m) => [
