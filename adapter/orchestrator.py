@@ -889,6 +889,7 @@ class Run:
         # (graph_service/namesakes.py); the answer names who was joined so.
         self.name_join = name_join
         self.joined = {}
+        self._namesake_notes = []
         self._joined_counts = False
         self._ambiguous = 0
         self.contexts = []
@@ -1146,7 +1147,11 @@ class Run:
         if not picked:
             self.notes.append(_t("not_found", self.code) % name)
         elif len(picked) > 1:
-            self.notes.append(_t("namesakes", self.code) % (len(picked), picked[0]["label"]))
+            note = _t("namesakes", self.code) % (len(picked), picked[0]["label"])
+            self.notes.append(note)
+            # Two people of one name must not read as one: said under the answer too.
+            if note not in self._namesake_notes:
+                self._namesake_notes.append(note)
         self._names[key] = [n["id"] for n in picked]
         if self._round == 1:
             self._asked.update(self._names[key])
@@ -1952,7 +1957,8 @@ class Run:
     @property
     def caveat(self):
         """Shown under the answer as is: the model may drop these."""
-        parts = [p for p in [self._joined_note(), self._reason] + self._table_notes if p]
+        parts = [p for p in self._namesake_notes + [self._joined_note(), self._reason]
+                 + self._table_notes if p]
         return "\n\n".join(parts) or None
 
     def _pending(self):

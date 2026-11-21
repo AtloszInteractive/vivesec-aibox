@@ -965,6 +965,8 @@ const M: Record<string, Tri> = {
   ],
   "Set the purpose": ["Cél megadása", "Angiv formålet", "Zweck angeben"],
   "Case reference": ["Ügyszám", "Sagsnummer", "Aktenzeichen"],
+  "e.g.": ["pl.", "f.eks.", "z. B."],
+  Example: ["Példa", "Eksempel", "Beispiel"],
   "Legal basis": ["Jogalap", "Retsgrundlag", "Rechtsgrundlage"],
   "Give the case reference or the legal basis before asking.": [
     "Kérdés előtt adja meg az ügyszámot vagy a jogalapot.",
@@ -1083,6 +1085,16 @@ const M: Record<string, Tri> = {
   ],
   Question: ["Kérdés", "Spørgsmål", "Frage"],
   "Relationship query": ["Kapcsolati lekérdezés", "Relationsforespørgsel", "Beziehungsabfrage"],
+  "Review list opened": [
+    "Felülvizsgálati lista megnyitása",
+    "Gennemgangsliste åbnet",
+    "Prüfliste geöffnet",
+  ],
+  "Review decisions viewed": [
+    "Felülvizsgálati döntések megtekintése",
+    "Gennemgangsbeslutninger vist",
+    "Prüfentscheidungen angesehen",
+  ],
   "Spreadsheet export": ["Excel-export", "Regnearkseksport", "Tabellenexport"],
   "Dossier export": ["Dosszié-export", "Dossiereksport", "Dossierexport"],
   "Investigation diagram": ["Vizsgálati ábra", "Undersøgelsesdiagram", "Untersuchungsdiagramm"],
@@ -2316,6 +2328,12 @@ const M: Record<string, Tri> = {
     "Anmodningen fortsætter i baggrunden.",
     "Die Anfrage läuft im Hintergrund weiter.",
   ],
+  "The question was stopped.": [
+    "A kérdés leállítva.",
+    "Spørgsmålet blev stoppet.",
+    "Die Frage wurde angehalten.",
+  ],
+  "Stopping…": ["Leállítás folyamatban…", "Stopper…", "Wird angehalten…"],
   "Background recovery will be available after the AI Box adapter is updated.": [
     "A háttérfeladatok helyreállítása az AI Box adapter frissítése után lesz elérhető.",
     "Gendannelse af baggrundsopgaver bliver tilgængelig, når AI Box-adapteren er opdateret.",

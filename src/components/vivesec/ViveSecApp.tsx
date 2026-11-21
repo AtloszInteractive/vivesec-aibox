@@ -31,8 +31,10 @@ import {
   createConversation,
   deleteConversation,
   deleteRagJob,
+  followRagJob,
   getConversation,
   getRagJob,
+  listChatJobs,
   listConversations,
   listDriveChildren,
   listDriveFiles,
@@ -270,6 +272,9 @@ type Message =
       kind: "thinking";
       startedAt: number;
       stage?: AdapterJobProgress;
+      /** The box job answering it: a chat question can be stopped. */
+      jobId?: string;
+      stopping?: boolean;
     }
   | ({
       id: string;
@@ -783,6 +788,26 @@ function toTaskStatus(s: string): ReportTask["status"] {
   return "On Track";
 }
 
+/** Closes a header menu on Escape or a press outside it. No covering layer:
+ *  the press that closes the menu also reaches the button it was meant for. */
+function useDismiss(open: boolean, close: () => void, ref: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    const onPress = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) close();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPress);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPress);
+    };
+  }, [open, close, ref]);
+}
+
 /* =========================================================== */
 
 export function ViveSecApp() {
@@ -794,7 +819,7 @@ export function ViveSecApp() {
 }
 
 function ViveSecAppInner() {
-  const { t, tm, lang } = useLang();
+  const { t, tm, lang, suggestLang } = useLang();
   const [messages, setMessages] = useState<Message[]>(() => [
     {
       id: "sys1",
@@ -894,6 +919,12 @@ function ViveSecAppInner() {
   const pendingThreadRef = useRef<Promise<string | null> | null>(null);
   const [conversationsSupported, setConversationsSupported] = useState<boolean | null>(null);
   const [threadsOpen, setThreadsOpen] = useState(false);
+  const threadsRef = useRef<HTMLDivElement>(null);
+  const agentMenuRef = useRef<HTMLDivElement>(null);
+  const closeThreads = useCallback(() => setThreadsOpen(false), []);
+  const closeAgentMenu = useCallback(() => setAgentMenuOpen(false), []);
+  useDismiss(threadsOpen, closeThreads, threadsRef);
+  useDismiss(agentMenuOpen, closeAgentMenu, agentMenuRef);
   const [threadBusy, setThreadBusy] = useState(false);
   const [threadDialog, setThreadDialog] = useState<
     { mode: "rename" | "delete"; id: string; title: string } | null
@@ -913,6 +944,10 @@ function ViveSecAppInner() {
   const [jobsSupported, setJobsSupported] = useState<boolean | null>(null);
   const jobsSupportedRef = useRef<boolean | null>(null);
   const hydratedJobsRef = useRef(new Set<string>());
+  // Chat questions the user stopped: their end is not reported as a failure.
+  const stoppedJobsRef = useRef(new Set<string>());
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   // Which speech engines this box actually has (adapter/voice.py); both off by
   // default, so a box without a voice backend looks exactly as it does today.
   const [voiceCaps, setVoiceCaps] = useState({ stt: false, tts: false });
@@ -966,6 +1001,7 @@ function ViveSecAppInner() {
       if (h.ok) setAnalyst(h.app?.mode === "analyst");
       if (h.ok) setWatchlist(Boolean(h.app?.watchlist));
       if (h.ok && h.app) setPurposeConfig(h.app.purpose);
+      if (h.ok) suggestLang(h.app?.defaultLanguage);
       if (h.ok) {
         const policy = h.chatPolicy;
         setChatPolicy(policy && ["locked_hybrid", "selectable_grounded", "selectable_hybrid"].includes(policy.policy)
@@ -979,7 +1015,7 @@ function ViveSecAppInner() {
       setBoxDetail(err instanceof Error ? err.message : "unreachable");
       return false;
     }
-  }, []);
+  }, [suggestLang]);
 
   useEffect(() => {
     void probeBox();
@@ -1712,6 +1748,110 @@ function ViveSecAppInner() {
     [chatProfile, resultIds, senderName],
   );
 
+  /** A chat question of this conversation still running on the box (the page
+   *  was reloaded meanwhile): shown again and followed to its answer. One that
+   *  failed while nobody watched says so once. */
+  const resumeChatJobs = useCallback(
+    async (threadId: string | null) => {
+      if (!drive) return;
+      let jobs: BackgroundJob[] | null;
+      try {
+        jobs = await listChatJobs(drive);
+      } catch {
+        return;
+      }
+      for (const job of jobs ?? []) {
+        if ((job.conversation_id ?? null) !== threadId) continue;
+        const active = job.status === "queued" || job.status === "running";
+        const failedUnseen =
+          !active && job.status !== "done" && !job.seen_ts && job.status !== "cancelled";
+        if (!active && !failedUnseen) continue;
+        const questionId = `job-q-${job.job_id}`;
+        const answerId = `job-a-${job.job_id}`;
+        const when = job.created ? hhmm(new Date(job.created * 1000)) : nowTs();
+        const question: Message = {
+          id: questionId,
+          role: "user",
+          name: senderName,
+          ts: when,
+          text: job.query ?? "",
+        };
+        const ended = (detail: string | null): Message => ({
+          id: answerId,
+          role: "ai",
+          name: "ViVeSec AI",
+          ts: nowTs(),
+          kind: "text",
+          tone: detail === null ? "normal" : "error",
+          text:
+            detail === null
+              ? tm("The question was stopped.")
+              : `${tm("The AI Box did not answer this question.")} (${detail})`,
+        });
+        // Already on screen (this tab asked it): nothing to put back.
+        const shown = (all: Message[]) =>
+          all.some(
+            (m) =>
+              m.id === answerId || ("kind" in m && m.kind === "thinking" && m.jobId === job.job_id),
+          );
+        if (shown(messagesRef.current)) continue;
+        setMessageProfiles((profiles) => ({
+          ...profiles,
+          [questionId]: chatProfile,
+          [answerId]: chatProfile,
+        }));
+        if (!active) {
+          setMessages((all) =>
+            shown(all) ? all : [...all, question, ended(job.error || job.status)],
+          );
+          void markRagJobSeen(job.job_id, drive).catch(() => undefined);
+          continue;
+        }
+        setMessages((all) =>
+          shown(all)
+            ? all
+            : [
+                ...all,
+                question,
+                {
+                  id: answerId,
+                  role: "ai",
+                  name: "ViVeSec AI",
+                  ts: when,
+                  kind: "thinking",
+                  startedAt: (job.started ?? job.created ?? Date.now() / 1000) * 1000,
+                  jobId: job.job_id,
+                },
+              ],
+        );
+        void followRagJob(job.job_id, drive, (stage) =>
+          setMessages((all) =>
+            all.map((m) =>
+              m.id === answerId && "kind" in m && m.kind === "thinking" ? { ...m, stage } : m,
+            ),
+          ),
+        ).then((res) => {
+          const stopped = stoppedJobsRef.current.has(job.job_id);
+          const card: Message = res.ok
+            ? buildLiveMessage(
+                answerId,
+                job.action as LiveAction | undefined,
+                job.query ?? "",
+                res,
+                undefined,
+                job.query,
+              )
+            : ended(stopped ? null : res.error || "error");
+          setMessages((all) => all.map((m) => (m.id === answerId ? card : m)));
+          if (res.ok) void refreshConversations();
+        });
+      }
+    },
+    // buildLiveMessage reads only render-time helpers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drive, chatProfile, senderName, tm, refreshConversations],
+  );
+
   /** An empty, not yet saved conversation: the box creates its thread with
    *  the first chat question (runLive). */
   const startDraft = useCallback(() => {
@@ -1742,13 +1882,14 @@ function ViveSecAppInner() {
         setConversationDrives(drives);
         setSelectedDrives(drives);
         showConversation(conversation.turns);
+        void resumeChatJobs(id);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : tm("The conversation could not be opened."));
       } finally {
         setThreadBusy(false);
       }
     },
-    [refreshConversations, showConversation, startDraft, threadScope, tm],
+    [refreshConversations, resumeChatJobs, showConversation, startDraft, threadScope, tm],
   );
 
   function newConversation() {
@@ -1841,7 +1982,12 @@ function ViveSecAppInner() {
     if (restoredRef.current !== storageKey) pendingThreadRef.current = null;
     void refreshConversations()
       .then((list) => {
-        if (cancelled || !list) return;
+        if (cancelled) return;
+        // Without threads every chat question lives in the one default thread.
+        if (!list) {
+          void resumeChatJobs(null);
+          return;
+        }
         if (restoredRef.current !== storageKey) {
           restoredRef.current = storageKey;
           const saved = window.localStorage.getItem(storageKey);
@@ -2163,9 +2309,21 @@ function ViveSecAppInner() {
         startedAt: Date.now(),
       },
     ]);
+    let jobId: string | null = null;
     try {
+      // The answer is waited for here however long it takes: the job list only
+      // holds jobs started there, so a question handed over would vanish.
       const res = await askRag({
         data: requestData,
+        untilDone: true,
+        onSubmitted: (id) => {
+          jobId = id;
+          setMessages((all) =>
+            all.map((m) =>
+              m.id === loadingId && "kind" in m && m.kind === "thinking" ? { ...m, jobId: id } : m,
+            ),
+          );
+        },
         onProgress: (stage) =>
           setMessages((all) =>
             all.map((m) =>
@@ -2173,23 +2331,6 @@ function ViveSecAppInner() {
             ),
           ),
       });
-      if (res.backgroundJobId) {
-        setMessages((all) => all.filter((message) => message.id !== loadingId));
-        setBackgroundJobs((jobs) => [
-          {
-            job_id: res.backgroundJobId as string,
-            status: "running",
-            action,
-            query: label,
-            created: Date.now() / 1000,
-            queue_position: null,
-          },
-          ...jobs.filter((job) => job.job_id !== res.backgroundJobId),
-        ]);
-        setMobilePane("results");
-        toast.info(tm("The request continues in the background."));
-        return;
-      }
       if (!res.ok) throw new Error(res.error || "adapter error");
       const term = cmd ? rest : v;
       const fileHits = action === "search" && term ? await searchFileNames(term) : undefined;
@@ -2205,6 +2346,7 @@ function ViveSecAppInner() {
     } catch (err) {
       // No mock fallback: the failure is shown as a failure.
       const detail = err instanceof Error ? err.message : "error";
+      const stopped = jobId !== null && stoppedJobsRef.current.has(jobId);
       // The box asked for the purpose, or refused the one given (its setting
       // changed under the tab): ask again, with the value to correct.
       if (/purpose_(required|invalid)/.test(detail)) setPurposeDialog(true);
@@ -2225,8 +2367,10 @@ function ViveSecAppInner() {
                 name: "ViVeSec AI",
                 ts: nowTs(),
                 kind: "text",
-                tone: "error" as const,
-                text: `${tm("The AI Box did not answer this question.")} (${detail})`,
+                tone: stopped ? ("normal" as const) : ("error" as const),
+                text: stopped
+                  ? tm("The question was stopped.")
+                  : `${tm("The AI Box did not answer this question.")} (${detail})`,
                 // The box kept the parts it read; running it again continues there.
                 ...(action === "analyze" && pane === "chat" && extras?.files?.[0]
                   ? { retryAnalyze: extras.files[0] }
@@ -2235,10 +2379,33 @@ function ViveSecAppInner() {
             : m,
         ),
       );
-      toast.error(tm("The AI Box did not answer this question."));
-      void probeBox();
+      if (!stopped) {
+        toast.error(tm("The AI Box did not answer this question."));
+        void probeBox();
+      }
     } finally {
       setLiveBusy(false);
+    }
+  }
+
+  /** Stops a chat question on the box; its poll then ends as cancelled. */
+  async function stopChatJob(jobId: string) {
+    stoppedJobsRef.current.add(jobId);
+    setMessages((all) =>
+      all.map((m) =>
+        "kind" in m && m.kind === "thinking" && m.jobId === jobId ? { ...m, stopping: true } : m,
+      ),
+    );
+    try {
+      await cancelRagJob(jobId, drive || undefined);
+    } catch (error) {
+      stoppedJobsRef.current.delete(jobId);
+      setMessages((all) =>
+        all.map((m) =>
+          "kind" in m && m.kind === "thinking" && m.jobId === jobId ? { ...m, stopping: false } : m,
+        ),
+      );
+      toast.error(error instanceof Error ? error.message : tm("The job could not be cancelled."));
     }
   }
 
@@ -2670,7 +2837,7 @@ function ViveSecAppInner() {
                   </button>
                 )}
                 {conversationsSupported && (
-                  <div className="relative flex shrink-0 items-center gap-1">
+                  <div ref={threadsRef} className="relative flex shrink-0 items-center gap-1">
                     <button
                       type="button"
                       onClick={() => setThreadsOpen((v) => !v)}
@@ -2706,7 +2873,6 @@ function ViveSecAppInner() {
                     </button>
                     {threadsOpen && (
                       <>
-                        <div className="fixed inset-0 z-40" onClick={() => setThreadsOpen(false)} />
                         <div
                           role="dialog"
                           aria-label={tm("Conversations")}
@@ -2807,7 +2973,7 @@ function ViveSecAppInner() {
                   )}
                 </button>
                 )}
-                <div className="relative ml-auto">
+                <div ref={agentMenuRef} className="relative ml-auto">
                   <button
                     onClick={() => setAgentMenuOpen((v) => !v)}
                     className="flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/[0.04] px-2.5 py-1 text-[11px] text-ink/70 transition hover:bg-ink/10"
@@ -2823,7 +2989,6 @@ function ViveSecAppInner() {
                   </button>
                   {agentMenuOpen && (
                     <>
-                      <div className="fixed inset-0 z-40" onClick={() => setAgentMenuOpen(false)} />
                       <div
                         role="dialog"
                         aria-label="AI agents"
@@ -2888,6 +3053,7 @@ function ViveSecAppInner() {
                         onOpenFile={openFile}
                         onAsk={sendText}
                         onAnalyze={liveBusy ? undefined : analyzeCited}
+                        onStop={(id) => void stopChatJob(id)}
                       />
                     </div>
                   ))}
@@ -3478,6 +3644,7 @@ function ViveSecAppInner() {
                           onUpdateSlide={(sid, patch) => updateSlide(m.id, sid, patch)}
                           onEdit={(patch) => patchMessage(m.id, patch)}
                           onOpenFile={openFile}
+                          onStop={(id) => void stopChatJob(id)}
                         />
                       </div>
                     ))
@@ -3593,6 +3760,8 @@ function ViveSecAppInner() {
                 drive={drive}
                 initial={graphInitial}
                 watchlist={watchlist}
+                purposeNote={purposeMissing ? tm(purposeText(purposeConfig, "banner")) : null}
+                onAskPurpose={() => setPurposeDialog(true)}
                 onClose={() => {
                   setGraphOpen(false);
                   setGraphInitial(null);
@@ -3785,10 +3954,17 @@ function PurposeDialog({
               value={caseRef}
               onChange={(e) => setCaseRef(e.target.value)}
               maxLength={64}
-              className={`mb-1 w-full rounded-lg border bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none focus:border-ink/30 ${caseOk ? "border-ink/15" : "border-rose-400/60"}`}
+              placeholder={
+                config.caseRefExample ? `${tm("e.g.")} ${config.caseRefExample}` : undefined
+              }
+              className={`mb-1 w-full rounded-lg border bg-shade/30 px-3 py-2 text-[13px] text-ink outline-none placeholder:text-ink/35 focus:border-ink/30 ${caseOk ? "border-ink/15" : "border-rose-400/60"}`}
             />
             <div className="mb-3 min-h-4 text-[11px] text-rose-700 dark:text-rose-300">
-              {caseOk ? "" : tm("The case reference does not have the expected form.")}
+              {caseOk
+                ? ""
+                : config.caseRefExample
+                  ? `${tm("The case reference does not have the expected form.")} ${tm("Example")}: ${config.caseRefExample}`
+                  : tm("The case reference does not have the expected form.")}
             </div>
           </>
         )}
@@ -4507,6 +4683,7 @@ function MessageView({
   onOpenFile,
   onAsk,
   onAnalyze,
+  onStop,
   inChat,
 }: {
   msg: Message;
@@ -4519,6 +4696,8 @@ function MessageView({
   onAsk?: (text: string) => void;
   /** Starts the full analysis of a cited document; absent outside the chat. */
   onAnalyze?: (path: string) => void;
+  /** Stops the box job a waiting answer belongs to. */
+  onStop?: (jobId: string) => void;
   /** In the conversation the user's own message already states the request. */
   inChat?: boolean;
 }) {
@@ -4585,7 +4764,14 @@ function MessageView({
         </div>
       )}
 
-      {msg.kind === "thinking" && <ThinkingBubble startedAt={msg.startedAt} stage={msg.stage} />}
+      {msg.kind === "thinking" && (
+        <ThinkingBubble
+          startedAt={msg.startedAt}
+          stage={msg.stage}
+          onStop={msg.jobId && onStop ? () => onStop(msg.jobId as string) : undefined}
+          stopping={msg.stopping}
+        />
+      )}
 
       {msg.kind === "summary" && (
         <SummaryCard msg={msg} onToggle={onToggleAction} onEdit={onEdit} />
@@ -4644,7 +4830,17 @@ function stageLabel(
 
 /** Waiting state for a local answer. The elapsed counter is the honest part:
  *  it proves the request is still alive when generation takes a while. */
-function ThinkingBubble({ startedAt, stage }: { startedAt: number; stage?: AdapterJobProgress }) {
+function ThinkingBubble({
+  startedAt,
+  stage,
+  onStop,
+  stopping,
+}: {
+  startedAt: number;
+  stage?: AdapterJobProgress;
+  onStop?: () => void;
+  stopping?: boolean;
+}) {
   const { tm } = useLang();
   const [elapsed, setElapsed] = useState(0);
 
@@ -4672,9 +4868,26 @@ function ThinkingBubble({ startedAt, stage }: { startedAt: number; stage?: Adapt
         ))}
       </span>
       <span className="vvs-think-label text-[13.5px]">
-        {stageLabel(tm, stage) ?? tm("The local model is thinking…")}
+        {stopping ? tm("Stopping…") : (stageLabel(tm, stage) ?? tm("The local model is thinking…"))}
       </span>
-      {elapsed >= 3 && <span className="text-[11px] tabular-nums text-ink/35">{elapsed}s</span>}
+      {elapsed >= 3 && (
+        <span className="text-[11px] tabular-nums text-ink/35">
+          {elapsed >= 60
+            ? `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`
+            : `${elapsed}s`}
+        </span>
+      )}
+      {onStop && elapsed >= 3 && !stopping && (
+        <button
+          type="button"
+          onClick={onStop}
+          title={tm("Stop")}
+          aria-label={tm("Stop")}
+          className="ml-1 grid h-6 w-6 place-items-center rounded-md text-ink/45 transition hover:bg-ink/[0.08] hover:text-ink"
+        >
+          <Square className="h-3 w-3 fill-current" />
+        </button>
+      )}
     </div>
   );
 }

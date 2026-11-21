@@ -27,6 +27,7 @@ import {
   adapterDriveFile,
   adapterDriveFiles,
   adapterFeedback,
+  adapterFollowJob,
   adapterFolderChildren,
   adapterGeneratedFiles,
   adapterGetJob,
@@ -222,9 +223,15 @@ const askInput = z.object({
 export async function askRag({
   data,
   onProgress,
+  onSubmitted,
+  untilDone,
 }: {
   data: z.input<typeof askInput>;
   onProgress?: (progress: AdapterJobProgress) => void;
+  /** The box accepted the question as this job (it can be stopped from now). */
+  onSubmitted?: (jobId: string) => void;
+  /** Wait for the answer however long it takes (a chat question). */
+  untilDone?: boolean;
 }): Promise<RagAskResult> {
   const empty: RagAskResult = {
     ok: false,
@@ -258,6 +265,7 @@ export async function askRag({
         topK: data.action ? undefined : 5,
       },
       onProgress,
+      { onSubmitted, untilDone },
     );
 
     return ragResultFromAdapter(result);
@@ -351,6 +359,33 @@ export async function submitRagJob({ data }: { data: z.input<typeof askInput> })
 
 export function listRagJobs(drive?: string): Promise<BackgroundJob[] | null> {
   return adapterListJobs({ drive });
+}
+
+/** The caller's chat questions on the box (running ones are followed again
+ *  after a reload); null when the box has no job store. */
+export function listChatJobs(drive?: string): Promise<BackgroundJob[] | null> {
+  return adapterListJobs({ drive }, "chat");
+}
+
+/** Waits for a chat question that is already running on the box. */
+export async function followRagJob(
+  jobId: string,
+  drive?: string,
+  onProgress?: (progress: AdapterJobProgress) => void,
+): Promise<RagAskResult> {
+  try {
+    return ragResultFromAdapter(await adapterFollowJob(jobId, { drive }, onProgress));
+  } catch (err) {
+    return {
+      ok: false,
+      answer: "",
+      mode: "",
+      backend: "",
+      sources: [],
+      citations: [],
+      error: err instanceof Error ? err.message : "bridge error",
+    };
+  }
 }
 
 export async function getRagJob(jobId: string, drive?: string): Promise<{

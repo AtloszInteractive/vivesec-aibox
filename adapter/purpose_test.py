@@ -51,7 +51,18 @@ class PurposeTest(unittest.TestCase):
         self.assertEqual({}, purpose.parse({"case_ref": "x"}, purpose.settings({})))
         self.assertEqual({"mode": "required", "fields": ["case_ref", "legal_basis"],
                           "require": "any", "legal_bases": ["Bv. tv. 21. §", "Infotv. 5. §"],
-                          "case_ref_pattern": r"BV-\d{4}/\d+"}, purpose.public(required))
+                          "case_ref_pattern": r"BV-\d{4}/\d+", "case_ref_example": None},
+                         purpose.public(required))
+
+    def test_the_example_of_the_form_is_shown_only_when_the_pattern_takes_it(self):
+        env = {"ADAPTER_PURPOSE": "required", "ADAPTER_CASE_REF_PATTERN": r"\d{4}/\d+(/\d+)?"}
+        shown = purpose.settings(dict(env, ADAPTER_CASE_REF_EXAMPLE=" 2026/1113/2310 "))
+        self.assertEqual("2026/1113/2310", purpose.public(shown)["case_ref_example"])
+        with patch("sys.stderr"):
+            wrong = purpose.settings(dict(env, ADAPTER_CASE_REF_EXAMPLE="BV-2026/1"))
+        self.assertIsNone(purpose.public(wrong)["case_ref_example"])
+        free = purpose.settings({"ADAPTER_PURPOSE": "required", "ADAPTER_CASE_REF_EXAMPLE": "X-1"})
+        self.assertEqual("X-1", purpose.public(free)["case_ref_example"])
 
     def test_a_case_reference_alone_can_be_required(self):
         # BV (2026-11-13): the case reference is mandatory, a legal basis is not asked for.
@@ -269,6 +280,13 @@ class PurposeHttpTest(unittest.TestCase):
         self.assertNotIn("Kovács", json.dumps(record, ensure_ascii=False))
         status, out = self.request("status", {})
         self.assertEqual("required", out["app"]["purpose"]["mode"])
+
+    def test_status_names_the_screen_language_a_new_user_starts_with(self):
+        self.assertIsNone(self.request("status", {})[1]["app"]["default_language"])
+        with patch.object(self.service, "UI_LANGUAGE", self.service._parse_ui_language(" HU ")):
+            self.assertEqual("hu", self.request("status", {})[1]["app"]["default_language"])
+        # An unknown value leaves it to the browser.
+        self.assertEqual("", self.service._parse_ui_language("klingon"))
 
     def test_a_job_logs_its_outcome(self):
         status, sub = self.request("ui/ask", {"query": "Ki?", "case_ref": "BV-1"})

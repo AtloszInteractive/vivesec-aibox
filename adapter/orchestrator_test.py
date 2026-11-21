@@ -326,6 +326,8 @@ class RunTest(unittest.TestCase):
         self.assertIn("meglátogatta", facts[0]["text"])
         self.assertEqual("/storage/drives/ops/a.txt", facts[0]["source_path"])
         self.assertEqual(["Kovács János"], r.info()["entities"])
+        # Under the answer too, as is: the model may drop it from the text.
+        self.assertIn("2 külön bejegyzés viseli a „Kovács János” nevet", r.caveat)
 
     def test_partial_name_with_different_people_is_asked_back(self):
         with self.assertRaises(orchestrator.Clarify) as cm:

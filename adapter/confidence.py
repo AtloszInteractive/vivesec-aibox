@@ -23,7 +23,9 @@ STANDARD_REFUSAL); every displayed answer carries the mandatory
 footer(), and each band carries the spec user message (band message + the
 amber "degraded metric" warning flag).
 
-Bands: >=85 green | 60-84 amber | <60 red.
+Bands: >=85 green | 60-84 amber | <60 red. An answer with fields left as '?'
+(the task template's "CONTEXT does not say") is at most amber, flagged as
+`unfilled_fields`.
 
 Pure stdlib, no I/O — unit-testable.
 """
@@ -92,6 +94,9 @@ _CIT_RE = re.compile(r"\[#\d+\]")
 _ENUM_RE = re.compile(r"(?m)^[\s>#*+-]*\d+[.):]\s")
 _SLIDE_RE = re.compile(r"(?i)\bslide\s+\d+\s*[:.]")
 _WORD_RE = re.compile(r"[^\W\d_]{4,}", re.UNICODE)
+# A field the task template filled with '?' (CONTEXT does not say): "Date: ?",
+# "| ? |", "Owner | ?".
+_UNFILLED_RE = re.compile(r"(?m)(?:[:|]|^)[ \t*_]*\?[ \t*_]*(?:\[#\d+\][ \t]*)*(?=[|;,]|$)")
 
 
 def _numbers(text):
@@ -341,11 +346,18 @@ def score(contexts, answer, question=None, now=None, history=None,
         achievable += 10
 
     pct = int(round(100.0 * achieved / achievable)) if achievable else 0
-    band = GREEN if pct >= 85 else (AMBER if pct >= 60 else RED)
     # Spec (amber): flag the exact metrics that degraded the score.
     degraded = sorted(
         name for name, c in components.items()
         if c.get("max", 0) > 0 and c["points"] < c["max"])
+    # Fields left as '?' are grounded but missing: such an answer is not a
+    # green one, whatever its retrieval scored.
+    unfilled = len(_UNFILLED_RE.findall(answer or "")) if has_answer else 0
+    if unfilled:
+        components["unfilled_fields"] = {"count": unfilled}
+        degraded.append("unfilled_fields")
+        pct = min(pct, 84)
+    band = GREEN if pct >= 85 else (AMBER if pct >= 60 else RED)
     return {
         "score": pct,
         "band": band,

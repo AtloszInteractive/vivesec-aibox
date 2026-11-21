@@ -107,7 +107,12 @@ class DeepTest(unittest.TestCase):
             contexts, info, rag, _, _ = self.run_deep()
         self.assertEqual((7, 3, True), (info["matched"], info["read"], info["partial"]))
         self.assertEqual([0, 2], [b["offset"] for p, b in rag.calls if p == "/rag/match_chunks"])
-        self.assertIn("R\u00e9szleges eredm\u00e9ny: 7 r\u00e9szlet", contexts[0]["text"])
+        self.assertIn("R\u00e9szleges eredm\u00e9ny: az \u00d6n sz\u00e1m\u00e1ra "
+                      "l\u00e1that\u00f3 dokumentumok k\u00f6z\u00fcl 7 r\u00e9szlet",
+                      contexts[0]["text"])
+        self.assertIn("csak az els\u0151 3-t", contexts[0]["text"])
+        # A capped reading never also claims that every passage was read.
+        self.assertNotIn("Teljes \u00e1tn\u00e9z\u00e9s", contexts[0]["text"])
 
     def test_documents_without_text_are_named_in_the_note(self):
         contexts, info, rag, _, _ = self.run_deep(skipped=5)

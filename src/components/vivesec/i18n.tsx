@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { translateExact } from "./i18n-data";
 
 /* =========================================================================
@@ -452,34 +460,60 @@ export function translateText(text: string, lang: Lang): string {
 type LanguageContextValue = {
   lang: Lang;
   setLang: (l: Lang) => void;
+  /** The box's default language (ADAPTER_UI_LANGUAGE): used until the user picks one. */
+  suggestLang: (code: string | undefined) => void;
   t: Dict;
   tm: (text: string) => string;
 };
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
+/** The first supported language the browser asks for, else English. */
+function browserLang(): Lang {
+  const wanted = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const tag of wanted) {
+    const code = (tag || "").slice(0, 2).toUpperCase() as Lang;
+    if (code in DICTS) return code;
+  }
+  return "EN";
+}
+
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [lang, setLangState] = useState<Lang>("EN");
+  // The user's own choice wins over the box's default and the browser's.
+  const chosen = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = window.localStorage.getItem(STORAGE_KEY) as Lang | null;
-    if (saved && saved in DICTS) setLangState(saved);
+    if (saved && saved in DICTS) {
+      chosen.current = true;
+      setLangState(saved);
+    } else {
+      setLangState(browserLang());
+    }
   }, []);
 
   const setLang = useCallback((l: Lang) => {
+    chosen.current = true;
     setLangState(l);
     if (typeof window !== "undefined") window.localStorage.setItem(STORAGE_KEY, l);
+  }, []);
+
+  const suggestLang = useCallback((code: string | undefined) => {
+    const l = (code ?? "").toUpperCase() as Lang;
+    if (!chosen.current && l in DICTS) setLangState(l);
   }, []);
 
   const value = useMemo<LanguageContextValue>(
     () => ({
       lang,
       setLang,
+      suggestLang,
       t: DICTS[lang] ?? EN,
       tm: (text: string) => translateText(text, lang),
     }),
-    [lang, setLang],
+    [lang, setLang, suggestLang],
   );
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
@@ -489,7 +523,7 @@ export function useLang(): LanguageContextValue {
   const ctx = useContext(LanguageContext);
   if (!ctx) {
     // Safe fallback so components never crash outside the provider.
-    return { lang: "EN", setLang: () => {}, t: EN, tm: (s: string) => s };
+    return { lang: "EN", setLang: () => {}, suggestLang: () => {}, t: EN, tm: (s: string) => s };
   }
   return ctx;
 }

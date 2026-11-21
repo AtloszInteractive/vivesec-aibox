@@ -115,6 +115,12 @@ class SchedulerHttpTest(unittest.TestCase):
         self.assertEqual(queued["queue_position"], 1)
         self.assertNotIn(interactive["job_id"],
                          [job["job_id"] for job in listing["jobs"]])
+        # A chat question is listed on its own, so a reloaded page can follow it.
+        code, chats = self.request("/api/v1/ui/jobs?origin=chat", method="GET")
+        self.assertEqual(code, 200)
+        self.assertEqual([(interactive["job_id"], "chat now", None)],
+                         [(job["job_id"], job["query"], job["conversation_id"])
+                          for job in chats["jobs"]])
 
         code, cancelled = self.request("/api/v1/ui/jobs/cancel",
                                        {"job_id": second["job_id"]})

@@ -106,19 +106,24 @@ _TEXT = {
               "d\u00fcrfen, die %s enth\u00e4lt, wurde gelesen -- %d Passagen in %d "
               "Dokumenten; %d relevante Befunde.",
     },
+    # A capped reading: said instead of "coverage", never beside it.
     "partial": {
-        "en": "Partial result: %d passages contain the terms, only the first %d (in path "
-              "order) were read. Narrow the question (a person, a period, a folder) for a "
-              "complete reading.",
-        "hu": "R\u00e9szleges eredm\u00e9ny: %d r\u00e9szlet tartalmazza a keresett "
-              "kifejez\u00e9seket, ebb\u0151l csak az els\u0151 %d-t (el\u00e9r\u00e9si "
-              "\u00fat szerinti sorrendben) olvastam el. A teljes \u00e1tn\u00e9z\u00e9shez "
-              "sz\u0171k\u00edtse a k\u00e9rd\u00e9st (szem\u00e9ly, id\u0151szak, mappa).",
-        "da": "Delvist resultat: %d passager indeholder ordene, kun de f\u00f8rste %d (efter "
-              "sti) er l\u00e6st. Afgr\u00e6ns sp\u00f8rgsm\u00e5let (en person, en periode, "
-              "en mappe) for en fuld gennemgang.",
-        "de": "Teilergebnis: %d Passagen enthalten die Begriffe, nur die ersten %d (nach "
-              "Pfad) wurden gelesen. Schr\u00e4nken Sie die Frage ein (eine Person, ein "
+        "en": "Partial result: %d passages in %d of the documents you may see contain %s; "
+              "only the first %d of them (in path order) were read; %d relevant findings. "
+              "Narrow the question (a person, a period, a folder) for a complete reading.",
+        "hu": "R\u00e9szleges eredm\u00e9ny: az \u00d6n sz\u00e1m\u00e1ra l\u00e1that\u00f3 "
+              "dokumentumok k\u00f6z\u00fcl %d r\u00e9szlet (%d dokumentumban) tartalmazza "
+              "ezt: %s; ebb\u0151l csak az els\u0151 %d-t (el\u00e9r\u00e9si \u00fat "
+              "szerinti sorrendben) olvastam el; %d relev\u00e1ns meg\u00e1llap\u00edt\u00e1s. "
+              "A teljes \u00e1tn\u00e9z\u00e9shez sz\u0171k\u00edtse a k\u00e9rd\u00e9st "
+              "(szem\u00e9ly, id\u0151szak, mappa).",
+        "da": "Delvist resultat: %d passager i %d af de dokumenter, du har adgang til, "
+              "indeholder %s; kun de f\u00f8rste %d af dem (efter sti) er l\u00e6st; %d "
+              "relevante fund. Afgr\u00e6ns sp\u00f8rgsm\u00e5let (en person, en periode, en "
+              "mappe) for en fuld gennemgang.",
+        "de": "Teilergebnis: %d Passagen in %d der Dokumente, die Sie sehen d\u00fcrfen, "
+              "enthalten %s; nur die ersten %d davon (nach Pfad) wurden gelesen; %d "
+              "relevante Befunde. Schr\u00e4nken Sie die Frage ein (eine Person, ein "
               "Zeitraum, ein Ordner), um alles zu lesen.",
     },
     "trimmed": {
@@ -429,10 +434,12 @@ def read_all(post, scope_body, question, terms, lang=None, mode="any", path_pref
         if key not in seen:
             seen.add(key)
             unique.append(f)
-    notes = [_t("coverage", lang) % (shown, len(chunks), documents, len(unique))
-             if total else _t("none", lang) % shown]
-    if total > len(chunks):
-        notes.append(_t("partial", lang) % (total, len(chunks)))
+    if not total:
+        notes = [_t("none", lang) % shown]
+    elif total > len(chunks):
+        notes = [_t("partial", lang) % (total, documents, shown, len(chunks), len(unique))]
+    else:
+        notes = [_t("coverage", lang) % (shown, len(chunks), documents, len(unique))]
     if unreadable:
         notes.append(_t("unreadable", lang) % unreadable)
     if ocr_pending:

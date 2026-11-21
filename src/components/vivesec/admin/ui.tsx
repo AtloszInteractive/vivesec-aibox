@@ -7,21 +7,13 @@ import { Loader2, X } from "lucide-react";
 import { AdminError } from "@/lib/auth/admin-client";
 import { ACCENT, ACCENT_TEXT, ON_ACCENT } from "../brand";
 import type { Lang } from "../i18n";
+import { formatDateTime } from "../date-format";
 
 export type Tm = (text: string) => string;
 
-const LOCALES: Record<Lang, string> = { EN: "en-GB", HU: "hu-HU", DA: "da-DK", DE: "de-DE" };
-
 export function formatTime(seconds: number | null | undefined, lang: Lang): string {
   if (!seconds) return "—";
-  return new Date(seconds * 1000).toLocaleString(LOCALES[lang] ?? "en-GB", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return formatDateTime(seconds * 1000, lang);
 }
 
 /** `{n}`-style placeholders filled in after the translation. */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import { useLang } from "./i18n";
+import { formatDateTime } from "./date-format";
 import { GraphCanvas, type Emphasis, type ExportRequest } from "./GraphCanvas";
 import { mergeGraphs, withDetails } from "./graph-model";
 import { pairKey, TYPE_COLOR, TYPE_NAME, type RelationInfo } from "./graph-style";
@@ -102,6 +103,8 @@ export function GraphPanel({
   drive,
   initial,
   watchlist = false,
+  purposeNote = null,
+  onAskPurpose,
   onClose,
   onOpenSource,
 }: {
@@ -110,6 +113,10 @@ export function GraphPanel({
   watchlist?: boolean;
   /** An investigation subgraph the Explore tab shows instead of the search. */
   initial?: GraphInvestigationView | null;
+  /** What the box still needs before any query here (the case reference): shown at once. */
+  purposeNote?: string | null;
+  /** Opens the purpose dialog (also when the box answers 428). */
+  onAskPurpose?: () => void;
   onClose: () => void;
   onOpenSource: (source: GraphSource) => void;
 }) {
@@ -170,7 +177,7 @@ export function GraphPanel({
     { id: "querylog", label: tm("Query log"), icon: ScrollText },
   ];
 
-  return (
+  const panel = (
     <div
       className="absolute inset-0 z-[60] flex flex-col text-foreground"
       style={{ backgroundColor: BG }}
@@ -201,6 +208,21 @@ export function GraphPanel({
           <X className="h-4 w-4" />
         </button>
       </div>
+      {purposeNote && (
+        <div className="mx-4 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-rose-400/40 bg-rose-400/10 px-3 py-2 text-xs text-rose-800 dark:text-rose-100">
+          <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">{purposeNote}</span>
+          {onAskPurpose && (
+            <button
+              onClick={onAskPurpose}
+              className="rounded-full px-3 py-1 text-xs font-medium"
+              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+            >
+              {tm("Set the purpose")}
+            </button>
+          )}
+        </div>
+      )}
       {failure === "disabled" ? (
         <Notice text={tm(FAILURE_TEXT.disabled)} />
       ) : (
@@ -254,7 +276,12 @@ export function GraphPanel({
       )}
     </div>
   );
+  return <AskPurpose.Provider value={onAskPurpose ?? null}>{panel}</AskPurpose.Provider>;
 }
+
+/** Opens the purpose dialog of the chat: a query refused for the missing
+ *  case reference (428) asks for it right away. */
+const AskPurpose = createContext<(() => void) | null>(null);
 
 function Notice({ text, tone = "muted" }: { text: string; tone?: "muted" | "warn" }) {
   return (
@@ -273,17 +300,23 @@ function Notice({ text, tone = "muted" }: { text: string; tone?: "muted" | "warn
 
 function useFailure() {
   const { tm } = useLang();
+  const askPurpose = useContext(AskPurpose);
   const [failure, setFailure] = useState<GraphFailure | null>(null);
-  const run = useCallback(async <T,>(work: () => Promise<T>): Promise<T | null> => {
-    try {
-      const out = await work();
-      setFailure(null);
-      return out;
-    } catch (err) {
-      setFailure(graphFailure(err));
-      return null;
-    }
-  }, []);
+  const run = useCallback(
+    async <T,>(work: () => Promise<T>): Promise<T | null> => {
+      try {
+        const out = await work();
+        setFailure(null);
+        return out;
+      } catch (err) {
+        const kind = graphFailure(err);
+        setFailure(kind);
+        if (kind === "purpose") askPurpose?.();
+        return null;
+      }
+    },
+    [askPurpose],
+  );
   const notice = failure ? <Notice text={tm(FAILURE_TEXT[failure])} tone="warn" /> : null;
   return { run, notice };
 }
@@ -585,6 +618,14 @@ function ExploreTab({
             />
             {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-ink/50" />}
           </div>
+          <button
+            disabled={!text.trim() || busy}
+            onClick={() => void search("focus")}
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+            style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+          >
+            <Search className="h-3.5 w-3.5" /> {tm("Search")}
+          </button>
           <select
             value={hops}
             onChange={(e) => {
@@ -1736,7 +1777,7 @@ function PairDetails({
 }
 
 function DecidedReview({ drive }: { drive: string }) {
-  const { tm } = useLang();
+  const { tm, lang } = useLang();
   const reason = useReasonText();
   const { run, notice } = useFailure();
   const [items, setItems] = useState<GraphReviewDecision[] | null>(null);
@@ -1807,7 +1848,7 @@ function DecidedReview({ drive }: { drive: string }) {
                 <span>
                   {[
                     item.by,
-                    item.at ? new Date(item.at * 1000).toLocaleString() : "",
+                    item.at ? formatDateTime(item.at * 1000, lang) : "",
                     item.reason ? reason(item.reason) : "",
                   ]
                     .filter(Boolean)
@@ -1853,9 +1894,14 @@ const QUERY_KIND: Record<string, string> = {
   "export:investigation": "Spreadsheet export",
   "export:dossier": "Dossier export",
   "graph:investigation": "Investigation diagram",
+  "graph:review": "Review list opened",
+  "graph:review-history": "Review decisions viewed",
   "summary:investigation": "Person summaries",
   "querylog:view": "Query log view",
 };
+
+// SHA-256 of the empty text: a logged view that had no question to keep.
+const EMPTY_QUESTION = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 function queryKind(kind: string): string {
   return QUERY_KIND[kind] ?? (kind.startsWith("graph:") ? "Relationship query" : kind);
@@ -1864,7 +1910,7 @@ function queryKind(kind: string): string {
 /** The query log (concept 5.3): an analyst sees their own queries, a leader
  *  everyone's. Documents outside the viewer's access are only counted. */
 function QueryLogTab({ drive }: { drive: string }) {
-  const { tm } = useLang();
+  const { tm, lang } = useLang();
   const [inputs, setInputs] = useState({ from: "", to: "", user: "", caseRef: "" });
   const [applied, setApplied] = useState(inputs);
   const [data, setData] = useState<QueryLog | null>(null);
@@ -2002,7 +2048,7 @@ function QueryLogTab({ drive }: { drive: string }) {
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-medium text-ink">{tm(queryKind(rec.kind))}</span>
-                <span className="text-ink/50">{new Date(rec.ts).toLocaleString()}</span>
+                <span className="text-ink/50">{formatDateTime(rec.ts, lang)}</span>
                 {leader && <span className="text-ink/70">{rec.user}</span>}
                 {rec.case_ref && (
                   <span className="rounded-full border border-ink/15 px-2 py-0.5 text-[11px] text-ink/70">
@@ -2016,15 +2062,16 @@ function QueryLogTab({ drive }: { drive: string }) {
                 )}
               </div>
               <div className="mt-1 break-words text-ink/80">
-                {rec.question ?? (
-                  <span className="text-ink/45">
-                    {`${tm(
-                      rec.sealed
-                        ? "Protected query: only authorised members see its text and sources (fingerprint)"
-                        : "Question text not kept (fingerprint only)",
-                    )}: ${rec.question_sha256.slice(0, 12)}…`}
-                  </span>
-                )}
+                {rec.question ??
+                  (rec.question_sha256 === EMPTY_QUESTION ? null : (
+                    <span className="text-ink/45">
+                      {`${tm(
+                        rec.sealed
+                          ? "Protected query: only authorised members see its text and sources (fingerprint)"
+                          : "Question text not kept (fingerprint only)",
+                      )}: ${rec.question_sha256.slice(0, 12)}…`}
+                    </span>
+                  ))}
               </div>
               {sources.length > 0 && (
                 <div className="mt-1 space-y-0.5 text-[11px] text-ink/50">
