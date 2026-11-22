@@ -49,6 +49,7 @@ from store import (  # noqa: E402
     MIN_SCORE_ACTIVE,
     REACCENT_ACTIVE,
     REACCENT_MAX_CHUNKS,
+    SPREAD_MARGIN,
     TOKEN_TTL_SECONDS,
     _decode_head,
     _doc_id,
@@ -883,7 +884,10 @@ class SqliteVecStore:
                 return [], {"chunk_hits_count": total, "estimated_tokens": 0}
 
             k = min(k, total)
-            pool_size = min(max(k * 8, 40), 256)
+            pool_size = retrieval.pool_size(k)
+            # The dense search looks further only for spreading candidates
+            # (retrieval.spread); the ranking fuses the first pool_size alone.
+            wide_size = retrieval.spread_pool_size(k, SPREAD_MARGIN)
             marks = ",".join("?" * len(scope))
             clause = "c.corpus_id IN (%s)" % marks
             bindings = list(scope)
@@ -914,12 +918,12 @@ class SqliteVecStore:
                             "FROM chunks c JOIN documents d ON d.doc_id=c.doc_id "
                             "JOIN chunk_vectors v ON v.rowid=c.vec_rowid WHERE " + clause +
                             " AND c.corpus_id=? ORDER BY distance LIMIT ?",
-                            [blob] + bindings + [cid, pool_size]).fetchall()
+                            [blob] + bindings + [cid, wide_size]).fetchall()
                     else:
                         rows = self._conn.execute(
                             "SELECT chunk_id, distance FROM chunk_vectors "
                             "WHERE corpus_id=? AND embedding MATCH ? AND k=? ORDER BY distance",
-                            (cid, blob, min(pool_size, totals[cid])),
+                            (cid, blob, min(wide_size, totals[cid])),
                         ).fetchall()
                     for chunk_id, distance in rows:
                         score = 1.0 - float(distance)
@@ -932,9 +936,12 @@ class SqliteVecStore:
                 # sub-questions themselves are interleaved afterwards, so a
                 # strong corpus cannot take every slot from a sub-question.
                 kept.sort(key=lambda hit: hit[1], reverse=True)
-                runs.append(kept[:pool_size])
-            dense = query_split.interleave(runs, pool_size)
-            dense_scores = dict(dense)
+                runs.append(kept[:wide_size])
+            dense = query_split.interleave([run[:pool_size] for run in runs], pool_size)
+            ranked_ids = {chunk_id for chunk_id, _ in dense}
+            further = [hit for hit in query_split.interleave(runs, wide_size)
+                       if hit[0] not in ranked_ids]
+            dense_scores = dict(dense + further)
             query_terms = retrieval.terms(question)
             lexical = []
             if query_terms:
@@ -954,11 +961,15 @@ class SqliteVecStore:
                     clause + " AND c.chunk_id=?", bindings + [chunk_id]).fetchone():
                     evidence.append(chunk_id)
             hits = retrieval.fuse([chunk_id for chunk_id, _ in dense], lexical, evidence)
+            ranked = len(hits)
+            known = set(hits)
+            hits += [chunk_id for chunk_id, _ in further if chunk_id not in known]
+            lexical_rank = {chunk_id: rank for rank, chunk_id in enumerate(lexical, 1)}
 
-            contexts = []
-            used_tokens = 0
+            pool = []
+            spread_docs = set()
             seen_text = set()
-            for chunk_id in hits:
+            for position, chunk_id in enumerate(hits):
                 row = self._conn.execute(
                     "SELECT c.doc_id, c.page_id, c.page_number, c.section_path, c.text, "
                     "c.corpus_id, d.title, d.source_path, d.file, d.mtime, d.size "
@@ -984,11 +995,12 @@ class SqliteVecStore:
                     score = max((1.0 - distance[0] for distance in distances if distance), default=0.0)
                 if MIN_SCORE_ACTIVE and score < MIN_SCORE:
                     continue
-                est = _estimate_tokens(text)
-                if contexts and used_tokens + est > max_context_tokens:
-                    continue
-                used_tokens += est
-                contexts.append({
+                if position >= ranked:
+                    # A spreading candidate: one per document is all it can use.
+                    if doc_id in spread_docs:
+                        continue
+                    spread_docs.add(doc_id)
+                pool.append({
                     "chunk_id": chunk_id,
                     "doc_id": doc_id,
                     "page_id": page_id,
@@ -1011,9 +1023,20 @@ class SqliteVecStore:
                         "size": size,
                     },
                 })
-                recognised = self._page_ocr(page_id)
+            pool = retrieval.spread(pool, k, SPREAD_MARGIN,
+                                    lexical_rank=lambda c: lexical_rank.get(c["chunk_id"]))
+
+            contexts = []
+            used_tokens = 0
+            for context in pool:
+                est = _estimate_tokens(context["text"])
+                if contexts and used_tokens + est > max_context_tokens:
+                    continue
+                used_tokens += est
+                contexts.append(context)
+                recognised = self._page_ocr(context["page_id"])
                 if recognised:
-                    contexts[-1]["ocr"] = recognised
+                    context["ocr"] = recognised
                 if len(contexts) >= k:
                     break
             return contexts, {"chunk_hits_count": total, "estimated_tokens": used_tokens,

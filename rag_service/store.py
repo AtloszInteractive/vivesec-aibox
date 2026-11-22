@@ -33,6 +33,7 @@ from chunking import chunk_rows, chunk_text  # noqa: E402
 import access as access_filter  # noqa: E402
 import extract  # noqa: E402
 import reaccent  # noqa: E402
+import retrieval  # noqa: E402
 
 
 def chunk_page(source_path, page_text):
@@ -64,6 +65,9 @@ TOKEN_TTL_SECONDS = int(os.environ.get("RAG_TOKEN_TTL_SECONDS", "900"))
 # would still drop those chunks — that is a filter, not "disabled".
 MIN_SCORE = float(os.environ.get("RAG_MIN_SCORE", "0") or 0)
 MIN_SCORE_ACTIVE = MIN_SCORE > 0
+# How close another document's best hit must come to the best one to take a
+# slot from a document that holds more than half of them (retrieval.spread).
+SPREAD_MARGIN = retrieval.spread_margin()
 
 # Query spelling repair (reaccent.py). Users type Hungarian without accents,
 # and measured on the production index that is not a degradation but a failure:
@@ -647,7 +651,6 @@ class RagStore:
     def search_context(self, corpus_id, question, top_k=3, max_context_tokens=4000,
                        corpus_ids=None, source_paths=None, evidence_chunk_ids=None,
                        access=None):
-        import retrieval
         scope = normalize_corpus_ids(corpus_id, corpus_ids)
         if not scope or not question or top_k <= 0:
             return [], {"chunk_hits_count": 0, "estimated_tokens": 0}
@@ -672,9 +675,13 @@ class RagStore:
                     candidates.append((score, doc, ch))
         candidates.sort(key=lambda t: t[0], reverse=True)
         limit = min(max(top_k, 0), 50)
-        pool_size = min(max(limit * 8, 40), 256)
-        dense = [chunk["chunk_id"] for score, doc, chunk in candidates
-                 if not MIN_SCORE_ACTIVE or score >= MIN_SCORE][:pool_size]
+        pool_size = retrieval.pool_size(limit)
+        wide_size = retrieval.spread_pool_size(limit, SPREAD_MARGIN)
+        above = [chunk["chunk_id"] for score, doc, chunk in candidates
+                 if not MIN_SCORE_ACTIVE or score >= MIN_SCORE]
+        dense = above[:pool_size]
+        # Further dense hits only feed spreading (retrieval.spread), not the ranking.
+        further = above[pool_size:wide_size]
         query_terms = set(retrieval.terms(question))
         frequencies = {}
         matches = {}
@@ -689,23 +696,27 @@ class RagStore:
         by_id = {chunk["chunk_id"]: (score, doc, chunk) for score, doc, chunk in candidates}
         evidence = [chunk_id for chunk_id in (evidence_chunk_ids or [])[:8] if chunk_id in by_id]
         ranked = retrieval.fuse(dense, lexical, evidence)
+        fused = len(ranked)
+        known = set(ranked)
+        ranked += [chunk_id for chunk_id in further if chunk_id not in known]
+        lexical_rank = {chunk_id: rank for rank, chunk_id in enumerate(lexical, 1)}
 
-        contexts = []
-        used_tokens = 0
+        pool = []
+        spread_docs = set()
         seen_text = set()
-        for chunk_id in ranked:
+        for position, chunk_id in enumerate(ranked):
             score, doc, ch = by_id[chunk_id]
             if MIN_SCORE_ACTIVE and score < MIN_SCORE:
                 continue
+            if position >= fused:
+                if doc["doc_id"] in spread_docs:
+                    continue
+                spread_docs.add(doc["doc_id"])
             text_key = (doc.get("corpus_id"), " ".join(ch["text"].casefold().split()))
             if text_key in seen_text:
                 continue
             seen_text.add(text_key)
-            est = _estimate_tokens(ch["text"])
-            if contexts and used_tokens + est > max_context_tokens:
-                continue
-            used_tokens += est
-            contexts.append({
+            pool.append({
                 "chunk_id": ch["chunk_id"],
                 "doc_id": doc["doc_id"],
                 "page_id": ch["page_id"],
@@ -728,6 +739,17 @@ class RagStore:
                     "size": doc.get("size"),
                 },
             })
+        pool = retrieval.spread(pool, limit, SPREAD_MARGIN,
+                                lexical_rank=lambda c: lexical_rank.get(c["chunk_id"]))
+
+        contexts = []
+        used_tokens = 0
+        for context in pool:
+            est = _estimate_tokens(context["text"])
+            if contexts and used_tokens + est > max_context_tokens:
+                continue
+            used_tokens += est
+            contexts.append(context)
             if len(contexts) >= limit:
                 break
         return contexts, {"chunk_hits_count": len(candidates), "estimated_tokens": used_tokens,
