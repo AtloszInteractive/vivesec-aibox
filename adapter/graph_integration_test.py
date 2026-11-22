@@ -623,6 +623,27 @@ class GraphIntegrationTest(unittest.TestCase):
             self.assertIn("Titkos Tamás", out["answer"])
             self.assertIn(HIDDEN, {h["path"] for h in out["hits"]})
 
+    def test_chat_names_namesakes_only_among_the_records_the_caller_sees(self):
+        import llm
+
+        with patch.object(llm, "generate", lambda q, c, **kw: ("Válasz.", "echo")), \
+                patch.object(llm, "TITLES", False), \
+                patch.object(llm, "condense", lambda q, h, lang=None: (q, False)):
+            # Each note names its own Kovács János: two records until reviewed.
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Kivel találkozott Kovács János?"}, user="hanna")
+            self.assertEqual(200, status, out)
+            note = ("2 külön bejegyzés viseli a \u201eKovács János\u201d nevet; a dokumentumok "
+                    "nem igazolják, hogy ugyanarról van szó.")
+            self.assertIn("> Gráfkeresés: " + note, out["answer"])
+            self.assertEqual(1, len(out["graph"]["namesakes"]))
+            # lars sees one of them: the hidden record is not even hinted at.
+            status, out = self.call("/api/v1/ui/query",
+                                    {"query": "Kivel találkozott Kovács János?"}, user="lars")
+            self.assertEqual(200, status, out)
+            self.assertNotIn("külön bejegyzés", out["answer"])
+            self.assertNotIn("namesakes", out["graph"])
+
     def test_dossier_cites_only_visible_sources(self):
         import io
         import zipfile
