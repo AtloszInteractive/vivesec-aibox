@@ -12,6 +12,8 @@ the adapter's policy hides is dropped (the graph's ACL copy may lag).
 """
 import time
 
+import orchestrator
+
 LANG_CODES = {"Hungarian": "hu", "English": "en", "Danish": "da", "German": "de"}
 ENTITY_TYPES = ["person", "organization", "place", "identifier", "object"]
 
@@ -93,4 +95,23 @@ class GraphFacts:
             out.append({"text": text, "source_path": doc.get("source_path"),
                         "corpus_id": doc.get("corpus_id"), "page_number": ev.get("page"),
                         "chunk_id": None, "score": 1.0, "origin": "graph"})
-        return out, {"entities": [e["label"] for e in entities], "facts": len(out)}
+        info = {"entities": [e["label"] for e in entities], "facts": len(out)}
+        namesakes = self._namesakes(entities, scope_body, code)
+        if namesakes:
+            info["namesakes"] = namesakes
+        return out, info
+
+    def _namesakes(self, entities, scope_body, code):
+        """The people the question names that several separate records carry
+        (not merged: the documents do not show they are one person), counted
+        among the records the caller may see. One note line per name."""
+        notes = []
+        for name in dict.fromkeys(e["label"] for e in entities if e.get("type") == "person"):
+            key = orchestrator.fold(name)
+            found = self.client.post("/query/find", dict(
+                scope_body, text=name, limit=8, types=["person"])).get("entities") or []
+            same = [n for n in found
+                    if key in {orchestrator.fold(x) for x in [n.get("label"), *n.get("aliases", [])]}]
+            if len(same) > 1:
+                notes.append(orchestrator._t("namesakes", code) % (len(same), name))
+        return notes

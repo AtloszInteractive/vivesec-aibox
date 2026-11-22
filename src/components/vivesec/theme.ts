@@ -9,7 +9,7 @@ export type ThemePref = "dark" | "light" | "system";
 const STORAGE_KEY = "vivesec_theme";
 const QUERY = "(prefers-color-scheme: dark)";
 /** Browser chrome colour per theme: the header background. */
-const THEME_COLOR = { dark: "#141414", light: "#FFFFFF" } as const;
+const THEME_COLOR = { dark: "#1B272D", light: "#FFFFFF" } as const;
 
 /** Runs in <head> before the first paint, so the theme never flashes.
  *  Unknown stored values count as "system"; no matchMedia means dark. */

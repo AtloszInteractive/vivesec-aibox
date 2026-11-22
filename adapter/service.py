@@ -1858,6 +1858,12 @@ def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=
                 {"corpus_ids": list(req_scope.corpus_ids), "access": access.as_rag()},
                 lambda path: req_scope.contains_path(path) and check(path), lang)
             contexts = facts + contexts
+            if graph_info.get("namesakes"):
+                # Last, as the full reading's note: the passages stay [#1]...
+                contexts = contexts + [{
+                    "text": "\n".join(graph_info["namesakes"]), "source_path": None,
+                    "title": "namesakes", "corpus_id": None, "page_number": None,
+                    "chunk_id": None, "score": 1.0, "origin": "search-note"}]
         except graph.GraphError as e:
             # The answer still comes from the documents; the graph is an extra.
             sys.stderr.write("[adapter] graph facts unavailable: %s\n" % e)
@@ -1947,6 +1953,9 @@ def _answer_turn(user, drive, query, top_k, lang, action=None, mode=None, files=
     if display and orchestrated is not None and orchestrated[1].get("caveat"):
         display = display + "\n\n" + "\n".join(
             ("> " + line) if line else ">" for line in orchestrated[1]["caveat"].split("\n"))
+    if display and orchestrated is None and graph_info and graph_info.get("namesakes"):
+        # Two people of one name must not read as one, whatever the model wrote.
+        display = display + "\n\n" + "\n".join("> " + line for line in graph_info["namesakes"])
     if display and deep_note:
         # What the full reading covered (or could not), as is.
         display = display + "\n\n" + "\n".join(

@@ -1766,6 +1766,19 @@
       "internal": false
     },
     {
+      "name": "RAG_SPREAD_MARGIN",
+      "component": "rag",
+      "category": "retrieval",
+      "type": "float",
+      "default": "0.08",
+      "allowed": "0..1; 0 turns spreading off",
+      "fail_safe": "Empty, invalid or out of range uses 0.08.",
+      "impact": "When one document holds more than half of the returned chunks, the best chunk of another document within this cosine margin of the best hit (or a top-3 keyword match), above RAG_MIN_SCORE, takes one of its slots (at most half of them). The ranking itself is unchanged; a wider dense search (k*24, 120..256) only supplies those candidates.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "RAG_PORT",
       "component": "rag",
       "category": "network",

@@ -141,16 +141,18 @@
   --brand-pale: #F3ECFD;
   --ink: #FFFFFF;
   --shade: #000000;
-  --header: #141414;
-  --surface-0: #141414;
-  --surface-1: #191919;
-  --surface-2: #1E1E1E;
-  --surface-3: #242424;
-  --surface-4: #2B2B2B;
-  --surface-5: #333333;
+  /* Blue grey, as the ViVeSec app around the embedded UI: its list
+     background (#152027), rows and room header (#263238), selection (#313C42). */
+  --header: #1B272D;
+  --surface-0: #0F191F;
+  --surface-1: #121D23;
+  --surface-2: #152027;
+  --surface-3: #1C292F;
+  --surface-4: #263238;
+  --surface-5: #313C42;
   --danger-text: #FB7185;
   --background: var(--surface-2);
-  --foreground: #EBEBEB;
+  --foreground: #ECEFF1;
   --card: var(--surface-4);
   --card-foreground: var(--foreground);
   --popover: var(--surface-4);
@@ -160,7 +162,7 @@
   --secondary: var(--surface-5);
   --secondary-foreground: var(--foreground);
   --muted: var(--surface-5);
-  --muted-foreground: #A3A3A3;
+  --muted-foreground: #A2AFB6;
   --accent: var(--surface-5);
   --accent-foreground: var(--foreground);
   --destructive: oklch(0.704 0.191 22.216);

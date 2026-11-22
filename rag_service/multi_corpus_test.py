@@ -89,6 +89,61 @@ class MultiCorpusSearchTest(unittest.TestCase):
         self.assertEqual(contexts, [])
         self.assertEqual(debug["chunk_hits_count"], 0)
 
+    # -- one document must not crowd out another the question needs ---------
+    ORDERS = "/storage/drives/ops/orders.csv"
+    STOCK = "/storage/drives/ops/stock.csv"
+    NOISE = "/storage/drives/ops/canteen.txt"
+
+    @staticmethod
+    def _vector(text):
+        if "zzother" in text:
+            return [-0.559, 0.829]   # the stock list just under a 0.5 floor, orders far below
+        if "zzquery" in text:
+            return [1.0, 0.0]
+        if text.startswith("Order"):
+            return [0.95, 0.312]     # cosine 0.95 with zzquery
+        if text.startswith("Stock"):
+            return [0.47, 0.8827] if "stockword" in text else [0.9, 0.436]
+        return [-0.94, -0.342]       # unrelated
+
+    def _ops_store(self, stock_text):
+        result = self._fresh_store()
+        embed = patch.object(result, "_embed",
+                             side_effect=lambda texts: [self._vector(t) for t in texts])
+        embed.start()
+        self.addCleanup(embed.stop)
+        self.store = result
+        result._index_document("ops-4444", "default", self.ORDERS, "orders.csv",
+                               [(i, "root", "Order VR-%d of material PX-%d is open" % (i, i))
+                                for i in range(1, 9)], None, None)
+        result._index_document("ops-4444", "default", self.STOCK, "stock.csv",
+                               [(1, "root", stock_text)], None, None)
+        result._index_document("ops-4444", "default", self.NOISE, "canteen.txt",
+                               [(1, "root", "Canteen menu for Monday")], None, None)
+        return result
+
+    def test_a_close_second_document_gets_a_slot_from_a_crowded_one(self):
+        ops = self._ops_store("Stock list: PX-1 holds 620 pieces")
+        contexts, _ = ops.search_context("ops-4444", "zzquery", top_k=5)
+        paths = self._paths(contexts)
+        self.assertEqual((5, 4, 1), (len(paths), paths.count(self.ORDERS), paths.count(self.STOCK)))
+        self.assertNotIn(self.NOISE, paths)  # far from the best hit: no slot
+        with patch.object(sys.modules[type(ops).__module__], "SPREAD_MARGIN", 0.0):
+            contexts, _ = ops.search_context("ops-4444", "zzquery", top_k=5)
+        self.assertEqual([self.ORDERS] * 5, self._paths(contexts))
+
+    def test_the_floor_still_holds_for_a_keyword_match_under_it(self):
+        ops = self._ops_store("Stock list: stockword PX-1 holds 620 pieces")
+        module = sys.modules[type(ops).__module__]
+        with patch.multiple(module, MIN_SCORE=0.5, MIN_SCORE_ACTIVE=True):
+            contexts, _ = ops.search_context("ops-4444", "zzquery stockword", top_k=5)
+            self.assertEqual([self.ORDERS] * 5, self._paths(contexts))
+            contexts, _ = ops.search_context("ops-4444", "zzother stockword", top_k=5)
+            self.assertEqual([], contexts)
+
+    def _fresh_store(self):
+        return store.RagStore()
+
 
 class SqliteHybridSearchTest(MultiCorpusSearchTest):
     def setUp(self):

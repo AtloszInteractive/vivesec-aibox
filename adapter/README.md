@@ -663,6 +663,9 @@ Off unless `GRAPH_URL` points at the internal `graph_service`. Then:
   extra contexts (`graph_context.py`), each with its verbatim quote, document
   and page, ahead of the RAG excerpts; the response carries `graph`
   `{entities, facts}`. Facts whose documents the caller may not see are dropped.
+  A named person that several separate (unmerged) records carry, counted among
+  the records the caller may see, is named under the answer and given to the
+  model as a note (`graph.namesakes`); a hidden record is never hinted at.
   `ADAPTER_GRAPH_CHAT=off` disables it; a graph error never blocks the answer.
 - **Progress**: `POST /api/v1/ui/graph/status` lists only files the caller may
   see; queue sizes and totals are box-wide numbers.

@@ -197,9 +197,9 @@ function readPalette(el: Element): Palette {
   const style = window.getComputedStyle(el);
   const pick = (name: string, fallback: string) =>
     cssColor(style.getPropertyValue(name).trim(), fallback);
-  const bg = pick("--surface-2", "#1e1e1e");
+  const bg = pick("--surface-2", "#152027");
   const ink = pick("--ink", "#ffffff");
-  const fg = pick("--foreground", "#ebebeb");
+  const fg = pick("--foreground", "#eceff1");
   const accent = pick("--brand-soft", "#b48cf5");
   return {
     key: [bg, ink, fg, accent].join("|"),
@@ -343,18 +343,18 @@ export const GraphGL = forwardRef<GlHandle, Props>(function GraphGL(props, ref) 
     s: new THREE.Vector3(),
     c: new THREE.Color(),
     z: new THREE.Vector3(0, 0, 1),
-    bg: new THREE.Color("#1e1e1e"),
+    bg: new THREE.Color("#152027"),
   });
   const palRef = useRef<Palette | null>(null);
   const pal = (): Palette =>
     palRef.current ?? {
       key: "",
-      bg: "#1e1e1e",
+      bg: "#152027",
       ink: "#ffffff",
-      fg: "#ebebeb",
+      fg: "#eceff1",
       accent: "#b48cf5",
-      fgRgb: "235,235,235",
-      bgRgb: "30,30,30",
+      fgRgb: "236,239,241",
+      bgRgb: "21,32,39",
     };
   const toneColor = (tone: Tone) =>
     tone === "a" ? pal().accent : tone === "p" ? PROTECTED : pal().ink;

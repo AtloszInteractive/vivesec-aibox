@@ -1,3 +1,4 @@
+import os
 import re
 import unicodedata
 
@@ -17,6 +18,74 @@ def match_source(path, sources):
         for source in sources)
 
 
+# -- spreading the context over documents --------------------------------------
+# One file with many alike chunks (an 80-chunk order export) must not take every
+# slot from another file the question also needs (the one-chunk stock list).
+# A document keeps at most half of the slots when another document comes close
+# to the best hit (RAG_SPREAD_MARGIN of cosine score) or is a top keyword match;
+# otherwise the slots stay with it. The ranking itself is untouched: the wider
+# search only brings candidates of other documents for those freed slots.
+LEXICAL_RESCUE = 3
+SPREAD_MARGIN_DEFAULT = 0.08
+
+
+def spread_margin(env=None):
+    """RAG_SPREAD_MARGIN: 0 turns spreading off; empty or invalid takes the default."""
+    raw = ((env if env is not None else os.environ).get("RAG_SPREAD_MARGIN") or "").strip()
+    try:
+        value = float(raw) if raw else SPREAD_MARGIN_DEFAULT
+    except ValueError:
+        return SPREAD_MARGIN_DEFAULT
+    return value if 0 <= value <= 1 else SPREAD_MARGIN_DEFAULT
+
+
+def pool_size(k):
+    """Dense and keyword candidates per sub-question that the ranking fuses."""
+    return min(max(k * 8, 40), 256)
+
+
+def spread_pool_size(k, margin):
+    """How far the dense search looks for other documents to spread to (the
+    other document's chunk may rank far below the crowded one's)."""
+    if margin > 0 and k >= 2:
+        return min(max(k * 24, 120), 256)
+    return pool_size(k)
+
+
+def spread(pool, k, margin, document=None, lexical_rank=None):
+    """`pool`: candidate contexts in rank order (each with a `score`). Returns
+    them reordered: the k to use first, in rank order, then the rest."""
+    document = document or (lambda c: c.get("doc_id") or c.get("source_path"))
+    lexical_rank = lexical_rank or (lambda c: None)
+    if margin <= 0 or k < 2 or len(pool) <= k:
+        return pool
+    cap = (k + 1) // 2
+    chosen = list(range(k))
+    counts = {}
+    for i in chosen:
+        counts[document(pool[i])] = counts.get(document(pool[i]), 0) + 1
+    top = max(pool[i]["score"] for i in chosen)
+    for i in range(k, len(pool)):
+        over = [doc for doc, n in counts.items() if n > cap]
+        if not over:
+            break
+        doc = document(pool[i])
+        if doc in counts:
+            continue
+        rank = lexical_rank(pool[i])
+        if not (pool[i]["score"] >= top - margin or (rank is not None and rank <= LEXICAL_RESCUE)):
+            continue
+        crowded = max(over, key=lambda d: counts[d])
+        dropped = max(j for j in chosen if document(pool[j]) == crowded)
+        chosen.remove(dropped)
+        counts[crowded] -= 1
+        chosen.append(i)
+        counts[doc] = 1
+    chosen.sort()
+    picked = set(chosen)
+    return [pool[i] for i in chosen] + [c for i, c in enumerate(pool) if i not in picked]
+
+
 def fuse(dense, lexical, evidence=()):
     scores = {}
     for run, weight in [(dense, 1.0), (lexical, 2.0)]:
@@ -27,8 +96,8 @@ def fuse(dense, lexical, evidence=()):
 
 # -- full-coverage matching (match_chunks) ------------------------------------
 # A term matches a chunk when every word of it starts a word of the chunk
-# (inflected Hungarian: "Balázs" finds "Balázzsal" only through the stem, but
-# "látogatás" finds "látogatásai"), the words lying close together. Short words
+# (inflected Hungarian: "BalĂˇzs" finds "BalĂˇzzsal" only through the stem, but
+# "lĂˇtogatĂˇs" finds "lĂˇtogatĂˇsai"), the words lying close together. Short words
 # must match whole, or "Kis" would find every "kisebb". The JSON store and the
 # FTS5 query of the SQLite store implement the same rule.
 PREFIX_MIN = 4
