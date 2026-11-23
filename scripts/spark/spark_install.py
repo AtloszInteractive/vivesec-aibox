@@ -640,6 +640,28 @@ def build_graph_image():
     return image
 
 
+def tcp_open(host, port, timeout=3):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def neo4j_problems(info, port, data_dir):
+    """Why a kept vivesec-neo4j container (`docker container inspect` output)
+    is not the one this installer creates: bolt on 127.0.0.1:<port>, data bound."""
+    problems = []
+    bindings = (info.get("HostConfig") or {}).get("PortBindings") or {}
+    if not any(b.get("HostIp") == "127.0.0.1" and b.get("HostPort") == str(port)
+               for b in bindings.get("7687/tcp") or []):
+        problems.append("bolt (7687) is not published on 127.0.0.1:%d" % port)
+    if not any(m.get("Destination") == "/data" and m.get("Source") == str(data_dir)
+               for m in info.get("Mounts") or []):
+        problems.append("%s is not mounted on /data" % data_dir)
+    return problems
+
+
 def phase_graph(conf):
     if conf["MATRIX_GRAPH"] == "off":
         log("GRAPH_SKIPPED (MATRIX_GRAPH=off)")
@@ -663,9 +685,18 @@ def phase_graph(conf):
 
     images = kit_images(kit_info())
     neo4j_image = "vivesec-neo4j:latest" if "vivesec-neo4j" in images else conf["MATRIX_NEO4J_IMAGE"]
-    if run("docker", "container", "inspect", "vivesec-neo4j", check=False).returncode == 0:
+    kept = run("docker", "container", "inspect", "vivesec-neo4j", check=False)
+    if kept.returncode == 0:
+        info = json.loads(kept.stdout)[0]
+        problems = neo4j_problems(info, conf["MATRIX_NEO4J_PORT"], data / "data")
+        if problems:
+            # It may hold graph data, so it is never replaced automatically.
+            raise InstallError("the existing vivesec-neo4j container is not the Matrix's Neo4j: %s.\n"
+                               "Check it (docker container inspect vivesec-neo4j); if it holds no graph "
+                               "data, remove it (docker rm -f vivesec-neo4j) and run the graph phase again."
+                               % "; ".join(problems))
         run("docker", "start", "vivesec-neo4j")
-        log("NEO4J kept (%s)" % run("docker", "inspect", "-f", "{{.Config.Image}}", "vivesec-neo4j").stdout.strip())
+        log("NEO4J kept (%s)" % info["Config"].get("Image"))
     else:
         if "vivesec-neo4j" not in images:
             run("docker", "pull", "-q", neo4j_image)
@@ -681,6 +712,8 @@ def phase_graph(conf):
         return "Started." in logs.stdout + logs.stderr
 
     wait_for(neo4j_started, 180, "vivesec-neo4j")
+    wait_for(lambda: tcp_open("127.0.0.1", conf["MATRIX_NEO4J_PORT"]), 60,
+             "the Neo4j bolt port 127.0.0.1:%d" % conf["MATRIX_NEO4J_PORT"])
 
     if "vivesec-graph" in images:
         # Built and tested when the release was packed; the images phase tagged it.

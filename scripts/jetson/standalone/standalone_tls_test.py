@@ -396,7 +396,7 @@ case $(basename "$0") in
   docker)
     printf '%s\n' "$*" >>"$FAKE_DOCKER_LOG"
     case $1 in
-      inspect) exit 1 ;;
+      inspect|container) exit 1 ;;
       image) exit 0 ;;
       run) exit 1 ;;
     esac ;;

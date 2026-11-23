@@ -148,6 +148,23 @@ class TunnelConfigTest(unittest.TestCase):
         self.assertIn("MATRIX_TUNNEL_FORWARD_KEY_FILE=%d/forward.key", unit)
 
 
+class Neo4jKeptTest(unittest.TestCase):
+    PORT, DATA = 7687, Path("/var/lib/vivesec-matrix/neo4j/data")
+
+    def test_the_installers_own_container_passes(self):
+        info = {"HostConfig": {"PortBindings": {"7687/tcp": [{"HostIp": "127.0.0.1", "HostPort": "7687"}]}},
+                "Mounts": [{"Source": str(self.DATA), "Destination": "/data"}]}
+        self.assertEqual(si.neo4j_problems(info, self.PORT, self.DATA), [])
+
+    def test_a_placeholder_without_port_and_data_is_refused(self):
+        # `docker create --name vivesec-neo4j <image>`: no published port, no volume.
+        problems = si.neo4j_problems({"HostConfig": {"PortBindings": {}}, "Mounts": []}, self.PORT, self.DATA)
+        self.assertEqual(len(problems), 2)
+        public = {"HostConfig": {"PortBindings": {"7687/tcp": [{"HostIp": "", "HostPort": "7687"}]}},
+                  "Mounts": [{"Source": str(self.DATA), "Destination": "/data"}]}
+        self.assertEqual(len(si.neo4j_problems(public, self.PORT, self.DATA)), 1)
+
+
 class InstallProbeTest(unittest.TestCase):
     def forget(self, shown):
         calls = []

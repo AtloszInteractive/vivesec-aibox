@@ -3,6 +3,7 @@ import socket
 import struct
 import threading
 import unittest
+from unittest import mock
 
 import clamav_deploy
 
@@ -41,6 +42,16 @@ class FakeClamd:
 
 
 class SettingsTest(unittest.TestCase):
+    def test_an_image_of_the_same_name_is_no_container(self):
+        # A fresh box has the vivesec-clamav image but no container yet.
+        def docker(*args):
+            if args[:2] == ("docker", "inspect"):
+                return '[{"Id": "sha256:1", "RepoTags": ["vivesec-clamav:latest"]}]'
+            raise RuntimeError("Error: No such container: " + args[-1])
+
+        with mock.patch.object(clamav_deploy, "command", docker):
+            self.assertIsNone(clamav_deploy.inspect(clamav_deploy.CONTAINER))
+
     def test_defaults(self):
         config = clamav_deploy.settings({})
         self.assertEqual(config, {"image": "clamav/clamav-debian:1.4", "port": 3310,

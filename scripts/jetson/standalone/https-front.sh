@@ -375,7 +375,7 @@ check_internal_ports() {
 
 check_front_ports_free() {
   local socket address port ip
-  docker inspect "$CONTAINER" >/dev/null 2>&1 && return 0
+  docker container inspect "$CONTAINER" >/dev/null 2>&1 && return 0
   while IFS= read -r socket; do
     port=${socket##*:}
     address=${socket%:*}
@@ -534,7 +534,7 @@ cmd_deploy() {
   stamp=$(date -u +%Y%m%d-%H%M%S)
   if [[ -f $conf ]]; then cp -p "$conf" "$conf.prev"; fi
   mv -f "$new_conf" "$conf"
-  if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  if docker container inspect "$CONTAINER" >/dev/null 2>&1; then
     prev="$CONTAINER-prev-$stamp"
     docker rename "$CONTAINER" "$prev"
     docker stop "$prev" >/dev/null

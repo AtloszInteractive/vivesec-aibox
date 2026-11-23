@@ -122,7 +122,7 @@ def collect(run=_run, http_json=_http_json, registry=None, compatibility=None, n
     config_problems = []
     for kind, name in CONTAINERS.items():
         try:
-            info = json.loads(run("docker", "inspect", name))[0]
+            info = json.loads(run("docker", "container", "inspect", name))[0]
         except (RuntimeError, ValueError, IndexError, OSError) as error:
             errors.append("%s: %s" % (name, error))
             continue

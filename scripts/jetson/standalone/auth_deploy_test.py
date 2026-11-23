@@ -3,6 +3,7 @@ and the image recipe. The docker operations themselves run on the box."""
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import auth_deploy  # noqa: E402
@@ -136,6 +137,16 @@ class ServiceTest(unittest.TestCase):
                 auth_deploy.settings({"AIBOX_AUTH_DIR": bad})
         with self.assertRaises(SystemExit):
             auth_deploy.settings({"AIBOX_AUTH_PORT": "http"})
+
+    def test_an_image_of_the_same_name_is_no_container(self):
+        # A fresh box has the vivesec-auth image but no container yet.
+        def docker(*args, stdin=None):
+            if args[:2] == ("docker", "inspect"):
+                return '[{"Id": "sha256:1", "RepoTags": ["vivesec-auth:latest"]}]'
+            raise RuntimeError("Error: No such container: " + args[-1])
+
+        with mock.patch.object(auth_deploy, "command", docker):
+            self.assertIsNone(auth_deploy.inspect(auth_deploy.AUTH_CONTAINER))
 
 
 if __name__ == "__main__":

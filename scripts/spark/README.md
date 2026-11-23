@@ -133,7 +133,10 @@ the previous container back.
 loopback) and the graph service (`vivesec-graph`, built from the kit, its tests
 run inside the image first), and wires the adapter to it with the GPU broker.
 Secrets are generated once under `/var/lib/vivesec-matrix/graph-secrets`; the
-person-key salt stays with the Neo4j data. `MATRIX_GRAPH_PROFILE` picks the
+person-key salt stays with the Neo4j data. An existing `vivesec-neo4j` is kept
+(it holds the graph), but only if it publishes bolt on `127.0.0.1:MATRIX_NEO4J_PORT`
+and mounts `/var/lib/vivesec-matrix/neo4j/data`; otherwise the phase stops with
+a message instead of replacing it. `MATRIX_GRAPH_PROFILE` picks the
 domain profile (e.g. `bv`), `MATRIX_GRAPH_ADMINS` the users who manage it.
 
 `ADAPTER_*` lines of `matrix.conf` (not of the environment) go to the adapter

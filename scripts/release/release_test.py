@@ -157,14 +157,14 @@ class BoxManifestTest(unittest.TestCase):
         self.ui_label = "26.10.1"
 
     def run_cmd(self, *args):
-        if args[:2] == ("docker", "inspect"):
+        if args[:3] == ("docker", "container", "inspect"):
             return {
                 "vivesec-adapter": _inspect(["ADAPTER_PORT=8088", "RAG_API_KEY=top-secret",
                                              "ADAPTER_GEN_MODEL=qwen3.6:35b", "ADAPTER_CHAT_POLICY=locked_hybrid"]),
                 "vivesec-rag": _inspect(["RAG_PORT=8090", "RAG_API_KEY=top-secret", "VENDOR_TOKEN=x"]),
                 "vivesec-ui": _inspect(["PORT=8080", "ADAPTER_URL=http://127.0.0.1:8088"],
                                        {"vivesec.version": "26.10.1"}),
-            }[args[2]]
+            }[args[3]]
         return "5.15.148-tegra\n" if args[0] == "uname" else "27.3.1\n"
 
     def http(self, url, timeout=10):

@@ -116,8 +116,9 @@ def command(*args, stdin=None):
 
 
 def inspect(name):
+    # `docker inspect` without a type also finds an image of the same name.
     try:
-        return json.loads(command("docker", "inspect", name))[0]
+        return json.loads(command("docker", "container", "inspect", name))[0]
     except RuntimeError:
         return None
 

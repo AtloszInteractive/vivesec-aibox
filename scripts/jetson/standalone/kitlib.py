@@ -88,7 +88,7 @@ def require_root():
 def docker_inspect(names):
     if not names:
         return []
-    code, out, _ = run(["docker", "inspect"] + list(names), check=False)
+    code, out, _ = run(["docker", "container", "inspect"] + list(names), check=False)
     if code and not out.strip():
         return []
     try:
