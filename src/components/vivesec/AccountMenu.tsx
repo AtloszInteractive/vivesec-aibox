@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, KeyRound, LogOut, Settings2, UserRound } from "lucide-react";
 
 import { readAdapterSystem, readAuthSystem } from "@/lib/auth/admin-client";
@@ -10,30 +11,30 @@ import {
   PASSWORD_PATH,
   type GateUser,
 } from "@/lib/auth/protocol";
-import { isEmbedded } from "@/lib/rag/adapter-client";
+import { adapterSession, isEmbedded, isMatrixEmbed } from "@/lib/rag/adapter-client";
+import { EmbeddedAdmin } from "./admin/AdminPage";
 import { needsAttention } from "./admin/status";
 import { ACCENT_TEXT } from "./brand";
 import { useLang } from "./i18n";
 
 /**
  * The signed-in user of a standalone box, with password change and sign-out.
- * Renders nothing in the ViVeSecBox embedding or on a box in vivesecbox mode,
- * where the ViVeSecBox owns the login.
+ * Renders nothing on a box in vivesecbox mode or in the ViVeSecBox embedding,
+ * where the ViVeSecBox owns the login, with one exception: inside the Matrix
+ * app an administrator gets the administration page, opened over the app.
  */
 export function AccountMenu() {
   const { tm } = useLang();
   const [user, setUser] = useState<GateUser | null>(null);
+  const [embedded, setEmbedded] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [attention, setAttention] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isEmbedded()) return;
     let cancelled = false;
-    void fetchGateSession().then(async (s) => {
-      if (cancelled || !s.ok || !s.standalone || !s.authenticated) return;
-      setUser(s.user);
-      if (!s.user.roles.includes(ADMIN_ROLE)) return;
+    const checkAttention = async () => {
       // The clock and the virus definitions, so an administrator notices a
       // problem without opening the administration page.
       const [auth, adapter] = await Promise.all([
@@ -41,6 +42,32 @@ export function AccountMenu() {
         readAdapterSystem().catch(() => null),
       ]);
       if (!cancelled) setAttention(needsAttention(auth, adapter));
+    };
+    if (isEmbedded()) {
+      if (!isMatrixEmbed()) return;
+      void adapterSession()
+        .then(async (s) => {
+          if (cancelled || !s.roles.includes(ADMIN_ROLE)) return;
+          setEmbedded(true);
+          setUser({
+            username: s.user,
+            display_name: "",
+            source: "local",
+            roles: s.roles,
+            drives: [],
+          });
+          await checkAttention();
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+    void fetchGateSession().then(async (s) => {
+      if (cancelled || !s.ok || !s.standalone || !s.authenticated) return;
+      setUser(s.user);
+      if (!s.user.roles.includes(ADMIN_ROLE)) return;
+      await checkAttention();
     });
     return () => {
       cancelled = true;
@@ -95,28 +122,47 @@ export function AccountMenu() {
             {user.display_name && (
               <div className="truncate text-[11px] text-ink/50">{user.username}</div>
             )}
-            {user.drives.length === 0 && (
+            {!embedded && user.drives.length === 0 && (
               <p className="mt-1.5 text-[11px] text-amber-800/90 dark:text-amber-100/90">
                 {tm("No rooms are assigned to you yet. Ask the administrator for access.")}
               </p>
             )}
           </div>
-          {user.roles.includes(ADMIN_ROLE) && (
-            <a
-              role="menuitem"
-              href={gatePath(ADMIN_PATH)}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              {tm("Administration")}
-              {attention && (
-                <span className="ml-auto text-[11px] text-amber-800 dark:text-amber-200">
-                  {tm("Needs attention")}
-                </span>
-              )}
-            </a>
-          )}
-          {user.source !== "ldap" && (
+          {user.roles.includes(ADMIN_ROLE) &&
+            (embedded ? (
+              <button
+                role="menuitem"
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setAdminOpen(true);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                {tm("Administration")}
+                {attention && (
+                  <span className="ml-auto text-[11px] text-amber-800 dark:text-amber-200">
+                    {tm("Needs attention")}
+                  </span>
+                )}
+              </button>
+            ) : (
+              <a
+                role="menuitem"
+                href={gatePath(ADMIN_PATH)}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                {tm("Administration")}
+                {attention && (
+                  <span className="ml-auto text-[11px] text-amber-800 dark:text-amber-200">
+                    {tm("Needs attention")}
+                  </span>
+                )}
+              </a>
+            ))}
+          {!embedded && user.source !== "ldap" && (
             <a
               role="menuitem"
               href={gatePath(PASSWORD_PATH)}
@@ -126,17 +172,29 @@ export function AccountMenu() {
               {tm("Change password")}
             </a>
           )}
-          <button
-            role="menuitem"
-            type="button"
-            onClick={() => void signOut()}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            {tm("Sign out")}
-          </button>
+          {!embedded && (
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => void signOut()}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-ink/80 transition hover:bg-ink/5 hover:text-brand-soft"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              {tm("Sign out")}
+            </button>
+          )}
         </div>
       )}
+      {adminOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100] overflow-y-auto"
+            style={{ backgroundColor: "var(--surface-0)" }}
+          >
+            <EmbeddedAdmin onClose={() => setAdminOpen(false)} />
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

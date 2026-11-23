@@ -376,6 +376,12 @@ export function isEmbedded(): boolean {
   return Boolean((globalThis as { frameSocketFetcher?: unknown }).frameSocketFetcher);
 }
 
+/** True inside the Matrix bootloader: embedded, with its own tunnel prefix,
+ *  through which the box's administration is reachable too. */
+export function isMatrixEmbed(): boolean {
+  return isEmbedded() && Boolean((globalThis as { matrixApiPrefix?: string }).matrixApiPrefix);
+}
+
 // Embedded, requests must travel through the ViVeSecBox frame socket rather than
 // the browser network stack — every call in this module goes through here. On a
 // standalone box the login gate wants its CSRF token on state-changing calls and
@@ -573,7 +579,7 @@ export async function adapterStatus(): Promise<AdapterStatus> {
   }
 }
 
-export type SessionInfo = { drive: string; user: string };
+export type SessionInfo = { drive: string; user: string; roles: string[] };
 
 let sessionRequest: Promise<SessionInfo> | null = null;
 
@@ -584,9 +590,11 @@ async function fetchSession(): Promise<SessionInfo> {
     });
     if (!res.ok) throw new AdapterError(`ui/init HTTP ${res.status}`, res.status);
     const j = await safeJson(res);
+    const identity = (j.identity ?? {}) as { roles?: unknown };
     return {
       drive: typeof j.drive === "string" ? j.drive : "",
       user: typeof j.user === "string" ? j.user : "",
+      roles: Array.isArray(identity.roles) ? identity.roles.map(String) : [],
     };
   } catch (err) {
     // A failed handshake must not be remembered: the box being unreachable at

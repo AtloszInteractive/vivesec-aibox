@@ -1,7 +1,11 @@
+import hashlib
+import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import spark_install as si
 
@@ -142,6 +146,31 @@ class TunnelConfigTest(unittest.TestCase):
         self.assertIn("DynamicUser=yes", unit)
         self.assertEqual(unit.count("LoadCredential="), 3)
         self.assertIn("MATRIX_TUNNEL_FORWARD_KEY_FILE=%d/forward.key", unit)
+
+
+class InstallProbeTest(unittest.TestCase):
+    def forget(self, shown):
+        calls = []
+
+        def run(*args, **_kw):
+            calls.append(args[len(si.AUTH_MANAGE):])
+            return subprocess.CompletedProcess(args, 0, stdout=shown, stderr="")
+
+        with mock.patch.object(si, "run", run), mock.patch.object(si, "log"):
+            si.forget_old_probe()
+        return calls[1:]
+
+    def test_the_old_probe_and_only_its_own_user_are_removed(self):
+        auto = "vvs-" + hashlib.sha256(si.OLD_PROBE.encode()).hexdigest()[:10]
+        shown = json.dumps({"users": {si.OLD_PROBE: auto, "28744CZP27222": "anna"}})
+        self.assertEqual(self.forget(shown), [("tunnel-map", "remove", si.OLD_PROBE), ("delete-user", auto)])
+        shown = json.dumps({"users": {si.OLD_PROBE: "anna"}})
+        self.assertEqual(self.forget(shown), [("tunnel-map", "remove", si.OLD_PROBE)])
+        self.assertEqual(self.forget(json.dumps({"users": {"x": "anna"}})), [])
+        self.assertEqual(self.forget(""), [])
+        self.assertEqual(self.forget("not json"), [])
+        # The new probe is refused by its form, so it can never get a user.
+        self.assertNotRegex(si.INSTALL_PROBE, r"^[A-Za-z0-9][A-Za-z0-9._@=+-]{0,127}$")
 
 
 if __name__ == "__main__":

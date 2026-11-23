@@ -74,3 +74,7 @@ MATRIX_UPDATE=off
 # own user (vvs-..., role analyst, no rooms); an administrator gives it rooms.
 # off: only identities mapped by hand (manage.py tunnel-map set) get in.
 #MATRIX_TUNNEL_AUTOCREATE=analyst
+# on (default): the ViVeSecBox owner (its requests carry VVS-Permissions: ...,owner)
+# gets its user and the admin role on every visit; a former owner stays admin until
+# an administrator removes it. off: administrators only from manage.py tunnel-map promote.
+#MATRIX_TUNNEL_OWNER_ADMIN=on

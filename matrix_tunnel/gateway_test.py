@@ -38,11 +38,13 @@ class GatewayTest(unittest.TestCase):
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                test.auth_calls.append((dict(self.headers), body))
+                test.auth_calls.append((dict(self.headers), body, self.path))
                 keys_ok = (self.headers.get("X-Auth-Service-Key") == SERVICE_KEY.decode()
                            and self.headers.get("X-Auth-Tunnel-Key") == TUNNEL_KEY.decode())
                 if not keys_ok:
                     status, answer = 401, {"ok": False}
+                elif self.path.startswith("/auth/admin/"):
+                    status, answer = 200, {"ok": True, "action": self.path}
                 elif body["vvs_user"] == "28744CZP27222":
                     status, answer = 200, {"ok": True, "token": "tok-%d" % len(test.auth_calls),
                                            "expires_at": 4102444800,
@@ -139,7 +141,20 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(sent["X-Forwarded-For"], "192.168.0.20")
         for dropped in ("X-Demo-Drive", "X-Matrix-Forward-Key", "VVS-Session"):
             self.assertNotIn(dropped, sent)
-        self.assertEqual(self.auth_calls[0][1], {"vvs_user": "28744CZP27222", "vvs_session": "s1"})
+        self.assertEqual(self.auth_calls[0][1], {"vvs_user": "28744CZP27222", "vvs_session": "s1", "owner": False})
+
+    def test_the_owner_permission_is_passed_to_the_auth_service_only(self):
+        self.assertTrue(gateway.is_owner("write, Owner"))
+        for value in (None, "", "write", "owners", "read,write"):
+            self.assertFalse(gateway.is_owner(value), value)
+        self.call("/api/v1/matrix/files", VVS_Permissions="write,owner")
+        self.assertIs(self.auth_calls[-1][1]["owner"], True)
+        self.assertNotIn("VVS-Permissions", self.adapter_calls[-1][2])
+        # Owner and non-owner tokens are cached apart.
+        self.call("/api/v1/matrix/files")
+        self.assertIs(self.auth_calls[-1][1]["owner"], False)
+        self.call("/api/v1/matrix/scope", VVS_Permissions="write,owner")
+        self.assertEqual(len(self.auth_calls), 2)
 
     def test_tokens_are_cached_until_the_adapter_refuses_one(self):
         self.call("/api/v1/matrix/files")
@@ -196,6 +211,31 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(self.call("/api/v1/matrix/query", b"{}", user=None)[0], 401)
         self.assertEqual(self.call("/api/v1/matrix/init")[0], 200)
         self.assertEqual(self.adapter_calls[-1][1], "/api/v1/ui/init")
+
+    def test_admin_calls_go_to_the_auth_service_as_the_vivesecbox_user(self):
+        forged = json.dumps({"session": "stolen", "vvs_user": "admin-of-the-box", "client": "1.2.3.4",
+                             "username": "bela"}).encode()
+        status, body, _ = self.call("/api/v1/matrix/auth/admin/users/update", forged,
+                                    Content_Type="application/json", X_Matrix_Peer="192.168.0.20")
+        self.assertEqual((status, body["action"]), (200, "/auth/admin/users/update"))
+        headers, sent, path = self.auth_calls[-1]
+        self.assertEqual(sent, {"vvs_user": "28744CZP27222", "client": "192.168.0.20", "username": "bela"})
+        self.assertEqual(headers["X-Auth-Tunnel-Key"], TUNNEL_KEY.decode())
+        self.assertEqual(self.adapter_calls, [])
+        # A change of users drops the cached tokens: the next call asks again.
+        calls = len(self.auth_calls)
+        self.call("/api/v1/matrix/files")
+        self.assertEqual(self.auth_calls[calls][2], "/auth/tunnel/token")
+        # Only the listed actions, only POST with a JSON object, only a mapped identity.
+        self.assertEqual(self.call("/api/v1/matrix/auth/admin/users")[0], 405)
+        for path in ("/api/v1/matrix/auth/admin/login", "/api/v1/matrix/auth/admin/users/x"):
+            self.assertEqual(self.call(path, b"{}")[0], 404, path)
+        self.assertEqual(self.call("/api/v1/matrix/auth/admin/users", b"[1]")[0], 400)
+        self.assertEqual(self.call("/api/v1/matrix/auth/admin/users", b"x" * (70 * 1024))[0], 413)
+        self.assertEqual(self.call("/api/v1/matrix/auth/admin/users", b"{}", user="unknown")[0], 403)
+        self.assertEqual(self.call("/api/v1/matrix/auth/admin/users", b"{}", front=False)[0], 403)
+        self.assertFalse(any(path == "/auth/tunnel/token" and body.get("vvs_user") == "admin-of-the-box"
+                             for _, body, path in self.auth_calls))
 
     def test_auth_service_down(self):
         self.auth.shutdown()

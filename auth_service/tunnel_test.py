@@ -121,6 +121,39 @@ class TunnelTokenTest(unittest.TestCase):
                                             warn=warnings.append)
         self.assertIsNone(settings.tunnel_autocreate_roles)
         self.assertEqual(len(warnings), 1)
+        for raw, expected in (("on", True), ("ON", True), ("off", False), ("", False), ("yes", False)):
+            settings = config.Settings.from_env({"AUTH_DATA_DIR": self.dir, "AUTH_TUNNEL_OWNER_ADMIN": raw},
+                                                warn=warnings.append)
+            self.assertIs(settings.tunnel_owner_admin, expected, raw)
+        self.assertEqual(len(warnings), 2)  # "yes"
+
+    def test_the_vivesecbox_owner_is_the_administrator_when_switched_on(self):
+        name = tunnel.auto_username(VVS_USER)
+        # Off (the service's default): the owner flag changes nothing.
+        self.assertRaises(auth.AuthError, self.auth.issue_tunnel_token, VVS_USER, owner=True)
+        self.auth.settings = config.Settings(data_dir=self.dir, tunnel_owner_admin=True)
+        # Created even without autocreate, and an administrator.
+        issued = self.auth.issue_tunnel_token(VVS_USER, "s1", owner=True)
+        self.assertEqual((issued["user"]["username"], issued["user"]["roles"]), (name, ["admin", "analyst"]))
+        self.assertEqual(self.verifier().verify_token(issued["token"])["roles"], ["admin", "analyst"])
+        self.assertEqual(self.auth.tunnel_admin_actor(VVS_USER), name)
+        # Taken away by another administrator: back on the owner's next visit.
+        self.auth.update_user("cli", "bela", roles=["admin"])
+        self.auth.update_user("cli", name, roles=["analyst"])
+        self.assertEqual(self.auth.issue_tunnel_token(VVS_USER, owner=True)["user"]["roles"], ["admin", "analyst"])
+        events = [e for e in self.auth.list_events(50) if e["event"] == "tunnel_owner_admin"]
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["username"], name)
+        # A former owner keeps the role; another user without the flag gets nothing.
+        self.assertEqual(self.auth.issue_tunnel_token(VVS_USER)["user"]["roles"], ["admin", "analyst"])
+        self.map({VVS_USER: name, "other": "anna"})
+        self.assertEqual(self.auth.issue_tunnel_token("other")["user"]["roles"], ["analyst"])
+        # A suspended owner stays out; only a real boolean counts.
+        self.auth.update_user("cli", name, status="suspended")
+        self.assertRaises(auth.AuthError, self.auth.issue_tunnel_token, VVS_USER, owner=True)
+        with self.assertRaises(auth.AuthError) as refused:
+            self.auth.issue_tunnel_token("other", owner="true")
+        self.assertEqual(refused.exception.code, "invalid_owner")
 
     def test_malformed_input_is_refused(self):
         self.map({VVS_USER: "anna"})
@@ -152,8 +185,8 @@ class TunnelEndpointTest(unittest.TestCase):
         self.addCleanup(server.shutdown)
         return "http://127.0.0.1:%d" % server.server_address[1]
 
-    def call(self, base, keys, body):
-        request = urllib.request.Request(base + service.TUNNEL_PATH, method="POST",
+    def call(self, base, keys, body, path=service.TUNNEL_PATH):
+        request = urllib.request.Request(base + path, method="POST",
                                          data=json.dumps(body).encode("utf-8"))
         for header, value in keys.items():
             request.add_header(header, value.decode("ascii"))
@@ -176,6 +209,38 @@ class TunnelEndpointTest(unittest.TestCase):
         self.assertEqual((status, body["user"]["username"]), (200, "anna"))
         self.assertEqual(self.call(base, both, {"vvs_user": "unknown"}),
                          (403, {"ok": False, "error": "tunnel_user_unknown"}))
+        self.assertEqual(self.call(base, both, {"vvs_user": VVS_USER, "owner": "yes"}),
+                         (400, {"ok": False, "error": "invalid_owner"}))
+
+    def test_admin_calls_through_the_tunnel_act_as_the_mapped_administrator(self):
+        both = {service.KEY_HEADER: SERVICE_KEY, service.TUNNEL_KEY_HEADER: TUNNEL_KEY}
+        base = self.serve(TUNNEL_KEY)
+        users = "/auth/admin/users"
+        self.assertEqual(self.call(base, both, {"vvs_user": VVS_USER}, users),
+                         (403, {"ok": False, "error": "forbidden"}))  # anna is no admin
+        self.auth.update_user("cli", "anna", roles=["admin"])
+        status, body = self.call(base, both, {"vvs_user": VVS_USER}, users)
+        self.assertEqual((status, [u["username"] for u in body["users"]]), (200, ["anna"]))
+        # The web server's key alone never reads vvs_user, and a wrong tunnel key is refused.
+        self.assertEqual(self.call(base, {service.KEY_HEADER: SERVICE_KEY}, {"vvs_user": VVS_USER}, users),
+                         (401, {"ok": False, "error": "session_invalid"}))
+        self.assertEqual(self.call(base, dict(both, **{service.TUNNEL_KEY_HEADER: b"x" * 40}),
+                                   {"vvs_user": VVS_USER}, users)[0], 401)
+        self.assertEqual(self.call(self.serve(None), both, {"vvs_user": VVS_USER}, users)[0], 404)
+        # Unmapped identities get nothing, and none is created on an admin call.
+        self.auth.settings = config.Settings(data_dir=self.auth.settings.data_dir, tunnel_autocreate="analyst")
+        self.assertEqual(self.call(base, both, {"vvs_user": "unknown"}, users),
+                         (403, {"ok": False, "error": "tunnel_user_unknown"}))
+        self.assertIsNone(self.auth.tunnel_map.username_for("unknown"))
+        status, _ = self.call(base, both, {"vvs_user": VVS_USER, "username": "bela", "password": "Bela-jelszava-2026",
+                                           "client": "192.168.0.20"}, "/auth/admin/users/create")
+        self.assertEqual(status, 200)
+        created = [e for e in self.auth.list_events(20) if e["event"] == "user_created"][0]
+        self.assertEqual((created["username"], created["actor"], created["client"]),
+                         ("bela", "anna", "192.168.0.20"))
+        # A removed mapping takes effect at once.
+        tunnel.write_map(self.auth.settings.tunnel_users_file, {})
+        self.assertEqual(self.call(base, both, {"vvs_user": VVS_USER}, users)[0], 403)
 
     def test_an_unusable_key_file_turns_the_tunnel_off(self):
         warnings = []

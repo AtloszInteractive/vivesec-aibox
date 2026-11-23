@@ -28,7 +28,7 @@ status. Request bodies (passwords, codes, session secrets) are never logged.
   POST /auth/admin/directory            {session}  -> settings (no secrets), map, map_version
   POST /auth/admin/directory/map        {session, map, base}  (base = the map_version read)
   POST /auth/admin/directory/check      {session, username?}
-  POST /auth/tunnel/token   {vvs_user, vvs_session?, client?} -> token, expires_at, user
+  POST /auth/tunnel/token   {vvs_user, vvs_session?, owner?, client?} -> token, expires_at, user
 
 `client` is the browser's address as the web UI server saw it; it feeds the
 per-client throttle and the event log. A refusal of an administrative call may
@@ -37,6 +37,9 @@ carry a `message` for the administrator (what is wrong with a group map).
 `/auth/tunnel/token` exists only with AUTH_TUNNEL_KEY_FILE (tunnel.py) and
 needs that key as well (`X-Auth-Tunnel-Key`): its one caller is the tunnel
 gateway, so the web UI server's key alone cannot mint tokens without a session.
+The same two keys let the gateway make the `/auth/admin/*` calls with
+`{vvs_user, ...}` instead of `session`: the actor is then the local user that
+ViVeSecBox identity is mapped to, and it must hold the admin role.
 
 A directory user's login or session answers `directory_unavailable` (503)
 when Active Directory cannot be asked (E27 S6, `directory.py`); password,
@@ -68,9 +71,16 @@ REQUEST_TIMEOUT_SECONDS = 30
 
 
 def _admin(handler):
-    def route(authenticator, body, client):
-        actor = authenticator.admin_actor(body.get("session"))
+    def route(authenticator, body, client, tunnel=False):
+        # Through the tunnel gateway (both keys checked in do_POST) the caller is
+        # the administrator its ViVeSecBox identity is mapped to; a `session` in
+        # such a body is ignored, and a `vvs_user` in a web call is never read.
+        if tunnel:
+            actor = authenticator.tunnel_admin_actor(body.get("vvs_user"), client)
+        else:
+            actor = authenticator.admin_actor(body.get("session"))
         return handler(authenticator, body, client, actor)
+    route.admin = True
     return route
 
 
@@ -125,7 +135,8 @@ ROUTES = {
 
 
 def _tunnel_token(authenticator, body, client):
-    return authenticator.issue_tunnel_token(body.get("vvs_user"), body.get("vvs_session"), client)
+    return authenticator.issue_tunnel_token(body.get("vvs_user"), body.get("vvs_session"), client,
+                                            owner=body.get("owner", False))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -183,6 +194,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self._send(400, {"ok": False, "error": "bad_request"})
             return
+        via_tunnel = False
         if self.path == TUNNEL_PATH:
             if self.server.tunnel_key is None:
                 self._send(404, {"ok": False, "error": "not_found"})
@@ -193,13 +205,24 @@ class Handler(BaseHTTPRequestHandler):
             route = _tunnel_token
         else:
             route = ROUTES.get(self.path)
+            if getattr(route, "admin", False) and self.headers.get(TUNNEL_KEY_HEADER) is not None:
+                if self.server.tunnel_key is None:
+                    self._send(404, {"ok": False, "error": "not_found"})
+                    return
+                if not self._tunnel_authorised():
+                    self._send(401, {"ok": False, "error": "tunnel_key"}, close=True)
+                    return
+                via_tunnel = True
         if route is None:
             self._send(404, {"ok": False, "error": "not_found"})
             return
         client = body.get("client")
         client = client.strip()[:MAX_CLIENT_LENGTH] if isinstance(client, str) else ""
         try:
-            result = route(self.server.authenticator, body, client)
+            if via_tunnel:
+                result = route(self.server.authenticator, body, client, tunnel=True)
+            else:
+                result = route(self.server.authenticator, body, client)
         except auth.AuthError as e:
             answer = {"ok": False, "error": e.code}
             if e.detail and self.path.startswith("/auth/admin/"):

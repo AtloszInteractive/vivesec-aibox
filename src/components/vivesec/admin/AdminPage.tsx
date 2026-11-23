@@ -3,7 +3,8 @@
 // the company profile (E12), the organisation's templates (E18), the event
 // logs and the updates of a Matrix box (E07). Only for users with
 // the admin role; the login gate and both backends check that again on every
-// call.
+// call. Inside the Matrix app in the ViVeSecBox (E07b) the same page opens over
+// the app (EmbeddedAdmin) and its calls go through the tunnel gateway.
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -33,6 +34,7 @@ import {
 } from "@/lib/auth/admin-client";
 import { fetchGateSession, gatePath } from "@/lib/auth/client";
 import { ADMIN_ROLE, LOGIN_PATH } from "@/lib/auth/protocol";
+import { adapterSession } from "@/lib/rag/adapter-client";
 import { GateLogo, LanguagePicker } from "../AuthPages";
 import { ACCENT_TEXT } from "../brand";
 import { LanguageProvider, useLang } from "../i18n";
@@ -60,8 +62,15 @@ type Tab =
 
 type Gate = { state: "loading" } | { state: "not_standalone" } | { state: "ready"; me: string };
 
-function AdminScreen() {
+/**
+ * `onClose` set: the page runs inside the Matrix app in the ViVeSecBox (E07b),
+ * over the chat instead of on its own route. The signed-in user and the roles
+ * come from the box's /init answer (the tunnel's identity token); the calls go
+ * through the frame socket (admin-client.ts).
+ */
+function AdminScreen({ onClose }: { onClose?: () => void }) {
   const { tm } = useLang();
+  const embedded = onClose !== undefined;
   const [gate, setGate] = useState<Gate>({ state: "loading" });
   const [tab, setTab] = useState<Tab>("overview");
 
@@ -78,6 +87,15 @@ function AdminScreen() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
+    if (onClose) {
+      void adapterSession()
+        .then((s) => {
+          if (s.roles.includes(ADMIN_ROLE)) setGate({ state: "ready", me: s.user });
+          else onClose();
+        })
+        .catch(() => onClose());
+      return;
+    }
     void fetchGateSession().then((s) => {
       if (!s.ok) return;
       if (!s.standalone) setGate({ state: "not_standalone" });
@@ -85,7 +103,7 @@ function AdminScreen() {
       else if (!s.user.roles.includes(ADMIN_ROLE)) window.location.assign(gatePath("/"));
       else setGate({ state: "ready", me: s.user.username });
     });
-  }, []);
+  }, [onClose]);
 
   const loadSystem = useCallback(async () => {
     setBusy(true);
@@ -181,13 +199,24 @@ function AdminScreen() {
           <GateLogo />
           <h1 className="text-base font-semibold">{tm("Administration")}</h1>
           <div className="ml-auto flex items-center gap-3">
-            <a
-              href={gatePath("/")}
-              className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 transition hover:bg-ink/10"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              {tm("Back to the AI Box")}
-            </a>
+            {embedded ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 transition hover:bg-ink/10"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                {tm("Back to the AI Box")}
+              </button>
+            ) : (
+              <a
+                href={gatePath("/")}
+                className="inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 transition hover:bg-ink/10"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                {tm("Back to the AI Box")}
+              </a>
+            )}
             <ThemeToggle />
             <LanguagePicker />
           </div>
@@ -233,6 +262,7 @@ function AdminScreen() {
               adapterError={adapterError}
               busy={busy}
               onRefresh={() => void loadSystem()}
+              embedded={embedded}
             />
           )}
           {tab === "users" && (
@@ -281,4 +311,9 @@ export function AdminPage() {
       <AdminScreen />
     </LanguageProvider>
   );
+}
+
+/** The administration page over the Matrix app (inside its LanguageProvider). */
+export function EmbeddedAdmin({ onClose }: { onClose: () => void }) {
+  return <AdminScreen onClose={onClose} />;
 }

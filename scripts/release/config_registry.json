@@ -4276,6 +4276,23 @@
       ]
     },
     {
+      "name": "AUTH_TUNNEL_OWNER_ADMIN",
+      "component": "auth",
+      "category": "security",
+      "type": "enum",
+      "default": "off",
+      "allowed": "off, on",
+      "fail_safe": "Anything else is off (with a warning): administrators come only from the user records (manage.py tunnel-map promote, the administration page). A user an administrator deleted or suspended stays refused, the owner too; a directory user's roles are never changed.",
+      "impact": "on: a request the ViVeSecBox marks as its owner's (VVS-Permissions naming owner, passed on by the tunnel gateway) gets that identity a local user (created like AUTH_TUNNEL_AUTOCREATE, also when that is off) and the admin role, again on every visit. A former owner keeps the role until an administrator removes it. The Spark installer sets it from MATRIX_TUNNEL_OWNER_ADMIN (default on).",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "off",
+        "on"
+      ]
+    },
+    {
       "name": "AUTH_TUNNEL_AUTOCREATE_MAX",
       "component": "auth",
       "category": "security",

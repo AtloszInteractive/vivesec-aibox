@@ -496,17 +496,35 @@ class Authenticator:
         return {"token": tokens.sign_hs256(claims, self.jwt_secret), "expires_at": expires,
                 "user": session_user(user)}
 
-    def issue_tunnel_token(self, vvs_user, vvs_session=None, client=""):
+    def issue_tunnel_token(self, vvs_user, vvs_session=None, client="", owner=False):
         """An identity token for the user a ViVeSecBox identity is mapped to
-        (tunnel.py). Only the tunnel gateway calls this, with its own key."""
+        (tunnel.py). Only the tunnel gateway calls this, with its own key.
+        `owner`: the ViVeSecBox marked the request as its owner's
+        (VVS-Permissions: owner); with AUTH_TUNNEL_OWNER_ADMIN=on that user is
+        created when needed and holds the admin role on every visit."""
         identity = tunnel.normalize_vvs_user(vvs_user)
         if identity is None:
             raise AuthError("invalid_vvs_user", 400)
         if vvs_session is not None and (not isinstance(vvs_session, str)
                                         or len(vvs_session) > tunnel.MAX_SESSION_LENGTH):
             raise AuthError("invalid_vvs_session", 400)
+        if not isinstance(owner, bool):
+            raise AuthError("invalid_owner", 400)
+        user = self._tunnel_user(identity, client, create=True,
+                                 owner=owner and self.settings.tunnel_owner_admin)
+        claims = tunnel.token_claims(self.settings, user, tunnel.session_id(identity, vvs_session or ""),
+                                     self.clock())
+        return {"token": tunnel.sign(claims, self.jwt_secret), "expires_at": claims["exp"],
+                "user": session_user(user)}
+
+    def _tunnel_user(self, identity, client, create, owner=False):
+        """The active local user a ViVeSecBox identity is mapped to, read now,
+        or AuthError tunnel_user_unknown (403). A user an administrator deleted
+        or suspended stays refused, the owner too."""
         name = self.tunnel_map.username_for(identity)
-        if name is None and self.settings.tunnel_autocreate_roles is not None:
+        if name is None and owner:
+            name = self.tunnel_user_for(identity, ("analyst",), client=client, limit=tunnel.MAX_ENTRIES)
+        elif name is None and create and self.settings.tunnel_autocreate_roles is not None:
             name = self.tunnel_user_for(identity, self.settings.tunnel_autocreate_roles, client=client)
         user = self.store.get_user(name) if name else None
         if user is None or user["status"] != "active":
@@ -521,10 +539,14 @@ class Authenticator:
                 if e.code != "session_invalid":
                     raise
                 raise AuthError("tunnel_user_unknown", 403)
-        claims = tunnel.token_claims(self.settings, user, tunnel.session_id(identity, vvs_session or ""),
-                                     self.clock())
-        return {"token": tunnel.sign(claims, self.jwt_secret), "expires_at": claims["exp"],
-                "user": session_user(user)}
+        elif owner and ADMIN_ROLE not in user["roles"]:
+            # A directory user's roles belong to AD and the group map.
+            now = self.clock()
+            self.store.update_user(user["username"], now, roles=sorted(set(user["roles"]) | {ADMIN_ROLE}))
+            self._event("tunnel_owner_admin", user["username"], actor="tunnel", client=client,
+                        detail="VVS-User %s: ViVeSecBox owner" % identity)
+            user = self.store.get_user(user["username"])
+        return user
 
     def tunnel_user_for(self, identity, roles, actor="tunnel", client="", limit=None):
         """The local user of a ViVeSecBox identity, created and mapped when it has
@@ -595,6 +617,18 @@ class Authenticator:
         if ADMIN_ROLE not in user["roles"]:
             raise AuthError("forbidden", 403)
         self.store.touch_session(session["id"], self.clock())
+        return user["username"]
+
+    def tunnel_admin_actor(self, vvs_user, client=""):
+        """The administrator a ViVeSecBox identity is mapped to (the tunnel
+        gateway's admin calls), or AuthError. The map and the user record are
+        read on every call, so a removed mapping or role takes effect at once."""
+        identity = tunnel.normalize_vvs_user(vvs_user)
+        if identity is None:
+            raise AuthError("invalid_vvs_user", 400)
+        user = self._tunnel_user(identity, client, create=False)
+        if ADMIN_ROLE not in user["roles"]:
+            raise AuthError("forbidden", 403)
         return user["username"]
 
     def list_users(self):

@@ -3548,6 +3548,21 @@ const M: Record<string, Tri> = {
     "Katalogbruger loggede ind første gang",
     "Erste Anmeldung eines Verzeichnisbenutzers",
   ],
+  "ViVeSecBox user first signed in": [
+    "ViVeSecBox-felhasználó első belépése",
+    "ViVeSecBox-bruger loggede ind første gang",
+    "Erste Anmeldung eines ViVeSecBox-Benutzers",
+  ],
+  "ViVeSecBox user refused": [
+    "ViVeSecBox-felhasználó elutasítva",
+    "ViVeSecBox-bruger afvist",
+    "ViVeSecBox-Benutzer abgewiesen",
+  ],
+  "ViVeSecBox owner made administrator": [
+    "A ViVeSecBox tulajdonosa adminisztrátor lett",
+    "ViVeSecBox-ejeren blev gjort til administrator",
+    "Der ViVeSecBox-Eigentümer wurde Administrator",
+  ],
   "Directory roles changed": [
     "Címtárbeli szerepkörök módosultak",
     "Katalogroller ændret",

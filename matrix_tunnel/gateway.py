@@ -10,8 +10,12 @@ ViVeSecBox only embeds its UI and relays the UI's API calls under
 The gateway trusts the `VVS-User` header only on a request the front marked
 with the shared forward key and a verified client certificate. It turns that
 identity into the box's own identity token (auth_service `/auth/tunnel/token`:
-only an administrator-mapped user gets one) and relays the call to the
+only an administrator-mapped user gets one, or one the auth service creates)
+and relays the call to the
 adapter's `/api/v1/ui/` API with the headers the web login gate would send.
+`VVS-Permissions` naming `owner` (the ViVeSecBox owner's requests) is passed on
+as `owner`: the auth service may then make that user an administrator. The
+header itself never reaches the adapter.
 The adapter itself stays in standalone mode with ADAPTER_IDENTITY_MODE=require:
 the tunnel adds no new trust to it.
 
@@ -19,6 +23,12 @@ the tunnel adds no new trust to it.
   /api/v1/matrix/status  ->  adapter /api/v1/status
   /api/v1/matrix/init    ->  200 when the identity may use the box, else 400
   /api/v1/matrix/end     ->  200: the ViVeSecBox closed the session (its token is dropped)
+  /api/v1/matrix/auth/admin/<action>
+                         ->  auth service /auth/admin/<action> (the admin page's users,
+                             directory, clock and sign-in events), POST only. The
+                             gateway sets `vvs_user` and `client`; the auth service
+                             acts as the local user that identity is mapped to and
+                             refuses it without the admin role.
   /api/v1/matrix/app/manifest, /api/v1/matrix/app/bundle/<sha256>
                          ->  the UI the Matrix bootloader loads (MATRIX_TUNNEL_APP_DIR:
                              manifest.json + bundle.json from scripts/matrix-bundle.mjs)
@@ -51,6 +61,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PREFIX = "/api/v1/matrix/"
 ADAPTER_PREFIX = "/api/v1/ui/"
 APP_PREFIX = PREFIX + "app/"
+AUTH_ADMIN_PREFIX = PREFIX + "auth/admin/"
+# What the admin page may ask the authentication service (the same list as the
+# web login gate, src/lib/auth/gate.server.ts ADMIN_ACTIONS).
+AUTH_ADMIN_ACTIONS = frozenset(("users", "users/create", "users/update", "users/delete",
+                                "users/reset-totp", "users/unlock", "users/reset-password",
+                                "events", "system", "directory", "directory/map",
+                                "directory/check"))
+# Fields only the gateway may set on an administrative call.
+AUTH_ADMIN_RESERVED = ("session", "vvs_user", "vvs_session", "client")
+MAX_ADMIN_BODY = 64 * 1024
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 FORWARD_KEY_HEADER = "X-Matrix-Forward-Key"
 CLIENT_VERIFY_HEADER = "X-Matrix-Client-Verify"
@@ -121,6 +141,13 @@ def encode_drive(path):
     return base64.urlsafe_b64encode(path.encode("utf-8")).decode("ascii")
 
 
+def is_owner(permissions):
+    """The ViVeSecBox sends `VVS-Permissions: write,owner` on the requests of
+    the user who owns it; that user may administer the box (auth service
+    AUTH_TUNNEL_OWNER_ADMIN)."""
+    return "owner" in {part.strip().lower() for part in (permissions or "").split(",")}
+
+
 def adapter_path(raw_path):
     """The adapter path for a tunnel path (with its query), or None."""
     path, _, query = raw_path.partition("?")
@@ -160,6 +187,22 @@ def app_file(app_dir, path):
     return 200, body, "application/json; charset=utf-8", "public, max-age=31536000, immutable"
 
 
+def auth_post(settings, path, body):
+    """(status, answer) of a call to the auth service with both keys."""
+    data = json.dumps(body).encode("utf-8")
+    connection = http.client.HTTPConnection(settings.auth.hostname, settings.auth.port or 80, timeout=10)
+    try:
+        connection.request("POST", path, data, {
+            "Content-Type": "application/json",
+            "X-Auth-Service-Key": settings.service_key.decode("ascii"),
+            "X-Auth-Tunnel-Key": settings.tunnel_key.decode("ascii")})
+        response = connection.getresponse()
+        answer = json.loads(response.read() or b"{}")
+        return response.status, answer if isinstance(answer, dict) else {}
+    finally:
+        connection.close()
+
+
 class Identities:
     """Identity tokens from the auth service, cached per ViVeSecBox session
     until shortly before they expire. A refusal is remembered briefly, so an
@@ -171,31 +214,20 @@ class Identities:
         self._lock = threading.Lock()
         self._cache = {}
 
-    def _ask(self, vvs_user, vvs_session):
-        body = json.dumps({"vvs_user": vvs_user, "vvs_session": vvs_session}).encode("utf-8")
-        connection = http.client.HTTPConnection(self.settings.auth.hostname,
-                                                self.settings.auth.port or 80, timeout=10)
-        try:
-            connection.request("POST", "/auth/tunnel/token", body, {
-                "Content-Type": "application/json",
-                "X-Auth-Service-Key": self.settings.service_key.decode("ascii"),
-                "X-Auth-Tunnel-Key": self.settings.tunnel_key.decode("ascii")})
-            response = connection.getresponse()
-            answer = json.loads(response.read() or b"{}")
-            return response.status, answer
-        finally:
-            connection.close()
+    def _ask(self, vvs_user, vvs_session, owner):
+        return auth_post(self.settings, "/auth/tunnel/token",
+                         {"vvs_user": vvs_user, "vvs_session": vvs_session, "owner": owner})
 
-    def get(self, vvs_user, vvs_session):
+    def get(self, vvs_user, vvs_session, owner=False):
         """(status, identity) -- identity is {token, username, drives} on 200."""
-        key = (vvs_user, vvs_session)
+        key = (vvs_user, vvs_session, owner)
         now = self.clock()
         with self._lock:
             cached = self._cache.get(key)
             if cached and cached[0] > now:
                 return cached[1], cached[2]
         try:
-            status, answer = self._ask(vvs_user, vvs_session)
+            status, answer = self._ask(vvs_user, vvs_session, owner)
         except (OSError, ValueError, http.client.HTTPException) as e:
             sys.stderr.write("[tunnel] auth service unreachable: %s\n" % e)
             return 503, None
@@ -223,7 +255,14 @@ class Identities:
 
     def forget(self, vvs_user, vvs_session):
         with self._lock:
-            self._cache.pop((vvs_user, vvs_session), None)
+            for owner in (False, True):
+                self._cache.pop((vvs_user, vvs_session, owner), None)
+
+    def clear(self):
+        """After an administrator changed users: every token is asked for again,
+        so new roles and rooms apply at once."""
+        with self._lock:
+            self._cache.clear()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -280,7 +319,8 @@ class Handler(BaseHTTPRequestHandler):
         if not vvs_user:
             self._json(400 if init else 401, {"ok": False, "accepted": False, "error": "no identity"})
             return
-        status, identity = self.server.identities.get(vvs_user, vvs_session)
+        status, identity = self.server.identities.get(vvs_user, vvs_session,
+                                                      is_owner(self.headers.get("VVS-Permissions")))
         if identity is None:
             if init:
                 self._json(400, {"ok": False, "accepted": False, "error": "identity not accepted"})
@@ -289,7 +329,46 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._json(403, {"ok": False, "error": "identity not accepted"})
             return
+        path = self.path.split("?", 1)[0]
+        if path.startswith(AUTH_ADMIN_PREFIX):
+            self._auth_admin(path[len(AUTH_ADMIN_PREFIX):], vvs_user)
+            return
         self._relay(target, identity, vvs_user, vvs_session)
+
+    def _auth_admin(self, action, vvs_user):
+        if action not in AUTH_ADMIN_ACTIONS:
+            self._json(404, {"ok": False, "error": "not_found"})
+            return
+        if self.command != "POST":
+            self._json(405, {"ok": False, "error": "method_not_allowed"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_ADMIN_BODY or self.headers.get("Transfer-Encoding"):
+            self._json(413 if length > MAX_ADMIN_BODY else 400, {"ok": False, "error": "bad_request"})
+            return
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+        except (ValueError, UnicodeDecodeError):
+            body = None
+        if not isinstance(body, dict):
+            self._json(400, {"ok": False, "error": "bad_request"})
+            return
+        for name in AUTH_ADMIN_RESERVED:
+            body.pop(name, None)
+        body["vvs_user"] = vvs_user
+        body["client"] = (self.headers.get(PEER_HEADER) or "tunnel").strip()[:64]
+        try:
+            status, answer = auth_post(self.server.settings, "/auth/admin/" + action, body)
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            sys.stderr.write("[tunnel] auth service unreachable: %s\n" % e)
+            self._json(503, {"ok": False, "error": "auth_unavailable"})
+            return
+        if status == 200 and (action.startswith("users/") or action == "directory/map"):
+            self.server.identities.clear()
+        self._json(status, answer)
 
     def _app(self):
         if self.command != "GET":

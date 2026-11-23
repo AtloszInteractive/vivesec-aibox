@@ -36,6 +36,7 @@ export function OverviewTab({
   adapterError,
   busy,
   onRefresh,
+  embedded = false,
 }: {
   auth: AuthSystemReading | null;
   adapter: AdapterSystem | null;
@@ -43,6 +44,8 @@ export function OverviewTab({
   adapterError: string;
   busy: boolean;
   onRefresh: () => void;
+  /** Inside the ViVeSecBox: the box's own HTTPS front and its certificate are not used. */
+  embedded?: boolean;
 }) {
   const { tm, lang } = useLang();
   const levelText: Record<Level, string> = {
@@ -198,9 +201,11 @@ export function OverviewTab({
           </Row>
         </Card>
 
-        <div className="md:col-span-2">
-          <ClientCertificateCard />
-        </div>
+        {!embedded && (
+          <div className="md:col-span-2">
+            <ClientCertificateCard />
+          </div>
+        )}
       </div>
     </div>
   );

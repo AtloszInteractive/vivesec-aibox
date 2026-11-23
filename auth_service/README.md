@@ -227,6 +227,23 @@ POST /auth/tunnel/token   X-Auth-Service-Key + X-Auth-Tunnel-Key
   identity out; at most `AUTH_TUNNEL_AUTOCREATE_MAX` (500) users are created.
 - `tunnel-map promote <VVS-User>` makes that ViVeSecBox user an administrator
   (its `vvs-` user, created when needed).
+- With `AUTH_TUNNEL_OWNER_ADMIN=on` (the Spark installer's default) the gateway
+  passes `"owner": true` when the request carried `VVS-Permissions` naming
+  `owner` (the ViVeSecBox owner's tunnel). That identity then gets its user
+  like with autocreate (also when autocreate is off) and the admin role on
+  every token request (`tunnel_owner_admin` event when it was added). A former
+  owner keeps the role until an administrator removes it; a deleted or
+  suspended owner stays refused; a directory user's roles are not changed.
+- The administration page inside the Matrix app (E07b) calls
+  `/auth/admin/<action>` through the gateway with both keys and
+  `{"vvs_user": ...}` instead of `session`. The actor is the active local
+  user that identity is mapped to, read again on every call, and it must hold
+  the admin role (`403 forbidden`); an unmapped identity is
+  `403 tunnel_user_unknown` and is never created by such a call. A `session`
+  in that body is ignored, and a call with the service key alone never reads
+  `vvs_user`. The gateway sets `vvs_user` and `client` (the browser's address
+  the front saw) and, after a change of users or of the group map, drops its
+  cached tokens.
 - The token is the web login's token for that user (its roles, groups and
   rooms), with `sid = tunnel-<hash of VVS-User and VVS-Session>` and
   `amr = ["vivesecbox-tunnel"]`. The ViVeSecBox sign-in stands in for the

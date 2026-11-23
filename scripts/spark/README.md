@@ -10,6 +10,7 @@ ViVeSecBox ──mTLS──▶ :7476 tunnel front (nginx) ──▶ 127.0.0.1:18
                        client cert vs. ViVeSecBox CA      (matrix_tunnel/gateway.py)                    standalone
                                                                │
                                                                └──▶ auth :8097 /auth/tunnel/token (mapped users only)
+                                                                         /auth/admin/* (mapped administrators only)
 adapter ──▶ rag :8090 ──▶ shared Ollama 127.0.0.1:11434 (Dokumentum AI, read-only)
 adapter ──▶ clamav :3310          ui :8080 (loopback: admin over an SSH tunnel)
 ```
@@ -145,8 +146,13 @@ The kit carries no data; documents and records are loaded after the install.
 
 A ViVeSecBox user's first visit through the tunnel creates its own user
 (`vvs-<hash>`, role analyst, no rooms: it sees nothing until an administrator
-gives it rooms; `MATRIX_TUNNEL_AUTOCREATE=off` turns this off). One ViVeSecBox
-user becomes the administrator from the command line, once:
+gives it rooms; `MATRIX_TUNNEL_AUTOCREATE=off` turns this off). The owner of the
+ViVeSecBox (its requests carry `VVS-Permissions: write,owner`) becomes the
+administrator on its own visit, and gets the role back on every visit
+(`MATRIX_TUNNEL_OWNER_ADMIN=on`, the default). A former owner stays an
+administrator until another administrator removes the role. With the switch off,
+or for a further administrator, one ViVeSecBox user is promoted from the
+command line:
 
 ```bash
 docker exec -it vivesec-auth python /app/auth_service/manage.py tunnel-map promote <VVS-User>
@@ -161,7 +167,16 @@ docker exec -it vivesec-auth python /app/auth_service/manage.py tunnel-map set <
 docker exec -it vivesec-auth python /app/auth_service/manage.py tunnel-map show
 ```
 
-The web UI listens on loopback only. An administrator reaches it over SSH:
+The ViVeSecBox user an administrator promoted (or mapped to a local user with
+the admin role) finds **Administration** in the account menu of the Matrix app.
+The page opens over the app, and its calls go through the tunnel like every
+other call: `/api/v1/matrix/admin/*` to the adapter, and
+`/api/v1/matrix/auth/admin/<action>` to the auth service as that user (users,
+AD groups, clock, sign-in events). The client certificate card of the box's own
+HTTPS front is not shown there. Password change and sign-out stay with the
+ViVeSecBox.
+
+The web UI listens on loopback only. The local administrator reaches it over SSH:
 `ssh -L 8080:127.0.0.1:8080 vvsaibadmin@<spark>`, then `http://localhost:8080`.
 A ViVeSecBox user the tunnel refused shows up in the gateway's journal
 (`journalctl -u vivesec-matrix-tunnel | grep 'identity not accepted'`), with the

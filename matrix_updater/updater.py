@@ -351,23 +351,40 @@ def _check(settings, has_image):
                                                                state.get("step") or "?")})
         save_state(settings, state)
         return state
-    if state.get("status") == "broken" or state.get("interrupted"):
-        # An administrator has to look at the box first; nothing new is offered.
+    if state.get("interrupted"):
+        # An administrator has to go back first; nothing new is offered.
         return state
+    # Neither the new nor the previous version passed its checks. The box is
+    # only offered a fix: a release newer than the one that failed. Until one
+    # comes (or while the channel cannot be read) the state stays as it is.
+    broken = state.get("status") == "broken"
     installed = installed_version(settings.kit_dir)
-    state.update({"format": 1, "channel": settings.channel, "installed": installed, "checked_at": utcnow()})
+    if broken:
+        state["checked_at"] = utcnow()
+    else:
+        state.update({"format": 1, "channel": settings.channel, "installed": installed, "checked_at": utcnow()})
     if not settings.enabled:
-        state.update({"status": "off", "error": settings.problem, "available": None})
+        if not broken:
+            state.update({"status": "off", "error": settings.problem, "available": None})
         save_state(settings, state)
         return state
     agent = "vivesec-matrix-updater/%s box=%s v=%s s=%s" % (
         AGENT_VERSION, box_id(settings.state_dir), installed or "unknown", state.get("status", "never"))
+    kept = dict(state)
     try:
         updater = make_updater(settings, agent)
         updater.refresh()
         pointer, _ = fetch_json(updater, "channels/%s.json" % settings.channel)
         current = version_key(installed)
-        if pointer is None or current is not None and version_key(pointer.get("version")) <= current:
+        floor = current
+        if broken:
+            keys = [key for key in (current, version_key((state.get("last") or {}).get("version")))
+                    if key is not None]
+            floor = max(keys) if keys else None
+        if pointer is None or floor is not None and version_key(pointer.get("version")) <= floor:
+            if broken:
+                save_state(settings, state)
+                return state
             state.update({"status": "current", "available": None, "error": None})
             save_state(settings, state)
             return state
@@ -378,6 +395,9 @@ def _check(settings, has_image):
                    "security": bool(release.get("security")), "compat": release.get("compat") or {},
                    "published": release.get("published"), "min_from": release.get("min_from")}
         if release.get("min_from") and (current is None or current < version_key(release["min_from"])):
+            if broken:
+                save_state(settings, state)
+                return state
             state.update({"status": "blocked", "available": offered, "error":
                           "%s needs %s or newer installed first" % (release["version"], release["min_from"])})
             save_state(settings, state)
@@ -393,9 +413,14 @@ def _check(settings, has_image):
         offered["files"] = files
         offered["downloaded_at"] = utcnow()
         state.update({"status": "ready", "available": offered, "error": None})
+        if broken:
+            state.update({"format": 1, "channel": settings.channel, "installed": installed})
     except (RepositoryError, DownloadError, UpdateError, OSError, ValueError, KeyError) as e:
         # A failed check never touches the running box; it is retried by the timer.
-        state.update({"status": "error", "error": "%s: %s" % (type(e).__name__, e)})
+        if broken:
+            state = kept
+        else:
+            state.update({"status": "error", "error": "%s: %s" % (type(e).__name__, e)})
     save_state(settings, state)
     return state
 

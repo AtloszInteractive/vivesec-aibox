@@ -80,6 +80,8 @@ class Settings:
             or os.path.join(self.data_dir, "tunnel-users.json")
         self.tunnel_autocreate = values.get("tunnel_autocreate", "off")
         self.tunnel_autocreate_roles = TUNNEL_AUTOCREATE_MODES.get(self.tunnel_autocreate)
+        # The ViVeSecBox owner (VVS-Permissions: owner) administers the box.
+        self.tunnel_owner_admin = values.get("tunnel_owner_admin", False) is True
 
     @classmethod
     def from_env(cls, env=None, warn=None):
@@ -131,6 +133,10 @@ class Settings:
             warn("invalid AUTH_TUNNEL_AUTOCREATE=%r, using off" % mode)
             mode = "off"
         values["tunnel_autocreate"] = mode
+        owner = text("AUTH_TUNNEL_OWNER_ADMIN", "off").lower()
+        if owner not in ("on", "off"):
+            warn("invalid AUTH_TUNNEL_OWNER_ADMIN=%r, using off" % owner)
+        values["tunnel_owner_admin"] = owner == "on"
         return cls(**values)
 
 

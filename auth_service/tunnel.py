@@ -13,7 +13,12 @@ no token; a missing or broken map maps nobody. With AUTH_TUNNEL_AUTOCREATE=analy
 an unmapped identity gets a local user of its own on its first visit
 (`vvs-<10 hex of its sha256>`, role analyst, no rooms, no password: it signs in
 through the tunnel only) and the mapping is written; an administrator gives it
-rooms. A user the administrator deleted or suspended stays refused. The token is the same as the one
+rooms. A user the administrator deleted or suspended stays refused. With
+AUTH_TUNNEL_OWNER_ADMIN=on the ViVeSecBox's owner (the gateway saw
+`VVS-Permissions: ...,owner`) gets a user the same way, also when
+AUTH_TUNNEL_AUTOCREATE is off, and holds the admin role on every visit: an
+administrator cannot take it away while the switch is on. A former owner keeps
+the role until an administrator removes it. The token is the same as the one
 the web login gets, minted from the current user record, so the roles, groups
 and rooms are the box's own -- the tunnel only says who the user is. The
 ViVeSecBox's own sign-in stands in for the password and the TOTP code.

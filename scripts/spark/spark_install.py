@@ -105,12 +105,14 @@ DEFAULTS = {
     "MATRIX_UPDATE_URL": "",
     "MATRIX_UPDATE_CHANNEL": "stable",
     "MATRIX_TUNNEL_AUTOCREATE": "analyst",
+    "MATRIX_TUNNEL_OWNER_ADMIN": "on",
 }
 PKI_MODES = ("off", "files", "partner-dev")
 FIREWALL_MODES = ("off", "dropin-dev")
 GRAPH_MODES = ("on", "off")
 UPDATE_MODES = ("on", "off")
 AUTOCREATE_MODES = ("analyst", "off")
+OWNER_ADMIN_MODES = ("on", "off")
 UPDATE_CHANNELS = ("stable", "pilot", "labor")
 PORT_KEYS = ("MATRIX_RAG_PORT", "MATRIX_ADAPTER_PORT", "MATRIX_UI_PORT", "MATRIX_AUTH_PORT",
              "MATRIX_CLAMAV_PORT", "MATRIX_GATEWAY_PORT", "MATRIX_TUNNEL_PORT",
@@ -188,7 +190,8 @@ def settings(conf_text="", env=None):
     warnings = []
     for key, allowed in (("MATRIX_TUNNEL_PKI", PKI_MODES), ("MATRIX_TUNNEL_FIREWALL", FIREWALL_MODES),
                          ("MATRIX_GRAPH", GRAPH_MODES), ("MATRIX_UPDATE", UPDATE_MODES),
-                         ("MATRIX_TUNNEL_AUTOCREATE", AUTOCREATE_MODES)):
+                         ("MATRIX_TUNNEL_AUTOCREATE", AUTOCREATE_MODES),
+                         ("MATRIX_TUNNEL_OWNER_ADMIN", OWNER_ADMIN_MODES)):
         values[key] = values[key].strip().lower()
         if values[key] not in allowed:
             warnings.append("unknown %s=%r -> off" % (key, values[key]))
@@ -502,12 +505,38 @@ def phase_auth(conf):
     env = dict(os.environ, AIBOX_AUTH_DIR=str(auth_dir), AIBOX_AUTH_PORT=str(conf["MATRIX_AUTH_PORT"]),
                AUTH_TUNNEL_KEY_FILE="/data/auth/tunnel.key",
                # A ViVeSecBox user's first visit creates its own analyst without rooms.
-               AUTH_TUNNEL_AUTOCREATE=conf["MATRIX_TUNNEL_AUTOCREATE"])
+               AUTH_TUNNEL_AUTOCREATE=conf["MATRIX_TUNNEL_AUTOCREATE"],
+               # The ViVeSecBox owner (VVS-Permissions: owner) is the administrator.
+               AUTH_TUNNEL_OWNER_ADMIN=conf["MATRIX_TUNNEL_OWNER_ADMIN"])
     if "vivesec-auth" in kit_images(kit_info()):
         env["AIBOX_AUTH_IMAGE"] = "vivesec-auth:latest"
     run(sys.executable, str(SRC / "scripts/jetson/standalone/auth_deploy.py"), "deploy", str(SRC),
         env=env, capture=False)
+    forget_old_probe()
     log("AUTH_OK")
+
+
+AUTH_MANAGE = ("docker", "exec", "vivesec-auth", "python", "/app/auth_service/manage.py")
+INSTALL_PROBE = "matrix install probe"
+# Until 26.10.1.5 the verify phase used this valid VVS-User; with autocreate on it
+# got a user of its own (vvs-<10 hex of its sha256>), which an administrator may
+# even have given rooms, so that every later verify failed.
+OLD_PROBE = "matrix-install-probe"
+
+
+def forget_old_probe():
+    shown = run(*AUTH_MANAGE, "tunnel-map", "show", check=False)
+    try:
+        users = json.loads(shown.stdout or "{}").get("users") or {}
+    except ValueError:
+        return
+    name = users.get(OLD_PROBE)
+    if not name:
+        return
+    run(*AUTH_MANAGE, "tunnel-map", "remove", OLD_PROBE)
+    if name == "vvs-" + hashlib.sha256(OLD_PROBE.encode("utf-8")).hexdigest()[:10]:
+        run(*AUTH_MANAGE, "delete-user", name, check=False)
+    log("removed the user %s of the old install probe" % name)
 
 
 def adapter_args(conf, rag_key):
@@ -1116,9 +1145,11 @@ def phase_verify(conf):
     status = http_status(gateway, headers={"VVS-User": "probe"})[0]
     check("gateway refuses a caller without the forward key", status == 403, status)
     forward_key = (ROOT / "secrets" / "tunnel-forward.key").read_text().strip()
+    # A VVS-User the auth service refuses by its form: a valid one would get a
+    # user of its own with AUTH_TUNNEL_AUTOCREATE.
     status = http_status(gateway, headers={"X-Matrix-Forward-Key": forward_key, "X-Matrix-Client-Verify": "SUCCESS",
-                                           "VVS-User": "matrix-install-probe"})[0]
-    check("gateway asks the auth service (unmapped probe -> 400)", status == 400, status)
+                                           "VVS-User": INSTALL_PROBE})[0]
+    check("gateway asks the auth service (malformed probe -> 400)", status == 400, status)
     app = "http://127.0.0.1:%d/api/v1/matrix/app/manifest" % conf["MATRIX_GATEWAY_PORT"]
     status = http_status(app, headers={"X-Matrix-Forward-Key": forward_key, "X-Matrix-Client-Verify": "SUCCESS"})[0]
     check("gateway serves the bootloader app manifest", status == 200, status)

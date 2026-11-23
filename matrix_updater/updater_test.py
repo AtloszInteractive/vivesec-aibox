@@ -200,6 +200,32 @@ class UpdateChainTest(unittest.TestCase):
         self.assertEqual(state["status"], "current", state.get("error"))
         self.assertEqual(host.installers, ["26.11.1", "26.10.1-dev+4d28a33", "26.10.1-dev+4d28a33"])
 
+    def test_a_broken_box_is_offered_only_a_fix(self):
+        self.release("26.11.1")
+        settings = self.settings()
+        host = FakeHost({"vivesec-adapter:latest": OLD_ADAPTER, "vivesec-graph:latest": OLD_GRAPH}, codes=[1, 1])
+        up.check(settings, has_image=lambda _: False)
+        state = self.request(settings, host, action="install", version="26.11.1")
+        self.assertEqual(state["status"], "broken")
+        # Nothing newer than the release that failed: the state and its reason stay.
+        state = up.check(settings, has_image=lambda _: False)
+        self.assertEqual(state["status"], "broken")
+        self.assertIn("did not start either", state["error"])
+        self.server.shutdown()  # an unreachable channel does not hide it either
+        self.server.server_close()
+        self.assertEqual(up.check(settings, has_image=lambda _: False)["status"], "broken")
+        self.server = ThreadingHTTPServer(("127.0.0.1", self.server.server_port),
+                                          functools.partial(Handler, directory=str(self.repo)))
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        # A fix is offered and installs over the version that is in place.
+        self.release("26.11.2")
+        state = up.check(settings, has_image=lambda _: False)
+        self.assertEqual((state["status"], state["available"]["version"]), ("ready", "26.11.2"))
+        host.codes = [0]
+        state = self.request(settings, host, action="install", version="26.11.2")
+        self.assertEqual((state["status"], state["installed"]), ("current", "26.11.2"), state.get("error"))
+        self.assertEqual(state["last"]["previous"]["label"], "26.10.1-dev+4d28a33")
+
     def test_an_interrupted_install_stays_visible(self):
         self.release("26.11.1")
         settings = self.settings()

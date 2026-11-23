@@ -18,6 +18,8 @@ MATRIX_GRAPH_ADMINS=admin
 
 # A ViVeSecBox user's first visit creates its own analyst without rooms (off: map by hand).
 MATRIX_TUNNEL_AUTOCREATE=analyst
+# The ViVeSecBox owner (VVS-Permissions: owner) is the administrator (off: tunnel-map promote).
+MATRIX_TUNNEL_OWNER_ADMIN=on
 
 # The signed update channel the release kit on the stick belongs to.
 MATRIX_UPDATE=on

@@ -6,8 +6,12 @@
 //   * the adapter (rooms, ACL rules file, virus definitions, file events,
 //     organisation templates): /api/v1/ui/admin/*, relayed with the signed
 //     identity token.
+// Inside the Matrix bootloader (E07b) both go through the ViVeSecBox frame
+// socket instead: /api/v1/matrix/auth/admin/<action> and /api/v1/matrix/admin/*,
+// which the tunnel gateway relays as the ViVeSecBox user's local account.
 // Both check the admin role themselves; this module only shapes the calls.
 
+import { isMatrixEmbed, tunnelPath } from "@/lib/rag/adapter-client";
 import { followAuthSignal, gatePath, withCsrf } from "./client";
 
 export class AdminError extends Error {
@@ -23,18 +27,16 @@ export class AdminError extends Error {
 
 const TIMEOUT_MS = 30_000;
 
+function send(url: string, init: RequestInit): Promise<Response> {
+  const tunnel = globalThis.frameSocketFetcher;
+  if (tunnel) return tunnel(tunnelPath(url), init);
+  return fetch(url, withCsrf({ ...init, credentials: "same-origin", cache: "no-store" }));
+}
+
 async function call<T>(url: string, init: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(
-      url,
-      withCsrf({
-        ...init,
-        credentials: "same-origin",
-        cache: "no-store",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      }),
-    );
+    res = await send(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
   } catch {
     throw new AdminError("network", 0);
   }
@@ -56,7 +58,10 @@ async function call<T>(url: string, init: RequestInit): Promise<T> {
 }
 
 function authAdmin<T>(action: string, body: Record<string, unknown> = {}): Promise<T> {
-  return call<T>(gatePath(`/auth/admin/${action}`), {
+  const url = isMatrixEmbed()
+    ? `${globalThis.matrixApiPrefix}auth/admin/${action}`
+    : gatePath(`/auth/admin/${action}`);
+  return call<T>(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -357,15 +362,16 @@ export type TemplatesState = {
 
 export type GeneratedFile = { name: string; content_type: string; content_b64: string };
 
-/** A file sent as the raw request body; its name travels percent-encoded. */
-function adapterUpload<T>(endpoint: string, file: File): Promise<T> {
+/** A file sent as the raw request body; its name travels percent-encoded. The
+ *  frame socket gets the bytes rather than a File it may not be able to carry. */
+async function adapterUpload<T>(endpoint: string, file: File): Promise<T> {
   return call<T>(`/api/v1/ui/admin/${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
       "X-Template-Name": encodeURIComponent(file.name),
     },
-    body: file,
+    body: globalThis.frameSocketFetcher ? await file.arrayBuffer() : file,
   });
 }
 
