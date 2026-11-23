@@ -112,12 +112,18 @@ def build(client, scope_body, visible, entity_id, lang="en", user="", scope_name
         lines.append("- %s: %s" % (_t("aliases", lang), "; ".join(others)))
     lines.append("- %s: %d %s" % (_t("seen", lang), node.get("mentions") or 0,
                                   _t("times_in", lang) % len(node.get("documents") or [])))
+    # One line per attribute and value: ten documents giving the same registry
+    # number are ten references, not ten lines.
+    merged = {}
     for attr in node.get("attributes") or []:
         if not shown(attr.get("doc_id")):
             continue
-        name = TEXT["attr"].get(attr["name"], {}).get(lang) or attr["name"]
-        n = ref({"doc_id": attr["doc_id"], "page": attr.get("page"), "quote": ""})
-        lines.append("- %s: %s [%d]" % (name, attr["value"], n))
+        merged.setdefault((attr["name"], str(attr["value"]).strip()), []).append(attr)
+    for (key, value), attrs in merged.items():
+        name = TEXT["attr"].get(key, {}).get(lang) or key
+        refs = "".join("[%d]" % ref({"doc_id": a["doc_id"], "page": a.get("page"), "quote": ""})
+                       for a in attrs[:5])
+        lines.append("- %s: %s %s" % (name, value, refs))
 
     edges = []
     for edge in hood.get("edges") or []:

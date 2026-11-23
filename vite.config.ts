@@ -101,7 +101,9 @@ const versionJsonAsset = {
 };
 
 const versionVite = {
-  define: { __AIBOX_BUILD__: JSON.stringify(BUILD_INFO) },
+  // __AIBOX_MATRIX__: the Matrix app for the bootloader, which always runs inside
+  // the ViVeSec app (decided at build time, so the prerendered shell matches).
+  define: { __AIBOX_BUILD__: JSON.stringify(BUILD_INFO), __AIBOX_MATRIX__: JSON.stringify(MATRIX) },
   plugins: [versionJsonAsset],
 };
 

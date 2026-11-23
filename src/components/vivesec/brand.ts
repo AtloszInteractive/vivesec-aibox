@@ -38,3 +38,7 @@ export const LOGO_ON_LIGHT: string = logoOnLight;
 export const LOGO_FILE_RATIO = 1 / 0.903;
 /** File height / file width of the full logo PNGs. */
 export const LOGO_ASPECT = 148 / 512;
+
+/** The product's name inside the ViVeSec app, where its logo would show twice
+ *  (the Matrix build, `npm run build:matrix`). A working name for now. */
+export const MATRIX_NAME = "VIVEMATRIX";

@@ -8,6 +8,8 @@ declare global {
   var matrixApiPrefix: string | undefined;
   /** Release identity injected by vite.config.ts (see src/lib/build-info.ts). */
   const __AIBOX_BUILD__: import("./lib/build-info").BuildInfo;
+  /** True in the Matrix build (`npm run build:matrix`), which runs inside the ViVeSec app. */
+  const __AIBOX_MATRIX__: boolean;
 }
 
 export {};

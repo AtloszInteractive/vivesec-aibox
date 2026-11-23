@@ -85,6 +85,7 @@ import {
 } from "@/lib/rag/adapter-client";
 import { useVoice } from "./use-voice";
 import { AccountMenu } from "./AccountMenu";
+import { MatrixMark } from "./MatrixMark";
 import { DocumentStoreModal } from "./DocumentStoreModal";
 import {
   ArrowLeft,
@@ -838,6 +839,12 @@ function ViveSecAppInner() {
   const [showSlash, setShowSlash] = useState(false);
   const [driveOpen, setDriveOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
+  // Mounted from its first opening on: switching to the chat only hides it, so
+  // a search and its picture are still there when the user comes back.
+  const [graphMounted, setGraphMounted] = useState(false);
+  useEffect(() => {
+    if (graphOpen) setGraphMounted(true);
+  }, [graphOpen]);
   // An investigation subgraph the Relationships view opens on (BV 1.3 / 2.3);
   // the key remounts the view for each one.
   const [graphInitial, setGraphInitial] = useState<GraphInvestigationView | null>(null);
@@ -952,8 +959,11 @@ function ViveSecAppInner() {
   // default, so a box without a voice backend looks exactly as it does today.
   const [voiceCaps, setVoiceCaps] = useState({ stt: false, tts: false });
   // Analyst boxes (ADAPTER_APP_MODE=analyst) offer chat + relationships only; the
-  // drive browser and quick actions stay in the code but are not shown.
-  const [analyst, setAnalyst] = useState(false);
+  // drive browser and quick actions stay in the code but are not shown. The mode
+  // is unknown until the box answers; until then, and while it cannot be
+  // reached, the narrower layout is shown, so quick actions never flash up.
+  const [appMode, setAppMode] = useState<"workspace" | "analyst" | null>(null);
+  const analyst = appMode !== "workspace";
   const [watchlist, setWatchlist] = useState(false);
   // Concept 5.2: the case reference / legal basis of this session's queries,
   // and whether the box requires one (/status app.purpose).
@@ -998,7 +1008,7 @@ function ViveSecAppInner() {
       setBoxDetail(h.ok ? (h.mode ?? "") : (h.error ?? ""));
       setVoiceCaps({ stt: Boolean(h.voice?.stt), tts: Boolean(h.voice?.tts) });
       if (h.ok) setBoxVersion(h.version ?? null);
-      if (h.ok) setAnalyst(h.app?.mode === "analyst");
+      if (h.ok) setAppMode(h.app?.mode === "analyst" ? "analyst" : "workspace");
       if (h.ok) setWatchlist(Boolean(h.app?.watchlist));
       if (h.ok && h.app) setPurposeConfig(h.app.purpose);
       if (h.ok) suggestLang(h.app?.defaultLanguage);
@@ -1223,6 +1233,9 @@ function ViveSecAppInner() {
       (m.role === "system" || (messageProfiles[m.id] ?? "grounded") === chatProfile)),
     [messages, resultIds, messageProfiles, chatProfile],
   );
+  // Nothing asked yet: the composer sits under the opening, mid-column; the
+  // first message sends it to the bottom.
+  const freshChat = !chatMessages.some((m) => m.role !== "system");
   const resultMessages = useMemo(
     () => messages.filter((m) => resultIds.has(m.id)),
     [messages, resultIds],
@@ -2761,10 +2774,17 @@ function ViveSecAppInner() {
               )}
               {!analyst && (
                 <button
-                  onClick={() => setDriveOpen((v) => !v)}
+                  onClick={() => {
+                    // Beside the relationships there is no drive column: go back to it.
+                    if (graphOpen) {
+                      setGraphOpen(false);
+                      setDriveOpen(true);
+                    } else setDriveOpen((v) => !v);
+                  }}
                   className="hidden md:inline-flex items-center gap-2 rounded-full border border-ink/10 bg-ink/5 px-3 py-1.5 text-xs text-ink/80 hover:bg-ink/10 transition"
                 >
-                  <Laptop className="h-3.5 w-3.5" /> {driveOpen ? t.hideDrive : t.browseDrive}
+                  <Laptop className="h-3.5 w-3.5" />{" "}
+                  {driveOpen && !graphOpen ? t.hideDrive : t.browseDrive}
                 </button>
               )}
               {/* AI Box connection state. There is no offline answer mode: when
@@ -2817,8 +2837,15 @@ function ViveSecAppInner() {
               ViVeSecBox, never from here. */}
             <main
               className={`h-full min-w-0 flex-1 basis-0 flex-col transition-all duration-500 ${
-                mobilePane === "chat" ? "flex" : "hidden"
-              } ${previewFile && viewerMode === "split" ? "lg:hidden" : "lg:order-3 lg:flex lg:border-l lg:border-ink/5"}`}
+                mobilePane === "chat" && !graphOpen ? "flex" : "hidden"
+              } ${
+                previewFile && viewerMode === "split" && !graphOpen
+                  ? "lg:hidden"
+                  : `lg:order-3 lg:flex lg:border-l lg:border-ink/5${
+                      // Beside the relationships the chat keeps a narrow column.
+                      graphOpen ? " lg:w-[26rem] lg:flex-none" : ""
+                    }`
+              }`}
             >
               {/* Pinned chat header strip */}
               <div className="relative flex flex-wrap items-center gap-2 border-b border-ink/5 px-4 py-2.5">
@@ -3039,7 +3066,12 @@ function ViveSecAppInner() {
               {/* Messages */}
               {/* Messages — slim styled scrollbar: with the composer pinned
                 below, a hidden one left long answers looking complete. */}
-              <div ref={scrollRef} className="vvs-scroll flex-1 overflow-y-auto px-3 py-6 sm:px-6">
+              <div
+                ref={scrollRef}
+                className={`vvs-scroll overflow-y-auto px-3 py-6 sm:px-6 ${
+                  freshChat ? "mt-auto min-h-0 flex-initial" : "flex-1"
+                }`}
+              >
                 <div className="mx-auto flex max-w-3xl flex-col gap-5">
                   {chatMessages.map((m) => (
                     <div key={m.id} data-msg-id={m.id} className="scroll-mt-2">
@@ -3057,7 +3089,7 @@ function ViveSecAppInner() {
                       />
                     </div>
                   ))}
-                  {analyst && !chatMessages.some((m) => m.role !== "system") && (
+                  {appMode === "analyst" && freshChat && (
                     <>
                       {watchlist && !purposeMissing && (
                         <WatchCard key={drive} drive={drive} onTemplate={putInComposer} />
@@ -3079,7 +3111,11 @@ function ViveSecAppInner() {
               </div>
 
               {/* Composer */}
-              <div className="relative border-t border-ink/5 px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
+              <div
+                className={`relative px-3 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6 ${
+                  freshChat ? "mb-auto" : ""
+                }`}
+              >
                 {/* Floating browse drive (matches screenshot) */}
                 {!driveOpen && !analyst && (
                   <div className="pointer-events-none absolute -top-12 right-4 sm:right-8">
@@ -3343,7 +3379,9 @@ function ViveSecAppInner() {
             {/* Results column — quick actions and the cards they produce */}
             <section
               className={`h-full min-w-0 flex-1 basis-0 flex-col border-ink/5 transition-all duration-500 lg:order-2 lg:border-l ${
-                analyst ? "hidden" : `lg:flex ${mobilePane === "results" ? "flex" : "hidden"}`
+                analyst || graphOpen
+                  ? "hidden"
+                  : `lg:flex ${mobilePane === "results" ? "flex" : "hidden"}`
               }`}
             >
               <div className="flex items-center gap-2 border-b border-ink/5 px-4 py-2.5">
@@ -3661,7 +3699,8 @@ function ViveSecAppInner() {
                 citation={previewCitation}
                 evidence={viewerCitations}
                 drive={drive}
-                mode={viewerMode}
+                // Beside the relationships the document never takes the chat's place.
+                mode={graphOpen ? "side" : viewerMode}
                 matchCount={viewerCitations.length}
                 matchIndex={viewerIndex}
                 onPrevMatch={() => goMatch(-1)}
@@ -3688,8 +3727,8 @@ function ViveSecAppInner() {
               </PdfPreviewPane>
             )}
 
-            {/* Drive — hidden while a document is open above it */}
-            {!previewFile && !analyst && (
+            {/* Drive — hidden while a document is open above it, and beside the relationships */}
+            {!previewFile && !analyst && !graphOpen && (
               <DrivePanel
                 open={driveOpen}
                 onClose={() => {
@@ -3754,27 +3793,27 @@ function ViveSecAppInner() {
                 getFile={(id) => files.find((f) => f.id === id)}
               />
             )}
-            {graphOpen && (
+            {graphMounted && (
               <GraphPanel
-                key={graphKey}
+                // A new investigation or another drive starts it afresh: what was
+                // found on one drive is never shown next to another.
+                key={`${graphKey}:${drive}`}
                 drive={drive}
                 initial={graphInitial}
+                visible={graphOpen}
                 watchlist={watchlist}
                 purposeNote={purposeMissing ? tm(purposeText(purposeConfig, "banner")) : null}
                 onAskPurpose={() => setPurposeDialog(true)}
-                onClose={() => {
-                  setGraphOpen(false);
-                  setGraphInitial(null);
-                }}
+                onClose={() => setGraphOpen(false)}
                 onOpenSource={(s: GraphSource) => {
-                  // The investigation stays: reopening the view returns to it.
-                  setGraphOpen(false);
+                  // The document opens beside the picture; the view stays.
                   openCitation({
                     fileId: s.path,
                     page: s.page,
                     label: s.path.split("/").pop() ?? s.path,
                     snippet: s.quote,
                   });
+                  setViewerMode("side");
                 }}
               />
             )}
@@ -4649,8 +4688,10 @@ function HighlightedText({ text, terms }: { text: string; terms: string[] }) {
   );
 }
 
-/** The full ViVeSec logo at the guide's digital minimum (160 px visible). */
+/** The full ViVeSec logo at the guide's digital minimum (160 px visible); in the
+ *  Matrix build the product's name, as the ViVeSec app around it shows the logo. */
 function BrandLogo() {
+  if (__AIBOX_MATRIX__) return <MatrixMark />;
   return <ThemeLogo visibleWidth={160} />;
 }
 

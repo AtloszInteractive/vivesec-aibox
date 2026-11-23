@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ArrowLeft,
   CalendarDays,
@@ -104,6 +112,7 @@ export function GraphPanel({
   initial,
   watchlist = false,
   purposeNote = null,
+  visible = true,
   onAskPurpose,
   onClose,
   onOpenSource,
@@ -115,6 +124,9 @@ export function GraphPanel({
   initial?: GraphInvestigationView | null;
   /** What the box still needs before any query here (the case reference): shown at once. */
   purposeNote?: string | null;
+  /** False while the chat view is on: the view stays mounted, so a search,
+   *  the picture and every opened tab are there again when it comes back. */
+  visible?: boolean;
   /** Opens the purpose dialog (also when the box answers 428). */
   onAskPurpose?: () => void;
   onClose: () => void;
@@ -122,7 +134,19 @@ export function GraphPanel({
 }) {
   const { tm, lang } = useLang();
   const code = lang.toLowerCase() as keyof GraphLabel;
-  const [tab, setTab] = useState<Tab>("explore");
+  const [tab, setTabState] = useState<Tab>("explore");
+  // A tab once opened stays mounted (hidden), so going back to it keeps its state.
+  const [opened, setOpened] = useState<Tab[]>(["explore"]);
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next);
+    setOpened((list) => (list.includes(next) ? list : [...list, next]));
+  }, []);
+  const pane = (id: Tab, content: ReactNode) =>
+    opened.includes(id) && (
+      <TabActive.Provider value={visible && tab === id}>
+        <div className={tab === id ? "h-full" : "hidden"}>{content}</div>
+      </TabActive.Provider>
+    );
   /** People the Explore tab opens with (a review pair to look at). */
   const [exploreSeed, setExploreSeed] = useState<string[] | null>(null);
   const [profile, setProfile] = useState<GraphProfile | null>(null);
@@ -179,7 +203,9 @@ export function GraphPanel({
 
   const panel = (
     <div
-      className="absolute inset-0 z-[60] flex flex-col text-foreground"
+      className={`h-full min-w-0 flex-1 basis-0 flex-col text-foreground lg:order-first ${
+        visible ? "flex" : "hidden"
+      }`}
       style={{ backgroundColor: BG }}
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-ink/5 px-4 py-2">
@@ -227,7 +253,8 @@ export function GraphPanel({
         <Notice text={tm(FAILURE_TEXT.disabled)} />
       ) : (
         <div className="min-h-0 flex-1">
-          {tab === "explore" && (
+          {pane(
+            "explore",
             <ExploreTab
               drive={drive}
               initial={initial ?? null}
@@ -238,9 +265,10 @@ export function GraphPanel({
               subtypeLabel={subtypeLabel}
               watchlist={watchlist}
               onOpenSource={onOpenSource}
-            />
+            />,
           )}
-          {tab === "review" && (
+          {pane(
+            "review",
             <ReviewTab
               drive={drive}
               canEdit={canEdit}
@@ -251,27 +279,29 @@ export function GraphPanel({
                 setExploreSeed([a, b]);
                 setTab("explore");
               }}
-            />
+            />,
           )}
-          {tab === "processing" && (
+          {pane(
+            "processing",
             <ProcessingTab
               drive={drive}
               canEdit={canEdit}
               profile={profile}
               onProfileSaved={loadProfile}
               onOpenSource={onOpenSource}
-            />
+            />,
           )}
-          {tab === "profile" && (
+          {pane(
+            "profile",
             <ProfileTab
               drive={drive}
               profile={profile}
               canEdit={canEdit}
               code={code}
               onSaved={loadProfile}
-            />
+            />,
           )}
-          {tab === "querylog" && <QueryLogTab drive={drive} />}
+          {pane("querylog", <QueryLogTab drive={drive} />)}
         </div>
       )}
     </div>
@@ -282,6 +312,20 @@ export function GraphPanel({
 /** Opens the purpose dialog of the chat: a query refused for the missing
  *  case reference (428) asks for it right away. */
 const AskPurpose = createContext<(() => void) | null>(null);
+
+/** False while the tab (or the whole view) is hidden: its polling waits. */
+const TabActive = createContext(true);
+
+/** Calls `load` now and every `ms` while the tab is on screen. */
+function usePolling(load: () => Promise<void>, ms: number) {
+  const active = useContext(TabActive);
+  useEffect(() => {
+    if (!active) return;
+    void load();
+    const timer = setInterval(() => void load(), ms);
+    return () => clearInterval(timer);
+  }, [load, ms, active]);
+}
 
 function Notice({ text, tone = "muted" }: { text: string; tone?: "muted" | "warn" }) {
   return (
@@ -848,6 +892,52 @@ function InvestigationLevels({
   );
 }
 
+/** One row per attribute and value, in the order given, with the number of
+ *  documents that state it: the same registry number from ten documents is
+ *  one row. */
+function sameValuesOnce(
+  attributes: GraphNode["attributes"],
+): { name: string; value: string; documents: number }[] {
+  const rows = new Map<string, { name: string; value: string; docs: Set<string> }>();
+  for (const a of attributes) {
+    const value = a.value.trim();
+    const key = `${a.name}\u0000${value}`;
+    const row = rows.get(key) ?? { name: a.name, value, docs: new Set<string>() };
+    row.docs.add(a.doc_id);
+    rows.set(key, row);
+  }
+  return [...rows.values()].map((r) => ({ name: r.name, value: r.value, documents: r.docs.size }));
+}
+
+/** The attributes that tell namesakes apart, in the order a result line names them. */
+const DISTINGUISHING = [
+  "registry_number",
+  "birth_date",
+  "mother_name",
+  "birth_place",
+  "id_number",
+] as const;
+
+/** "Registry number: NY-1 · Date of birth: 1980-01-02 · ..." from what the
+ *  caller may see of the node; empty when it has none of these. */
+function distinguishing(node: GraphNode, tm: (text: string) => string): string {
+  const parts: string[] = [];
+  for (const name of DISTINGUISHING) {
+    const values = [
+      ...new Set(
+        node.attributes
+          .filter((a) => a.name === name)
+          .map((a) => a.value.trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (!values.length) continue;
+    const more = values.length > 2 ? ` +${values.length - 2}` : "";
+    parts.push(`${tm(name)}: ${values.slice(0, 2).join(", ")}${more}`);
+  }
+  return parts.join(" · ");
+}
+
 function ResultList({
   results,
   subtypeLabel,
@@ -862,7 +952,7 @@ function ResultList({
   const { tm } = useLang();
   return (
     <div
-      className="absolute left-4 top-3 z-10 max-h-[70%] w-[min(420px,90%)] overflow-y-auto rounded-xl border border-ink/10 shadow-xl"
+      className="absolute left-4 top-3 z-10 max-h-[70%] w-[min(560px,90%)] overflow-y-auto rounded-xl border border-ink/10 shadow-xl"
       style={{ backgroundColor: PANEL }}
     >
       <div className="flex items-center justify-between px-3 py-2 text-[11px] text-ink/50">
@@ -878,23 +968,33 @@ function ResultList({
           {tm("No match in the documents you may see.")}
         </div>
       )}
-      {results.map((n) => (
-        <button
-          key={n.id}
-          onClick={() => onPick(n)}
-          className="flex w-full items-center gap-2 border-t border-ink/5 px-3 py-2 text-left text-xs hover:bg-ink/5"
-        >
-          <span
-            className="h-2.5 w-2.5 shrink-0 rounded-full"
-            style={{ backgroundColor: TYPE_COLOR[n.type] }}
-          />
-          <span className="min-w-0 flex-1 truncate">{n.label}</span>
-          <span className="shrink-0 text-[10px] text-ink/45">
-            {subtypeLabel(n.subtype) || tm(TYPE_NAME[n.type])} · {n.documents.length}{" "}
-            {tm("documents")}
-          </span>
-        </button>
-      ))}
+      {results.map((n) => {
+        const details = distinguishing(n, tm);
+        return (
+          <button
+            key={n.id}
+            onClick={() => onPick(n)}
+            className="flex w-full items-start gap-2 border-t border-ink/5 px-3 py-2 text-left text-xs hover:bg-ink/5"
+          >
+            <span
+              className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: TYPE_COLOR[n.type] }}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{n.label}</span>
+              {details && (
+                <span className="block truncate text-[10.5px] text-ink/60" title={details}>
+                  {details}
+                </span>
+              )}
+            </span>
+            <span className="shrink-0 text-[10px] text-ink/45">
+              {subtypeLabel(n.subtype) || tm(TYPE_NAME[n.type])} · {n.documents.length}{" "}
+              {tm("documents")}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1053,8 +1153,12 @@ function EntitySheet({
       )}
       {node.attributes.length > 0 && (
         <Section title={tm("Attributes")}>
-          {node.attributes.map((a, i) => (
-            <div key={i} className="flex justify-between gap-2 text-xs">
+          {sameValuesOnce(node.attributes).map((a) => (
+            <div
+              key={`${a.name}\u0000${a.value}`}
+              className="flex justify-between gap-2 text-xs"
+              title={a.documents > 1 ? `${a.documents} ${tm("documents")}` : undefined}
+            >
               <span className="text-ink/55">{tm(a.name)}</span>
               <span>{a.value}</span>
             </div>
@@ -2132,11 +2236,7 @@ function ProcessingTab({
     const res = await run(() => graphApi.status(drive));
     if (res) setStatus(res);
   }, [drive, run]);
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+  usePolling(load, 5000);
 
   const totals = status?.totals ?? {};
   return (
@@ -2761,11 +2861,7 @@ function ReprocessSection({ drive, canEdit }: { drive: string; canEdit: boolean 
     const res = await call(() => graphApi.reprocessStatus(drive));
     if (res) setData(res);
   }, [drive, call]);
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+  usePolling(load, 5000);
 
   async function act(work: () => Promise<unknown>) {
     setBusy(true);
@@ -2961,12 +3057,8 @@ function UnreadableDocuments({
     }
   }, [drive]);
   const rereading = data?.rereading ?? 0;
-  useEffect(() => {
-    void load();
-    // Faster while rereads are running, so their outcome shows up.
-    const timer = setInterval(() => void load(), rereading ? 5000 : 30000);
-    return () => clearInterval(timer);
-  }, [load, rereading]);
+  // Faster while rereads are running, so their outcome shows up.
+  usePolling(load, rereading ? 5000 : 30000);
 
   async function act(work: () => Promise<unknown>, done?: (out: unknown) => string) {
     setBusy(true);

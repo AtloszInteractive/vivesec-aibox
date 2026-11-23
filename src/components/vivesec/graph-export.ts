@@ -39,6 +39,10 @@ export function pictureSvg(
   lines: string[],
 ): string {
   const clone = svg.cloneNode(true) as SVGSVGElement;
+  // The page's own placement of the picture stays on the page: a WebGL
+  // snapshot is drawn hidden there, and a file that kept `visibility: hidden`
+  // would hold the whole picture and show nothing.
+  clone.removeAttribute("style");
   inlineStyles(svg, clone);
   const ns = "http://www.w3.org/2000/svg";
   const band = (lines.length * 14 + 12) * unit;

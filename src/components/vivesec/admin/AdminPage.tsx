@@ -38,6 +38,7 @@ import { adapterSession } from "@/lib/rag/adapter-client";
 import { GateLogo, LanguagePicker } from "../AuthPages";
 import { ACCENT_TEXT } from "../brand";
 import { LanguageProvider, useLang } from "../i18n";
+import { MatrixMark } from "../MatrixMark";
 import { ThemeToggle } from "../ThemeControls";
 import { CompanyTab } from "./CompanyTab";
 import { DirectoryTab } from "./DirectoryTab";
@@ -196,7 +197,7 @@ function AdminScreen({ onClose }: { onClose?: () => void }) {
     >
       <header className="border-b border-ink/10">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
-          <GateLogo />
+          {embedded ? <MatrixMark /> : <GateLogo />}
           <h1 className="text-base font-semibold">{tm("Administration")}</h1>
           <div className="ml-auto flex items-center gap-3">
             {embedded ? (
