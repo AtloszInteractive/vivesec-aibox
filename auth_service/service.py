@@ -28,10 +28,15 @@ status. Request bodies (passwords, codes, session secrets) are never logged.
   POST /auth/admin/directory            {session}  -> settings (no secrets), map, map_version
   POST /auth/admin/directory/map        {session, map, base}  (base = the map_version read)
   POST /auth/admin/directory/check      {session, username?}
+  POST /auth/tunnel/token   {vvs_user, vvs_session?, client?} -> token, expires_at, user
 
 `client` is the browser's address as the web UI server saw it; it feeds the
 per-client throttle and the event log. A refusal of an administrative call may
 carry a `message` for the administrator (what is wrong with a group map).
+
+`/auth/tunnel/token` exists only with AUTH_TUNNEL_KEY_FILE (tunnel.py) and
+needs that key as well (`X-Auth-Tunnel-Key`): its one caller is the tunnel
+gateway, so the web UI server's key alone cannot mint tokens without a session.
 
 A directory user's login or session answers `directory_unavailable` (503)
 when Active Directory cannot be asked (E27 S6, `directory.py`); password,
@@ -55,6 +60,8 @@ import store as store_module  # noqa: E402
 import tokens  # noqa: E402
 
 KEY_HEADER = "X-Auth-Service-Key"
+TUNNEL_KEY_HEADER = "X-Auth-Tunnel-Key"
+TUNNEL_PATH = "/auth/tunnel/token"
 MAX_BODY_BYTES = 64 * 1024
 MAX_CLIENT_LENGTH = 64
 REQUEST_TIMEOUT_SECONDS = 30
@@ -117,6 +124,10 @@ ROUTES = {
 }
 
 
+def _tunnel_token(authenticator, body, client):
+    return authenticator.issue_tunnel_token(body.get("vvs_user"), body.get("vvs_session"), client)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "aibox-auth"
     sys_version = ""
@@ -141,6 +152,10 @@ class Handler(BaseHTTPRequestHandler):
     def _authorised(self):
         presented = (self.headers.get(KEY_HEADER) or "").strip().encode("utf-8")
         return bool(presented) and hmac.compare_digest(presented, self.server.service_key)
+
+    def _tunnel_authorised(self):
+        presented = (self.headers.get(TUNNEL_KEY_HEADER) or "").strip().encode("utf-8")
+        return bool(presented) and hmac.compare_digest(presented, self.server.tunnel_key)
 
     def do_GET(self):
         if self.path == "/auth/health":
@@ -168,7 +183,16 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self._send(400, {"ok": False, "error": "bad_request"})
             return
-        route = ROUTES.get(self.path)
+        if self.path == TUNNEL_PATH:
+            if self.server.tunnel_key is None:
+                self._send(404, {"ok": False, "error": "not_found"})
+                return
+            if not self._tunnel_authorised():
+                self._send(401, {"ok": False, "error": "tunnel_key"}, close=True)
+                return
+            route = _tunnel_token
+        else:
+            route = ROUTES.get(self.path)
         if route is None:
             self._send(404, {"ok": False, "error": "not_found"})
             return
@@ -197,9 +221,10 @@ class Handler(BaseHTTPRequestHandler):
 class AuthServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, authenticator, service_key):
+    def __init__(self, address, authenticator, service_key, tunnel_key=None):
         self.authenticator = authenticator
         self.service_key = service_key
+        self.tunnel_key = tunnel_key
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
         super().__init__(address, Handler)
@@ -212,16 +237,31 @@ def open_service(settings):
     return auth.Authenticator(store_module.Store(settings.db_path), settings, jwt_secret)
 
 
+def tunnel_key(settings, warn):
+    """The tunnel gateway's key, or None (tunnel sign-in off). A configured but
+    unusable key file turns the tunnel off rather than stopping the service."""
+    if not settings.tunnel_key_file:
+        return None
+    try:
+        return tokens.read_key(settings.tunnel_key_file, "tunnel key")
+    except tokens.KeyFileError as e:
+        warn("tunnel sign-in off: %s" % e)
+        return None
+
+
 def main():
+    warn = lambda message: sys.stderr.write("[auth] %s\n" % message)  # noqa: E731
     try:
         settings = config.Settings.from_env()
         service_key = tokens.read_key(settings.service_key_file, "service key")
         authenticator = open_service(settings)
-        server = AuthServer((settings.host, settings.port), authenticator, service_key)
+        server = AuthServer((settings.host, settings.port), authenticator, service_key,
+                            tunnel_key(settings, warn))
     except (config.ConfigError, tokens.KeyFileError, OSError) as e:
         sys.stderr.write("[auth] not starting: %s\n" % e)
         return 2
-    sys.stderr.write("[auth] listening on %s:%d\n" % (settings.host, settings.port))
+    sys.stderr.write("[auth] listening on %s:%d (tunnel sign-in %s)\n"
+                     % (settings.host, settings.port, "on" if server.tunnel_key else "off"))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

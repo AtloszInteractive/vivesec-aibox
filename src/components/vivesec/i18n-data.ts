@@ -4801,6 +4801,206 @@ const M: Record<string, Tri> = {
     "Kun de første {n} resultater vises; indsnævr søgningen.",
     "Nur die ersten {n} Treffer werden angezeigt; grenzen Sie die Suche ein.",
   ],
+  // Updates of a Matrix box (E07, admin/UpdatesTab.tsx)
+  Updates: ["Frissítések", "Opdateringer", "Updates"],
+  "The AI Box is restarting with the new version. This page refreshes by itself.": [
+    "Az AI Box az új verzióval indul újra. Az oldal magától frissül.",
+    "AI Box genstarter med den nye version. Siden opdateres af sig selv.",
+    "Die AI Box startet mit der neuen Version neu. Die Seite aktualisiert sich von selbst.",
+  ],
+  "Updates are not set up on this AI Box.": [
+    "Ezen az AI Boxon nincs beállítva a frissítés.",
+    "Opdateringer er ikke sat op på denne AI Box.",
+    "Updates sind auf dieser AI Box nicht eingerichtet.",
+  ],
+  "Installed version": ["Telepített verzió", "Installeret version", "Installierte Version"],
+  Channel: ["Csatorna", "Kanal", "Kanal"],
+  "Last check": ["Utolsó ellenőrzés", "Seneste kontrol", "Letzte Prüfung"],
+  "Up to date.": ["Naprakész.", "Opdateret.", "Auf dem neuesten Stand."],
+  "Update checks are off on this AI Box.": [
+    "Ezen az AI Boxon ki van kapcsolva a frissítések keresése.",
+    "Søgning efter opdateringer er slået fra på denne AI Box.",
+    "Die Suche nach Updates ist auf dieser AI Box ausgeschaltet.",
+  ],
+  "The last update check failed. It is retried automatically.": [
+    "A legutóbbi frissítéskeresés nem sikerült. Automatikusan újrapróbálja.",
+    "Den seneste søgning efter opdateringer mislykkedes. Den gentages automatisk.",
+    "Die letzte Suche nach Updates ist fehlgeschlagen. Sie wird automatisch wiederholt.",
+  ],
+  "Downloading version {v}…": [
+    "A(z) {v} verzió letöltése folyik…",
+    "Henter version {v}…",
+    "Version {v} wird heruntergeladen…",
+  ],
+  "Version {v} needs version {min} installed first.": [
+    "A(z) {v} verzió előtt a(z) {min} verziót kell telepíteni.",
+    "Version {v} kræver, at version {min} installeres først.",
+    "Für Version {v} muss zuerst Version {min} installiert werden.",
+  ],
+  "Installing: {step}": ["Telepítés: {step}", "Installerer: {step}", "Installation: {step}"],
+  "Going back to the previous version: {step}": [
+    "Visszaállás az előző verzióra: {step}",
+    "Går tilbage til den forrige version: {step}",
+    "Zurück zur vorherigen Version: {step}",
+  ],
+  "The update failed; the previous version runs again.": [
+    "A frissítés nem sikerült; ismét az előző verzió fut.",
+    "Opdateringen mislykkedes; den forrige version kører igen.",
+    "Das Update ist fehlgeschlagen; die vorherige Version läuft wieder.",
+  ],
+  "The AI Box needs attention: the previous version did not start either. Contact support.": [
+    "Az AI Box beavatkozást igényel: az előző verzió sem indult el. Forduljon a supporthoz.",
+    "AI Box kræver opmærksomhed: den forrige version startede heller ikke. Kontakt support.",
+    "Die AI Box braucht Aufmerksamkeit: Auch die vorherige Version ist nicht gestartet. Wenden Sie sich an den Support.",
+  ],
+  "The updater has not picked up the request. Check that the update service runs on the AI Box.": [
+    "A frissítő nem vette át a kérést. Ellenőrizze, hogy fut-e a frissítő szolgáltatás az AI Boxon.",
+    "Opdateringstjenesten har ikke modtaget anmodningen. Kontrollér, at den kører på AI Box.",
+    "Der Updater hat die Anfrage nicht übernommen. Prüfen Sie, ob der Update-Dienst auf der AI Box läuft.",
+  ],
+  "Waiting for the updater…": [
+    "Várakozás a frissítőre…",
+    "Venter på opdateringstjenesten…",
+    "Warten auf den Updater…",
+  ],
+  "Version {v} is ready to install.": [
+    "A(z) {v} verzió telepíthető.",
+    "Version {v} er klar til installation.",
+    "Version {v} ist bereit zur Installation.",
+  ],
+  "Security update": ["Biztonsági frissítés", "Sikkerhedsopdatering", "Sicherheitsupdate"],
+  "Release notes": ["Kiadási megjegyzések", "Udgivelsesnoter", "Versionshinweise"],
+  "Download size: {n} MB": [
+    "Letöltési méret: {n} MB",
+    "Downloadstørrelse: {n} MB",
+    "Downloadgröße: {n} MB",
+  ],
+  "Before installing, the data is copied aside, because this version changes how it is stored.": [
+    "Telepítés előtt az adatokról másolat készül, mert ez a verzió megváltoztatja a tárolásukat.",
+    "Før installationen kopieres data til side, fordi denne version ændrer, hvordan de gemmes.",
+    "Vor der Installation werden die Daten beiseitekopiert, weil diese Version ihre Speicherung ändert.",
+  ],
+  "The search index is rebuilt after installing; until then answers may be incomplete.": [
+    "Telepítés után a keresőindex újraépül; addig a válaszok hiányosak lehetnek.",
+    "Søgeindekset genopbygges efter installationen; indtil da kan svar være ufuldstændige.",
+    "Der Suchindex wird nach der Installation neu aufgebaut; bis dahin können Antworten unvollständig sein.",
+  ],
+  "Install now": ["Telepítés most", "Installér nu", "Jetzt installieren"],
+  "Back to the previous version": [
+    "Vissza az előző verzióra",
+    "Tilbage til den forrige version",
+    "Zurück zur vorherigen Version",
+  ],
+  "Last update: {v}, before it: {prev}": [
+    "Utolsó frissítés: {v}, előtte: {prev}",
+    "Seneste opdatering: {v}, før den: {prev}",
+    "Letztes Update: {v}, davor: {prev}",
+  ],
+  Installed: ["Telepítve", "Installeret", "Installiert"],
+  "Rolled back, data restored": [
+    "Visszaállítva, adatokkal együtt",
+    "Rullet tilbage, data gendannet",
+    "Zurückgesetzt, Daten wiederhergestellt",
+  ],
+  "Rolled back": ["Visszaállítva", "Rullet tilbage", "Zurückgesetzt"],
+  "Install version {v}?": [
+    "Telepíti a(z) {v} verziót?",
+    "Installér version {v}?",
+    "Version {v} installieren?",
+  ],
+  "The AI Box is unavailable for a few minutes while the new version starts. If it does not start, the previous version comes back automatically.":
+    [
+      "Az AI Box néhány percig nem érhető el, amíg az új verzió elindul. Ha nem indul el, automatikusan visszaáll az előző verzió.",
+      "AI Box er utilgængelig i nogle minutter, mens den nye version starter. Hvis den ikke starter, vender den forrige version automatisk tilbage.",
+      "Die AI Box ist einige Minuten nicht erreichbar, während die neue Version startet. Startet sie nicht, kehrt die vorherige Version automatisch zurück.",
+    ],
+  "Go back to version {v}?": [
+    "Visszaáll a(z) {v} verzióra?",
+    "Gå tilbage til version {v}?",
+    "Zurück zu Version {v}?",
+  ],
+  "Go back": ["Visszaállás", "Gå tilbage", "Zurücksetzen"],
+  "The AI Box is unavailable for a few minutes while the previous version starts.": [
+    "Az AI Box néhány percig nem érhető el, amíg az előző verzió elindul.",
+    "AI Box er utilgængelig i nogle minutter, mens den forrige version starter.",
+    "Die AI Box ist einige Minuten nicht erreichbar, während die vorherige Version startet.",
+  ],
+  "Also restore the data as it was before the update (everything saved since then is lost)": [
+    "Az adatokat is állítsa vissza a frissítés előtti állapotra (az azóta mentett adatok elvesznek)",
+    "Gendan også data, som de var før opdateringen (alt gemt siden da går tabt)",
+    "Auch die Daten auf den Stand vor dem Update zurücksetzen (alles seitdem Gespeicherte geht verloren)",
+  ],
+  "Checking the downloaded files": [
+    "A letöltött fájlok ellenőrzése",
+    "Kontrollerer de hentede filer",
+    "Prüfung der heruntergeladenen Dateien",
+  ],
+  "Copying the data aside": [
+    "Másolat készítése az adatokról",
+    "Kopierer data til side",
+    "Daten werden beiseitekopiert",
+  ],
+  "Loading the new version": [
+    "Az új verzió betöltése",
+    "Indlæser den nye version",
+    "Neue Version wird geladen",
+  ],
+  "Unpacking the installer": [
+    "A telepítő kicsomagolása",
+    "Pakker installationsprogrammet ud",
+    "Installationsprogramm wird entpackt",
+  ],
+  "Starting the services": [
+    "A szolgáltatások indítása",
+    "Starter tjenesterne",
+    "Dienste werden gestartet",
+  ],
+  "Putting the data copy back": [
+    "Az adatmásolat visszaállítása",
+    "Lægger datakopien tilbage",
+    "Datenkopie wird zurückgespielt",
+  ],
+  "This version is no longer ready to install. Refresh the page.": [
+    "Ez a verzió már nem telepíthető. Frissítse az oldalt.",
+    "Denne version er ikke længere klar til installation. Opdater siden.",
+    "Diese Version ist nicht mehr installationsbereit. Laden Sie die Seite neu.",
+  ],
+  "A request is already waiting for the updater.": [
+    "Már vár egy kérés a frissítőre.",
+    "En anmodning venter allerede på opdateringstjenesten.",
+    "Eine Anfrage wartet bereits auf den Updater.",
+  ],
+  "There is no earlier version to go back to.": [
+    "Nincs korábbi verzió, amelyre vissza lehetne állni.",
+    "Der er ingen tidligere version at gå tilbage til.",
+    "Es gibt keine frühere Version, zu der zurückgekehrt werden kann.",
+  ],
+  "The last update took no data copy.": [
+    "A legutóbbi frissítés nem készített adatmásolatot.",
+    "Den seneste opdatering tog ingen datakopi.",
+    "Das letzte Update hat keine Datenkopie angelegt.",
+  ],
+  "Update approved": ["Frissítés jóváhagyva", "Opdatering godkendt", "Update freigegeben"],
+  "The previous version runs already.": [
+    "Már az előző verzió fut.",
+    "Den forrige version kører allerede.",
+    "Die vorherige Version läuft bereits.",
+  ],
+  "The last installation was interrupted. Go back to the previous version or install again.": [
+    "A legutóbbi telepítés megszakadt. Álljon vissza az előző verzióra, vagy telepítse újra.",
+    "Den seneste installation blev afbrudt. Gå tilbage til den forrige version, eller installér igen.",
+    "Die letzte Installation wurde unterbrochen. Kehren Sie zur vorherigen Version zurück oder installieren Sie erneut.",
+  ],
+  "The previous version runs already; going back now only restores the data copy.": [
+    "Már az előző verzió fut; a visszaállás most csak az adatmásolatot állítja vissza.",
+    "Den forrige version kører allerede; at gå tilbage nu gendanner kun datakopien.",
+    "Die vorherige Version läuft bereits; das Zurücksetzen stellt jetzt nur die Datenkopie wieder her.",
+  ],
+  "Rollback requested": [
+    "Visszaállítás kérve",
+    "Tilbagerulning anmodet",
+    "Zurücksetzen angefordert",
+  ],
 };
 
 export function translateExact(text: string, lang: Lang): string | null {

@@ -127,6 +127,12 @@ const ERROR_TEXT: Record<string, string> = {
   invalid_documents: "The document selection is not valid.",
   length_required: "The upload did not arrive completely. Try again.",
   incomplete: "The upload did not arrive completely. Try again.",
+  not_ready: "This version is no longer ready to install. Refresh the page.",
+  request_pending: "A request is already waiting for the updater.",
+  nothing_to_roll_back: "There is no earlier version to go back to.",
+  no_data_copy: "The last update took no data copy.",
+  already_previous: "The previous version runs already.",
+  updates_unavailable: "Updates are not set up on this AI Box.",
 };
 
 export function errorText(error: unknown, tm: Tm): string {

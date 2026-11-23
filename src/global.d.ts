@@ -4,6 +4,8 @@
 declare global {
   // eslint-disable-next-line no-var
   var frameSocketFetcher: typeof fetch | undefined;
+  /** Set by the Matrix bootloader (matrix_boot/): the API prefix of the tunnel. */
+  var matrixApiPrefix: string | undefined;
   /** Release identity injected by vite.config.ts (see src/lib/build-info.ts). */
   const __AIBOX_BUILD__: import("./lib/build-info").BuildInfo;
 }

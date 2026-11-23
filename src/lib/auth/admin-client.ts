@@ -486,3 +486,68 @@ export const startExtraction = (paths: string[]) =>
   adapterAdmin<CompanyState>("company/extract", { paths });
 
 export const cancelExtraction = () => adapterAdmin<CompanyState>("company/extract/cancel", {});
+
+/* ------------------------------------------------------------------ updates (E07) */
+
+export type UpdateStep = "verify" | "snapshot" | "load" | "kit" | "install" | "data";
+
+export type UpdateStatus =
+  | "never"
+  | "off"
+  | "current"
+  | "downloading"
+  | "ready"
+  | "blocked"
+  | "error"
+  | "installing"
+  | "rolling_back"
+  | "failed"
+  | "broken";
+
+/** The host updater's state as the adapter passes it on (adapter/updates.py clean_state). */
+export type UpdateState = {
+  status: UpdateStatus;
+  installed: string | null;
+  channel: string | null;
+  checked_at: string | null;
+  error: string | null;
+  step: UpdateStep | null;
+  step_at: string | null;
+  interrupted: boolean;
+  available: {
+    version: string;
+    label: string | null;
+    notes: Partial<Record<"en" | "hu" | "da" | "de", string>>;
+    security: boolean;
+    data_copy: boolean;
+    reindex: boolean;
+    published: string | null;
+    min_from: string | null;
+    download_bytes: number | null;
+    downloaded: boolean;
+  } | null;
+  last: {
+    version: string;
+    previous: string | null;
+    data_copy: boolean;
+    started_at: string | null;
+    finished_at: string | null;
+    failed_at: string | null;
+  } | null;
+  history: {
+    version: string | null;
+    at: string | null;
+    result: "installed" | "rolled_back";
+    data_restored: boolean;
+  }[];
+  pending: { since_seconds: number; stuck: boolean } | null;
+};
+
+export const readUpdate = () =>
+  adapterAdmin<{ enabled: boolean; update: UpdateState | null }>("update");
+
+export const installUpdate = (version: string) =>
+  adapterAdmin<{ update: UpdateState }>("update/install", { version });
+
+export const rollbackUpdate = (restoreData: boolean) =>
+  adapterAdmin<{ update: UpdateState }>("update/rollback", { restore_data: restoreData });

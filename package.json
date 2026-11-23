@@ -7,6 +7,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "build:embed": "vite build --mode embed && node scripts/embed-config.mjs",
+    "build:matrix": "vite build --mode matrix && node scripts/matrix-bundle.mjs",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",

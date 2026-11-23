@@ -1,7 +1,7 @@
 // Administration page of a standalone box (E27 S7): users, AD group mapping,
 // rooms and permissions, two-factor resets, the clock and virus definitions,
-// the company profile (E12), the organisation's templates (E18) and the event
-// logs. Only for users with
+// the company profile (E12), the organisation's templates (E18), the event
+// logs and the updates of a Matrix box (E07). Only for users with
 // the admin role; the login gate and both backends check that again on every
 // call.
 
@@ -10,6 +10,7 @@ import {
   ArrowLeft,
   Building2,
   DoorOpen,
+  Download,
   FileText,
   Gauge,
   Loader2,
@@ -43,10 +44,19 @@ import { OverviewTab } from "./OverviewTab";
 import { RoomsTab } from "./RoomsTab";
 import { needsAttention } from "./status";
 import { TemplatesTab } from "./TemplatesTab";
+import { UpdatesTab } from "./UpdatesTab";
 import { UsersTab } from "./UsersTab";
 import { errorText } from "./ui";
 
-type Tab = "overview" | "users" | "rooms" | "directory" | "company" | "templates" | "events";
+type Tab =
+  | "overview"
+  | "users"
+  | "rooms"
+  | "directory"
+  | "company"
+  | "templates"
+  | "events"
+  | "updates";
 
 type Gate = { state: "loading" } | { state: "not_standalone" } | { state: "ready"; me: string };
 
@@ -155,6 +165,7 @@ function AdminScreen() {
     { id: "company", label: tm("Company profile"), icon: <Building2 className="h-4 w-4" /> },
     { id: "templates", label: tm("Templates"), icon: <FileText className="h-4 w-4" /> },
     { id: "events", label: tm("Event log"), icon: <ScrollText className="h-4 w-4" /> },
+    { id: "updates", label: tm("Updates"), icon: <Download className="h-4 w-4" /> },
   ];
 
   return (
@@ -257,6 +268,7 @@ function AdminScreen() {
           {tab === "company" && <CompanyTab />}
           {tab === "templates" && <TemplatesTab />}
           {tab === "events" && <EventsTab />}
+          {tab === "updates" && <UpdatesTab />}
         </main>
       )}
     </div>

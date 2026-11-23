@@ -79,3 +79,4 @@ rag_service/build_info.json
 scripts/release/fleet.json
 release-manifest-*.json
 ui-output*.tgz
+matrix-kit*.tgz

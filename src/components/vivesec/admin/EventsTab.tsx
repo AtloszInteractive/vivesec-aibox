@@ -55,6 +55,8 @@ const EVENT_TEXT: Record<string, string> = {
   company_delete: "Company profile fact deleted",
   company_restore: "Company profile fact restored",
   company_extract: "Company profile reading started",
+  update_install: "Update approved",
+  update_rollback: "Rollback requested",
 };
 
 const FAILURES = new Set([

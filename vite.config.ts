@@ -30,7 +30,11 @@ for (const file of [".env", ".env.local"]) {
 // `--mode embed` is used instead of an env var so the script stays cross-platform.
 const modeIndex = process.argv.indexOf("--mode");
 const buildMode = modeIndex >= 0 ? process.argv[modeIndex + 1] : "";
-const EMBED_SPA = process.env.VIVESEC_SPA === "1" || buildMode === "embed";
+// `--mode matrix` is the embed build as one script: the Matrix bootloader fetches
+// it through the ViVeSec frame socket, which cannot serve chunks the browser loads
+// itself (scripts/matrix-bundle.mjs inlines the remaining assets afterwards).
+const MATRIX = buildMode === "matrix";
+const EMBED_SPA = process.env.VIVESEC_SPA === "1" || buildMode === "embed" || MATRIX;
 if (EMBED_SPA) process.env.NODE_ENV ||= "production";
 
 const EMBED_BASE = process.env.VIVESEC_BASE ?? "";
@@ -101,6 +105,21 @@ const versionVite = {
   plugins: [versionJsonAsset],
 };
 
+// One client script, no module preloads, one stylesheet (dist/matrix-client).
+const matrixVite = MATRIX
+  ? {
+      build: { outDir: "dist/matrix-client", modulePreload: false },
+      environments: {
+        client: {
+          build: {
+            modulePreload: false,
+            rollupOptions: { output: { inlineDynamicImports: true } },
+          },
+        },
+      },
+    }
+  : {};
+
 // TanStack Start overwrites the router basepath during hydration with a constant
 // it inlines at build time, which would discard whatever the app resolved at
 // runtime. Replacing the constant with an expression keeps the mount prefix a
@@ -150,6 +169,7 @@ export default defineConfig({
           ? { ...versionVite, base: EMBED_BASE }
           : {
               ...versionVite,
+              ...matrixVite,
               experimental: portableAssetUrls,
               plugins: [runtimeRouterBasepath, ...versionVite.plugins],
             },

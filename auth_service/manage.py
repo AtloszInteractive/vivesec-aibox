@@ -20,6 +20,13 @@ Directory (AD) login, E27 S6:
   python manage.py ldap-map show
   python manage.py ldap-check [NAME]                      # bind, mapped groups, what NAME would get
 
+ViVeSecBox tunnel sign-in (tunnel.py; `init` also creates AUTH_TUNNEL_KEY_FILE when set):
+
+  python manage.py tunnel-map show
+  python manage.py tunnel-map set VVS_USER NAME           # VVS_USER signs in as the existing user NAME
+  python manage.py tunnel-map remove VVS_USER
+  python manage.py tunnel-map promote VVS_USER            # that ViVeSecBox user administers the box
+
 Uses the same AUTH_* environment as the service. Passwords are read from the
 terminal (twice), or as one line from standard input with --password-stdin;
 they are never taken from the command line. Every change is in the event log
@@ -43,6 +50,7 @@ import ldap_client  # noqa: E402
 import service  # noqa: E402
 import store as store_module  # noqa: E402
 import tokens  # noqa: E402
+import tunnel  # noqa: E402
 
 ACTOR = "cli"
 
@@ -63,8 +71,10 @@ def init(settings, out):
         os.chmod(settings.data_dir, 0o700)
     except OSError:
         pass
-    for path, what in ((settings.service_key_file, "service key"),
-                       (settings.jwt_secret_file, "token signing key")):
+    keys = [(settings.service_key_file, "service key"), (settings.jwt_secret_file, "token signing key")]
+    if settings.tunnel_key_file:
+        keys.append((settings.tunnel_key_file, "tunnel key"))
+    for path, what in keys:
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, mode=0o700, exist_ok=True)
         state = "created" if tokens.create_key(path) else "kept"
@@ -109,7 +119,59 @@ def build_parser():
     group_map.add_argument("action", choices=("import", "show"))
     group_map.add_argument("file", nargs="?")
     commands.add_parser("ldap-check").add_argument("username", nargs="?")
+    tunnel_map = commands.add_parser("tunnel-map")
+    tunnel_map.add_argument("action", choices=("show", "set", "remove", "promote"))
+    tunnel_map.add_argument("vvs_user", nargs="?")
+    tunnel_map.add_argument("username", nargs="?")
     return parser
+
+
+def tunnel_command(args, settings, out):
+    """tunnel-map: who may sign in through the ViVeSecBox tunnel, as whom.
+    `promote <VVS-User>` makes that ViVeSecBox user an administrator of the box
+    (its own `vvs-` user, created when it has none yet)."""
+    if args.action == "promote":
+        vvs_user = tunnel.normalize_vvs_user(args.vvs_user)
+        if vvs_user is None:
+            raise SystemExit("tunnel-map promote needs a valid VVS-User")
+        authenticator = service.open_service(settings)
+        try:
+            name = authenticator.tunnel_user_for(vvs_user, ("analyst",), actor=ACTOR, limit=tunnel.MAX_ENTRIES)
+            if name is None:
+                raise SystemExit("the tunnel map is not usable: %s" % authenticator.tunnel_map.problem)
+            user = authenticator._require_user(name)
+            roles = sorted(set(user["roles"]) | {auth.ADMIN_ROLE})
+            authenticator.update_user(ACTOR, name, roles=roles)
+        finally:
+            authenticator.store.close()
+        out.write("tunnel map: %s -> %s, roles %s\n" % (vvs_user, name, ",".join(roles)))
+        return 0
+    mapping = {}
+    if os.path.exists(settings.tunnel_users_file):
+        with open(settings.tunnel_users_file, encoding="utf-8") as handle:
+            mapping = tunnel.parse_map(json.load(handle), auth.normalize_username)
+    if args.action == "show":
+        out.write(json.dumps({"file": settings.tunnel_users_file, "users": mapping},
+                             indent=2, ensure_ascii=False) + "\n")
+        return 0
+    vvs_user = tunnel.normalize_vvs_user(args.vvs_user)
+    if vvs_user is None:
+        raise SystemExit("tunnel-map %s needs a valid VVS-User" % args.action)
+    if args.action == "remove":
+        if mapping.pop(vvs_user, None) is None:
+            raise SystemExit("%s is not mapped" % vvs_user)
+        detail = "removed"
+    else:
+        authenticator = service.open_service(settings)
+        try:
+            user = authenticator._require_user(args.username)
+        finally:
+            authenticator.store.close()
+        mapping[vvs_user] = user["username"]
+        detail = "-> " + user["username"]
+    tunnel.write_map(settings.tunnel_users_file, mapping)
+    out.write("tunnel map %s: %s %s\n" % (settings.tunnel_users_file, vvs_user, detail))
+    return 0
 
 
 def ldap_command(args, settings, out, stdin):
@@ -177,6 +239,8 @@ def run(argv, env=None, out=sys.stdout, stdin=None):
         return 0
     if args.command.startswith("ldap-"):
         return ldap_command(args, settings, out, stdin)
+    if args.command == "tunnel-map":
+        return tunnel_command(args, settings, out)
     authenticator = service.open_service(settings)
     try:
         command = args.command

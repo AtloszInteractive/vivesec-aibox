@@ -1,0 +1,82 @@
+<!doctype html>
+<!--
+  Matrix AI bootloader (ViVeSec AI Box, E07). Hosted by the ViVeSec next to its
+  frame socket; it loads the real UI from the AI Box through the frame socket
+  (GET /api/v1/matrix/app/manifest, /api/v1/matrix/app/bundle/<sha256>) and puts
+  it into this page. The frame socket script must define
+  globalThis.frameSocketFetcher before or within ten seconds of matrix-boot.js.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" data-matrix-boot />
+    <title data-matrix-boot>Matrix AI</title>
+    <style data-matrix-boot>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #141414;
+        color: #e5e5e5;
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+      }
+      #matrix-boot {
+        display: flex;
+        height: 100%;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        text-align: center;
+        padding: 0 24px;
+      }
+      #matrix-boot .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid #3f3f46;
+        border-top-color: #a855f7;
+        border-radius: 50%;
+        animation: matrix-spin 0.9s linear infinite;
+      }
+      #matrix-boot.failed .spinner {
+        display: none;
+      }
+      #matrix-boot .detail {
+        font-size: 12px;
+        color: #a1a1aa;
+      }
+      #matrix-boot button {
+        display: none;
+        padding: 8px 16px;
+        border: 1px solid #52525b;
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+      #matrix-boot.failed button {
+        display: inline-block;
+      }
+      @keyframes matrix-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="matrix-boot" data-matrix-boot>
+      <div class="spinner"></div>
+      <div class="message">Loading Matrix AI…</div>
+      <div class="detail"></div>
+      <button type="button">Try again</button>
+    </div>
+    <script src="./matrix-boot.js" defer></script>
+  </body>
+</html>

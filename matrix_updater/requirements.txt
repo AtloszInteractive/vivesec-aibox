@@ -1,0 +1,6 @@
+# Host-side update client of the Matrix AI (not part of the adapter, which stays stdlib-only).
+# Shipped to the Spark as wheels inside the kit; pinned to the version the tests ran with.
+tuf==6.0.0
+securesystemslib==1.6.0
+cryptography==49.0.0
+urllib3==2.7.0

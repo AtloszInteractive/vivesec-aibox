@@ -1,0 +1,42 @@
+# Matrix AI - BV pilot / test Spark next to the Dokumentum AI (E07).
+# Copied to the stick as matrix.conf; matrix-usb.sh installs it as
+# /etc/vivesec-matrix/matrix.conf when that file does not exist yet.
+# partner-dev and dropin-dev are for test and demo Sparks only (see matrix.conf.example).
+
+MATRIX_OLLAMA_URL=http://127.0.0.1:11434
+MATRIX_GEN_MODEL=qwen3.6:35b
+MATRIX_EMBED_MODEL=bge-m3
+MATRIX_NUM_CTX=65536
+
+MATRIX_TUNNEL_PKI=partner-dev
+MATRIX_TUNNEL_PORT=7476
+MATRIX_TUNNEL_FIREWALL=dropin-dev
+
+MATRIX_GRAPH=on
+MATRIX_GRAPH_PROFILE=bv
+MATRIX_GRAPH_ADMINS=admin
+
+# A ViVeSecBox user's first visit creates its own analyst without rooms (off: map by hand).
+MATRIX_TUNNEL_AUTOCREATE=analyst
+
+# The signed update channel the release kit on the stick belongs to.
+MATRIX_UPDATE=on
+MATRIX_UPDATE_URL=https://CHANNEL-URL
+MATRIX_UPDATE_CHANNEL=pilot
+
+ADAPTER_APP_MODE=analyst
+ADAPTER_DEFAULT_LANG=hu
+ADAPTER_UI_LANGUAGE=hu
+ADAPTER_PURPOSE=required
+ADAPTER_PURPOSE_FIELDS=case_ref
+ADAPTER_CASE_REF_PATTERN='(?:19|20)\d{2}/\d{1,7}(?:/\d{1,5})?'
+ADAPTER_CASE_REF_EXAMPLE=2026/1113/2310
+ADAPTER_WATCHLIST=on
+ADAPTER_QUERY_LOG_TEXT=on
+ADAPTER_QUERY_LOG_RETENTION_DAYS=1827
+ADAPTER_MAX_CONTEXT_TOKENS=4000
+ADAPTER_CONVERSATIONS_PER_USER=50
+ADAPTER_SESSION_IDLE=900
+ADAPTER_SESSION_TURNS=12
+ADAPTER_JOB_QUEUE_MAX=5
+ADAPTER_FEEDBACK_TRACES=200

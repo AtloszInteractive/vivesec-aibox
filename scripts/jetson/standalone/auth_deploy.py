@@ -19,7 +19,8 @@ with `docker exec -it vivesec-auth python /app/auth_service/manage.py ...`.
 
 Only docker is needed (no sudo): the data directory is created through a
 short-lived container. Settings: AIBOX_AUTH_DIR (default /data/auth),
-AIBOX_AUTH_BASE_IMAGE (default python:3.12-slim), AIBOX_AUTH_PORT (default
+AIBOX_AUTH_BASE_IMAGE (default python:3.12-slim), AIBOX_AUTH_IMAGE (a prebuilt
+image of a release kit: no tests, no build), AIBOX_AUTH_PORT (default
 8097); AUTH_* variables in the environment are passed to the service.
 """
 import hashlib
@@ -77,7 +78,9 @@ def settings(env=None):
     if not data_dir.startswith("/") or ".." in data_dir.split("/") or data_dir.count("/") < 2:
         raise SystemExit("AIBOX_AUTH_DIR must be an absolute path below a top-level directory")
     return {"data_dir": data_dir, "port": int(port),
-            "base_image": (env.get("AIBOX_AUTH_BASE_IMAGE") or "python:3.12-slim").strip()}
+            "base_image": (env.get("AIBOX_AUTH_BASE_IMAGE") or "python:3.12-slim").strip(),
+            # A built and tested image of a signed release kit: no build, no tests here.
+            "image": (env.get("AIBOX_AUTH_IMAGE") or "").strip()}
 
 
 # ---------------------------------------------------------------- docker
@@ -280,8 +283,8 @@ def source_files(source):
     return files
 
 
-def deploy(source):
-    config = settings()
+def build(config, source, stamp):
+    """Test auth_service in the base image, then build vivesec-auth:release-<stamp>."""
     source = Path(source).resolve()
     files = source_files(source)
     if not (source / "adapter" / "identity.py").is_file():
@@ -290,7 +293,6 @@ def deploy(source):
     for path in files:
         digest.update(path.name.encode() + b"\0" + path.read_bytes())
     fingerprint = digest.hexdigest()
-    stamp = time.strftime("%Y%m%d-%H%M%S")
     image = "vivesec-auth:release-" + stamp
 
     print("TESTS: auth_service in %s" % config["base_image"], flush=True)
@@ -310,10 +312,24 @@ def deploy(source):
         (Path(context) / "Dockerfile").write_text(dockerfile(config["base_image"], fingerprint))
         command("docker", "build", "-q", "-t", image, context)
     print("BUILT=" + image, flush=True)
+    return image
+
+
+def deploy(source):
+    config = settings()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    if config["image"]:
+        image = config["image"]
+        if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode:
+            raise SystemExit("AIBOX_AUTH_IMAGE %s is not on this box" % image)
+        print("PREBUILT=" + image, flush=True)
+        helper = ["--user", "0:0", "--entrypoint", "sh", image]
+    else:
+        image = build(config, source, stamp)
+        helper = ["--entrypoint", "sh", config["base_image"]]
 
     parent, name = config["data_dir"].rsplit("/", 1)
-    command("docker", "run", "--rm", "--network", "none", "-v", parent + ":/host", "--entrypoint", "sh",
-            config["base_image"], "-c",
+    command("docker", "run", "--rm", "--network", "none", "-v", parent + ":/host", *helper, "-c",
             "mkdir -p /host/{0} && chown {1} /host/{0} && chmod 700 /host/{0}".format(name, AUTH_UID))
     print(command("docker", "run", "--rm", "--network", "none", "--user", AUTH_UID,
                   "-v", config["data_dir"] + ":" + DATA_IN_CONTAINER, "--entrypoint", "python",

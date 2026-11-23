@@ -324,6 +324,25 @@ Changes and readings are written to `events.jsonl` (`company_fact`,
 ViVeSecBox-integrated box there is no administration page; a profile already
 in `ADAPTER_TEMPLATES_DIR` still applies.
 
+### Update approval (E07, Matrix on a DGX Spark)
+
+The host updater (`matrix_updater/updater.py`, root, outside the containers)
+downloads signed releases (TUF) and writes its state into
+`ADAPTER_UPDATES_DIR` (default empty: no updater, the page says so; the Spark
+installer sets `/data/updates`). `updates.py` shows that state to an
+administrator, reduced to known fields, and turns an approval into
+`request.json` in the same folder; a systemd path unit hands it to the updater.
+The adapter installs nothing itself, and it accepts only the release the
+updater already verified and offered (`409 not_ready` otherwise), one request
+at a time (`409 request_pending`; a request not picked up within two minutes is
+reported as `stuck`). A rollback may also put back the data copy the last
+update took (`restore_data`, refused with `409 no_data_copy` when there is
+none); after a failed installation the previous version runs again already, so
+a plain rollback is refused then (`409 already_previous`) unless the box is
+broken or the installation was interrupted. The host updater puts the data copy
+back by itself when an installation that took one fails. Every approval goes to
+the event log (`update_install`, `update_rollback`).
+
 ### Encrypted storage in standalone mode (E05, E27 S8)
 
 A standalone box keeps the original documents, so its data must sit on an

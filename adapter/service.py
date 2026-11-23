@@ -58,6 +58,9 @@ Front (what the ViVeSecBox / simulator calls, ViVeSec v2):
     POST /api/v1/ui/admin/company/fact | state | delete | restore   {base, ...}
     GET  /api/v1/ui/admin/company/history?id= | documents?q=
     POST /api/v1/ui/admin/company/extract {paths} | extract/cancel  (proposals from documents)
+    GET  /api/v1/ui/admin/update              (E07 updates.py: what the host updater offers and does)
+    POST /api/v1/ui/admin/update/install      {version}  (approve the offered release; 202)
+    POST /api/v1/ui/admin/update/rollback     {restore_data}  (back to the previous release; 202)
 
 The VVS-Drive header is urlsafe base64 of the UTF-8 drive path (corpus.py).
 The status response carries ui-ready / fs-ready / features so the ViVeSecBox
@@ -170,6 +173,7 @@ import session  # noqa: E402
 import chat_policy
 import storage  # noqa: E402
 import templates  # noqa: E402
+import updates  # noqa: E402
 import voice  # noqa: E402
 import watch  # noqa: E402
 import wsfs  # noqa: E402
@@ -1003,6 +1007,8 @@ DRIVE_FILE_PATH = "/api/v1/ui/file"
 # quarantine until clamd has scanned them, then the upload worker moves them
 # into the room and indexes them on the sync's own RAG path (_store_index).
 STORE = drivestore.DriveStore.from_env()
+# Update approval (E07): state and requests of the host updater, nothing is installed here.
+UPDATES = updates.UpdateChannel.from_env()
 STORE_WRITERS = drivestore.parse_writers(os.environ.get("ADAPTER_STORE_WRITERS"))
 UPLOAD_SCAN = drivestore.parse_scan_mode(os.environ.get("ADAPTER_UPLOAD_SCAN"))
 CLAMD = clamd.Clamd.from_env()
@@ -2529,6 +2535,7 @@ class Handler(BaseHTTPRequestHandler):
                        "/api/v1/ui/admin/templates": self._admin_templates,
                        "/api/v1/ui/admin/company": self._admin_company,
                        "/api/v1/ui/admin/company/history": self._admin_company_history,
+                       "/api/v1/ui/admin/update": self._admin_update,
                        "/api/v1/ui/admin/company/documents": self._admin_company_documents}.get(path)
         if admin_route is not None:
             try:
@@ -2639,6 +2646,8 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/v1/ui/admin/company/restore": self._admin_company_restore,
                 "/api/v1/ui/admin/company/extract": self._admin_company_extract,
                 "/api/v1/ui/admin/company/extract/cancel": self._admin_company_extract_cancel,
+                "/api/v1/ui/admin/update/install": self._admin_update_install,
+                "/api/v1/ui/admin/update/rollback": self._admin_update_rollback,
                 "/api/v1/ui/querylog": self._ui_querylog,
             }.get(path.rstrip("/"))
             if route is None:
@@ -4946,6 +4955,39 @@ class Handler(BaseHTTPRequestHandler):
     def _admin_event(self, action, caller, path, **detail):
         sys.stderr.write("[adapter] admin: %s %s by %r\n" % (action, path, caller.user))
         STORE.event(action, caller.user, path, **detail)
+
+    def _admin_update(self, _query=""):
+        """What the host updater offers and does (E07 updates.py)."""
+        if self._admin_caller() is None:
+            return
+        self._send(200, {"ok": True, "enabled": UPDATES.enabled,
+                         "update": UPDATES.state() if UPDATES.enabled else None})
+
+    def _admin_update_request(self, action):
+        caller = self._admin_caller()
+        if caller is None:
+            return
+        payload = self._read_json()
+        payload = payload if isinstance(payload, dict) else {}
+        try:
+            body = UPDATES.request(action, caller.user, version=payload.get("version"),
+                                   restore_data=payload.get("restore_data") is True)
+        except updates.UpdateRefused as e:
+            self._send(e.status, {"ok": False, "error": e.code})
+            return
+        except OSError as e:
+            sys.stderr.write("[adapter] update request not written: %s\n" % e)
+            self._send(503, {"ok": False, "error": "updates_unavailable"})
+            return
+        self._admin_event("update_" + action, caller, body.get("version") or "-",
+                          restore_data=body.get("restore_data", False))
+        self._send(202, {"ok": True, "request": body, "update": UPDATES.state()})
+
+    def _admin_update_install(self):
+        self._admin_update_request("install")
+
+    def _admin_update_rollback(self):
+        self._admin_update_request("rollback")
 
     def _admin_system(self, _query=""):
         """Virus scanner and definitions, the rules file, the box time."""

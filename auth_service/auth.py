@@ -42,6 +42,7 @@ import directory as directory_module
 import passwords
 import tokens
 import totp
+import tunnel
 
 ADMIN_ROLE = "admin"
 STATUSES = ("active", "suspended")
@@ -221,6 +222,8 @@ class Authenticator:
         self._retry_at = {}
         self._map_lock = threading.Lock()
         self.kernel_clock = clock_module.kernel_sync
+        self.tunnel_map = tunnel.TunnelMap(settings.tunnel_users_file, normalize_username)
+        self._tunnel_lock = threading.Lock()
 
     # -- helpers ---------------------------------------------------------------
     def _event(self, event, username="", actor="", client="", detail=""):
@@ -492,6 +495,63 @@ class Authenticator:
                   "jti": secrets.token_hex(8)}
         return {"token": tokens.sign_hs256(claims, self.jwt_secret), "expires_at": expires,
                 "user": session_user(user)}
+
+    def issue_tunnel_token(self, vvs_user, vvs_session=None, client=""):
+        """An identity token for the user a ViVeSecBox identity is mapped to
+        (tunnel.py). Only the tunnel gateway calls this, with its own key."""
+        identity = tunnel.normalize_vvs_user(vvs_user)
+        if identity is None:
+            raise AuthError("invalid_vvs_user", 400)
+        if vvs_session is not None and (not isinstance(vvs_session, str)
+                                        or len(vvs_session) > tunnel.MAX_SESSION_LENGTH):
+            raise AuthError("invalid_vvs_session", 400)
+        name = self.tunnel_map.username_for(identity)
+        if name is None and self.settings.tunnel_autocreate_roles is not None:
+            name = self.tunnel_user_for(identity, self.settings.tunnel_autocreate_roles, client=client)
+        user = self.store.get_user(name) if name else None
+        if user is None or user["status"] != "active":
+            reason = "not mapped" if name is None else ("no such user" if user is None else "suspended")
+            self._event("tunnel_refused", name or "", client=client,
+                        detail="VVS-User %s: %s" % (identity, reason))
+            raise AuthError("tunnel_user_unknown", 403)
+        if user["source"] == DIRECTORY:
+            try:
+                user = self._directory_user(user)
+            except AuthError as e:
+                if e.code != "session_invalid":
+                    raise
+                raise AuthError("tunnel_user_unknown", 403)
+        claims = tunnel.token_claims(self.settings, user, tunnel.session_id(identity, vvs_session or ""),
+                                     self.clock())
+        return {"token": tunnel.sign(claims, self.jwt_secret), "expires_at": claims["exp"],
+                "user": session_user(user)}
+
+    def tunnel_user_for(self, identity, roles, actor="tunnel", client="", limit=None):
+        """The local user of a ViVeSecBox identity, created and mapped when it has
+        none: `vvs-<hash>`, the given roles, no rooms, no password (it signs in
+        through the tunnel only). None when the limit of such users is reached."""
+        limit = self.settings.tunnel_autocreate_max if limit is None else limit
+        with self._tunnel_lock:
+            mapping = self.tunnel_map.mapping()
+            if self.tunnel_map.problem:
+                return None  # a broken map is never overwritten
+            if identity in mapping:
+                return mapping[identity]
+            if sum(1 for name in mapping.values() if name.startswith(tunnel.AUTO_PREFIX)) >= limit:
+                self._event("tunnel_refused", "", actor=actor, client=client,
+                            detail="VVS-User %s: the limit of %d automatic users is reached" % (identity, limit))
+                return None
+            name = tunnel.auto_username(identity)
+            now = self.clock()
+            if self.store.insert_user(name, now, source=LOCAL, password_hash=None, must_change_password=False,
+                                      password_changed_at=now,
+                                      display_name=normalize_display_name("ViVeSecBox " + identity),
+                                      roles=_items(roles, ROLE_RE, "roles", True), groups=[], drives=[]):
+                self._event("tunnel_user_created", name, actor=actor, client=client,
+                            detail="VVS-User %s, roles=%s" % (identity, ",".join(roles)))
+            mapping[identity] = name
+            tunnel.write_map(self.settings.tunnel_users_file, mapping)
+            return name
 
     def change_password(self, session_secret, current, new, client=""):
         session, user = self._session(session_secret)

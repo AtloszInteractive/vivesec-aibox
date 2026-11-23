@@ -382,12 +382,24 @@ export function isEmbedded(): boolean {
 // signals an expired session, which sends the browser to the login page.
 function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   const tunnel = (globalThis as { frameSocketFetcher?: typeof fetch }).frameSocketFetcher;
-  if (tunnel) return tunnel(input, init);
+  if (tunnel) return tunnel(tunnelPath(input), init);
   if (!IS_BROWSER) return fetch(input, init);
   return fetch(input, withCsrf(init)).then((res) => {
     followAuthSignal(res);
     return res;
   });
+}
+
+const UI_PREFIX = "/api/v1/ui/";
+
+/** The Matrix AI is reached under its own tunnel prefix (the Dokumentum AI owns
+ *  /api/v1/ui/ on the same ViVeSecBox); its bootloader names it. */
+export function tunnelPath(input: string): string {
+  const prefix = (globalThis as { matrixApiPrefix?: string }).matrixApiPrefix;
+  if (!prefix) return input;
+  if (input.startsWith(UI_PREFIX)) return prefix + input.slice(UI_PREFIX.length);
+  if (input === "/api/v1/status") return `${prefix}status`;
+  return input;
 }
 
 function env(name: string): string | undefined {

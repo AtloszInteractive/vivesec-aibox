@@ -26,7 +26,10 @@ NUMBERS = {
     "AUTH_LDAP_TIMEOUT_SECONDS": (5, 1, 60),
     "AUTH_LDAP_REFRESH_SECONDS": (300, 60, 3600),
     "AUTH_LDAP_MAX_STALE_SECONDS": (900, 60, 86400),
+    "AUTH_TUNNEL_AUTOCREATE_MAX": (500, 0, 10000),
 }
+# A ViVeSecBox user without a mapping gets a local user with these roles and no rooms.
+TUNNEL_AUTOCREATE_MODES = {"off": None, "analyst": ("analyst",)}
 
 DEFAULT_DATA_DIR = "/data/auth"
 DEFAULT_ISSUER = "vivesec-aibox-auth"
@@ -71,6 +74,12 @@ class Settings:
         self.ldap_user_attribute = values.get("ldap_user_attribute") or "sAMAccountName"
         self.ldap_map_file = values.get("ldap_map_file") or os.path.join(self.data_dir, "ldap-groups.json")
         self.ldap_max_stale_seconds = max(self.ldap_max_stale_seconds, self.ldap_refresh_seconds)
+        # ViVeSecBox tunnel sign-in (tunnel.py): off without a key file.
+        self.tunnel_key_file = values.get("tunnel_key_file") or ""
+        self.tunnel_users_file = values.get("tunnel_users_file") \
+            or os.path.join(self.data_dir, "tunnel-users.json")
+        self.tunnel_autocreate = values.get("tunnel_autocreate", "off")
+        self.tunnel_autocreate_roles = TUNNEL_AUTOCREATE_MODES.get(self.tunnel_autocreate)
 
     @classmethod
     def from_env(cls, env=None, warn=None):
@@ -114,7 +123,14 @@ class Settings:
             ldap_base_dn=text("AUTH_LDAP_BASE_DN", ""),
             ldap_user_attribute=text("AUTH_LDAP_USER_ATTRIBUTE", "sAMAccountName"),
             ldap_map_file=text("AUTH_LDAP_MAP_FILE", ""),
+            tunnel_key_file=text("AUTH_TUNNEL_KEY_FILE", ""),
+            tunnel_users_file=text("AUTH_TUNNEL_USERS_FILE", ""),
         )
+        mode = text("AUTH_TUNNEL_AUTOCREATE", "off").lower()
+        if mode not in TUNNEL_AUTOCREATE_MODES:
+            warn("invalid AUTH_TUNNEL_AUTOCREATE=%r, using off" % mode)
+            mode = "off"
+        values["tunnel_autocreate"] = mode
         return cls(**values)
 
 

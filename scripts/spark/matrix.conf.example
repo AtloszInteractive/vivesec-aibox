@@ -1,0 +1,76 @@
+# Matrix AI on a DGX Spark - installer settings (E07 M1).
+# Copy to /etc/vivesec-matrix/matrix.conf (root, 0600). KEY=value, shell quoting.
+# MATRIX_* variables of the environment override this file. Unknown modes fall
+# back to "off"; a port of the Dokumentum AI or the system is refused.
+
+# --- Shared Ollama of the Dokumentum AI (read-only: no pull, no delete) ------
+MATRIX_OLLAMA_URL=http://127.0.0.1:11434
+MATRIX_GEN_MODEL=qwen3.6:35b
+MATRIX_EMBED_MODEL=bge-m3
+# Keep equal to the Dokumentum AI's OLLAMA_CONTEXT_LENGTH: another size reloads
+# the 22 GB model on every switch between the two products.
+MATRIX_NUM_CTX=65536
+# After the Dokumentum AI changed the embedding model and the index was rebuilt:
+#MATRIX_ACCEPT_EMBED_CHANGE=yes
+
+# --- Loopback ports of the Matrix services ------------------------------------
+#MATRIX_RAG_PORT=8090
+#MATRIX_ADAPTER_PORT=8088
+#MATRIX_UI_PORT=8080
+#MATRIX_AUTH_PORT=8097
+#MATRIX_CLAMAV_PORT=3310
+#MATRIX_GATEWAY_PORT=18476
+
+# --- ViVeSecBox tunnel front --------------------------------------------------
+# off          no front: the gateway runs, nothing listens on the network
+# files        certificate, key and the ViVeSecBox CA in /etc/vivesec-matrix/tunnel-pki/
+#              (server.crt, server.key, ca.crt)
+# partner-dev  reuse the Dokumentum AI pairing certificate (copied every 15 s,
+#              removed when it goes away). DEVELOPMENT SPARK ONLY: it reads
+#              another product's private key.
+MATRIX_TUNNEL_PKI=off
+MATRIX_TUNNEL_PORT=7476
+# off          the port must be opened in the ViVeSec prep firewall by its owner
+# dropin-dev   re-add an accept rule after each prep firewall refresh (LAN only).
+#              DEVELOPMENT SPARK ONLY: it edits another product's firewall table.
+MATRIX_TUNNEL_FIREWALL=off
+
+# --- Relationship analysis (E26): Neo4j + graph service, loopback only --------
+# off (default) or on; anything else falls back to off.
+MATRIX_GRAPH=off
+# Domain profile of the graph (empty: the built-in default), e.g. bv
+#MATRIX_GRAPH_PROFILE=bv
+# Local users who manage the graph profile and imports (comma separated)
+MATRIX_GRAPH_ADMINS=admin
+#MATRIX_GRAPH_PORT=8095
+#MATRIX_BROKER_PORT=8099
+#MATRIX_NEO4J_PORT=7687
+#MATRIX_NEO4J_IMAGE=neo4j:5-community
+# Seconds to wait for the graph service (a large graph takes minutes to open)
+#MATRIX_GRAPH_START_WAIT=600
+
+# --- Adapter behaviour of this deployment (ADAPTER_* goes to the adapter) ------
+# Only behaviour: the installer refuses ADAPTER_* keys it wires itself (host,
+# port, TLS, identity, integration, paths, ClamAV, broker, models).
+#ADAPTER_APP_MODE=analyst
+#ADAPTER_DEFAULT_LANG=hu
+#ADAPTER_UI_LANGUAGE=hu
+#ADAPTER_PURPOSE=required
+#ADAPTER_PURPOSE_FIELDS=case_ref
+#ADAPTER_CASE_REF_PATTERN='(?:19|20)\d{2}/\d{1,7}(?:/\d{1,5})?'
+#ADAPTER_CASE_REF_EXAMPLE=2026/1113/2310
+
+# --- Signed updates (matrix_updater) -------------------------------------------
+# off (default) or on; anything else falls back to off. on needs an https:// URL
+# and a kit packed with --wheels and --trusted-root. Every installation is
+# approved by an administrator on the administration page (Updates tab).
+MATRIX_UPDATE=off
+#MATRIX_UPDATE_URL=https://updates.example/matrix
+# stable | pilot | labor; anything else turns updates off
+#MATRIX_UPDATE_CHANNEL=stable
+
+# --- ViVeSecBox users -------------------------------------------------------------
+# analyst (default): a ViVeSecBox user's first visit through the tunnel creates its
+# own user (vvs-..., role analyst, no rooms); an administrator gives it rooms.
+# off: only identities mapped by hand (manage.py tunnel-map set) get in.
+#MATRIX_TUNNEL_AUTOCREATE=analyst

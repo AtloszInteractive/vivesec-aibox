@@ -1493,6 +1493,19 @@
       "internal": false
     },
     {
+      "name": "ADAPTER_UPDATES_DIR",
+      "component": "adapter",
+      "category": "files",
+      "type": "path",
+      "default": "",
+      "allowed": "directory path or empty",
+      "fail_safe": "Empty: no update approval (the admin page says there is no updater; install and rollback answer 404). The adapter only reads the updater's state, reduced to known fields, and writes one request file; it installs nothing.",
+      "impact": "Matrix on a DGX Spark (E07): the folder the host updater shares with the adapter (state.json, request.json). The Spark installer sets /data/updates, which is /var/lib/vivesec-matrix/adapter/updates on the host.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "ADAPTER_TENANT_ID",
       "component": "adapter",
       "category": "scope",
@@ -3847,6 +3860,19 @@
       "internal": false
     },
     {
+      "name": "AIBOX_AUTH_IMAGE",
+      "component": "install",
+      "category": "install",
+      "type": "string",
+      "default": "",
+      "allowed": "empty, or a vivesec-auth image already on the box",
+      "fail_safe": "Empty: auth_deploy.py tests and builds the image itself. A named image that is not on the box stops the deployment before anything changes.",
+      "impact": "Signed release kits (E07): deploy the vivesec-auth image the kit brought, built and tested when the release was packed.",
+      "change": "install",
+      "secret": false,
+      "internal": false
+    },
+    {
       "name": "AIBOX_AUTH_PORT",
       "component": "install",
       "category": "install",
@@ -4202,6 +4228,62 @@
       "allowed": "file path",
       "fail_safe": "Missing or invalid: every directory login fails closed (directory_unavailable) and the problem is logged. Re-read when it changes. A user in none of the mapped groups cannot sign in.",
       "impact": "Group -> role -> room map of the directory users (groups by DN, nested membership counts). Installed and validated with `manage.py ldap-map import`; format in auth_service/README.md.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "AUTH_TUNNEL_KEY_FILE",
+      "component": "auth",
+      "category": "security",
+      "type": "path",
+      "default": "empty (tunnel sign-in off)",
+      "allowed": "a file of at least 32 bytes",
+      "fail_safe": "Empty: /auth/tunnel/token does not exist (404). Set but missing or shorter than 32 bytes: the tunnel sign-in stays off and the service logs why; the rest of the service runs.",
+      "impact": "Second key the Matrix tunnel gateway (matrix_tunnel/gateway.py) presents in X-Auth-Tunnel-Key, next to the service key, to mint identity tokens for ViVeSecBox identities (tunnel.py). The web UI server's key alone cannot. `manage.py init` creates it when set.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "AUTH_TUNNEL_USERS_FILE",
+      "component": "auth",
+      "category": "security",
+      "type": "path",
+      "default": "<AUTH_DATA_DIR>/tunnel-users.json",
+      "allowed": "file path",
+      "fail_safe": "Missing: nobody signs in through the tunnel. Unreadable or invalid: nobody signs in through the tunnel and the problem is logged. Re-read when it changes. A mapped user who is suspended or deleted gets no token.",
+      "impact": "Map of ViVeSecBox identities (VVS-User) to local users, {\"<VVS-User>\": \"<username>\"}, managed with `manage.py tunnel-map set|remove|show`; read again when it changes, no restart needed. The token carries the local user's roles, groups and rooms.",
+      "change": "restart",
+      "secret": false,
+      "internal": false
+    },
+    {
+      "name": "AUTH_TUNNEL_AUTOCREATE",
+      "component": "auth",
+      "category": "security",
+      "type": "enum",
+      "default": "off",
+      "allowed": "off, analyst",
+      "fail_safe": "Anything else is off (with a warning): an unmapped ViVeSecBox user gets no token. A created user has no rooms, so it sees no document until an administrator gives it one; a user the administrator deleted or suspended stays refused; a broken tunnel map is never overwritten.",
+      "impact": "analyst: a ViVeSecBox user without a mapping gets its own local user on the first visit through the tunnel (vvs-<10 hex of the sha256 of its VVS-User>, role analyst, no rooms, no password) and the mapping is written. The Spark installer sets it from MATRIX_TUNNEL_AUTOCREATE (default analyst).",
+      "change": "restart",
+      "secret": false,
+      "internal": false,
+      "values": [
+        "off",
+        "analyst"
+      ]
+    },
+    {
+      "name": "AUTH_TUNNEL_AUTOCREATE_MAX",
+      "component": "auth",
+      "category": "security",
+      "type": "int",
+      "default": "500",
+      "allowed": "0..10000",
+      "fail_safe": "Out of range or not a number: 500. When this many users were created automatically, further unmapped ViVeSecBox users are refused and the refusal is logged.",
+      "impact": "Upper limit of the users AUTH_TUNNEL_AUTOCREATE creates, against a flood of identities; an administrator can still map identities by hand.",
       "change": "restart",
       "secret": false,
       "internal": false

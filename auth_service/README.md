@@ -198,6 +198,47 @@ directory user's next request then asks the directory again (the outage grace
 period does not grow). `manage.py ldap-map import` writes the same normalised
 form. Connection settings and the service account password stay shell-only.
 
+## Sign-in through the ViVeSecBox tunnel (Matrix on a Spark, E07)
+
+On a DGX Spark shared with the Dokumentum AI the box is not paired, but the
+ViVeSecBox embeds the UI and relays its calls under `/api/v1/matrix/`. The
+tunnel gateway (`matrix_tunnel/gateway.py`, see `scripts/spark/README.md`)
+accepts them only after the tunnel front verified the ViVeSecBox client
+certificate, and asks this service for a token:
+
+```http
+POST /auth/tunnel/token   X-Auth-Service-Key + X-Auth-Tunnel-Key
+{"vvs_user": "<VVS-User>", "vvs_session": "<VVS-Session>"}
+-> {"token": ..., "expires_at": ..., "user": {...}}
+```
+
+- Off unless `AUTH_TUNNEL_KEY_FILE` is set (404); a set but unusable key file
+  keeps it off and the service logs why. Both keys are needed, so the web UI
+  server cannot mint tokens without a session.
+- Only an identity mapped to an active local user gets a token
+  (`AUTH_TUNNEL_USERS_FILE`, `{"<VVS-User>": "<username>"}`, read again
+  when it changes; missing or invalid maps nobody). A refusal is
+  `403 tunnel_user_unknown` and a `tunnel_refused` event.
+- With `AUTH_TUNNEL_AUTOCREATE=analyst` (the Spark installer's default) an
+  unmapped identity gets its own user on its first visit: `vvs-<10 hex of the
+  sha256 of the VVS-User>`, role analyst, no rooms, no password (tunnel only),
+  and the mapping is written (`tunnel_user_created` event). It sees no document
+  until an administrator gives it rooms. Deleting or suspending it keeps the
+  identity out; at most `AUTH_TUNNEL_AUTOCREATE_MAX` (500) users are created.
+- `tunnel-map promote <VVS-User>` makes that ViVeSecBox user an administrator
+  (its `vvs-` user, created when needed).
+- The token is the web login's token for that user (its roles, groups and
+  rooms), with `sid = tunnel-<hash of VVS-User and VVS-Session>` and
+  `amr = ["vivesecbox-tunnel"]`. The ViVeSecBox sign-in stands in for the
+  password and the TOTP code; whether that is acceptable is a customer decision.
+
+```bash
+docker exec -it vivesec-auth python /app/auth_service/manage.py tunnel-map set <VVS-User> anna
+docker exec -it vivesec-auth python /app/auth_service/manage.py tunnel-map show
+docker exec -it vivesec-auth python /app/auth_service/manage.py tunnel-map remove <VVS-User>
+docker exec -it vivesec-auth python /app/auth_service/manage.py tunnel-map promote <VVS-User>
+```
+
 ## Security properties
 
 - Listens on loopback only (`AUTH_HOST` must be a loopback address or the
