@@ -680,6 +680,9 @@ def _leader_roles(raw):
 LEADERS = frozenset(u.strip().casefold() for u in
                     os.environ.get("ADAPTER_LEADERS", "").split(",") if u.strip())
 LEADER_ROLES = _leader_roles(os.environ.get("ADAPTER_LEADER_ROLES"))
+# Roles that may load structured exports (E28) besides the graph administrators:
+# unset: "leader", "off": graph administrators only, e.g. "leader,analyst".
+GRAPH_IMPORT_ROLES = _leader_roles(os.environ.get("ADAPTER_GRAPH_IMPORT_ROLES"))
 # Documents listed at most by one /ui/index/skipped answer (the counts cover all).
 SKIPPED_LIST_LIMIT = 500
 # Plain chat questions get the graph's relations among the named entities;
@@ -2691,6 +2694,7 @@ class Handler(BaseHTTPRequestHandler):
                          "drive": drive, "user": user,
                          "session": self.headers.get("VVS-Session", ""),
                          "identity": {"source": caller.source, "upn": caller.upn,
+                                      "name": caller.name,
                                       "groups": list(info.groups),
                                       "roles": list(info.roles),
                                       "directory": {"source": info.source,
@@ -3774,10 +3778,39 @@ class Handler(BaseHTTPRequestHandler):
             self._send(e.status, e.body)
             return None
 
-    def _graph_admin(self, user):
+    def _is_graph_admin(self, user):
+        """Named in ADAPTER_GRAPH_ADMINS, or, on a standalone box, a caller whose
+        verified token carries the admin role (a ViVeSecBox user signed in through
+        the tunnel has a generated name that no list can name in advance)."""
         if (user or "").casefold() in GRAPH_ADMINS:
             return True
+        return (INTEGRATION == integration.MODE_STANDALONE
+                and ADMIN_PRINCIPAL in self._access().principals)
+
+    def _graph_admin(self, user):
+        if self._is_graph_admin(user):
+            return True
         self._send(403, {"ok": False, "error": "changing the shared graph is not allowed"})
+        return False
+
+    def _can_import(self, user):
+        """A graph administrator, or a caller holding a role of
+        ADAPTER_GRAPH_IMPORT_ROLES from a directory lookup without error (an
+        unknown membership is no role, as in acl.py)."""
+        if self._is_graph_admin(user):
+            return True
+        caller = getattr(self, "_caller", None)
+        if caller is None or not GRAPH_IMPORT_ROLES:
+            return False
+        info = DIRECTORY.lookup(caller)
+        if info is None or info.error is not None or info.source == "off":
+            return False
+        return any(str(role).casefold() in GRAPH_IMPORT_ROLES for role in info.roles)
+
+    def _import_admin(self, user):
+        if self._can_import(user):
+            return True
+        self._send(403, {"ok": False, "error": "loading structured data is not allowed"})
         return False
 
     def _graph_query(self):
@@ -4028,7 +4061,7 @@ class Handler(BaseHTTPRequestHandler):
                          "stale_total": res.get("stale_total", 0),
                          "partial_total": res.get("partial_total", 0),
                          "absent_total": len(_graph_absent(known, req_scope, visible)),
-                         "can_start": (user or "").casefold() in GRAPH_ADMINS,
+                         "can_start": self._is_graph_admin(user),
                          "source": _reprocess_source(),
                          "source_ready": _reprocess_source_ready(),
                          "run": REPROCESS.status(
@@ -4074,7 +4107,7 @@ class Handler(BaseHTTPRequestHandler):
     def _graph_import_sources(self):
         """The profile's structured sources (E28), for a graph administrator."""
         ctx = self._graph_request()
-        if ctx is None or not self._graph_admin(ctx[0]):
+        if ctx is None or not self._import_admin(ctx[0]):
             return
         res = self._graph_post("/import/sources", {})
         if res is not None:
@@ -4091,7 +4124,8 @@ class Handler(BaseHTTPRequestHandler):
         if ctx is None:
             return
         user, payload = ctx[0], ctx[1]
-        if not self._graph_admin(user):
+        allowed = self._import_admin if path == "/import/inspect" else self._graph_admin
+        if not allowed(user):
             return
         body = {k: payload[k] for k in keys if payload.get(k) is not None}
         if path == "/import/learn":
@@ -4135,7 +4169,7 @@ class Handler(BaseHTTPRequestHandler):
         if ctx is None:
             return
         user, payload, req_scope, access, _ = ctx
-        if not self._graph_admin(user):
+        if not self._import_admin(user):
             return
         raw_folder = str(payload.get("folder") or "").strip()
         folder = corpus.norm(raw_folder).rstrip("/") if raw_folder else ""
@@ -4181,7 +4215,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _graph_import_status(self):
         ctx = self._graph_request()
-        if ctx is None or not self._graph_admin(ctx[0]):
+        if ctx is None or not self._import_admin(ctx[0]):
             return
         wait = _graph_wait(ctx[1], 0)
         res = self._graph_post("/import/status", {"job": str(ctx[1].get("job") or ""),
@@ -4196,7 +4230,7 @@ class Handler(BaseHTTPRequestHandler):
         if ctx is None:
             return
         user, payload, req_scope, access, _ = ctx
-        if not self._graph_admin(user):
+        if not self._import_admin(user):
             return
         raw_folder = str(payload.get("folder") or "").strip()
         folder = corpus.norm(raw_folder).rstrip("/") if raw_folder else ""
@@ -4270,7 +4304,7 @@ class Handler(BaseHTTPRequestHandler):
             scope_body, limit=_review_int(payload, "limit", 100) or 100,
             offset=_review_int(payload, "offset", 0)))
         if res is not None and self._log_graph(ctx, "graph:review-history", "", []):
-            self._send(200, dict(res, can_undo=(user or "").casefold() in GRAPH_ADMINS))
+            self._send(200, dict(res, can_undo=self._is_graph_admin(user)))
 
     def _graph_review_undo(self):
         """A graph administrator takes a decision back; the pair is open again."""
@@ -4300,7 +4334,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, {"ok": True, "profile": res.get("profile"),
                          "templates": templates.get("templates"),
-                         "can_edit": (user or "").casefold() in GRAPH_ADMINS})
+                         "can_edit": self._is_graph_admin(user),
+                         "can_import": self._can_import(user)})
 
     def _graph_profile_set(self):
         ctx = self._graph_request()

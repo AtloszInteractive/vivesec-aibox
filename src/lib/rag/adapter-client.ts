@@ -579,7 +579,7 @@ export async function adapterStatus(): Promise<AdapterStatus> {
   }
 }
 
-export type SessionInfo = { drive: string; user: string; roles: string[] };
+export type SessionInfo = { drive: string; user: string; name: string; roles: string[] };
 
 let sessionRequest: Promise<SessionInfo> | null = null;
 
@@ -590,10 +590,11 @@ async function fetchSession(): Promise<SessionInfo> {
     });
     if (!res.ok) throw new AdapterError(`ui/init HTTP ${res.status}`, res.status);
     const j = await safeJson(res);
-    const identity = (j.identity ?? {}) as { roles?: unknown };
+    const identity = (j.identity ?? {}) as { roles?: unknown; name?: unknown };
     return {
       drive: typeof j.drive === "string" ? j.drive : "",
       user: typeof j.user === "string" ? j.user : "",
+      name: typeof identity.name === "string" ? identity.name : "",
       roles: Array.isArray(identity.roles) ? identity.roles.map(String) : [],
     };
   } catch (err) {

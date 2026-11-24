@@ -70,8 +70,10 @@ class Identity:
     """The caller of one request, as far as the box can tell."""
 
     def __init__(self, user, source, upn=None, groups=None, roles=None,
-                 session=None, expires=None, drives=None):
+                 session=None, expires=None, drives=None, name=None):
         self.user = user or ""
+        # The display name the identity assertion carries; for the UI only.
+        self.name = name or ""
         self.source = source
         self.upn = upn or None
         self.groups = tuple(groups or ())
@@ -431,7 +433,10 @@ class Verifier:
         drives = claims.get("drives")
         if drives is not None and not isinstance(drives, list):
             raise IdentityError("token drives claim is not a list")
-        return Identity(user, SOURCE_TOKEN, upn=upn,
+        display_name = claims.get("name")
+        display_name = display_name.strip()[:128] if isinstance(display_name, str) \
+            and not any(ord(c) < 32 or ord(c) == 127 for c in display_name) else ""
+        return Identity(user, SOURCE_TOKEN, upn=upn, name=display_name,
                         groups=_as_list(claims.get("groups")),
                         roles=_as_list(claims.get("roles")),
                         session=str(token_session) if token_session is not None else header_session,

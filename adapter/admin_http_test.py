@@ -5,6 +5,7 @@ import json
 import os
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import acl
@@ -75,6 +76,41 @@ class AdminHttpTest(StandaloneHttpCase):
         # A drive the token does not grant is still refused.
         status, _ = self.admin("GET", "/api/v1/ui/admin/rooms", drives=(OTHER + "/",))
         self.assertEqual(status, 403)
+
+    def test_an_admin_role_makes_a_graph_admin_on_a_standalone_box_only(self):
+        def graph_admin(principals, user="vvs-17ef8b9d7d"):
+            handler = self.service.Handler.__new__(self.service.Handler)
+            handler._access_ctx = acl.Access(principals, 1, True)
+            return handler._is_graph_admin(user)
+
+        with patch.object(self.service, "GRAPH_ADMINS", frozenset({"hanna"})):
+            self.assertTrue(graph_admin(["role:admin"]))
+            self.assertFalse(graph_admin(["role:analyst"]))
+            self.assertTrue(graph_admin(["role:analyst"], user="Hanna"))
+            with patch.object(self.service, "INTEGRATION", integration.MODE_VIVESECBOX):
+                self.assertFalse(graph_admin(["role:admin"]))
+
+    def test_leaders_may_load_structured_data_but_not_change_the_graph(self):
+        class Directory:
+            def lookup(self, caller):
+                return SimpleNamespace(roles=caller.roles, error=None, source="token")
+
+        def handler(roles):
+            h = self.service.Handler.__new__(self.service.Handler)
+            h._caller = SimpleNamespace(user="vvs-1", roles=roles)
+            h._access_ctx = acl.Access(["role:" + r for r in roles], 1, True)
+            return h
+
+        with patch.object(self.service, "DIRECTORY", Directory()), \
+                patch.object(self.service, "GRAPH_ADMINS", frozenset()):
+            leader, analyst = handler(["leader"]), handler(["analyst"])
+            self.assertEqual((True, False), (leader._can_import("vvs-1"), analyst._can_import("vvs-1")))
+            self.assertFalse(leader._is_graph_admin("vvs-1"))
+            self.assertTrue(handler(["admin"])._can_import("vvs-1"))
+            with patch.object(self.service, "GRAPH_IMPORT_ROLES", frozenset({"leader", "analyst"})):
+                self.assertTrue(analyst._can_import("vvs-1"))
+            with patch.object(self.service, "GRAPH_IMPORT_ROLES", frozenset()):
+                self.assertFalse(leader._can_import("vvs-1"))
 
     # -- system ------------------------------------------------------------------
     def test_system_reports_definition_age(self):

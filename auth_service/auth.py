@@ -550,8 +550,9 @@ class Authenticator:
 
     def tunnel_user_for(self, identity, roles, actor="tunnel", client="", limit=None):
         """The local user of a ViVeSecBox identity, created and mapped when it has
-        none: `vvs-<hash>`, the given roles, no rooms, no password (it signs in
-        through the tunnel only). None when the limit of such users is reached."""
+        none: `vvs-<hash>`, the given roles, the default rooms
+        (AUTH_TUNNEL_DEFAULT_DRIVES), no password (it signs in through the
+        tunnel only). None when the limit of such users is reached."""
         limit = self.settings.tunnel_autocreate_max if limit is None else limit
         with self._tunnel_lock:
             mapping = self.tunnel_map.mapping()
@@ -568,7 +569,8 @@ class Authenticator:
             if self.store.insert_user(name, now, source=LOCAL, password_hash=None, must_change_password=False,
                                       password_changed_at=now,
                                       display_name=normalize_display_name("ViVeSecBox " + identity),
-                                      roles=_items(roles, ROLE_RE, "roles", True), groups=[], drives=[]):
+                                      roles=_items(roles, ROLE_RE, "roles", True), groups=[],
+                                      drives=list(self.settings.tunnel_default_drives)):
                 self._event("tunnel_user_created", name, actor=actor, client=client,
                             detail="VVS-User %s, roles=%s" % (identity, ",".join(roles)))
             mapping[identity] = name

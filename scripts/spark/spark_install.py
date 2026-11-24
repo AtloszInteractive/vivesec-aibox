@@ -106,6 +106,7 @@ DEFAULTS = {
     "MATRIX_UPDATE_CHANNEL": "stable",
     "MATRIX_TUNNEL_AUTOCREATE": "analyst",
     "MATRIX_TUNNEL_OWNER_ADMIN": "on",
+    "MATRIX_TUNNEL_DEFAULT_DRIVES": "/storage/drives/kozos/",
 }
 PKI_MODES = ("off", "files", "partner-dev")
 FIREWALL_MODES = ("off", "dropin-dev")
@@ -504,8 +505,9 @@ def phase_auth(conf):
     ensure_key(auth_dir / "tunnel.key", AUTH_UID)
     env = dict(os.environ, AIBOX_AUTH_DIR=str(auth_dir), AIBOX_AUTH_PORT=str(conf["MATRIX_AUTH_PORT"]),
                AUTH_TUNNEL_KEY_FILE="/data/auth/tunnel.key",
-               # A ViVeSecBox user's first visit creates its own analyst without rooms.
+               # A ViVeSecBox user's first visit creates its own analyst in the default rooms.
                AUTH_TUNNEL_AUTOCREATE=conf["MATRIX_TUNNEL_AUTOCREATE"],
+               AUTH_TUNNEL_DEFAULT_DRIVES=conf["MATRIX_TUNNEL_DEFAULT_DRIVES"],
                # The ViVeSecBox owner (VVS-Permissions: owner) is the administrator.
                AUTH_TUNNEL_OWNER_ADMIN=conf["MATRIX_TUNNEL_OWNER_ADMIN"])
     if "vivesec-auth" in kit_images(kit_info()):

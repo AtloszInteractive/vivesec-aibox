@@ -322,11 +322,12 @@ export const graphApi = {
       drive,
     ),
   profile: (drive: string) =>
-    adapterGraph<{ profile: GraphProfile; templates: unknown[]; can_edit: boolean }>(
-      "profile/get",
-      {},
-      drive,
-    ),
+    adapterGraph<{
+      profile: GraphProfile;
+      templates: unknown[];
+      can_edit: boolean;
+      can_import?: boolean;
+    }>("profile/get", {}, drive),
   saveProfile: (drive: string, profile: unknown) =>
     adapterGraph<{ profile: GraphProfile }>("profile/set", { profile }, drive),
   /** What extraction kept that the profile lacks (graph admins; one model call,

@@ -51,7 +51,7 @@ export function AccountMenu() {
           setEmbedded(true);
           setUser({
             username: s.user,
-            display_name: "",
+            display_name: s.name,
             source: "local",
             roles: s.roles,
             drives: [],

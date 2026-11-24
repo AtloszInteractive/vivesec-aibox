@@ -137,7 +137,9 @@ person-key salt stays with the Neo4j data. An existing `vivesec-neo4j` is kept
 (it holds the graph), but only if it publishes bolt on `127.0.0.1:MATRIX_NEO4J_PORT`
 and mounts `/var/lib/vivesec-matrix/neo4j/data`; otherwise the phase stops with
 a message instead of replacing it. `MATRIX_GRAPH_PROFILE` picks the
-domain profile (e.g. `bv`), `MATRIX_GRAPH_ADMINS` the users who manage it.
+domain profile (e.g. `bv`), `MATRIX_GRAPH_ADMINS` the users who manage it. A user
+with the admin role (for example the ViVeSecBox owner) manages it as well, whatever
+its name, so the generated `vvs-<hash>` names need not be listed.
 
 `ADAPTER_*` lines of `matrix.conf` (not of the environment) go to the adapter
 as they are: the deployment's behaviour, such as `ADAPTER_APP_MODE=analyst`,
@@ -148,8 +150,9 @@ The kit carries no data; documents and records are loaded after the install.
 ## Users
 
 A ViVeSecBox user's first visit through the tunnel creates its own user
-(`vvs-<hash>`, role analyst, no rooms: it sees nothing until an administrator
-gives it rooms; `MATRIX_TUNNEL_AUTOCREATE=off` turns this off). The owner of the
+(`vvs-<hash>`, role analyst, in the rooms of `MATRIX_TUNNEL_DEFAULT_DRIVES`,
+default `/storage/drives/kozos/`; empty = no rooms, it then sees nothing until an
+administrator gives it rooms; `MATRIX_TUNNEL_AUTOCREATE=off` turns this off). The owner of the
 ViVeSecBox (its requests carry `VVS-Permissions: write,owner`) becomes the
 administrator on its own visit, and gets the role back on every visit
 (`MATRIX_TUNNEL_OWNER_ADMIN=on`, the default). A former owner stays an

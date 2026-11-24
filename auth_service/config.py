@@ -82,6 +82,8 @@ class Settings:
         self.tunnel_autocreate_roles = TUNNEL_AUTOCREATE_MODES.get(self.tunnel_autocreate)
         # The ViVeSecBox owner (VVS-Permissions: owner) administers the box.
         self.tunnel_owner_admin = values.get("tunnel_owner_admin", False) is True
+        # Rooms every automatically created tunnel user starts with.
+        self.tunnel_default_drives = list(values.get("tunnel_default_drives") or [])
 
     @classmethod
     def from_env(cls, env=None, warn=None):
@@ -137,6 +139,14 @@ class Settings:
         if owner not in ("on", "off"):
             warn("invalid AUTH_TUNNEL_OWNER_ADMIN=%r, using off" % owner)
         values["tunnel_owner_admin"] = owner == "on"
+        from auth import AuthError, normalize_drive  # auth imports this module
+        drives = []
+        for raw in _list(env.get("AUTH_TUNNEL_DEFAULT_DRIVES")):
+            try:
+                drives.append(normalize_drive(raw))
+            except AuthError:
+                warn("invalid entry in AUTH_TUNNEL_DEFAULT_DRIVES ignored: %r" % raw)
+        values["tunnel_default_drives"] = drives
         return cls(**values)
 
 

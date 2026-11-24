@@ -25,9 +25,79 @@ import {
   formatTime,
   generatePassword,
   roomName,
-  splitList,
   withSlash,
 } from "./ui";
+
+// The same rules as auth_service/auth.py (ROLE_RE, GROUP_RE).
+const ROLE_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
+const GROUP_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 _.@-]{0,127}$/;
+const BUILT_IN_ROLES = ["admin", "analyst", "leader"];
+
+/** Pick from the values the box already knows (built-in and used by other
+ *  users); a value that is new can still be added. */
+function TagPicker({
+  label,
+  hint,
+  known,
+  selected,
+  pattern,
+  lower,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  known: string[];
+  selected: string[];
+  pattern: RegExp;
+  lower?: boolean;
+  onChange: (values: string[]) => void;
+}) {
+  const { tm } = useLang();
+  const [draft, setDraft] = useState("");
+  const options = [...new Set([...known, ...selected])].sort((a, b) => a.localeCompare(b));
+  const value = lower ? draft.trim().toLowerCase() : draft.trim();
+  const valid = pattern.test(value);
+  const toggle = (item: string, on: boolean) =>
+    onChange(on ? [...selected, item] : selected.filter((s) => s !== item));
+  function add() {
+    if (!valid) return;
+    if (!selected.includes(value)) onChange([...selected, value]);
+    setDraft("");
+  }
+  return (
+    <div>
+      <span className="mb-1 block text-[11px] font-medium text-ink/65">{label}</span>
+      <div className="grid max-h-40 grid-cols-2 gap-1.5 overflow-y-auto rounded-lg border border-ink/10 bg-ink/[0.03] p-2">
+        {options.map((item) => (
+          <Checkbox
+            key={item}
+            label={item}
+            checked={selected.includes(item)}
+            onChange={(on) => toggle(item, on)}
+          />
+        ))}
+        {options.length === 0 && <span className="text-[11px] text-ink/50">—</span>}
+      </div>
+      <div className="mt-1.5 flex gap-1.5">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+          className="min-w-0 flex-1 rounded-lg border border-ink/15 bg-ink/5 px-2.5 py-1 text-xs text-ink outline-none focus:border-brand-soft"
+        />
+        <Button onClick={add} disabled={!valid}>
+          {tm("Add")}
+        </Button>
+      </div>
+      <span className="mt-1 block text-[11px] text-ink/45">{hint}</span>
+    </div>
+  );
+}
 
 type Editing =
   | { kind: "create" }
@@ -85,11 +155,13 @@ function RoomPicker({
 function UserDialog({
   editing,
   rooms,
+  users,
   onClose,
   onDone,
 }: {
   editing: Extract<Editing, { kind: "create" | "edit" }>;
   rooms: Room[];
+  users: AdminUser[];
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
@@ -98,8 +170,8 @@ function UserDialog({
   const managed = user?.source === "ldap";
   const [username, setUsername] = useState(user?.username ?? "");
   const [displayName, setDisplayName] = useState(user?.display_name ?? "");
-  const [roles, setRoles] = useState((user?.roles ?? []).join(", "));
-  const [groups, setGroups] = useState((user?.groups ?? []).join(", "));
+  const [roles, setRoles] = useState<string[]>(user?.roles ?? []);
+  const [groups, setGroups] = useState<string[]>(user?.groups ?? []);
   const [drives, setDrives] = useState<string[]>(user?.drives ?? []);
   const [password, setPassword] = useState(() => (user ? "" : generatePassword()));
   const [temporary, setTemporary] = useState(true);
@@ -112,8 +184,8 @@ function UserDialog({
     try {
       const fields = {
         display_name: displayName,
-        roles: splitList(roles).map((r) => r.toLowerCase()),
-        groups: splitList(groups),
+        roles,
+        groups,
         drives,
       };
       if (user) {
@@ -174,21 +246,37 @@ function UserDialog({
           disabled={managed}
           onChange={(e) => setDisplayName(e.target.value)}
         />
-        <TextField
-          label={tm("Roles")}
-          hint={tm("Separated by commas. “admin” makes the user an administrator.")}
-          value={roles}
-          disabled={managed}
-          onChange={(e) => setRoles(e.target.value)}
-        />
-        <TextField
-          label={tm("Groups")}
-          hint={tm("Separated by commas; used in the permission rules as group:<name>.")}
-          value={groups}
-          disabled={managed}
-          onChange={(e) => setGroups(e.target.value)}
-        />
       </div>
+      {!managed && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <TagPicker
+            label={tm("Roles")}
+            hint={tm("“admin” makes the user an administrator.")}
+            known={[...BUILT_IN_ROLES, ...users.flatMap((u) => u.roles)]}
+            selected={roles}
+            pattern={ROLE_PATTERN}
+            lower
+            onChange={setRoles}
+          />
+          {(groups.length > 0 || users.some((u) => u.groups.length > 0)) && (
+            <TagPicker
+              label={tm("Groups")}
+              hint={tm("Used in the permission rules as group:<name>.")}
+              known={users.flatMap((u) => u.groups)}
+              selected={groups}
+              pattern={GROUP_PATTERN}
+              onChange={setGroups}
+            />
+          )}
+        </div>
+      )}
+      {managed && (
+        <p className="text-xs text-ink/70">
+          {tm("Roles")}: {roles.join(", ") || "—"}
+          <br />
+          {tm("Groups")}: {groups.join(", ") || "—"}
+        </p>
+      )}
       {!managed && <RoomPicker rooms={rooms} selected={drives} onChange={setDrives} />}
       {managed && (
         <p className="text-xs text-ink/70">
@@ -570,6 +658,7 @@ export function UsersTab({
         <UserDialog
           editing={editing}
           rooms={rooms}
+          users={users}
           onClose={() => setEditing(null)}
           onDone={done}
         />

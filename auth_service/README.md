@@ -221,9 +221,10 @@ POST /auth/tunnel/token   X-Auth-Service-Key + X-Auth-Tunnel-Key
   `403 tunnel_user_unknown` and a `tunnel_refused` event.
 - With `AUTH_TUNNEL_AUTOCREATE=analyst` (the Spark installer's default) an
   unmapped identity gets its own user on its first visit: `vvs-<10 hex of the
-  sha256 of the VVS-User>`, role analyst, no rooms, no password (tunnel only),
-  and the mapping is written (`tunnel_user_created` event). It sees no document
-  until an administrator gives it rooms. Deleting or suspending it keeps the
+  sha256 of the VVS-User>`, role analyst, the rooms of
+  `AUTH_TUNNEL_DEFAULT_DRIVES` (default none), no password (tunnel only),
+  and the mapping is written (`tunnel_user_created` event). Without default
+  rooms it sees no document until an administrator gives it rooms. Deleting or suspending it keeps the
   identity out; at most `AUTH_TUNNEL_AUTOCREATE_MAX` (500) users are created.
 - `tunnel-map promote <VVS-User>` makes that ViVeSecBox user an administrator
   (its `vvs-` user, created when needed).

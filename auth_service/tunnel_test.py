@@ -115,6 +115,17 @@ class TunnelTokenTest(unittest.TestCase):
         events = [event["event"] for event in self.auth.list_events(20)]
         self.assertIn("tunnel_user_created", events)
 
+    def test_new_tunnel_users_start_in_the_default_rooms(self):
+        warnings = []
+        settings = config.Settings.from_env(
+            {"AUTH_DATA_DIR": self.dir, "AUTH_TUNNEL_AUTOCREATE": "analyst",
+             "AUTH_TUNNEL_DEFAULT_DRIVES": "/storage/drives/kozos, ../x"}, warn=warnings.append)
+        self.assertEqual(settings.tunnel_default_drives, ["/storage/drives/kozos/"])
+        self.assertEqual(len(warnings), 1)
+        self.auth.settings = settings
+        claims = self.verifier().verify_token(self.auth.issue_tunnel_token(VVS_USER)["token"])
+        self.assertEqual(claims["drives"], ["/storage/drives/kozos/"])
+
     def test_an_unknown_autocreate_mode_is_off(self):
         warnings = []
         settings = config.Settings.from_env({"AUTH_DATA_DIR": self.dir, "AUTH_TUNNEL_AUTOCREATE": "admin"},

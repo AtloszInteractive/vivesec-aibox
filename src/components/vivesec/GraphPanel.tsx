@@ -151,6 +151,7 @@ export function GraphPanel({
   const [exploreSeed, setExploreSeed] = useState<string[] | null>(null);
   const [profile, setProfile] = useState<GraphProfile | null>(null);
   const [canEdit, setCanEdit] = useState(false);
+  const [canImport, setCanImport] = useState(false);
   const [failure, setFailure] = useState<GraphFailure | null>(null);
 
   const loadProfile = useCallback(async () => {
@@ -158,6 +159,7 @@ export function GraphPanel({
       const res = await graphApi.profile(drive);
       setProfile(res.profile);
       setCanEdit(res.can_edit);
+      setCanImport(res.can_import ?? res.can_edit);
       setFailure(null);
     } catch (err) {
       setFailure(graphFailure(err));
@@ -286,6 +288,7 @@ export function GraphPanel({
             <ProcessingTab
               drive={drive}
               canEdit={canEdit}
+              canImport={canImport}
               profile={profile}
               onProfileSaved={loadProfile}
               onOpenSource={onOpenSource}
@@ -2218,12 +2221,14 @@ function QueryLogTab({ drive }: { drive: string }) {
 function ProcessingTab({
   drive,
   canEdit,
+  canImport,
   profile,
   onProfileSaved,
   onOpenSource,
 }: {
   drive: string;
   canEdit: boolean;
+  canImport: boolean;
   profile: GraphProfile | null;
   onProfileSaved: () => Promise<void>;
   onOpenSource: (source: GraphSource) => void;
@@ -2299,6 +2304,7 @@ function ProcessingTab({
       <ImportSection
         drive={drive}
         canEdit={canEdit}
+        canImport={canImport}
         profile={profile}
         onProfileSaved={onProfileSaved}
       />
@@ -2336,11 +2342,13 @@ function toBase64(buffer: ArrayBuffer): string {
 function ImportSection({
   drive,
   canEdit,
+  canImport,
   profile,
   onProfileSaved,
 }: {
   drive: string;
   canEdit: boolean;
+  canImport: boolean;
   profile: GraphProfile | null;
   onProfileSaved: () => Promise<void>;
 }) {
@@ -2378,8 +2386,8 @@ function ImportSection({
     [drive, call],
   );
   useEffect(() => {
-    if (canEdit) void loadSources();
-  }, [canEdit, loadSources]);
+    if (canImport) void loadSources();
+  }, [canImport, loadSources]);
 
   const check = useCallback(
     async (file: GraphSampleFile, keepSource = false) => {
@@ -2447,7 +2455,7 @@ function ImportSection({
     return () => clearTimeout(timer);
   }, [drive, ragFolder, ragState]);
 
-  if (!canEdit) return null;
+  if (!canImport) return null;
   const source = sources?.find((s) => s.id === sourceId) ?? null;
   const effectiveMode = mode || source?.mode || "delta";
 
@@ -2667,7 +2675,7 @@ function ImportSection({
                   {`${tm("Found by another name")}: ${fit.aliased.join(", ")}`}
                 </div>
               )}
-              {fit.fit !== "full" && fit.unused.length > 0 && panel !== "assign" && (
+              {canEdit && fit.fit !== "full" && fit.unused.length > 0 && panel !== "assign" && (
                 <button
                   onClick={() => setPanel("assign")}
                   disabled={busy}
@@ -2678,7 +2686,10 @@ function ImportSection({
               )}
             </div>
           )}
-          {inspect && !inspecting && !inspect.best && panel !== "learn" && (
+          {inspect && !inspecting && !inspect.best && panel !== "learn" && !canEdit && (
+            <Notice text={tm("Only graph administrators may do this.")} />
+          )}
+          {canEdit && inspect && !inspecting && !inspect.best && panel !== "learn" && (
             <div className="space-y-1.5 rounded-lg border border-amber-300/30 bg-amber-300/10 p-2">
               <div className="text-[11.5px] text-amber-800 dark:text-amber-100">
                 {tm(
@@ -2688,8 +2699,13 @@ function ImportSection({
               {learnButton(true)}
             </div>
           )}
-          {inspect && !inspecting && inspect.best && panel !== "learn" && learnButton(false)}
-          {panel === "assign" && fit && (
+          {canEdit &&
+            inspect &&
+            !inspecting &&
+            inspect.best &&
+            panel !== "learn" &&
+            learnButton(false)}
+          {canEdit && panel === "assign" && fit && (
             <AssignColumns
               drive={drive}
               fit={fit}
@@ -2705,7 +2721,7 @@ function ImportSection({
               }
             />
           )}
-          {panel === "learn" && sample && profile && (
+          {canEdit && panel === "learn" && sample && profile && (
             <LearnSource
               drive={drive}
               file={sample}

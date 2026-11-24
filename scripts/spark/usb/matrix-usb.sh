@@ -10,8 +10,8 @@
 #   sudo bash .../matrix-usb.sh admin-vvs <VVS-User>         that ViVeSecBox user administers the box
 #   sudo bash .../matrix-usb.sh map <VVS-User> <user>        let a ViVeSecBox user in as an existing <user>
 #   sudo bash .../matrix-usb.sh status
-# A ViVeSecBox user's first visit creates its own analyst without rooms
-# (MATRIX_TUNNEL_AUTOCREATE); an administrator gives it rooms. The owner of the
+# A ViVeSecBox user's first visit creates its own analyst in the default rooms
+# (MATRIX_TUNNEL_AUTOCREATE, MATRIX_TUNNEL_DEFAULT_DRIVES). The owner of the
 # ViVeSecBox becomes the administrator on its own visit (MATRIX_TUNNEL_OWNER_ADMIN);
 # admin-vvs is only needed when that is off or for a further administrator.
 # Later versions come through the administration page (Updates tab).

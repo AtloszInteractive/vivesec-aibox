@@ -178,6 +178,13 @@ class Hs256Test(VerifierTestBase):
         self.assertEqual(caller.roles, ("Analyst",))
         self.assertEqual(caller.keys(), ("lars.nygaard", "lars@example.com"))
         self.assertIsNone(caller.drives)
+        self.assertEqual(caller.name, "")
+
+    def test_the_display_name_claim_is_carried_when_clean(self):
+        verifier = self.verifier()
+        for raw, expected in (("Lars Nygaard", "Lars Nygaard"), ("bad\nname", ""), (7, "")):
+            token = identity.sign_hs256(claims(name=raw), SECRET)
+            self.assertEqual(verifier.resolve(Headers({"VVS-Identity": token})).name, expected)
 
     def test_bearer_prefix_and_custom_header(self):
         token = identity.sign_hs256(claims(), SECRET)

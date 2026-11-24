@@ -4054,16 +4054,16 @@ const M: Record<string, Tri> = {
       "Dieser Benutzer meldet sich über Active Directory an: Name, Rollen, Gruppen und Räume kommen aus dem AD und der Gruppenzuordnung.",
     ],
   "Display name": ["Megjelenített név", "Visningsnavn", "Anzeigename"],
-  "Separated by commas. “admin” makes the user an administrator.": [
-    "Vesszővel elválasztva. Az „admin” szerepkörrel a felhasználó rendszergazda lesz.",
-    "Adskilt med kommaer. “admin” gør brugeren til administrator.",
-    "Durch Kommas getrennt. „admin“ macht den Benutzer zum Administrator.",
+  "“admin” makes the user an administrator.": [
+    "Az „admin” szerepkörrel a felhasználó rendszergazda lesz.",
+    "“admin” gør brugeren til administrator.",
+    "„admin“ macht den Benutzer zum Administrator.",
   ],
   Groups: ["Csoportok", "Grupper", "Gruppen"],
-  "Separated by commas; used in the permission rules as group:<name>.": [
-    "Vesszővel elválasztva; a jogosultsági szabályokban group:<név> formában használható.",
-    "Adskilt med kommaer; bruges i rettighedsreglerne som group:<navn>.",
-    "Durch Kommas getrennt; in den Berechtigungsregeln als group:<Name> verwendet.",
+  "Used in the permission rules as group:<name>.": [
+    "A jogosultsági szabályokban group:<név> formában használható.",
+    "Bruges i rettighedsreglerne som group:<navn>.",
+    "In den Berechtigungsregeln als group:<Name> verwendet.",
   ],
   "Initial password": ["Kezdő jelszó", "Startadgangskode", "Anfangspasswort"],
   Generate: ["Generálás", "Generér", "Erzeugen"],

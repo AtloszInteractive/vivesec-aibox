@@ -71,9 +71,12 @@ MATRIX_UPDATE=off
 
 # --- ViVeSecBox users -------------------------------------------------------------
 # analyst (default): a ViVeSecBox user's first visit through the tunnel creates its
-# own user (vvs-..., role analyst, no rooms); an administrator gives it rooms.
+# own user (vvs-..., role analyst, in the default rooms below).
 # off: only identities mapped by hand (manage.py tunnel-map set) get in.
 #MATRIX_TUNNEL_AUTOCREATE=analyst
+# Rooms (space or comma separated paths) every automatically created user starts in,
+# so the first sign-in works. Empty: no rooms, an administrator adds them.
+#MATRIX_TUNNEL_DEFAULT_DRIVES=/storage/drives/kozos/
 # on (default): the ViVeSecBox owner (its requests carry VVS-Permissions: ...,owner)
 # gets its user and the admin role on every visit; a former owner stays admin until
 # an administrator removes it. off: administrators only from manage.py tunnel-map promote.
