@@ -1,0 +1,12 @@
+{
+  "name": "vivesec-manual-tools",
+  "private": true,
+  "type": "module",
+  "description": "Screenshot capture for the user manual (dev only, not shipped)",
+  "scripts": {
+    "capture": "node capture.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
