@@ -23,6 +23,8 @@ model stops the installation instead of mixing vectors in one index.
 
 Phases:
     preflight  platform, docker, nginx, shared Ollama and its models, free ports
+    vault      MATRIX_VAULT=on: /var/lib/vivesec-matrix lives in a LUKS2 volume (a file, opened
+               at boot without a person); off (default) leaves everything as it is
     dirs       /var/lib/vivesec-matrix and its secrets (RAG key, tunnel forward key)
     images     vivesec-adapter, -rag, -ui built from the kit (10-build-images.sh),
                or the release kit's loaded images tagged :latest
@@ -59,7 +61,8 @@ HERE = Path(__file__).resolve().parent
 SRC = HERE.parents[1]
 KIT = SRC.parent
 
-PHASES = ("preflight", "dirs", "images", "clamav", "auth", "graph", "core", "tunnel", "updater", "verify")
+PHASES = ("preflight", "vault", "dirs", "images", "clamav", "auth", "graph", "core", "tunnel", "updater",
+          "verify")
 CONF_FILE = Path("/etc/vivesec-matrix/matrix.conf")
 ROOT = Path("/var/lib/vivesec-matrix")
 STATE_FILE = ROOT / "install-state"
@@ -70,6 +73,17 @@ UNIT_DIR = Path("/etc/systemd/system")
 FRONT_DIR = Path("/etc/vivesec-matrix/front")
 FILES_PKI = Path("/etc/vivesec-matrix/tunnel-pki")
 FRONT_PKI = ROOT / "front-pki"
+VAULT_TOOL = SRC / "scripts" / "jetson" / "standalone" / "vault.py"
+VAULT_CONF = Path("/etc/aibox/standalone.conf")
+VAULT_IMAGE = Path("/var/lib/vivesec-matrix-vault.img")
+VAULT_MOUNT = Path("/var/lib/vivesec-matrix-vault")
+VAULT_NAME = "matrix_vault"
+VAULT_UNIT = "aibox-vault.service"
+# Everything that reads or writes ROOT starts only once the volume is open.
+VAULT_DEPENDENTS = ("vivesec-matrix-tunnel.service", "vivesec-matrix-front.service",
+                    "vivesec-matrix-pki-sync.service", "vivesec-matrix-pki-sync.timer",
+                    "vivesec-matrix-updater-check.service", "vivesec-matrix-updater-check.timer",
+                    "vivesec-matrix-updater-request.service", "vivesec-matrix-updater-request.path")
 PARTNER_PKI = Path("/run/vivetech-vivesec-adapter/pki")
 PARTNER_ADAPTER_UNIT = "vivetech-vivesec-adapter.service"
 PREP_TABLE = "inet vivesec_prep_v2"
@@ -107,7 +121,13 @@ DEFAULTS = {
     "MATRIX_TUNNEL_AUTOCREATE": "analyst",
     "MATRIX_TUNNEL_OWNER_ADMIN": "on",
     "MATRIX_TUNNEL_DEFAULT_DRIVES": "/storage/drives/kozos/",
+    "MATRIX_VAULT": "off",
+    "MATRIX_VAULT_SIZE": "512G",
+    "MATRIX_VAULT_UNLOCK": "keyfile",
+    "MATRIX_VAULT_RECOVERY_OUT": "",
 }
+VAULT_MODES = ("on", "off")
+VAULT_UNLOCK_MODES = ("keyfile", "usb")
 PKI_MODES = ("off", "files", "partner-dev")
 FIREWALL_MODES = ("off", "dropin-dev")
 GRAPH_MODES = ("on", "off")
@@ -206,6 +226,23 @@ def settings(conf_text="", env=None):
     if values["MATRIX_UPDATE"] == "on" and not re.match(
             r"^https://[A-Za-z0-9.-]+(:\d+)?(/[A-Za-z0-9._~/-]*)?$", values["MATRIX_UPDATE_URL"]):
         raise InstallError("MATRIX_UPDATE=on needs MATRIX_UPDATE_URL, an https:// URL")
+    values["MATRIX_VAULT"] = values["MATRIX_VAULT"].strip().lower()
+    values["MATRIX_VAULT_UNLOCK"] = values["MATRIX_VAULT_UNLOCK"].strip().lower()
+    values["MATRIX_VAULT_SIZE"] = values["MATRIX_VAULT_SIZE"].strip().upper()
+    values["MATRIX_VAULT_RECOVERY_OUT"] = values["MATRIX_VAULT_RECOVERY_OUT"].strip()
+    # An unclear wish for encryption stops the installation: falling back to "off" would leave data in the clear.
+    if values["MATRIX_VAULT"] not in VAULT_MODES:
+        raise InstallError("MATRIX_VAULT must be on or off, not %r" % values["MATRIX_VAULT"])
+    if values["MATRIX_VAULT"] == "on":
+        if values["MATRIX_VAULT_UNLOCK"] not in VAULT_UNLOCK_MODES:
+            raise InstallError("MATRIX_VAULT_UNLOCK must be keyfile or usb (a passphrase needs a person at "
+                               "every boot: not supported here), not %r" % values["MATRIX_VAULT_UNLOCK"])
+        if not re.fullmatch(r"[1-9][0-9]*[GT]", values["MATRIX_VAULT_SIZE"]):
+            raise InstallError("MATRIX_VAULT_SIZE must look like 512G or 2T")
+        out = values["MATRIX_VAULT_RECOVERY_OUT"]
+        if out and (not out.startswith("/") or ".." in out.split("/")
+                    or Path(out).is_relative_to(ROOT) or Path(out).is_relative_to(VAULT_MOUNT)):
+            raise InstallError("MATRIX_VAULT_RECOVERY_OUT must be an absolute path outside the volume")
     ports = {}
     for key in PORT_KEYS:
         raw = values[key].strip()
@@ -390,6 +427,15 @@ def phase_preflight(conf):
     for item in ("KIT.json",):
         if not (KIT / item).is_file():
             problems.append("kit file %s missing next to src/" % item)
+    if conf["MATRIX_VAULT"] == "on":
+        for tool in ("cryptsetup", "rsync", "fallocate", "mkfs.ext4", "e2fsck", "chattr", "mount", "umount"):
+            if shutil.which(tool) is None and not Path("/usr/sbin/" + tool).exists():
+                problems.append("MATRIX_VAULT=on needs %s" % tool)
+        for name in ("vault.py", "kitlib.py"):
+            if not (VAULT_TOOL.parent / name).is_file():
+                problems.append("MATRIX_VAULT=on: this kit has no scripts/jetson/standalone/%s" % name)
+    if ROOT.is_symlink() and not ROOT.is_dir():
+        problems.append("%s is on the encrypted volume, which is closed: sudo aibox-vault unlock" % ROOT)
     images = kit_images(kit_info()) if (KIT / "KIT.json").is_file() else {}
     if not images and not (KIT / "ui-output.tgz").is_file():
         problems.append("kit file ui-output.tgz missing next to src/")
@@ -445,6 +491,69 @@ def phase_preflight(conf):
         raise InstallError("preflight:\n  - " + "\n  - ".join(problems))
     log("PREFLIGHT_OK kit=%s ollama=%s" % (json.loads((KIT / "KIT.json").read_text()).get("label"),
                                            conf["MATRIX_OLLAMA_URL"]))
+
+
+def vault_settings(conf):
+    return {"AIBOX_VAULT_FILE": VAULT_IMAGE.as_posix(), "AIBOX_VAULT_SIZE": conf["MATRIX_VAULT_SIZE"],
+            "AIBOX_VAULT_NAME": VAULT_NAME, "AIBOX_VAULT_MOUNT": VAULT_MOUNT.as_posix(),
+            "AIBOX_VAULT_LINKS": ROOT.as_posix(), "AIBOX_VAULT_UNLOCK": conf["MATRIX_VAULT_UNLOCK"]}
+
+
+def vault_conf_text(existing, values):
+    """`existing` with the AIBOX_VAULT_* lines this installer owns replaced; other lines stay."""
+    kept = [line for line in existing.splitlines()
+            if line.split("=", 1)[0].strip() not in values]
+    return "\n".join(kept + ["%s=%s" % item for item in sorted(values.items())]) + "\n"
+
+
+def vault_dropin_text():
+    return ("# Written by spark_install.py: nothing below starts while the encrypted volume is closed.\n"
+            "[Unit]\nRequires=%s\nAfter=%s\n" % (VAULT_UNIT, VAULT_UNIT))
+
+
+def vault_tool(*args):
+    result = subprocess.run((sys.executable, str(VAULT_TOOL)) + args, text=True)
+    if result.returncode:
+        raise InstallError("vault.py %s failed (%d)" % (" ".join(args), result.returncode))
+
+
+def phase_vault(conf):
+    if conf["MATRIX_VAULT"] != "on":
+        log("VAULT_OFF (MATRIX_VAULT=off: %s stays a plain folder)" % ROOT)
+        return
+    existing = VAULT_CONF.read_text(encoding="utf-8") if VAULT_CONF.is_file() else ""
+    VAULT_CONF.parent.mkdir(parents=True, exist_ok=True)
+    write_file(VAULT_CONF, vault_conf_text(existing, vault_settings(conf)), 0o600)
+    stops = [unit for unit in VAULT_DEPENDENTS if (UNIT_DIR / unit).exists() and unit_active(unit)]
+    for unit in stops:
+        run("systemctl", "stop", unit, check=False)
+    if not VAULT_IMAGE.exists():
+        args = ["init"]
+        out = conf["MATRIX_VAULT_RECOVERY_OUT"]
+        if out:
+            args += ["--recovery-out", out]
+        elif not sys.stdin.isatty():
+            raise InstallError("a new volume needs its recovery key kept somewhere: run this on a terminal, "
+                               "or set MATRIX_VAULT_RECOVERY_OUT to a file outside the volume")
+        vault_tool(*args)
+    elif not os.path.ismount(VAULT_MOUNT):
+        vault_tool("unlock", "--no-start")
+    vault_tool("migrate")
+    vault_tool("install-unit")
+    for unit in VAULT_DEPENDENTS:
+        write_file(UNIT_DIR / (unit + ".d") / "vivesec-matrix-vault.conf", vault_dropin_text())
+    run("systemctl", "daemon-reload")
+    leftovers = sorted(ROOT.parent.glob(ROOT.name + ".pre-vault-*"))
+    for path in leftovers:
+        if {entry.name for entry in path.iterdir()} <= {STATE_FILE.name}:
+            shutil.rmtree(path)
+            log("VAULT_PLAINTEXT_REMOVED %s (it held nothing but the installer's state)" % path)
+        else:
+            log("VAULT_PLAINTEXT_LEFT %s: check the box, then sudo python3 %s wipe-plaintext --confirm"
+                % (path, VAULT_TOOL))
+    for unit in stops:
+        run("systemctl", "start", unit, check=False)
+    log("VAULT_OK %s on %s (%s unlock)" % (ROOT, VAULT_MOUNT, conf["MATRIX_VAULT_UNLOCK"]))
 
 
 def phase_dirs(conf):
@@ -1219,6 +1328,12 @@ def phase_verify(conf):
     if conf["MATRIX_UPDATE"] == "on":
         for unit in UPDATER_UNITS:
             check("%s active" % unit, unit_active(unit))
+    if conf["MATRIX_VAULT"] == "on":
+        check("%s is on the encrypted volume" % ROOT,
+              ROOT.is_symlink() and os.path.ismount(VAULT_MOUNT)
+              and ROOT.resolve().is_relative_to(VAULT_MOUNT))
+        check("%s enabled" % VAULT_UNIT,
+              run("systemctl", "is-enabled", "--quiet", VAULT_UNIT, check=False).returncode == 0)
     if not all(checks):
         raise InstallError("verify: %d check(s) failed" % checks.count(False))
     log("MATRIX_READY %d checks" % len(checks))
@@ -1226,7 +1341,7 @@ def phase_verify(conf):
 
 # ---------------------------------------------------------------- driver
 
-PHASE_FUNCTIONS = {"preflight": phase_preflight, "dirs": phase_dirs, "images": phase_images,
+PHASE_FUNCTIONS = {"preflight": phase_preflight, "vault": phase_vault, "dirs": phase_dirs, "images": phase_images,
                    "clamav": phase_clamav, "auth": phase_auth, "graph": phase_graph, "core": phase_core,
                    "tunnel": phase_tunnel, "updater": phase_updater, "verify": phase_verify}
 

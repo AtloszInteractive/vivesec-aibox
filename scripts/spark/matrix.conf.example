@@ -81,3 +81,16 @@ MATRIX_UPDATE=off
 # gets its user and the admin role on every visit; a former owner stays admin until
 # an administrator removes it. off: administrators only from manage.py tunnel-map promote.
 #MATRIX_TUNNEL_OWNER_ADMIN=on
+
+# --- Disk encryption (LUKS2) ------------------------------------------------------
+# off (default): /var/lib/vivesec-matrix is a plain folder. on: it lives in a LUKS2
+# volume (a file on the system disk, opened at boot without a person) and every
+# service that uses it waits for the volume. Anything but on/off stops the installation.
+# The Spark has no TPM2: the key is a file on the system disk (keyfile, protects a
+# removed data disk only) or on a USB stick (usb, protects a removed machine too).
+#MATRIX_VAULT=off
+#MATRIX_VAULT_SIZE=512G
+#MATRIX_VAULT_UNLOCK=keyfile
+# The recovery key of a NEW volume is shown on the terminal; when the installer runs
+# without one (the updater), it is written to this file, outside the volume. Keep it elsewhere.
+#MATRIX_VAULT_RECOVERY_OUT=/root/matrix-vault-recovery.txt

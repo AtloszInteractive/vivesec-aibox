@@ -147,6 +147,27 @@ as they are: the deployment's behaviour, such as `ADAPTER_APP_MODE=analyst`,
 TLS, identity, integration, data paths, ClamAV, broker, models) is refused.
 The kit carries no data; documents and records are loaded after the install.
 
+## Disk encryption (LUKS2)
+
+`MATRIX_VAULT=on` adds the `vault` phase: `/var/lib/vivesec-matrix` moves into a
+LUKS2 volume (the file `/var/lib/vivesec-matrix-vault.img`, `MATRIX_VAULT_SIZE`,
+mounted at `/var/lib/vivesec-matrix-vault`; the old path becomes a link). It uses
+`scripts/jetson/standalone/vault.py` (`aibox-vault.service` opens it at boot).
+The tunnel, front, pki-sync and updater units get a drop-in requiring the volume, so
+nothing starts on a closed one. The default is `off`; a value that is neither
+`on` nor `off` stops the installation.
+
+- No TPM2 on the Spark: `MATRIX_VAULT_UNLOCK=keyfile` (default) keeps the key in
+  `/etc/aibox/vault.key` on the system disk, so it protects a removed data disk only;
+  `usb` keeps it on a stick (`LABEL=AIBOX-KEY`), which protects a removed machine too.
+- A new volume has a recovery key. On a terminal it is shown and must be retyped; without one
+  (the updater) `MATRIX_VAULT_RECOVERY_OUT` must name a file outside the volume. Move it off the box.
+- On an existing box the data is copied in and the plaintext stays as
+  `/var/lib/vivesec-matrix.pre-vault-<time>` until
+  `sudo python3 <kit>/src/scripts/jetson/standalone/vault.py wipe-plaintext --confirm`.
+  A fresh install deletes it, as it holds only the installer's state.
+- `spark_install.py --only verify` checks the link, the mount and the unit.
+
 ## Users
 
 A ViVeSecBox user's first visit through the tunnel creates its own user

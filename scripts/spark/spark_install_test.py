@@ -77,6 +77,28 @@ class SettingsTest(unittest.TestCase):
                       units["vivesec-matrix-updater-check.service"])
         self.assertIn("/usr/bin/python3 -S ", units["vivesec-matrix-updater-request.service"])
 
+    def test_vault_is_off_unless_asked_and_unclear_values_stop(self):
+        conf, _ = si.settings("", env={})
+        self.assertEqual((conf["MATRIX_VAULT"], conf["MATRIX_VAULT_UNLOCK"]), ("off", "keyfile"))
+        conf, _ = si.settings("MATRIX_VAULT=ON\nMATRIX_VAULT_SIZE=2t\n", env={})
+        self.assertEqual((conf["MATRIX_VAULT"], conf["MATRIX_VAULT_SIZE"]), ("on", "2T"))
+        for text in ("MATRIX_VAULT=yes", "MATRIX_VAULT=on\nMATRIX_VAULT_UNLOCK=passphrase",
+                     "MATRIX_VAULT=on\nMATRIX_VAULT_SIZE=big", "MATRIX_VAULT=on\nMATRIX_VAULT_SIZE=0G",
+                     "MATRIX_VAULT=on\nMATRIX_VAULT_RECOVERY_OUT=relative.txt",
+                     "MATRIX_VAULT=on\nMATRIX_VAULT_RECOVERY_OUT=/var/lib/vivesec-matrix/key.txt",
+                     "MATRIX_VAULT=on\nMATRIX_VAULT_RECOVERY_OUT=/root/../etc/key"):
+            self.assertRaises(si.InstallError, si.settings, text, {})
+
+    def test_vault_conf_replaces_only_its_own_lines(self):
+        conf, _ = si.settings("MATRIX_VAULT=on\nMATRIX_VAULT_SIZE=1T\n", env={})
+        values = si.vault_settings(conf)
+        text = si.vault_conf_text("AIBOX_X=1\nAIBOX_VAULT_SIZE=old\n", values)
+        self.assertIn("AIBOX_X=1\n", text)
+        self.assertEqual(text.count("AIBOX_VAULT_SIZE="), 1)
+        self.assertIn("AIBOX_VAULT_SIZE=1T\n", text)
+        self.assertIn("AIBOX_VAULT_LINKS=/var/lib/vivesec-matrix\n", text)
+        self.assertIn("Requires=aibox-vault.service", si.vault_dropin_text())
+
     def test_graph_is_off_unless_asked_and_unknown_values_fall_back(self):
         self.assertEqual(si.settings("", env={})[0]["MATRIX_GRAPH"], "off")
         conf, warnings = si.settings("MATRIX_GRAPH=yes\n", env={})

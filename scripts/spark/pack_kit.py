@@ -34,7 +34,8 @@ SOURCE_PATHS = ("adapter", "rag_service", "poc", "auth_service", "matrix_tunnel"
                 "scripts/spark",
                 "scripts/release/build_info.py", "scripts/jetson/install/10-build-images.sh",
                 "scripts/jetson/Dockerfile.ui-runtime", "scripts/jetson/standalone/auth_deploy.py",
-                "scripts/jetson/standalone/clamav_deploy.py", "VERSION")
+                "scripts/jetson/standalone/clamav_deploy.py", "scripts/jetson/standalone/vault.py",
+                "scripts/jetson/standalone/kitlib.py", "VERSION")
 STAMPED = ("adapter/build_info.json", "rag_service/build_info.json")
 EXECUTABLE = (".sh", "spark_install.py")
 
