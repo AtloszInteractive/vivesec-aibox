@@ -1195,7 +1195,11 @@ A file with several tables (sheets, SQL tables, XML record kinds) is read where
 the profile's `sheet` names, else where the header holds most of the source's
 columns; an unclear choice is refused with the table names.
 `/ui/graph/import/sources` also lists the accepted `formats`. A graph
-administrator (`ADAPTER_GRAPH_ADMINS`) sends one file per call:
+administrator (`ADAPTER_GRAPH_ADMINS`; on a standalone box also a user with the
+`admin` role) or a holder of a role in `ADAPTER_GRAPH_IMPORT_ROLES` (default
+`leader`; `off`: administrators only; e.g. `leader,analyst`) sends one file per
+call. Changing the profile, teaching the mapping and undoing an import stay with
+the administrators; `/profile/get` reports `can_import` next to `can_edit`:
 
 `POST /api/v1/ui/graph/import` `{source, as_of, folder, filename, content_b64,
 mode?, force?, wait?}`; `/ui/graph/import/sources` lists the sources,
