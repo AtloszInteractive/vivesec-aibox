@@ -147,6 +147,7 @@ import {
   Download,
   ThumbsUp,
   ThumbsDown,
+  MessageSquare,
   Trash2,
   Network,
   FileSearch,
@@ -5315,20 +5316,30 @@ const FEEDBACK_REASONS: { key: string; label: string }[] = [
   { key: "format", label: "Wrong format" },
 ];
 
+/** The adapter keeps at most this many comment characters. */
+const FEEDBACK_COMMENT_MAX = 2000;
+
 /** Rate the answer (good / not good). Each click is stored on the box joined
- *  with the answer trace; a down-vote offers an optional reason refinement. */
+ *  with the answer trace; a down-vote offers an optional reason refinement,
+ *  and any vote can carry a free-text comment. The store is append-only and
+ *  the last record per audit id wins, so every save resends the full state. */
 function FeedbackButtons({ meta }: { meta: LiveMeta }) {
   const { tm } = useLang();
   const [rating, setRating] = useState<"up" | "down" | null>(null);
-  const [reasonSent, setReasonSent] = useState(false);
+  const [reason, setReason] = useState<string | null>(null);
+  const [comment, setComment] = useState("");
+  const [draft, setDraft] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  async function rate(value: "up" | "down", reason?: string) {
-    if (!meta.auditId) return;
+  async function rate(value: "up" | "down", why: string | null, note: string) {
+    if (!meta.auditId) return false;
     const res = await sendFeedback({
       data: {
         auditId: meta.auditId,
         rating: value,
-        reason,
+        reason: why ?? undefined,
+        comment: note || undefined,
         question: meta.question,
         answer: meta.raw,
         drive: meta.feedbackDrive,
@@ -5344,17 +5355,35 @@ function FeedbackButtons({ meta }: { meta: LiveMeta }) {
   function onVote(value: "up" | "down") {
     if (rating) return;
     setRating(value);
-    void rate(value).then((ok) => {
-      if (ok === false) setRating(null);
+    void rate(value, null, "").then((ok) => {
+      if (!ok) setRating(null);
       else if (value === "up") toast.success(tm("Feedback saved on the AI Box."));
     });
   }
 
   function onReason(key: string) {
-    setReasonSent(true);
-    void rate("down", key).then((ok) => {
-      if (ok !== false) toast.success(tm("Feedback saved on the AI Box."));
+    setReason(key);
+    void rate("down", key, comment).then((ok) => {
+      if (ok) toast.success(tm("Feedback saved on the AI Box."));
+      else setReason(null);
     });
+  }
+
+  function openComment() {
+    setDraft(comment);
+    setEditing(true);
+  }
+
+  async function saveComment() {
+    if (!rating || saving) return;
+    const note = draft.trim().slice(0, FEEDBACK_COMMENT_MAX);
+    setSaving(true);
+    const ok = await rate(rating, reason, note);
+    setSaving(false);
+    if (!ok) return;
+    setComment(note);
+    setEditing(false);
+    toast.success(tm("Feedback saved on the AI Box."));
   }
 
   const voteBtn = (value: "up" | "down", Icon: typeof ThumbsUp, label: string) => (
@@ -5374,24 +5403,78 @@ function FeedbackButtons({ meta }: { meta: LiveMeta }) {
   );
 
   return (
-    <span className="ml-auto inline-flex flex-wrap items-center gap-1.5">
-      {voteBtn("up", ThumbsUp, "Good answer")}
-      {voteBtn("down", ThumbsDown, "Bad answer")}
-      {rating === "down" && !reasonSent && (
-        <>
-          <span className="text-[10.5px] text-ink/45">{tm("What was wrong?")}</span>
-          {FEEDBACK_REASONS.map((r) => (
+    <>
+      <span className="ml-auto inline-flex flex-wrap items-center gap-1.5">
+        {voteBtn("up", ThumbsUp, "Good answer")}
+        {voteBtn("down", ThumbsDown, "Bad answer")}
+        {rating === "down" && !reason && (
+          <>
+            <span className="text-[10.5px] text-ink/45">{tm("What was wrong?")}</span>
+            {FEEDBACK_REASONS.map((r) => (
+              <button
+                key={r.key}
+                onClick={() => onReason(r.key)}
+                className="rounded-full border border-ink/10 px-2 py-0.5 text-[10.5px] text-ink/55 transition hover:bg-ink/10 hover:text-ink/85"
+              >
+                {tm(r.label)}
+              </button>
+            ))}
+          </>
+        )}
+        {rating && !editing && (
+          <button
+            onClick={openComment}
+            title={comment || undefined}
+            className="inline-flex items-center gap-1 rounded-full border border-ink/10 px-2 py-0.5 text-[10.5px] text-ink/55 transition hover:bg-ink/10 hover:text-ink/85"
+          >
+            <MessageSquare className="h-3 w-3" />
+            {tm(comment ? "Edit comment" : "Add comment")}
+          </button>
+        )}
+      </span>
+      {rating && editing && (
+        <div className="basis-full">
+          <textarea
+            autoFocus
+            rows={3}
+            value={draft}
+            maxLength={FEEDBACK_COMMENT_MAX}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                void saveComment();
+              } else if (e.key === "Escape") {
+                setEditing(false);
+              }
+            }}
+            placeholder={tm("Your comment on this answer (optional)")}
+            aria-label={tm("Comment on the answer")}
+            className="w-full resize-y rounded-lg border border-ink/10 bg-shade/25 px-3 py-2 text-[12.5px] text-ink placeholder:text-ink/35 outline-none focus:border-ink/25"
+          />
+          <div className="mt-1.5 flex items-center justify-end gap-2">
+            <span className="mr-auto text-[10.5px] text-ink/40">
+              {draft.length}/{FEEDBACK_COMMENT_MAX}
+            </span>
             <button
-              key={r.key}
-              onClick={() => onReason(r.key)}
-              className="rounded-full border border-ink/10 px-2 py-0.5 text-[10.5px] text-ink/55 transition hover:bg-ink/10 hover:text-ink/85"
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              className="rounded-lg px-3 py-1 text-[12px] text-ink/60 hover:bg-ink/10 disabled:opacity-40"
             >
-              {tm(r.label)}
+              {tm("Cancel")}
             </button>
-          ))}
-        </>
+            <button
+              onClick={() => void saveComment()}
+              disabled={saving || draft.trim() === comment}
+              className="rounded-lg px-3 py-1 text-[12px] font-semibold disabled:opacity-40"
+              style={{ backgroundColor: ACCENT, color: ON_ACCENT }}
+            >
+              {saving ? tm("Saving…") : tm("Save")}
+            </button>
+          </div>
+        </div>
       )}
-    </span>
+    </>
   );
 }
 

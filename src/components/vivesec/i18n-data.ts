@@ -2261,6 +2261,18 @@ const M: Record<string, Tri> = {
   ],
   Incomplete: ["Hiányos", "Ufuldstændig", "Unvollständig"],
   "Wrong format": ["Rossz formátum", "Forkert format", "Falsches Format"],
+  "Add comment": ["Megjegyzés", "Tilføj kommentar", "Kommentar hinzufügen"],
+  "Edit comment": ["Megjegyzés szerkesztése", "Redigér kommentar", "Kommentar bearbeiten"],
+  "Comment on the answer": [
+    "Megjegyzés a válaszhoz",
+    "Kommentar til svaret",
+    "Kommentar zur Antwort",
+  ],
+  "Your comment on this answer (optional)": [
+    "Megjegyzése a válaszhoz (nem kötelező)",
+    "Din kommentar til svaret (valgfrit)",
+    "Ihr Kommentar zur Antwort (optional)",
+  ],
   "Feedback saved on the AI Box.": [
     "Az értékelés mentve az AI Boxon.",
     "Feedback gemt på AI Boxen.",
