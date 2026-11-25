@@ -101,6 +101,13 @@ A beszélgetésben adott válasz alatti **Megnyitás ábrán** gomb a válaszban
 és kapcsolataikat közvetlenül az ábrán nyitja meg. Fordítva: ha a kérdésben ismert személy
 neve szerepel, a válasz a kapcsolatelemzés adatait is felhasználja, hivatkozással.
 
+A **Megnyitás ábrán** egy **Vizsgálat** nézetet nyit: a kiinduló személy (**Kiindulópont**)
+és a hozzá szintenként (**1. szint**, **2. szint** …) kapcsolódó személyek listáját, mellette az
+ábrát. Egy személyre kattintva látszik, milyen láncon kapcsolódik a kiindulóponthoz
+(**Kapcsolódás útja**), és ha több úton is, azok is (**További szál**). Ha a vizsgálat túl sok
+személyt érintene, a felület jelzi: **A vizsgálat csonkolva van; további személyek is
+lehetnek.** Egy személy adatlapjáról a **Vissza a vizsgálathoz** gombbal lehet visszatérni.
+
 ## Felülvizsgálat: lehetséges azonos személyek
 
 Ugyanaz a személy több dokumentumban, több rekordként is szerepelhet. Ha a rekordokat erős
@@ -218,7 +225,41 @@ betöltés** részben tölthetők be. Ez csak a jogosult szerepkörnek (alapért
 4. **A fájl tartalma**: **Csak a változások** vagy **A teljes nyilvántartás**.
 5. **Exportfájl**: CSV, TSV, TXT, XLSX vagy XLSM, legfeljebb 50 MB. A rendszer ellenőrzi, hogy
    a fájlban megvannak-e a forrás oszlopai.
-6. **Betöltés**. Az eredmény mutatja a sorok, az új, a frissült és a törölt rekordok számát.
+6. **Betöltés**. Az eredmény a sorok és rekordok számát (**Sorok**, **Rekordok**), az új, a
+   frissült, a változatlan és a törölt rekordokat, valamint az esetleges problémákat mutatja
+   (például **Hiányzó oszlopok**, **Ismeretlen kódok**, **Ismétlődő rekordazonosítók**,
+   **Senki által nem látható rekordok (ismeretlen hozzáférési kód)**). Az **Új review-párok**
+   a betöltés nyomán a **Felülvizsgálat** fülre került lehetséges azonos személyek száma. A
+   **Kereső-másolat** azt jelzi, hogy a rekordok kereshető szövegként is bekerültek-e a
+   kérdezéshez (**Várakozik**, **Frissítés…**, **Naprakész**).
+
+Ha a teljes nyilvántartás betöltése sok rekordot törölne, a rendszer megáll, és csak a
+**Betöltés mégis** gombbal folytatja – ez véd a véletlenül csonka exportfájl ellen. Az
+exportdátumnál régebbi fájlt a rendszer kihagyja (**Régebbi export, kihagyva**).
+
+**Ha a fájl oszlopai nem egyeznek.** Az ellenőrzés jelzi, ha a fájlból hiányoznak a forrás
+oszlopai (**Hiányzó oszlopok (a betöltés nélkülük is lefut)**), vagy ha egy oszlopot más néven
+talált (**Más néven megtalálva**). Ilyenkor a gráf-adminisztrátor két dolgot tehet:
+
+- **Átnevezett oszlopok összerendelése** – ha a nyilvántartás exportjában egy oszlop neve
+  megváltozott, egyszer kiválasztja, melyik a régi oszlop új neve (**Oszlopnevek mentése**); a
+  rendszer ezután magától párosítja.
+- **Új forrás felvétele ebből a fájlból** – ha a fájl egy még nem ismert nyilvántartásból
+  származik: a rendszer a fejlécből és néhány sorból javaslatot tesz, melyik oszlop mit jelent
+  (név, születési dátum, azonosító, telefonszám …); a gráf-adminisztrátor oszloponként
+  ellenőrzi a **Szerepkört**, szükség esetén kapcsolatot ad hozzá (**Kapcsolat hozzáadása**),
+  majd **Mentés új forrásként**. Az új forrás a szakterületi profil új verziójába kerül.
+
+### Újrafeldolgozás (gráf-adminisztrátoroknak)
+
+Ha a szakterületi profil megváltozik, a korábban feldolgozott dokumentumokat újra kell
+olvasni, hogy az új szabályok rájuk is érvényesek legyenek. Az **Újrafeldolgozás** rész
+mutatja a **Jelenlegi profil** verzióját és azt, hány dokumentum készült régebbi profillal
+(**Régebbi vagy ismeretlen profillal feldolgozva**). A gráf-adminisztrátor a **Szűkítés**
+mezővel egy mappára korlátozhatja, majd az **Újrafeldolgozás** gombbal elindítja; a
+**Leállítás** megszakítja. Az újrafeldolgozás a nyelvi modellt használja, ezért sok
+dokumentumnál hosszan tarthat; közben a kérdések elsőbbséget kapnak (**Az AI Box éppen
+kérdésre válaszol; a kinyerés addig vár.**).
 
 ## Szakterületi profil
 
@@ -228,14 +269,35 @@ dokumentumokban. A profilt a telepítés választja ki; módosítani csak gráf-
 
 ![A Szakterületi profil fül](img/graf-04-profil.png)
 
+A gráf-adminisztrátornak két további eszköze van:
+
+- **Javaslatok a dokumentumokból** – a **Javaslatok keresése** összegyűjti, milyen
+  kapcsolatokat tudott a rendszer csak általánosként („Kapcsolatban áll”) felismerni, és milyen
+  azonosítókat nem ismer egyik minta sem. A javaslatok egyenként elfogadhatók (**Elfogadás**),
+  szerkeszthetők vagy elvethetők; az **Elfogadottak alkalmazása**, majd a **Mentés új
+  verzióként** elkészíti a profil új verzióját.
+- **Profil szerkesztése (JSON)** – a profil közvetlen szerkesztése szakértőknek; mentés:
+  **Mentés új verzióként**.
+
+A profil új verziója a már feldolgozott dokumentumokra csak **Újrafeldolgozás** után érvényes
+(lásd fent).
+
 ## Lekérdezési napló
 
 ![A Lekérdezési napló](img/graf-05-naplo.png)
 
-Minden kapcsolati lekérdezés naplózódik az ügyszámmal és az érintett dokumentumokkal együtt.
-A **Lekérdezési napló** fülön a saját lekérdezései szűrhetők dátum (**Ettől**, **Eddig**) és
-**Ügyszám** szerint. Vezető szerepkörrel mindenki lekérdezései is megtekinthetők. Ha egy nap
-naplóját utólag módosították, a felület ezt jelzi.
+Minden kapcsolati lekérdezés naplózódik az ügyszámmal (és ha van, a jogalappal) és az érintett
+dokumentumokkal együtt. A **Lekérdezési napló** fülön a saját lekérdezései (**Saját
+lekérdezések**) szűrhetők dátum (**Ettől**, **Eddig**) és **Ügyszám** szerint, majd
+**Keresés**.
+
+- Vezető szerepkörrel a **Mindenki lekérdezései (vezető)** nézet is elérhető, **Felhasználó**
+  szerinti szűréssel.
+- A szűrők alatt látszik, meddig őrzi a rendszer a naplót (**Megőrzés (nap)**).
+- Ha egy lekérdezés olyan dokumentumot is érintett, amelyhez Ön nem fér hozzá, annak neve
+  helyett ez áll: **Az Ön számára nem látható dokumentumok**.
+- Ha egy nap naplóját utólag módosították, a felület figyelmeztet: **Ennek a napnak a naplóját
+  módosították: a hash-lánca megszakadt.** Ilyenkor értesítse a rendszergazdát.
 
 ## Korlátok
 

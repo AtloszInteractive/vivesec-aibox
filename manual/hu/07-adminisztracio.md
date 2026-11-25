@@ -10,6 +10,11 @@ Adminisztráció**. Visszatérni a **Vissza az AI Boxhoz** gombbal lehet. A fül
 A rendszergazda a gép telepítését, mentését és a parancssori karbantartást a telepítési
 kézikönyv szerint végzi; ez a fejezet csak a webes felületet írja le.
 
+Ha a box órája vagy a vírusdefiníciók figyelmet igényelnek, a rendszergazda fiókmenüjében és
+az **Adminisztráció** menüpontnál **Figyelmet igényel** jelzés jelenik meg, így a hiba az
+adminisztrációs oldal megnyitása nélkül is feltűnik. A részleteket az **Áttekintés** fül
+mutatja.
+
 ## Áttekintés
 
 ![Az Áttekintés fül](img/admin-01-attekintes.png)
@@ -90,19 +95,28 @@ tartozó helyi felhasználó jogait kapja.
 **Szabályok a szobán belül.** *Egy felhasználó csak akkor látja a szobát, ha hozzá van
 rendelve. A szobán belül a szabályok tovább szűkítenek:*
 
-- **Szabály a teljes szobára** vagy – a **Mappa a szobában** mező kitöltése után – **Szabály egy
-  mappára**;
-- tiltás (mindig erősebb), engedélyezési lista (csak a felsorolt felhasználók, csoportok,
-  szerepkörök láthatják) és minősítés;
-- a módosítások a **Szabályok mentése** gombbal lépnek érvénybe.
+- **Szabály a teljes szobára** vagy – a **Mappa a szobában** mező kitöltése után (például
+  `2026/Ügyek`) – **Szabály egy mappára**;
+- a szabály mezői:
+  - **Csak ezek láthatják (engedélyezési lista)** – bekapcsolva az **Engedélyezett** mezőben
+    felsoroltak láthatják, például `role:analyst, group:Nyomozok, user:anna`; üresen hagyva
+    senki;
+  - **Tiltott (mindig erősebb)** – akik semmiképp nem láthatják, ugyanilyen formában;
+  - **Minősítés** – a mappa dokumentumainak minősítése; **Nincs megadva (öröklött)** esetén a
+    szülőmappáé érvényes;
+  - **A szülő engedélyezési listájának öröklése** – a mappa a felette lévő mappa
+    engedélyezési listáját is alkalmazza;
+- a kuka ikon (**Szabály eltávolítása**) törli a szabályt;
+- amíg van mentetlen módosítás, ez látszik: **Vannak mentetlen változások.** A módosítások a
+  **Szabályok mentése** gombbal lépnek érvénybe, azonnal.
 
 Ha nincs szabály, a szobához hozzáférő mindenki minden dokumentumot lát benne.
 
 **Jogosultsági szint és alapértelmezett minősítés.** A minősítés nélküli dokumentum az
 **Alapértelmezett minősítés** szerinti szintű (**Nyilvános**, **Belső**, **Bizalmas**,
 **Szigorúan bizalmas**, **Személyes adat**). A **Jogosultsági szint hozzáadása** gombbal
-megadható, mely felhasználók, csoportok vagy szerepkörök milyen szintig láthatnak
-dokumentumot.
+megadható, kire (**Kire**: például `role:leader` vagy `user:anna`) milyen szintig láthat
+dokumentumot. Akire egyik sor sem illik, az az alapértelmezett szintig lát.
 
 ## AD-csoportok
 
@@ -165,6 +179,28 @@ jóváhagyásával települ:
 
 A **Vissza az előző verzióra** gombbal a legutóbbi frissítés visszavonható. Régebbi
 verzióra frissíteni (visszaléptetni) más módon nem lehet. Az **Előzmények** táblázat az
-összes telepítést és visszaállítást mutatja.
+összes telepítést és visszaállítást mutatja (**Telepítve**, **Visszaállítva**, illetve
+**Visszaállítva, adatokkal együtt**, ha a frissítés előtti adatmentés is visszakerült).
+
+További állapotok a fülön:
+
+- **Naprakész.** – nincs újabb kiadás;
+- **Várakozás a frissítőre…** – a jóváhagyás után a frissítő még nem kezdte el a munkát;
+- **A frissítés nem sikerült; ismét az előző verzió fut.** – a box magától visszaállt;
+  értesítse a szállítót;
+- **Ezen az AI Boxon nincs beállítva a frissítés.** / **Ezen az AI Boxon ki van kapcsolva a
+  frissítések keresése.** – a frissítést a telepítéskor kell beállítani.
 
 Telepítés előtt értesítse a felhasználókat, mert a box a frissítés idejére elérhetetlen.
+
+## Gráf-adminisztrátori feladatok
+
+A kapcsolatelemzés karbantartása nem az adminisztrációs oldalon, hanem a **Kapcsolatok**
+panelen történik ([6. fejezet](06-kapcsolatok.md)). Gráf-adminisztrátor önálló módban az
+`admin` szerepkörű felhasználó (a telepítés további felhasználókat is kijelölhet). Feladatai:
+
+- a **Felülvizsgálat** fülön a lehetséges azonos személyek összevonása vagy külön tartása;
+- a **Feldolgozás** fülön az **Újrafeldolgozás** indítása profilváltás után, a nem olvasható
+  dokumentumok újraolvasása, a strukturált források tanítása és az átnevezett oszlopok
+  összerendelése;
+- a **Szakterületi profil** fülön a javaslatok átnézése és a profil új verziójának mentése.

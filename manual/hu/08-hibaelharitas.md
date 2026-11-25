@@ -23,8 +23,20 @@ visszaállítja a kétlépcsős azonosítást; a következő belépéskor új al
 **Cél megadása** gombra ([3. fejezet](03-kerdezes.md)).
 
 **„Az AI Box nem érhető el — nem készíthető válasz.”** A szolgáltatás átmenetileg nem
-elérhető, például frissítés miatt. Várjon néhány percet, és ha nem múlik el, értesítse a
-rendszergazdát.
+elérhető, például frissítés miatt. Ilyenkor a fejlécben az **AI Box csatlakoztatva** helyett
+piros **AI Box offline** felirat látszik, és a beviteli mező zárolva van. A piros gombra
+kattintva a felület újra megpróbál kapcsolódni (**Kapcsolódás az AI Boxhoz…**). Várjon
+néhány percet, és ha nem múlik el, értesítse a rendszergazdát.
+
+**Felkiáltójel a verziószám mellett.** A képernyő alján a verziószám fölé víve az egeret
+látszik a felület és az AI Box verziója. A felkiáltójel azt jelzi, hogy a kettő eltér
+(**A felület és az AI Box eltérő verziót futtat**), ami frissítés közben átmenetileg
+előfordulhat. Töltse újra az oldalt; ha a jelzés megmarad, értesítse a rendszergazdát, és
+adja meg neki a két verziószámot.
+
+**„A ViVeSecBox nem adta át ezt a dokumentumot.”** ViVeSecBox-ba ágyazott használatnál a
+forrásdokumentumot a ViVeSecBox szolgáltatja. Ellenőrizze, hogy a ViVeSecBox elérhető-e, és a
+dokumentum megvan-e még rajta.
 
 **A válasz szerint nincs adat, pedig tudom, hogy van dokumentum róla.**
 

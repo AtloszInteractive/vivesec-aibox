@@ -38,6 +38,19 @@ meg:
 
 A nézet a jobb felső **×** gombbal zárható be.
 
+A forrásnézőben előforduló jelzések:
+
+- **Felismert szöveg (OCR) – felismerési hibákat tartalmazhat** – a részlet szkennelt képből,
+  szövegfelismeréssel készült; betűhibák előfordulhatnak, döntés előtt nézze meg az eredeti
+  oldalt.
+- **Itt csak a dokumentum eleje látszik.** – hosszú szöveges dokumentumnál a nézet csak az
+  elejét mutatja; a teljes szöveg az eredeti fájlban olvasható.
+- **Ez a formátum nem jeleníthető meg a böngészőben.** – a fájl a megjelenő gombbal letölthető,
+  és a saját programjával nyitható meg.
+
+A forráslista **Összes találat mutatása** gombja kibontja az összes hivatkozott részletet, a
+**Kevesebb találat** visszacsukja.
+
 A forráskártya melletti **Teljes elemzés** gomb (ha megjelenik) az egész dokumentumot
 elolvastatja és elemezteti. Nagy dokumentumnál ez percekig is tarthat.
 
@@ -77,10 +90,14 @@ javítását szolgálja. Az értékelés nem módosítja a választ.
 A kártya alján látható címke a válaszadás módját (profilját) jelzi:
 
 - **Dokumentumalapú**: a rendszer csak a dokumentumokból válaszol; ha azokban nincs válasz,
-  ezt kimondja.
+  ezt kimondja. Ilyenkor a címke mellett a **Megbízhatóság** pontszám is látszik (százalékban,
+  zöld / sárga / piros színnel): azt becsüli, mennyire illeszkednek a talált részletek a
+  kérdéshez, és mennyire támasztják alá a választ. Alacsony pontszámnál különösen fontos a
+  források ellenőrzése.
 - **Hibrid**: általános kérdésekre (magyarázat, megfogalmazás, javaslat) általános tudásból is
   válaszolhat, de a szervezetre és az ügyekre vonatkozó tényeket a dokumentumokra kell
   alapoznia, és a feltevéseket, javaslatokat el kell különítenie. Internetet ekkor sem használ.
 
 A profilt a telepítés határozza meg. Ha a telepítés engedi, a felületen választani is lehet a
-két profil között; a két profil beszélgetései egymástól elkülönülnek.
+két profil között ([3. fejezet](03-kerdezes.md)); a két profil beszélgetései egymástól
+elkülönülnek.

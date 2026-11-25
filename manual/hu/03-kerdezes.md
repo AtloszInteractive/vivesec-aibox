@@ -39,7 +39,7 @@ kérdéssel együtt naplózódik, és a böngészőlap bezárásáig érvényes.
 ## 2. lépés: a kérdés
 
 Írja be a kérdést a képernyő alján lévő mezőbe, és nyomja meg az **Enter** billentyűt, vagy
-kattintson a küldés (papírrepülő) ikonra.
+kattintson a küldés (papírrepülő) ikonra. Új sort a **Shift + Enter** kezd.
 
 Jó kérdés:
 
@@ -55,7 +55,46 @@ személy idővonala**, **Közös telefonszám**) beírják a kérdés elejét a 
 időszakot Önnek kell kiegészítenie, mielőtt elküldi.
 
 A válasz általában néhány másodperc és egy-két perc között érkezik, attól függően, hány
-dokumentumot kell átnéznie a rendszernek. Közben a felület mutatja, hogy a válasz készül.
+dokumentumot kell átnéznie a rendszernek.
+
+### Amíg a válasz készül
+
+A kérdés alatt egy állapotjelző mutatja, hol tart a munka, és mennyi idő telt el. Rövid
+kérdésnél ez **A helyi modell gondolkodik…**; több dokumentumot átfogó kérdésnél a lépéseket
+is kiírja, például **Várakozás az elemzési sorra…**, **Az összes érintett részlet
+összegyűjtése…**, **Részletek átnézése 3/12**, **Megállapítások összesítése**, **A válasz
+megírása…**.
+
+Néhány másodperc után az állapotjelző mellett megjelenik a **Leállítás** (négyzet) gomb. Ezzel
+a kérdés megszakítható, ha rosszul fogalmazott, vagy túl sokáig tart; a beszélgetésben ekkor
+**A kérdés leállítva.** áll. Válasz közben a beviteli mező zárolva van; a következő kérdést a
+válasz után teheti fel.
+
+A gép a nagy számításokat sorban végzi: ha egyszerre többen kérdeznek, a kérdés várakozhat
+(**Várakozás az elemzési sorra…**). Ez nem hiba.
+
+### Ha a rendszer visszakérdez
+
+Ha a kérdés nem egyértelmű – például több azonos nevű személy van –, a rendszer válasz helyett
+visszakérdez, és felsorolja a lehetőségeket (például a személyeket a megkülönböztető
+adataikkal). A lehetőségek gombok: rákattintva a rendszer a kiválasztottal folytatja, mintha
+beírta volna. Válaszolhat szövegesen is.
+
+## Figyelt személyek
+
+Ha a telepítésben a figyelőlista be van kapcsolva, a kapcsolatelemzésben egy személy
+figyelésre jelölhető (**Figyelés**, lásd [6. fejezet](06-kapcsolatok.md)). Új beszélgetés
+elején ekkor egy **Figyelt** kártya mutatja a figyelt személyeket, és hogy változott-e
+valami (**Változott**: n, illetve **Nincs újdonság**):
+
+- az **új** jelölésű sorok az utolsó megtekintés óta talált új kapcsolatok, a **+n dokumentum**
+  sorok meglévő kapcsolatok új forrásai;
+- a névre kattintva a rendszer a kérdésmezőbe írja: „Kikkel áll közvetlen kapcsolatban: …”
+  (**Kérdezz rá**);
+- a **Láttam** nyugtázza a változásokat, a **×** (**Figyelés vége**) leveszi a személyt a
+  listáról;
+- **Ebben a hatókörben most nem látható.** – a személy olyan dokumentumokból ismert, amelyek a
+  most kiválasztott szobákban nincsenek.
 
 ## Beszélgetések
 
@@ -66,6 +105,9 @@ dokumentumot kell átnéznie a rendszernek. Közben a felület mutatja, hogy a v
 - Az **Új beszélgetés** üres lappal indít. Új témánál mindig kezdjen új beszélgetést: így a
   korábbi kérdések nem befolyásolják a választ.
 - Üres beszélgetésben a **Folytatás:** sor a legutóbbi beszélgetést kínálja fel.
+- A listában egy beszélgetés fölé víve az egeret két ikon jelenik meg: a ceruza
+  (**Beszélgetés átnevezése**) új nevet ad, az **×** (**Beszélgetés törlése**) megerősítés után
+  törli. **A törlés nem vonható vissza.**
 
 ![A korábbi beszélgetések listája](img/fo-05-beszelgetesek.png)
 
@@ -77,9 +119,30 @@ melyikben keres, a rendszer ezért új beszélgetést nyit.
 ## Felolvasás és diktálás
 
 A beviteli mező hangszóró ikonja (**Utolsó válasz felolvasása**) felolvassa a legutóbbi
-választ; felolvasás közben ugyanez a gomb állítja le. Ha a telepítés támogatja, a mezőben
-mikrofon ikon is megjelenik: ezzel a kérdés diktálható, és a diktált kérdés ugyanúgy
-dolgozódik fel, mint a begépelt.
+választ; felolvasás közben ugyanez a gomb állítja le (**Felolvasás leállítása**).
+
+Ha a telepítés támogatja, a mezőben mikrofon ikon (**Kérdezés hanggal**) is megjelenik:
+
+1. Kattintson a mikrofonra, és mondja el a kérdést (**Hallgatom… nyomd meg a négyzetet a
+   küldéshez.**).
+2. Kattintson a négyzetre (**Felvétel leállítása és küldés**).
+3. A gép leírja a felvételt (**Átírás az AI Boxon…**), és a kérdést ugyanúgy dolgozza fel,
+   mint a begépeltet.
+
+A böngésző az első használatkor engedélyt kér a mikrofonhoz.
+
+## A válaszadás módja
+
+Ha a telepítés engedi, az eszközsoron két gomb közül választható a válaszadás módja:
+**Dokumentumalapú** vagy **Hibrid** (a különbséget lásd a [4. fejezetben](04-valaszok.md)). A
+két mód beszélgetései egymástól elkülönülnek; a választás az oldal újratöltéséig érvényes.
+Ha a gombok nem látszanak, a módot a telepítés rögzíti.
+
+## Új felületverzió
+
+Frissítés után a beviteli mező felett ez jelenhet meg: **Elérhető a felület új verziója.**
+Kattintson az **Újratöltés** gombra; a még el nem küldött szöveg megmarad (**Az el nem
+küldött szöveg megmarad.**).
 
 ## Műveleti asszisztens
 
