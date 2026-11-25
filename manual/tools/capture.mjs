@@ -164,6 +164,7 @@ const userSteps = [
       "graf-03-feldolgozas.png",
       "graf-04-profil.png",
       "graf-05-naplo.png",
+      "graf-06-felulvizsgalat.png",
     ],
     run: async (page) => {
       await openApp(page);
@@ -183,6 +184,7 @@ const userSteps = [
         ["Feldolgozás", "graf-03-feldolgozas.png"],
         ["Szakterületi profil", "graf-04-profil.png"],
         ["Lekérdezési napló", "graf-05-naplo.png"],
+        ["Felülvizsgálat", "graf-06-felulvizsgalat.png"],
       ]) {
         await page.getByRole("button", { name: tab, exact: true }).click();
         await shot(page, name, { settle: 2500, animations: "allow" });

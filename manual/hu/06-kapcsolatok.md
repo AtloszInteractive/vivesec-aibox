@@ -17,7 +17,7 @@ A panel fülei:
 | Fül | Tartalma |
 | --- | --- |
 | **Felderítés** | Keresés, ábra, entitás-adatlap. |
-| **Felülvizsgálat** | Lehetséges azonos személyek párjai (összevonásról csak gráf-adminisztrátor dönthet). |
+| **Felülvizsgálat** | Lehetséges azonos személyek párjai; az összevonásról vagy külön tartásról gráf-adminisztrátor dönt. |
 | **Feldolgozás** | A dokumentumfeldolgozás állapota, nem olvasható dokumentumok, strukturált betöltés. |
 | **Szakterületi profil** | Milyen entitásfajtákat és kapcsolattípusokat ismer a rendszer. |
 | **Lekérdezési napló** | A saját (vezetőnek mindenki) kapcsolati lekérdezései. |
@@ -101,6 +101,103 @@ A beszélgetésben adott válasz alatti **Megnyitás ábrán** gomb a válaszban
 és kapcsolataikat közvetlenül az ábrán nyitja meg. Fordítva: ha a kérdésben ismert személy
 neve szerepel, a válasz a kapcsolatelemzés adatait is felhasználja, hivatkozással.
 
+## Felülvizsgálat: lehetséges azonos személyek
+
+Ugyanaz a személy több dokumentumban, több rekordként is szerepelhet. Ha a rekordokat erős
+egyezés köti össze (például azonos azonosító szám, vagy azonos név és születési dátum), a
+rendszer magától egy személlyé vonja össze őket. Ha az egyezés bizonytalan – például csak a név
+azonos –, a két rekord külön marad, és a pár a **Felülvizsgálat** fülre kerül, ahol egy ember
+dönti el, hogy ugyanarról a személyről van-e szó.
+
+A fül két nézete:
+
+- **Nyitott párok** – a még eldöntetlen párok (**Lehetséges azonos személy**, mellette a
+  számuk);
+- **Döntések** – a korábbi döntések.
+
+A párokat mindenki láthatja, akinek a kapcsolatelemzés elérhető, de dönteni csak
+gráf-adminisztrátor tud (önálló módban ez az `admin` szerepkör). Más felhasználónak a fül
+tetején ez áll: **Ezt csak gráf-adminisztrátor teheti meg.** Mindenki csak azokat a párokat és
+döntéseket látja, amelyek az Ön számára látható dokumentumokból származnak.
+
+### A párok listája
+
+Minden pár egy kártya: a két rekord neve (**A ↔ B**), jobbra pedig az ok és az egyezés
+mértéke százalékban. Az ok azt mutatja, mi köti össze a két rekordot:
+
+| Ok | Jelentése |
+| --- | --- |
+| **azonos név** | csak a név egyezik |
+| **majdnem azonos név** | a név egy betűben tér el (elírás lehet) |
+| **azonos vezetéknév és kezdőbetű** | például „Kovács P.” és „Kovács Péter” |
+| **… + születési dátum** / **… + anyja neve** | a név mellett ez is egyezik |
+| név + közös elérhetőség | a két rekord ugyanazt a telefonszámot, okmányt vagy címet használja |
+| azonos azonosító szám, **eltérő név** | ugyanaz a nyilvántartási vagy azonosító szám más néven (elírás vagy kölcsönvett okmány lehet) |
+
+Elöl azok a párok állnak, amelyeket a néven kívül más adat is alátámaszt, utánuk az egyezés
+mértéke szerint; az azonos nevűek egymás után következnek, így egymással összevethetők.
+
+**Szűrés**
+
+- **Szűrés névre…** – a nevek egy részére szűr;
+- **Minden ok** – egy adott okra szűkít (zárójelben a párok száma okonként);
+- **Eltérő szerepű párok is** – alapértelmezésben rejtve vannak azok a párok, amelyekben két
+  különböző szerepű rekordot (például egy fogvatartottat és egy látogatót) csak a név köt
+  össze, mert ezek nagy valószínűséggel két különböző személyek. A jelölőnégyzettel ezek is
+  megjeleníthetők.
+
+### Egy pár részletei
+
+A kártya összeveti a két rekordot:
+
+- **Táblázat** az **1. rekord** és a **2. rekord** megkülönböztető adataival (születési dátum,
+  anyja neve, azonosító számok, **Telefonok, okmányok, címek**). Soronként jelzi, hogy az adat
+  **Egyezik**, **Ütközik**, **Eltér**, vagy csak az egyik rekordban szerepel (**Csak az 1.
+  rekordban**, **Csak a 2. rekordban**). Ha egyik rekordban sincs ilyen adat, a kártya ezt írja:
+  **Egyik rekord sem tartalmaz születési dátumot, anyja nevét vagy azonosítót.**
+- **Rekordonként** a szerep (például fogvatartott, látogató; ha nincs: **Szerep nincs
+  megadva**), a dokumentumok és kapcsolatok száma, a dokumentumok neve és a kapcsolatok szó
+  szerinti idézettel. A dokumentumnévre vagy az idézetre kattintva megnyílik a forrás.
+- **Mindkettő megnyitása a gráfban** – a **Felderítés** fülre vált, és kijelöli a két rekordot
+  az ábrán, így megnézhető a köztük lévő legrövidebb út és a közös kapcsolataik.
+
+Döntés előtt mindig nézze meg a forrásokat: az **Ütközik** jelzés (például eltérő születési
+dátum) erősen arra utal, hogy két különböző személyről van szó.
+
+### Döntés (gráf-adminisztrátoroknak)
+
+Kártyánként:
+
+- **Összevonás** – a két rekord egy személy lesz: nevei, adatai, dokumentumai és kapcsolatai
+  egyesülnek, és a keresés, az ábra és a válaszok ezentúl egy személyként kezelik;
+- **Külön tartás** – a két rekord két személy marad, és a pár nem kerül vissza a listára
+  (hacsak a döntést vissza nem vonják).
+
+A döntés után a kártyán **Összevonva.** vagy **Külön tartva.** áll, mellette a
+**Visszavonás** gombbal azonnal visszacsinálható.
+
+Több pár egyszerre is eldönthető: jelölje be a kártyák jelölőnégyzetét, vagy használja **A
+látható mind kijelölése** lehetőséget (a sávban a **Kijelölve** szám mutatja, hány pár van
+kijelölve), majd kattintson az **Összevonás** vagy a **Külön tartás** gombra, és erősítse meg
+(**Megerősítés**). Az eredmény: **Eldöntve: n · Kihagyva: m**. Egy pár akkor marad ki, ha
+közben megváltozott, például egy korábbi pár összevonása már érintette.
+
+> Tömeges összevonás előtt szűrje a listát, és nézzen bele néhány párba: egy hibás összevonás
+> összemossa két ember adatait, amíg vissza nem vonják.
+
+### Döntések és visszavonás
+
+A **Döntések** nézet a korábbi döntéseket mutatja a legújabbal kezdve: a két rekord, a döntés
+(**Összevonva.** / **Külön tartva.**), ki és mikor döntött, és az akkori ok.
+
+A gráf-adminisztrátor itt is visszavonhat egy döntést (**Visszavonás**). Ekkor a pár újra a
+nyitott párok közé kerül (**Visszavonva — a pár újra felülvizsgálatra vár.**); összevonásnál a
+két rekord újra különválik, és mindegyik visszakapja a saját dokumentumait. **Nem vonható
+vissza** az a döntés, amely a visszavonás funkció bevezetése előtt született, vagy amelyre
+később egy másik összevonás épült – ilyenkor előbb a későbbi összevonást kell visszavonni.
+
+A felülvizsgálati lista és a döntések megnyitása is bekerül a **Lekérdezési naplóba**.
+
 ## Feldolgozás
 
 A **Feldolgozás** fül mutatja, hol tart a dokumentumok feldolgozása (**Sorban áll**,
@@ -145,6 +242,7 @@ naplóját utólag módosították, a felület ezt jelzi.
 - Csak az Ön számára látható dokumentumokból származó entitások és kapcsolatok jelennek meg.
 - Az ábrán legfeljebb 5000 csomópont fér el; nagyobb környezetnél csak az új csomópont
   környezete marad. A kapcsolatlista legfeljebb 2000 entitást mutat.
-- Azonos nevű személyeket a rendszer csak akkor von össze, ha erről a **Felülvizsgálat** fülön
-  döntöttek; addig külön szerepelnek.
+- Azonos nevű rekordokat a rendszer csak erős egyezésnél (például azonos azonosító szám, vagy
+  azonos név és születési dátum) von össze magától; a bizonytalan párokról a **Felülvizsgálat**
+  fülön kell dönteni, addig külön személyként szerepelnek.
 - WebGL-gyorsítás nélküli gépen egyszerűsített, lassabb nézet jelenik meg.
