@@ -59,11 +59,19 @@ The answer screenshots ask a real question and rate the answer as bad (to show t
 reasons), so they add one conversation and one feedback record per run. A failed step leaves
 `img/_failed-<name>.png`; delete it before committing.
 
-## Rendering to DOCX or PDF
+## Rendering to DOCX and PDF
+
+`tools/build_pdf.py` joins the chapters into one document and renders it with the ViVeSec
+Word template: cover, table of contents, every chapter on a new page, the template's header
+logo, footer and styles. It needs pandoc and, for the PDF, Microsoft Word.
 
 ```powershell
-cd manual\hu
-pandoc index.md 01-bevezetes.md 02-belepes.md 03-kerdezes.md 04-valaszok.md `
-  05-dokumentumok.md 06-kapcsolatok.md 07-adminisztracio.md 08-hibaelharitas.md `
-  -o Matrix_AI_Felhasznaloi_utmutato.docx
+cd manual\tools
+python build_pdf.py              # manual/build/Matrix_AI_Felhasznaloi_utmutato.{docx,pdf}
+python build_pdf.py --no-pdf     # DOCX only (no Word needed)
 ```
+
+`tools/reference.docx` is the cleaned template: the styles, page setup, header and footer of
+the ViVeSec template without its body text, plus the styles pandoc needs (table, caption, note)
+in the template's colours. To rebuild it from a new template version:
+`python build_pdf.py --template <ViVeSec template>.docx`.

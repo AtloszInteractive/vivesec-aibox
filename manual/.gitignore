@@ -1,0 +1,5 @@
+# Generated DOCX/PDF (python tools/build_pdf.py)
+/build/
+# The original ViVeSec template holds a filled-in installation sheet; only the
+# cleaned tools/reference.docx is tracked.
+/hu/ViVeSec_sablon.docx
