@@ -20,7 +20,10 @@ installer never touches their files, units, containers or firewall table. With
 MATRIX_OLLAMA=shared (default) it uses that Ollama read-only (MATRIX_OLLAMA_URL):
 it neither pulls nor deletes a model. With MATRIX_OLLAMA=own it runs an Ollama of
 its own (vivesec-ollama, loopback, another port) with its models in
-/var/lib/vivesec-matrix-ollama, and pulls what is missing there. Either way it
+/var/lib/vivesec-matrix-ollama. A release kit pins its models in KIT.json: they come
+from the release's USB stick (pack_models.py, matrix-usb.sh models), each file
+checked against the pin, never from the internet; a build kit pulls what is missing.
+Either way it
 remembers the embedding model's digest, so a changed embedding model stops the
 installation instead of mixing vectors in one index.
 
@@ -101,6 +104,9 @@ PARTNER_ADAPTER_UNIT = "vivetech-vivesec-adapter.service"
 OLLAMA_CONTAINER = "vivesec-ollama"
 # Outside the encrypted volume: public model weights, and the Ollama may start before the volume opens.
 OLLAMA_DIR = Path("/var/lib/vivesec-matrix-ollama")
+# A release's models, copied from its USB stick by matrix-usb.sh (same disk as OLLAMA_DIR):
+# nothing in it is trusted until the ollama phase checked it against the signed kit.
+OLLAMA_INCOMING = Path("/var/lib/vivesec-matrix-ollama.incoming")
 OLLAMA_PULL_TIMEOUT = 6 * 3600
 # The model CDN publishes IPv6 addresses; where IPv6 is a black hole (office routers) Ollama's
 # downloads stall instead of falling back. Our container's resolver prefers IPv4, as an
@@ -465,6 +471,123 @@ def kit_images(info):
     return images
 
 
+MODEL_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def model_manifest(name):
+    """Where Ollama keeps the manifest of a model, relative to its models folder."""
+    if ":" in name.rsplit("/", 1)[-1]:
+        base, _, tag = name.rpartition(":")
+    else:
+        base, tag = name, "latest"
+    parts = base.split("/")
+    parts = (["registry.ollama.ai", "library"] + parts if len(parts) == 1
+             else ["registry.ollama.ai"] + parts if len(parts) == 2 else parts)
+    if len(parts) != 3 or not all(MODEL_PART.match(part) for part in parts + [tag]):
+        raise InstallError("bad model name %r" % name)
+    return "/".join(parts + [tag])
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 22), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def manifest_blobs(data):
+    """[(blob file name, size)] a model manifest names: its config and its layers."""
+    try:
+        manifest = json.loads(data)
+        blobs = [(entry["digest"], int(entry["size"])) for entry in [manifest["config"]] + list(manifest["layers"])]
+    except (ValueError, KeyError, TypeError) as e:
+        raise InstallError("bad model manifest: %s" % e)
+    for digest, size in blobs:
+        if not isinstance(digest, str) or not re.match(r"^sha256:[0-9a-f]{64}$", digest) or size < 0:
+            raise InstallError("bad model manifest blob %r" % (digest,))
+    return [(digest.replace(":", "-"), size) for digest, size in blobs]
+
+
+def model_pin(models_dir, name):
+    """What a release kit records of a model: its manifest by hash; the manifest names its blobs by hash."""
+    manifest = Path(models_dir) / "manifests" / model_manifest(name)
+    if not manifest.is_file():
+        raise InstallError("%s is not in %s" % (name, models_dir))
+    data = manifest.read_bytes()
+    blobs = manifest_blobs(data)
+    for blob, size in blobs:
+        path = Path(models_dir) / "blobs" / blob
+        if not path.is_file() or path.stat().st_size != size:
+            raise InstallError("%s lacks its blob %s in %s" % (name, blob, models_dir))
+    return {"name": name, "manifest": model_manifest(name), "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": sum(size for _, size in blobs)}
+
+
+def kit_models(info):
+    """The models a release kit pins; [] for a kit that pins none (the box pulls its models then)."""
+    models = []
+    for entry in info.get("models") or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str) \
+                or entry.get("manifest") != model_manifest(entry["name"]) \
+                or not SHA256_HEX.match(str(entry.get("sha256"))) or not isinstance(entry.get("bytes"), int):
+            raise InstallError("KIT.json lists a bad model %r" % (entry,))
+        models.append(entry)
+    return models
+
+
+def model_in_place(models_dir, pin):
+    """The pinned manifest is installed and its blobs have their sizes (each was hashed when placed)."""
+    manifest = Path(models_dir) / "manifests" / pin["manifest"]
+    if not manifest.is_file():
+        return False
+    data = manifest.read_bytes()
+    if hashlib.sha256(data).hexdigest() != pin["sha256"]:
+        return False
+    for blob, size in manifest_blobs(data):
+        path = Path(models_dir) / "blobs" / blob
+        if not path.is_file() or path.stat().st_size != size:
+            return False
+    return True
+
+
+def place_model(pin, source, target, move=False):
+    """Put a pinned model from one Ollama models folder into another, every file checked
+    against the pin first: the source may be a USB stick. Returns the bytes placed."""
+    source, target = Path(source), Path(target)
+    manifest = source / "manifests" / pin["manifest"]
+    if manifest.is_symlink() or not manifest.is_file():
+        raise InstallError("%s is not in %s" % (pin["name"], source))
+    data = manifest.read_bytes()
+    if hashlib.sha256(data).hexdigest() != pin["sha256"]:
+        raise InstallError("the manifest of %s in %s is not the release's" % (pin["name"], source))
+    (target / "blobs").mkdir(parents=True, exist_ok=True)
+    placed = 0
+    for blob, size in manifest_blobs(data):
+        digest = blob.split("-", 1)[1]
+        dst = target / "blobs" / blob
+        if not dst.is_symlink() and dst.is_file() and dst.stat().st_size == size and file_sha256(dst) == digest:
+            continue
+        src = source / "blobs" / blob
+        if src.is_symlink() or not src.is_file() or src.stat().st_size != size or file_sha256(src) != digest:
+            raise InstallError("%s: blob %s in %s is missing or damaged" % (pin["name"], blob, source))
+        part = dst.with_name("." + blob + ".part")
+        if move:
+            shutil.move(str(src), str(part))
+        else:
+            shutil.copyfile(src, part)
+        os.replace(part, dst)
+        placed += size
+    # The manifest last: Ollama sees the model only once all of its blobs are there.
+    path = target / "manifests" / pin["manifest"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name("." + path.name + ".part")
+    part.write_bytes(data)
+    os.replace(part, path)
+    return placed
+
+
 def image_present(image_id):
     result = run("docker", "image", "inspect", "-f", "{{.Id}}", image_id, check=False)
     return result.returncode == 0 and result.stdout.strip() == image_id
@@ -510,10 +633,17 @@ def phase_preflight(conf):
     if own and not ollama_cdi_ready():
         problems.append("MATRIX_OLLAMA=own needs the GPU as a CDI device (nvidia.com/gpu=all): "
                         "nvidia-ctk cdi list shows none")
+    pins = kit_models(kit_info()) if own and (KIT / "KIT.json").is_file() else []
+    absent = [pin["name"] for pin in pins if not model_in_place(OLLAMA_DIR, pin)
+              and not (OLLAMA_INCOMING / "manifests" / pin["manifest"]).is_file()]
+    if absent:
+        problems.append("this release's models %s are not on the box: copy them from its USB stick "
+                        "(sudo bash matrix-usb.sh models)" % ", ".join(absent))
     models = {}
     if own and not container_running(OLLAMA_CONTAINER):
-        log("own Ollama not running yet: the ollama phase starts it and pulls %s, %s"
-            % (conf["MATRIX_GEN_MODEL"], conf["MATRIX_EMBED_MODEL"]))
+        log("own Ollama not running yet: the ollama phase starts it with %s, %s (%s)"
+            % (conf["MATRIX_GEN_MODEL"], conf["MATRIX_EMBED_MODEL"],
+               "from the release" if pins else "pulled when missing"))
     else:
         try:
             models = ollama_models(conf["MATRIX_OLLAMA_URL"])
@@ -687,12 +817,28 @@ def ollama_pull(url, model):
                            % (model, status or "no connection", answer.get("error") or body[:300]))
 
 
+def place_release_models(pins):
+    """The models a release pins, from the box or from what matrix-usb.sh brought from the stick."""
+    for pin in pins:
+        if model_in_place(OLLAMA_DIR, pin):
+            continue
+        if not (OLLAMA_INCOMING / "manifests" / pin["manifest"]).is_file():
+            raise InstallError("%s (%d GB) of this release is not on the box: copy the models from the "
+                               "release's USB stick (sudo bash matrix-usb.sh models), then install again"
+                               % (pin["name"], pin["bytes"] >> 30))
+        log("OLLAMA_MODEL_IMPORT %s (%d GB, every file checked against the kit)" % (pin["name"], pin["bytes"] >> 30))
+        place_model(pin, OLLAMA_INCOMING, OLLAMA_DIR, move=True)
+    shutil.rmtree(OLLAMA_INCOMING, ignore_errors=True)
+
+
 def phase_ollama(conf):
     if conf["MATRIX_OLLAMA"] == "shared":
         if run("docker", "container", "inspect", OLLAMA_CONTAINER, check=False).returncode == 0:
             # Its models stay in OLLAMA_DIR for a later switch back.
             run("docker", "rm", "-f", OLLAMA_CONTAINER)
             log("OLLAMA_OWN_REMOVED (MATRIX_OLLAMA=shared; models kept in %s)" % OLLAMA_DIR)
+        if OLLAMA_INCOMING.exists():
+            log("WARNING %s holds models from a stick, unused with MATRIX_OLLAMA=shared" % OLLAMA_INCOMING)
         log("OLLAMA_SHARED %s" % conf["MATRIX_OLLAMA_URL"])
         return
     if not ollama_cdi_ready():
@@ -700,7 +846,11 @@ def phase_ollama(conf):
     OLLAMA_DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(OLLAMA_DIR, 0o700)
     write_file(OLLAMA_GAI, OLLAMA_GAI_TEXT, 0o644)
-    images = kit_images(kit_info())
+    info = kit_info()
+    pins = kit_models(info)
+    if pins:
+        place_release_models(pins)
+    images = kit_images(info)
     if OLLAMA_CONTAINER in images:
         # The images phase (later) tags :latest; the loaded image is there by its id already.
         image = images[OLLAMA_CONTAINER]
@@ -725,6 +875,10 @@ def phase_ollama(conf):
     models = ollama_models(url)
     for key in ("MATRIX_EMBED_MODEL", "MATRIX_GEN_MODEL"):
         if model_digest(models, conf[key])[0] is None:
+            if pins:
+                # A release brings its models; it does not fetch others from the internet.
+                raise InstallError("%s is not among this release's models (%s)"
+                                   % (conf[key], ", ".join(pin["name"] for pin in pins)))
             ollama_pull(url, conf[key])
     models = ollama_models(url)
     missing = [conf[key] for key in ("MATRIX_GEN_MODEL", "MATRIX_EMBED_MODEL") if model_digest(models, conf[key])[0] is None]
@@ -1489,7 +1643,13 @@ def phase_verify(conf):
         check("own Ollama %s running" % OLLAMA_CONTAINER, container_running(OLLAMA_CONTAINER))
     check("%s Ollama lists %s and %s" % (conf["MATRIX_OLLAMA"], conf["MATRIX_GEN_MODEL"], conf["MATRIX_EMBED_MODEL"]),
           all(model_digest(models, conf[key])[0] for key in ("MATRIX_GEN_MODEL", "MATRIX_EMBED_MODEL")))
-    if conf["MATRIX_TUNNEL_PKI"] != "off":
+    if conf["MATRIX_TUNNEL_PKI"] == "partner-dev" and not unit_active(PARTNER_ADAPTER_UNIT):
+        # The front follows the Dokumentum AI pairing and stays closed without it (pki-sync):
+        # the Matrix itself is installed, only the ViVeSecBox cannot reach it now.
+        log("WARNING tunnel front closed: %s is not running, so there is no pairing key to reuse "
+            "(MATRIX_TUNNEL_PKI=partner-dev); the ViVeSecBox reaches the Matrix once it runs again"
+            % PARTNER_ADAPTER_UNIT)
+    elif conf["MATRIX_TUNNEL_PKI"] != "off":
         front_ok = unit_active("vivesec-matrix-front.service")
         check("tunnel front active on :%d" % conf["MATRIX_TUNNEL_PORT"], front_ok)
         if front_ok:

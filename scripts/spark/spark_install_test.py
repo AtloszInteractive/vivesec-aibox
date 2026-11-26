@@ -310,5 +310,53 @@ class InstallProbeTest(unittest.TestCase):
         self.assertNotRegex(si.INSTALL_PROBE, r"^[A-Za-z0-9][A-Za-z0-9._@=+-]{0,127}$")
 
 
+class ReleaseModelsTest(unittest.TestCase):
+    def ollama(self, root, name, layers):
+        """An Ollama models folder holding one model; returns its blobs by name."""
+        root = Path(root)
+        (root / "blobs").mkdir(parents=True, exist_ok=True)
+        entries = []
+        for content in layers:
+            digest = hashlib.sha256(content).hexdigest()
+            (root / "blobs" / ("sha256-" + digest)).write_bytes(content)
+            entries.append({"digest": "sha256:" + digest, "size": len(content)})
+        manifest = root / "manifests" / si.model_manifest(name)
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"config": entries[0], "layers": entries[1:]}))
+
+    def test_model_names_map_to_ollama_manifests(self):
+        self.assertEqual(si.model_manifest("qwen3.6:35b"), "registry.ollama.ai/library/qwen3.6/35b")
+        self.assertEqual(si.model_manifest("bge-m3"), "registry.ollama.ai/library/bge-m3/latest")
+        self.assertEqual(si.model_manifest("acme/m:1"), "registry.ollama.ai/acme/m/1")
+        for bad in ("../x", "a/../../b:1", "x:", "a/b/c/d", ""):
+            self.assertRaises(si.InstallError, si.model_manifest, bad)
+
+    def test_a_pinned_model_is_placed_only_from_files_matching_the_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build, stick, box = Path(tmp) / "build", Path(tmp) / "stick", Path(tmp) / "box"
+            self.ollama(build, "bge-m3", [b"config", b"weights" * 100])
+            pin = si.model_pin(build, "bge-m3")
+            self.assertEqual(si.kit_models({"models": [pin]}), [pin])
+            self.assertEqual(si.place_model(pin, build, stick), 6 + 700)
+            self.assertTrue(si.model_in_place(stick, pin))
+            self.assertEqual(si.place_model(pin, stick, stick), 0)
+            blob = next((stick / "blobs").iterdir())
+            blob.write_bytes(b"X" * blob.stat().st_size)  # same size, other content
+            self.assertRaises(si.InstallError, si.place_model, pin, stick, box, True)
+            self.assertFalse((box / "manifests").exists())  # Ollama never sees a partial model
+            si.place_model(pin, build, stick)  # a second run repairs the stick
+            si.place_model(pin, stick, box, move=True)
+            self.assertTrue(si.model_in_place(box, pin))
+            self.ollama(stick, "bge-m3", [b"other config", b"other"])
+            self.assertRaises(si.InstallError, si.place_model, pin, stick, Path(tmp) / "box2")
+
+    def test_kit_models_refuse_bad_pins(self):
+        pin = {"name": "bge-m3", "manifest": si.model_manifest("bge-m3"), "sha256": "a" * 64, "bytes": 1}
+        self.assertEqual(si.kit_models({}), [])
+        for bad in ({"manifest": "registry.ollama.ai/library/x/latest"}, {"sha256": "A" * 64},
+                    {"name": "../x"}, {"bytes": "1"}):
+            self.assertRaises(si.InstallError, si.kit_models, {"models": [dict(pin, **bad)]})
+
+
 if __name__ == "__main__":
     unittest.main()

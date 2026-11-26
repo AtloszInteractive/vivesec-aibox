@@ -2,9 +2,12 @@
 # Matrix AI on a DGX Spark from a USB stick (E07). The Spark needs internet:
 # the images come from the signed update channel named in matrix.conf.
 #
-# The stick holds this script, matrix.conf and one matrix-kit-<version>.tgz
-# (the release kit of that channel, from pack_release.py):
+# The stick (exFAT or ext4) holds this script, matrix.conf, one matrix-kit-<version>.tgz
+# (the release kit of that channel, from pack_release.py) and matrix-models/
+# (the models that kit pins, from pack_models.py):
 #   sudo bash /media/<user>/<stick>/matrix-usb.sh install    first installation (or again)
+#   sudo bash .../matrix-usb.sh models                       only copy the models (then: Updates tab)
+#   sudo bash .../matrix-usb.sh own-ollama                   switch an installed box to its own Ollama
 #   sudo bash .../matrix-usb.sh admin                        local administrator (web page), temporary password
 #   sudo bash .../matrix-usb.sh ids                          ViVeSecBox users the box knows, and refused ones
 #   sudo bash .../matrix-usb.sh admin-vvs <VVS-User>         that ViVeSecBox user administers the box
@@ -14,13 +17,16 @@
 # (MATRIX_TUNNEL_AUTOCREATE, MATRIX_TUNNEL_DEFAULT_DRIVES). The owner of the
 # ViVeSecBox becomes the administrator on its own visit (MATRIX_TUNNEL_OWNER_ADMIN);
 # admin-vvs is only needed when that is off or for a further administrator.
-# Later versions come through the administration page (Updates tab).
+# Later versions come through the administration page (Updates tab); a version
+# with new models needs `models` from its stick first.
 # Logs: /var/log/vivesec-matrix-usb/ on the Spark, copied to logs/ on the stick.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CONF=/etc/vivesec-matrix/matrix.conf
 KIT_DIR=/opt/vivesec-matrix-kit
+OLLAMA_DIR=/var/lib/vivesec-matrix-ollama
+INCOMING=/var/lib/vivesec-matrix-ollama.incoming
 MANAGE=(docker exec vivesec-auth python /app/auth_service/manage.py)
 LOG=
 
@@ -48,6 +54,68 @@ ensure_nginx() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y -q nginx-core
 }
 
+blob_size() { stat -c %s "$1" 2>/dev/null || echo -1; }
+
+stage_models() {
+  # The stick's models onto the disk, where the installer checks each file against the
+  # signed kit (sha256) before Ollama sees it. Blobs the box holds already are skipped.
+  local src="$HERE/matrix-models" blob name size need=0 free done_=0
+  [ -d "$src/manifests" ] && [ -d "$src/blobs" ] || return 1
+  echo "== models: $src -> $INCOMING"
+  mkdir -p "$INCOMING/blobs"
+  chmod 700 "$INCOMING"
+  rm -rf "$INCOMING/manifests"
+  cp -rP "$src/manifests" "$INCOMING/manifests"
+  for blob in "$src"/blobs/sha256-*; do
+    [ -f "$blob" ] && [ ! -L "$blob" ] || continue
+    name=${blob##*/}
+    size=$(blob_size "$blob")
+    [ "$(blob_size "$OLLAMA_DIR/blobs/$name")" = "$size" ] || [ "$(blob_size "$INCOMING/blobs/$name")" = "$size" ] \
+      || need=$((need + size))
+  done
+  free=$(df --output=avail -B1 "$INCOMING" | tail -1)
+  [ "$need" -lt "$free" ] || die "$INCOMING has $((free >> 30)) GB free, the models need $((need >> 30)) GB"
+  for blob in "$src"/blobs/sha256-*; do
+    [ -f "$blob" ] && [ ! -L "$blob" ] || continue
+    name=${blob##*/}
+    size=$(blob_size "$blob")
+    if [ "$(blob_size "$OLLAMA_DIR/blobs/$name")" = "$size" ] || [ "$(blob_size "$INCOMING/blobs/$name")" = "$size" ]; then
+      continue
+    fi
+    echo "   $name ($((size >> 20)) MB)"
+    cp "$blob" "$INCOMING/blobs/.$name.part"
+    mv "$INCOMING/blobs/.$name.part" "$INCOMING/blobs/$name"
+    done_=$((done_ + size))
+  done
+  sync
+  echo "== models copied ($((done_ >> 20)) MB); the installer checks them against the kit"
+}
+
+models_present() {
+  [ -d "$HERE/matrix-models/manifests" ] || [ -d "$INCOMING/manifests" ] \
+    || [ -d "$OLLAMA_DIR/manifests/registry.ollama.ai" ]
+}
+
+set_conf() {
+  if grep -q "^$1=" "$CONF"; then
+    sed -i "s|^$1=.*|$1=$2|" "$CONF"
+  else
+    printf '%s=%s\n' "$1" "$2" >> "$CONF"
+  fi
+}
+
+own_ollama() {
+  [ -f "$CONF" ] || die "$CONF missing: install first"
+  # A rollback reinstalls the previous version with this file: switch only with the models
+  # at hand, so the release that brings them can start the own Ollama.
+  models_present || die "no models on the stick (matrix-models/) nor on the box: they come with the release"
+  cp -p "$CONF" "$CONF.bak-$(date +%Y%m%d-%H%M%S)"
+  set_conf MATRIX_OLLAMA own
+  set_conf MATRIX_OLLAMA_URL http://127.0.0.1:11435
+  echo "== $CONF: MATRIX_OLLAMA=own on 127.0.0.1:11435 (previous file kept as $CONF.bak-*)"
+  echo "Next: sudo bash $0 install (or: $0 models, then approve the release on the Updates tab)"
+}
+
 install_all() {
   log_to install
   trap 'copy_log; rm -rf "${WORK:-/nonexistent}"' EXIT
@@ -63,6 +131,10 @@ install_all() {
     echo "== $CONF installed from the stick"
   fi
   grep -q '^MATRIX_UPDATE=on' "$CONF" || die "$CONF needs MATRIX_UPDATE=on and the channel (MATRIX_UPDATE_URL)"
+  if ! stage_models; then
+    grep -q '^MATRIX_OLLAMA=own' "$CONF" \
+      && echo "WARNING: no matrix-models/ on the stick; the installer stops unless the box holds the release's models"
+  fi
   # The updater runs from a scratch copy of the kit; it checks the kit against the
   # signed release before anything is installed.
   WORK=$(mktemp -d /var/tmp/matrix-bootstrap.XXXXXX)
@@ -118,6 +190,13 @@ EOF
 
 case "${1:-}" in
   install) install_all ;;
+  models)
+    log_to models
+    trap copy_log EXIT
+    stage_models || die "no matrix-models/ (manifests/, blobs/) next to this script"
+    echo "Next: approve the release on the Updates tab (or: sudo bash $0 install)"
+    ;;
+  own-ollama) own_ollama ;;
   admin) admin ;;
   ids) ids ;;
   admin-vvs)
@@ -129,5 +208,5 @@ case "${1:-}" in
     "${MANAGE[@]}" tunnel-map set "$2" "$3"
     ;;
   status) python3 "$KIT_DIR/src/scripts/spark/spark_install.py" status; "${MANAGE[@]}" tunnel-map show ;;
-  *) sed -n '2,16p' "$0"; exit 2 ;;
+  *) sed -n '2,22p' "$0"; exit 2 ;;
 esac

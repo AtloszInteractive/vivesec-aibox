@@ -6,7 +6,9 @@
 # --- Ollama -------------------------------------------------------------------
 # shared (default): the Dokumentum AI's Ollama, read-only (no pull, no delete).
 # own: the Matrix's own Ollama (vivesec-ollama, whole GPU over CDI, loopback) with
-#      its models in /var/lib/vivesec-matrix-ollama; missing models are pulled once.
+#      its models in /var/lib/vivesec-matrix-ollama. A release kit brings them on its
+#      USB stick (pack_models.py, matrix-usb.sh models), checked against its pins;
+#      a build kit pulls the missing ones once.
 #      Needs a port of its own: MATRIX_OLLAMA_URL=http://127.0.0.1:11435.
 # Anything else stops the installation. Back to shared removes the container, keeps the models.
 #MATRIX_OLLAMA=shared

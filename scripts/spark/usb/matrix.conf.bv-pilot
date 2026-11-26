@@ -3,7 +3,10 @@
 # /etc/vivesec-matrix/matrix.conf when that file does not exist yet.
 # partner-dev and dropin-dev are for test and demo Sparks only (see matrix.conf.example).
 
-MATRIX_OLLAMA_URL=http://127.0.0.1:11434
+# Its own Ollama (vivesec-ollama on loopback): the models come on the stick
+# (matrix-models/, pack_models.py), pinned by the signed release kit.
+MATRIX_OLLAMA=own
+MATRIX_OLLAMA_URL=http://127.0.0.1:11435
 MATRIX_GEN_MODEL=qwen3.6:35b
 MATRIX_EMBED_MODEL=bge-m3
 MATRIX_NUM_CTX=65536
