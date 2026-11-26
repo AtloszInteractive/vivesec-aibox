@@ -153,8 +153,13 @@ The kit carries no data; documents and records are loaded after the install.
 LUKS2 volume (the file `/var/lib/vivesec-matrix-vault.img`, `MATRIX_VAULT_SIZE`,
 mounted at `/var/lib/vivesec-matrix-vault`; the old path becomes a link). It uses
 `scripts/jetson/standalone/vault.py` (`aibox-vault.service` opens it at boot).
-The tunnel, front, pki-sync and updater units get a drop-in requiring the volume, so
-nothing starts on a closed one. The default is `off`; a value that is neither
+The tunnel, front, pki-sync and updater **services** get a drop-in requiring the volume, so
+nothing starts on a closed one. Their timers and path unit get none: ordering a timer or
+path unit after `aibox-vault.service` is a systemd ordering cycle (timers and paths come
+before `basic.target`), which systemd breaks by dropping `paths.target` at boot or docker's
+stop at shutdown, so the Dokumentum AI's containers die uncleanly and it stays locked.
+The phase removes such drop-ins an earlier kit wrote, and stops the units only while it
+moves the data (never on an update). The default is `off`; a value that is neither
 `on` nor `off` stops the installation.
 
 - No TPM2 on the Spark: `MATRIX_VAULT_UNLOCK=keyfile` (default) keeps the key in

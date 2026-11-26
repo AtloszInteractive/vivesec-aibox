@@ -108,6 +108,70 @@ class SettingsTest(unittest.TestCase):
             self.assertRaises(si.InstallError, si.settings, text, {})
 
 
+class VaultPhaseTest(unittest.TestCase):
+    """The vault phase must not order a timer or path unit after aibox-vault (an ordering
+    cycle: systemd then drops paths.target at boot and docker's stop at shutdown), and
+    must not stop the unit that runs it (the updater)."""
+
+    UPDATER = "vivesec-matrix-updater-request.service"
+
+    def run_phase(self, settled, me=UPDATER):
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        units = tmp / "units"
+        for unit in si.VAULT_DEPENDENTS + si.VAULT_TRIGGERS:
+            (units / unit).parent.mkdir(parents=True, exist_ok=True)
+            (units / unit).write_text("[Unit]\n")
+        old = units / "vivesec-matrix-updater-request.path.d"
+        old.mkdir()
+        (old / si.VAULT_DROPIN).write_text("[Unit]\nAfter=aibox-vault.service\n")
+        kept = units / "vivesec-matrix-pki-sync.timer.d"
+        kept.mkdir()
+        (kept / si.VAULT_DROPIN).write_text("[Unit]\nAfter=aibox-vault.service\n")
+        (kept / "local.conf").write_text("[Timer]\n")
+        (tmp / "vault.img").write_text("")
+        root = mock.MagicMock()
+        root.is_symlink.return_value = settled
+        root.name = "vivesec-matrix"
+        root.parent.glob.return_value = []
+        calls = []
+        conf, _ = si.settings("MATRIX_VAULT=on\n", env={})
+        with mock.patch.multiple(si, UNIT_DIR=units, ROOT=root, VAULT_IMAGE=tmp / "vault.img",
+                                 VAULT_MOUNT=tmp / "mnt", VAULT_CONF=tmp / "standalone.conf"), \
+                mock.patch.object(si.os.path, "ismount", return_value=settled), \
+                mock.patch.object(si, "unit_active", return_value=True), \
+                mock.patch.object(si, "own_unit", return_value=me), \
+                mock.patch.object(si, "vault_tool", side_effect=lambda *a: calls.append(("vault",) + a)), \
+                mock.patch.object(si, "run", side_effect=lambda *a, **k: calls.append(a)):
+            si.phase_vault(conf)
+        dropins = sorted(p.parent.name[:-2] for p in units.glob("*.d/" + si.VAULT_DROPIN))
+        return calls, dropins, units
+
+    def test_only_services_get_the_drop_in_and_old_ones_go(self):
+        _, dropins, units = self.run_phase(settled=True)
+        self.assertEqual(dropins, sorted(si.VAULT_DEPENDENTS))
+        self.assertFalse((units / "vivesec-matrix-updater-request.path.d").exists())
+        self.assertTrue((units / "vivesec-matrix-pki-sync.timer.d" / "local.conf").is_file())
+
+    def test_an_installed_volume_stops_nothing(self):
+        calls, _, _ = self.run_phase(settled=True)
+        self.assertNotIn("stop", [c[1] for c in calls if c[0] == "systemctl"])
+        self.assertIn(("vault", "migrate"), calls)
+
+    def test_moving_the_data_stops_its_users_but_never_the_running_updater(self):
+        calls, _, _ = self.run_phase(settled=False)
+        stopped = [c[2] for c in calls if c[:2] == ("systemctl", "stop")]
+        self.assertIn("vivesec-matrix-tunnel.service", stopped)
+        self.assertIn("vivesec-matrix-updater-request.path", stopped)
+        self.assertNotIn(self.UPDATER, stopped)
+        self.assertEqual(sorted(stopped), sorted(c[2] for c in calls if c[:2] == ("systemctl", "start")))
+
+    def test_own_unit_reads_the_cgroup(self):
+        for text, unit in (("0::/system.slice/vivesec-matrix-updater-request.service\n", self.UPDATER),
+                           ("0::/user.slice/user-1000.slice/session-3.scope\n", "")):
+            with mock.patch.object(si.Path, "read_text", return_value=text):
+                self.assertEqual(si.own_unit(), unit)
+
+
 class ContainerArgsTest(unittest.TestCase):
     def setUp(self):
         self.conf, _ = si.settings("", env={})

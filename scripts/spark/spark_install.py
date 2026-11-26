@@ -79,11 +79,18 @@ VAULT_IMAGE = Path("/var/lib/vivesec-matrix-vault.img")
 VAULT_MOUNT = Path("/var/lib/vivesec-matrix-vault")
 VAULT_NAME = "matrix_vault"
 VAULT_UNIT = "aibox-vault.service"
-# Everything that reads or writes ROOT starts only once the volume is open.
+# Every service that reads or writes ROOT starts only once the volume is open.
 VAULT_DEPENDENTS = ("vivesec-matrix-tunnel.service", "vivesec-matrix-front.service",
-                    "vivesec-matrix-pki-sync.service", "vivesec-matrix-pki-sync.timer",
-                    "vivesec-matrix-updater-check.service", "vivesec-matrix-updater-check.timer",
-                    "vivesec-matrix-updater-request.service", "vivesec-matrix-updater-request.path")
+                    "vivesec-matrix-pki-sync.service", "vivesec-matrix-updater-check.service",
+                    "vivesec-matrix-updater-request.service")
+# Their timers and path unit only start those services, so they need no drop-in, and must not get
+# one: timers.target and paths.target come before basic.target, every service (aibox-vault too)
+# after it, so ordering a timer or path unit after aibox-vault is a cycle. systemd breaks it by
+# dropping a job of its own choice: paths.target at boot, docker's stop at shutdown (the
+# Dokumentum AI's containers then die uncleanly). They are only stopped while the data moves.
+VAULT_TRIGGERS = ("vivesec-matrix-pki-sync.timer", "vivesec-matrix-updater-check.timer",
+                  "vivesec-matrix-updater-request.path")
+VAULT_DROPIN = "vivesec-matrix-vault.conf"
 PARTNER_PKI = Path("/run/vivetech-vivesec-adapter/pki")
 PARTNER_ADAPTER_UNIT = "vivetech-vivesec-adapter.service"
 PREP_TABLE = "inet vivesec_prep_v2"
@@ -511,20 +518,54 @@ def vault_dropin_text():
             "[Unit]\nRequires=%s\nAfter=%s\n" % (VAULT_UNIT, VAULT_UNIT))
 
 
+def remove_trigger_dropins(unit_dir=None):
+    """Drop-ins an earlier installer put on the timers and the path unit (an ordering
+    cycle, see VAULT_TRIGGERS). True when one was removed."""
+    removed = False
+    for unit in VAULT_TRIGGERS:
+        dropin = Path(unit_dir or UNIT_DIR) / (unit + ".d") / VAULT_DROPIN
+        if dropin.is_file() or dropin.is_symlink():
+            dropin.unlink()
+            removed = True
+            log("VAULT_DROPIN_REMOVED %s (it made an ordering cycle)" % dropin)
+            try:
+                dropin.parent.rmdir()
+            except OSError:
+                pass  # other drop-ins stay
+    return removed
+
+
 def vault_tool(*args):
     result = subprocess.run((sys.executable, str(VAULT_TOOL)) + args, text=True)
     if result.returncode:
         raise InstallError("vault.py %s failed (%d)" % (" ".join(args), result.returncode))
 
 
+def own_unit():
+    """The systemd service this process runs in ("" outside one): the updater runs the
+    installer from vivesec-matrix-updater-request.service, which must not be stopped."""
+    try:
+        text = Path("/proc/self/cgroup").read_text()
+    except OSError:
+        return ""
+    units = re.findall(r"/([^/\s]+\.service)(?=/|$)", text, re.M)
+    return units[-1] if units else ""
+
+
 def phase_vault(conf):
+    if remove_trigger_dropins():
+        run("systemctl", "daemon-reload")
     if conf["MATRIX_VAULT"] != "on":
         log("VAULT_OFF (MATRIX_VAULT=off: %s stays a plain folder)" % ROOT)
         return
     existing = VAULT_CONF.read_text(encoding="utf-8") if VAULT_CONF.is_file() else ""
     VAULT_CONF.parent.mkdir(parents=True, exist_ok=True)
     write_file(VAULT_CONF, vault_conf_text(existing, vault_settings(conf)), 0o600)
-    stops = [unit for unit in VAULT_DEPENDENTS if (UNIT_DIR / unit).exists() and unit_active(unit)]
+    # Only moving the data needs its users stopped; an installed volume (every update) does not.
+    settled = VAULT_IMAGE.exists() and os.path.ismount(VAULT_MOUNT) and ROOT.is_symlink()
+    me = own_unit()
+    stops = [] if settled else [unit for unit in VAULT_TRIGGERS + VAULT_DEPENDENTS
+                                if unit != me and (UNIT_DIR / unit).exists() and unit_active(unit)]
     for unit in stops:
         run("systemctl", "stop", unit, check=False)
     if not VAULT_IMAGE.exists():
@@ -541,7 +582,7 @@ def phase_vault(conf):
     vault_tool("migrate")
     vault_tool("install-unit")
     for unit in VAULT_DEPENDENTS:
-        write_file(UNIT_DIR / (unit + ".d") / "vivesec-matrix-vault.conf", vault_dropin_text())
+        write_file(UNIT_DIR / (unit + ".d") / VAULT_DROPIN, vault_dropin_text())
     run("systemctl", "daemon-reload")
     leftovers = sorted(ROOT.parent.glob(ROOT.name + ".pre-vault-*"))
     for path in leftovers:
@@ -1334,6 +1375,8 @@ def phase_verify(conf):
               and ROOT.resolve().is_relative_to(VAULT_MOUNT))
         check("%s enabled" % VAULT_UNIT,
               run("systemctl", "is-enabled", "--quiet", VAULT_UNIT, check=False).returncode == 0)
+        check("no vault drop-in on a timer or path unit (ordering cycle)",
+              not any((UNIT_DIR / (unit + ".d") / VAULT_DROPIN).exists() for unit in VAULT_TRIGGERS))
     if not all(checks):
         raise InstallError("verify: %d check(s) failed" % checks.count(False))
     log("MATRIX_READY %d checks" % len(checks))
