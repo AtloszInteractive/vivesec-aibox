@@ -40,7 +40,8 @@ sys.path.insert(0, str(HERE.parents[1] / "scripts" / "jetson" / "standalone"))
 
 import spark_install as si  # noqa: E402
 
-PUBLIC_IMAGES = {"vivesec-clamav": "clamav/clamav-debian:1.4", "vivesec-neo4j": "neo4j:5-community"}
+PUBLIC_IMAGES = {"vivesec-clamav": "clamav/clamav-debian:1.4", "vivesec-neo4j": "neo4j:5-community",
+                 "vivesec-ollama": si.DEFAULTS["MATRIX_OLLAMA_IMAGE"]}
 BUILT_IMAGES = ("vivesec-adapter", "vivesec-rag", "vivesec-ui", "vivesec-auth", "vivesec-graph")
 VERSION = re.compile(r"^(\d{2}\.\d{2}\.\d{1,3})(?:\.\d{1,4})?$")
 # Left out of a release kit: what only a build on the box needs.

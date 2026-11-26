@@ -20,7 +20,7 @@ adapter ──▶ clamav :3310          ui :8080 (loopback: admin over an SSH tu
 | The Dokumentum AI owns | The Matrix uses |
 | --- | --- |
 | :80, :443, UDP 1900 (its ViVeSecBox adapter), :8443, loopback 8098, 11000, 18083–18086, 18200 | loopback 8080, 8088, 8090, 8097, 3310, 18476; :7476 for the tunnel front |
-| Ollama on 127.0.0.1:11434 with its models | that Ollama, read-only: no pull, no delete, the same `num_ctx` (65536) |
+| Ollama on 127.0.0.1:11434 with its models | that Ollama, read-only: no pull, no delete, the same `num_ctx` (65536); or its own (`MATRIX_OLLAMA=own`, below) |
 | `table inet vivesec_prep_v2` (ViVeSec prep firewall, rewritten every 30 s) | nothing, unless `MATRIX_TUNNEL_FIREWALL=dropin-dev` |
 
 The installer refuses a setting that would use one of their ports. The
@@ -30,6 +30,28 @@ changes it, the installer stops until the index is rebuilt
 never mix in one index. The Ollama serves one request at a time
 (`OLLAMA_NUM_PARALLEL=1` on the Dokumentum AI side): Matrix answers wait while
 the other product generates, and the other way round.
+
+### Own Ollama (`MATRIX_OLLAMA=own`)
+
+When the Dokumentum AI's Ollama is not there (a locked or retired partner
+stack), the `ollama` phase runs one for the Matrix: `vivesec-ollama`
+(`MATRIX_OLLAMA_IMAGE`, in release kits as an image), the whole GPU as the CDI
+device `nvidia.com/gpu=all`, listening on the loopback port of
+`MATRIX_OLLAMA_URL` (not 11434, e.g. `http://127.0.0.1:11435`), one request at a
+time, `OLLAMA_CONTEXT_LENGTH=MATRIX_NUM_CTX`. Its models live in
+`/var/lib/vivesec-matrix-ollama` (outside the encrypted volume: public weights);
+the phase pulls the missing ones from the Ollama registry once (22 GB for
+`qwen3.6:35b`) and stops when the embedding model's digest differs from the
+recorded one. A container that reports no CUDA device is removed: CPU inference
+is not an option. `MATRIX_OLLAMA=shared` removes the container and keeps the
+models. Both Ollamas at once each hold their own copy of the model in the
+128 GB unified memory.
+
+```bash
+# /etc/vivesec-matrix/matrix.conf: MATRIX_OLLAMA=own, MATRIX_OLLAMA_URL=http://127.0.0.1:11435
+sudo python3 spark_install.py --only ollama && sudo python3 spark_install.py --only core
+sudo python3 spark_install.py --only verify
+```
 
 ## Tunnel trust
 
@@ -122,7 +144,7 @@ sudo python3 spark_install.py            # --resume after a failure, --only PHAS
 sudo python3 spark_install.py status
 ```
 
-Phases: `preflight dirs images clamav auth graph core tunnel verify` (`--list`). The
+Phases: `preflight vault ollama dirs images clamav auth graph core tunnel updater verify` (`--list`). The
 image phase builds on the Spark and needs Docker Hub and the package mirrors;
 offline images come with the signed kit (M2). A failed container start brings
 the previous container back.

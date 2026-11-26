@@ -3,14 +3,21 @@
 # MATRIX_* variables of the environment override this file. Unknown modes fall
 # back to "off"; a port of the Dokumentum AI or the system is refused.
 
-# --- Shared Ollama of the Dokumentum AI (read-only: no pull, no delete) ------
+# --- Ollama -------------------------------------------------------------------
+# shared (default): the Dokumentum AI's Ollama, read-only (no pull, no delete).
+# own: the Matrix's own Ollama (vivesec-ollama, whole GPU over CDI, loopback) with
+#      its models in /var/lib/vivesec-matrix-ollama; missing models are pulled once.
+#      Needs a port of its own: MATRIX_OLLAMA_URL=http://127.0.0.1:11435.
+# Anything else stops the installation. Back to shared removes the container, keeps the models.
+#MATRIX_OLLAMA=shared
 MATRIX_OLLAMA_URL=http://127.0.0.1:11434
+#MATRIX_OLLAMA_IMAGE=ollama/ollama:0.40.18
 MATRIX_GEN_MODEL=qwen3.6:35b
 MATRIX_EMBED_MODEL=bge-m3
-# Keep equal to the Dokumentum AI's OLLAMA_CONTEXT_LENGTH: another size reloads
-# the 22 GB model on every switch between the two products.
+# Shared: keep equal to the Dokumentum AI's OLLAMA_CONTEXT_LENGTH: another size
+# reloads the 22 GB model on every switch between the two products.
 MATRIX_NUM_CTX=65536
-# After the Dokumentum AI changed the embedding model and the index was rebuilt:
+# After the embedding model changed (the other product's or a new pull) and the index was rebuilt:
 #MATRIX_ACCEPT_EMBED_CHANGE=yes
 
 # --- Loopback ports of the Matrix services ------------------------------------

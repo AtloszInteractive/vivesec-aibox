@@ -16,15 +16,20 @@ matrix.conf (matrix.conf.example); MATRIX_* variables of the environment win.
 
 The Spark is shared: the Dokumentum AI owns :80, :443 and SSDP (its ViVeSecBox
 adapter), :8443, its loopback ports and the Ollama on 127.0.0.1:11434. This
-installer never touches their files, units, containers or firewall table. It
-uses that Ollama read-only (MATRIX_OLLAMA_URL): it neither pulls nor deletes a
-model, and it remembers the embedding model's digest, so a changed embedding
-model stops the installation instead of mixing vectors in one index.
+installer never touches their files, units, containers or firewall table. With
+MATRIX_OLLAMA=shared (default) it uses that Ollama read-only (MATRIX_OLLAMA_URL):
+it neither pulls nor deletes a model. With MATRIX_OLLAMA=own it runs an Ollama of
+its own (vivesec-ollama, loopback, another port) with its models in
+/var/lib/vivesec-matrix-ollama, and pulls what is missing there. Either way it
+remembers the embedding model's digest, so a changed embedding model stops the
+installation instead of mixing vectors in one index.
 
 Phases:
-    preflight  platform, docker, nginx, shared Ollama and its models, free ports
+    preflight  platform, docker, nginx, the Ollama and its models, free ports
     vault      MATRIX_VAULT=on: /var/lib/vivesec-matrix lives in a LUKS2 volume (a file, opened
                at boot without a person); off (default) leaves everything as it is
+    ollama     MATRIX_OLLAMA=own: the Matrix's own Ollama (GPU over CDI) and its models;
+               shared (default) uses the Dokumentum AI's and removes an own one
     dirs       /var/lib/vivesec-matrix and its secrets (RAG key, tunnel forward key)
     images     vivesec-adapter, -rag, -ui built from the kit (10-build-images.sh),
                or the release kit's loaded images tagged :latest
@@ -61,8 +66,8 @@ HERE = Path(__file__).resolve().parent
 SRC = HERE.parents[1]
 KIT = SRC.parent
 
-PHASES = ("preflight", "vault", "dirs", "images", "clamav", "auth", "graph", "core", "tunnel", "updater",
-          "verify")
+PHASES = ("preflight", "vault", "ollama", "dirs", "images", "clamav", "auth", "graph", "core", "tunnel",
+          "updater", "verify")
 CONF_FILE = Path("/etc/vivesec-matrix/matrix.conf")
 ROOT = Path("/var/lib/vivesec-matrix")
 STATE_FILE = ROOT / "install-state"
@@ -93,6 +98,15 @@ VAULT_TRIGGERS = ("vivesec-matrix-pki-sync.timer", "vivesec-matrix-updater-check
 VAULT_DROPIN = "vivesec-matrix-vault.conf"
 PARTNER_PKI = Path("/run/vivetech-vivesec-adapter/pki")
 PARTNER_ADAPTER_UNIT = "vivetech-vivesec-adapter.service"
+OLLAMA_CONTAINER = "vivesec-ollama"
+# Outside the encrypted volume: public model weights, and the Ollama may start before the volume opens.
+OLLAMA_DIR = Path("/var/lib/vivesec-matrix-ollama")
+OLLAMA_PULL_TIMEOUT = 6 * 3600
+# The model CDN publishes IPv6 addresses; where IPv6 is a black hole (office routers) Ollama's
+# downloads stall instead of falling back. Our container's resolver prefers IPv4, as an
+# /etc/gai.conf line would on the host (left alone: it is shared).
+OLLAMA_GAI = Path("/etc/vivesec-matrix/ollama-gai.conf")
+OLLAMA_GAI_TEXT = "# Written by spark_install.py: the own Ollama prefers IPv4.\nprecedence ::ffff:0:0/96  100\n"
 PREP_TABLE = "inet vivesec_prep_v2"
 FIREWALL_COMMENT = "vivesec-matrix-tunnel"
 
@@ -100,7 +114,9 @@ FIREWALL_COMMENT = "vivesec-matrix-tunnel"
 RESERVED_TCP = (22, 80, 443, 8443, 8098, 11000, 11434, 18083, 18084, 18085, 18086, 18200)
 
 DEFAULTS = {
+    "MATRIX_OLLAMA": "shared",
     "MATRIX_OLLAMA_URL": "http://127.0.0.1:11434",
+    "MATRIX_OLLAMA_IMAGE": "ollama/ollama:0.40.18",
     "MATRIX_GEN_MODEL": "qwen3.6:35b",
     "MATRIX_EMBED_MODEL": "bge-m3",
     "MATRIX_NUM_CTX": "65536",
@@ -133,6 +149,7 @@ DEFAULTS = {
     "MATRIX_VAULT_UNLOCK": "keyfile",
     "MATRIX_VAULT_RECOVERY_OUT": "",
 }
+OLLAMA_MODES = ("shared", "own")
 VAULT_MODES = ("on", "off")
 VAULT_UNLOCK_MODES = ("keyfile", "usb")
 PKI_MODES = ("off", "files", "partner-dev")
@@ -276,6 +293,26 @@ def settings(conf_text="", env=None):
     if not re.match(r"^http://(127\.\d+\.\d+\.\d+|localhost):\d+$", url):
         raise InstallError("MATRIX_OLLAMA_URL must be a loopback http:// URL")
     values["MATRIX_OLLAMA_URL"] = url
+    # Like the vault: an unclear wish stops, falling back could start or drop a second model server.
+    values["MATRIX_OLLAMA"] = values["MATRIX_OLLAMA"].strip().lower()
+    if values["MATRIX_OLLAMA"] not in OLLAMA_MODES:
+        raise InstallError("MATRIX_OLLAMA must be shared or own, not %r" % values["MATRIX_OLLAMA"])
+    values["MATRIX_OLLAMA_IMAGE"] = values["MATRIX_OLLAMA_IMAGE"].strip()
+    if not re.match(r"^[a-z0-9][a-z0-9./_-]*(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$",
+                    values["MATRIX_OLLAMA_IMAGE"]):
+        raise InstallError("MATRIX_OLLAMA_IMAGE must be an image reference")
+    values["MATRIX_OLLAMA_PORT"] = None
+    if values["MATRIX_OLLAMA"] == "own":
+        match = re.match(r"^http://127\.0\.0\.1:(\d+)$", url)
+        port = int(match.group(1)) if match else 0
+        if not 1024 <= port <= 65535:
+            raise InstallError("MATRIX_OLLAMA=own needs MATRIX_OLLAMA_URL=http://127.0.0.1:<port>")
+        if port in RESERVED_TCP:
+            raise InstallError("MATRIX_OLLAMA=own: port %d belongs to the Dokumentum AI / the system "
+                               "(e.g. MATRIX_OLLAMA_URL=http://127.0.0.1:11435)" % port)
+        if port in ports.values():
+            raise InstallError("MATRIX_OLLAMA_URL port %d is used by another Matrix service" % port)
+        values["MATRIX_OLLAMA_PORT"] = port
     values["MATRIX_ACCEPT_EMBED_CHANGE"] = values["MATRIX_ACCEPT_EMBED_CHANGE"].strip().lower() == "yes"
     return values, warnings
 
@@ -388,7 +425,7 @@ def unit_active(unit):
 def ollama_models(url):
     status, body = http_status(url + "/api/tags", timeout=10)
     if status != 200:
-        raise InstallError("the shared Ollama at %s does not answer (%s)" % (url, status or "no connection"))
+        raise InstallError("the Ollama at %s does not answer (%s)" % (url, status or "no connection"))
     return {model["name"]: model.get("digest", "") for model in json.loads(body).get("models", [])}
 
 
@@ -397,6 +434,20 @@ def model_digest(models, name):
         if candidate in models:
             return candidate, models[candidate]
     return None, None
+
+
+def embed_change_problem(models, conf, record=None):
+    """Why the embedding model may not be used: another digest than the index was built with."""
+    record = Path(record or EMBED_RECORD)
+    name, digest = model_digest(models, conf["MATRIX_EMBED_MODEL"])
+    if not digest or not record.is_file() or conf["MATRIX_ACCEPT_EMBED_CHANGE"]:
+        return None
+    recorded = json.loads(record.read_text(encoding="utf-8"))
+    if recorded.get("digest") == digest:
+        return None
+    return ("the embedding model %s changed (%s -> %s): the index was built with the old one; "
+            "reindex first, then set MATRIX_ACCEPT_EMBED_CHANGE=yes once"
+            % (name, recorded.get("digest", "?")[:12], digest[:12]))
 
 
 def kit_info():
@@ -455,23 +506,30 @@ def phase_preflight(conf):
                             % ", ".join(missing))
         if conf["MATRIX_GRAPH"] == "on" and images and "vivesec-graph" not in images:
             problems.append("MATRIX_GRAPH=on but this release kit has no vivesec-graph image")
-    try:
-        models = ollama_models(conf["MATRIX_OLLAMA_URL"])
-    except InstallError as e:
-        problems.append(str(e))
-        models = {}
+    own = conf["MATRIX_OLLAMA"] == "own"
+    if own and not ollama_cdi_ready():
+        problems.append("MATRIX_OLLAMA=own needs the GPU as a CDI device (nvidia.com/gpu=all): "
+                        "nvidia-ctk cdi list shows none")
+    models = {}
+    if own and not container_running(OLLAMA_CONTAINER):
+        log("own Ollama not running yet: the ollama phase starts it and pulls %s, %s"
+            % (conf["MATRIX_GEN_MODEL"], conf["MATRIX_EMBED_MODEL"]))
+    else:
+        try:
+            models = ollama_models(conf["MATRIX_OLLAMA_URL"])
+        except InstallError as e:
+            problems.append(str(e))
     for key in ("MATRIX_GEN_MODEL", "MATRIX_EMBED_MODEL"):
-        if models and model_digest(models, conf[key])[0] is None:
-            problems.append("the shared Ollama has no %s (%s); this kit does not pull models"
+        if models and not own and model_digest(models, conf[key])[0] is None:
+            problems.append("the shared Ollama has no %s (%s); this kit does not pull models there"
                             % (conf[key], key))
-    name, digest = model_digest(models, conf["MATRIX_EMBED_MODEL"])
-    if digest and EMBED_RECORD.is_file():
-        recorded = json.loads(EMBED_RECORD.read_text(encoding="utf-8"))
-        if recorded.get("digest") != digest and not conf["MATRIX_ACCEPT_EMBED_CHANGE"]:
-            problems.append("the embedding model %s changed (%s -> %s): the index was built with the old one; "
-                            "reindex first, then set MATRIX_ACCEPT_EMBED_CHANGE=yes once"
-                            % (name, recorded.get("digest", "?")[:12], digest[:12]))
+    problem = embed_change_problem(models, conf)
+    if problem:
+        problems.append(problem)
     busy = listening_ports()
+    if own and conf["MATRIX_OLLAMA_PORT"] in busy and not container_running(OLLAMA_CONTAINER):
+        problems.append("port %d (MATRIX_OLLAMA_URL) is taken by something that is not %s"
+                        % (conf["MATRIX_OLLAMA_PORT"], OLLAMA_CONTAINER))
     for key in PORT_KEYS:
         if key == "MATRIX_TUNNEL_PORT" and conf["MATRIX_TUNNEL_PKI"] == "off":
             continue
@@ -496,8 +554,8 @@ def phase_preflight(conf):
             problems.append("MATRIX_TUNNEL_FIREWALL=dropin-dev needs the %s table" % PREP_TABLE)
     if problems:
         raise InstallError("preflight:\n  - " + "\n  - ".join(problems))
-    log("PREFLIGHT_OK kit=%s ollama=%s" % (json.loads((KIT / "KIT.json").read_text()).get("label"),
-                                           conf["MATRIX_OLLAMA_URL"]))
+    log("PREFLIGHT_OK kit=%s ollama=%s (%s)" % (json.loads((KIT / "KIT.json").read_text()).get("label"),
+                                                conf["MATRIX_OLLAMA_URL"], conf["MATRIX_OLLAMA"]))
 
 
 def vault_settings(conf):
@@ -595,6 +653,89 @@ def phase_vault(conf):
     for unit in stops:
         run("systemctl", "start", unit, check=False)
     log("VAULT_OK %s on %s (%s unlock)" % (ROOT, VAULT_MOUNT, conf["MATRIX_VAULT_UNLOCK"]))
+
+
+def ollama_cdi_ready():
+    result = run("nvidia-ctk", "cdi", "list", check=False) if shutil.which("nvidia-ctk") else None
+    return bool(result and result.returncode == 0 and "nvidia.com/gpu=all" in result.stdout + result.stderr)
+
+
+def ollama_args(conf):
+    """The Matrix's own Ollama: the whole GPU over CDI, loopback only, one request at a time
+    (the adapter scheduler serializes the GPU work anyway), the context size the adapter asks for."""
+    env = {"OLLAMA_HOST": "127.0.0.1:%d" % conf["MATRIX_OLLAMA_PORT"], "OLLAMA_MODELS": "/models",
+           "OLLAMA_CONTEXT_LENGTH": conf["MATRIX_NUM_CTX"], "OLLAMA_NUM_PARALLEL": "1",
+           "OLLAMA_NO_CLOUD": "1", "GODEBUG": "netdns=cgo"}
+    args = ["--device", "nvidia.com/gpu=all", "-v", "%s:/models" % OLLAMA_DIR.as_posix(),
+            "-v", "%s:/etc/gai.conf:ro" % OLLAMA_GAI.as_posix()]
+    for key, value in sorted(env.items()):
+        args += ["-e", "%s=%s" % (key, value)]
+    return args
+
+
+def ollama_pull(url, model):
+    log("OLLAMA_PULL %s (one-time download)" % model)
+    status, body = http_status(url + "/api/pull", method="POST", timeout=OLLAMA_PULL_TIMEOUT,
+                               headers={"Content-Type": "application/json"},
+                               body=json.dumps({"model": model, "stream": False}).encode())
+    try:
+        answer = json.loads(body or b"{}")
+    except ValueError:
+        answer = {}
+    if status != 200 or answer.get("status") != "success":
+        raise InstallError("pulling %s into the own Ollama failed (%s): %s"
+                           % (model, status or "no connection", answer.get("error") or body[:300]))
+
+
+def phase_ollama(conf):
+    if conf["MATRIX_OLLAMA"] == "shared":
+        if run("docker", "container", "inspect", OLLAMA_CONTAINER, check=False).returncode == 0:
+            # Its models stay in OLLAMA_DIR for a later switch back.
+            run("docker", "rm", "-f", OLLAMA_CONTAINER)
+            log("OLLAMA_OWN_REMOVED (MATRIX_OLLAMA=shared; models kept in %s)" % OLLAMA_DIR)
+        log("OLLAMA_SHARED %s" % conf["MATRIX_OLLAMA_URL"])
+        return
+    if not ollama_cdi_ready():
+        raise InstallError("MATRIX_OLLAMA=own needs the GPU as a CDI device (nvidia.com/gpu=all)")
+    OLLAMA_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(OLLAMA_DIR, 0o700)
+    write_file(OLLAMA_GAI, OLLAMA_GAI_TEXT, 0o644)
+    images = kit_images(kit_info())
+    if OLLAMA_CONTAINER in images:
+        # The images phase (later) tags :latest; the loaded image is there by its id already.
+        image = images[OLLAMA_CONTAINER]
+        if not image_present(image):
+            raise InstallError("release image %s (%s) is not loaded" % (OLLAMA_CONTAINER, image[:19]))
+    else:
+        image = conf["MATRIX_OLLAMA_IMAGE"]
+        if run("docker", "image", "inspect", image, check=False).returncode:
+            run("docker", "pull", "-q", image)
+    url = conf["MATRIX_OLLAMA_URL"]
+    replace_container(OLLAMA_CONTAINER, image, ollama_args(conf), url + "/api/version")
+
+    def compute_lines():
+        logs = run("docker", "logs", OLLAMA_CONTAINER, check=False)
+        return [line for line in (logs.stdout + logs.stderr).splitlines() if "inference compute" in line]
+
+    wait_for(lambda: bool(compute_lines()), 60, "the GPU discovery of %s" % OLLAMA_CONTAINER)
+    if not any("library=cuda" in line.lower() for line in compute_lines()):
+        run("docker", "rm", "-f", OLLAMA_CONTAINER, check=False)
+        raise InstallError("the own Ollama sees no GPU (CPU inference is unusable): %s"
+                           % compute_lines()[-1][-300:])
+    models = ollama_models(url)
+    for key in ("MATRIX_EMBED_MODEL", "MATRIX_GEN_MODEL"):
+        if model_digest(models, conf[key])[0] is None:
+            ollama_pull(url, conf[key])
+    models = ollama_models(url)
+    missing = [conf[key] for key in ("MATRIX_GEN_MODEL", "MATRIX_EMBED_MODEL") if model_digest(models, conf[key])[0] is None]
+    if missing:
+        raise InstallError("the own Ollama still lacks %s after pulling" % ", ".join(missing))
+    problem = embed_change_problem(models, conf)
+    if problem:
+        raise InstallError(problem)
+    log("OLLAMA_OWN_OK %s %s on GPU, models %s" % (OLLAMA_CONTAINER, url, ", ".join(
+        "%s %s" % (model_digest(models, conf[key])[0], model_digest(models, conf[key])[1][:12])
+        for key in ("MATRIX_GEN_MODEL", "MATRIX_EMBED_MODEL"))))
 
 
 def phase_dirs(conf):
@@ -1344,7 +1485,9 @@ def phase_verify(conf):
         status = http_status("http://127.0.0.1:%d/health" % conf["MATRIX_BROKER_PORT"], timeout=10)[0]
         check("adapter GPU broker /health", status == 200, status)
     models = ollama_models(conf["MATRIX_OLLAMA_URL"])
-    check("shared Ollama lists %s and %s" % (conf["MATRIX_GEN_MODEL"], conf["MATRIX_EMBED_MODEL"]),
+    if conf["MATRIX_OLLAMA"] == "own":
+        check("own Ollama %s running" % OLLAMA_CONTAINER, container_running(OLLAMA_CONTAINER))
+    check("%s Ollama lists %s and %s" % (conf["MATRIX_OLLAMA"], conf["MATRIX_GEN_MODEL"], conf["MATRIX_EMBED_MODEL"]),
           all(model_digest(models, conf[key])[0] for key in ("MATRIX_GEN_MODEL", "MATRIX_EMBED_MODEL")))
     if conf["MATRIX_TUNNEL_PKI"] != "off":
         front_ok = unit_active("vivesec-matrix-front.service")
@@ -1384,7 +1527,8 @@ def phase_verify(conf):
 
 # ---------------------------------------------------------------- driver
 
-PHASE_FUNCTIONS = {"preflight": phase_preflight, "vault": phase_vault, "dirs": phase_dirs, "images": phase_images,
+PHASE_FUNCTIONS = {"preflight": phase_preflight, "vault": phase_vault, "ollama": phase_ollama, "dirs": phase_dirs,
+                   "images": phase_images,
                    "clamav": phase_clamav, "auth": phase_auth, "graph": phase_graph, "core": phase_core,
                    "tunnel": phase_tunnel, "updater": phase_updater, "verify": phase_verify}
 
@@ -1400,7 +1544,7 @@ def mark_done(phase):
 
 def status(conf):
     for name in ("vivesec-rag", "vivesec-adapter", "vivesec-ui", "vivesec-auth", "vivesec-clamav",
-                 "vivesec-neo4j", "vivesec-graph"):
+                 "vivesec-neo4j", "vivesec-graph", OLLAMA_CONTAINER):
         result = run("docker", "container", "inspect", "-f", "{{.State.Status}} {{.Config.Image}}", name, check=False)
         print("%-24s %s" % (name, result.stdout.strip() if result.returncode == 0 else "absent"))
     for unit in ("vivesec-matrix-tunnel.service", "vivesec-matrix-front.service", "vivesec-matrix-pki-sync.timer",
@@ -1409,6 +1553,7 @@ def status(conf):
     print("phases done: %s" % " ".join(phase for phase in PHASES if phase in done_phases()))
     print("tunnel: pki=%s firewall=%s port=%d" % (conf["MATRIX_TUNNEL_PKI"], conf["MATRIX_TUNNEL_FIREWALL"],
                                                  conf["MATRIX_TUNNEL_PORT"]))
+    print("ollama: %s %s" % (conf["MATRIX_OLLAMA"], conf["MATRIX_OLLAMA_URL"]))
 
 
 def main(argv=None):

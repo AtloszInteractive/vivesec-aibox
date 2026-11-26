@@ -107,6 +107,40 @@ class SettingsTest(unittest.TestCase):
                      "MATRIX_GRAPH_PROFILE='../x'"):
             self.assertRaises(si.InstallError, si.settings, text, {})
 
+    def test_own_ollama_needs_a_loopback_port_of_its_own_and_unclear_modes_stop(self):
+        conf, _ = si.settings("", env={})
+        self.assertEqual((conf["MATRIX_OLLAMA"], conf["MATRIX_OLLAMA_PORT"]), ("shared", None))
+        conf, _ = si.settings("MATRIX_OLLAMA=Own\nMATRIX_OLLAMA_URL=http://127.0.0.1:11435/\n", env={})
+        self.assertEqual((conf["MATRIX_OLLAMA"], conf["MATRIX_OLLAMA_PORT"]), ("own", 11435))
+        for text in ("MATRIX_OLLAMA=yes", "MATRIX_OLLAMA=own",
+                     "MATRIX_OLLAMA=own\nMATRIX_OLLAMA_URL=http://localhost:11435",
+                     "MATRIX_OLLAMA=own\nMATRIX_OLLAMA_URL=http://127.0.0.1:8088",
+                     "MATRIX_OLLAMA_IMAGE='ollama/ollama;rm'"):
+            self.assertRaises(si.InstallError, si.settings, text, {})
+
+    def test_own_ollama_runs_on_the_gpu_on_loopback_with_the_adapters_context(self):
+        conf, _ = si.settings("MATRIX_OLLAMA=own\nMATRIX_OLLAMA_URL=http://127.0.0.1:11435\n", env={})
+        args = si.ollama_args(conf)
+        self.assertIn("nvidia.com/gpu=all", args)
+        self.assertIn("OLLAMA_HOST=127.0.0.1:11435", args)
+        self.assertIn("OLLAMA_CONTEXT_LENGTH=65536", args)
+        self.assertIn("/var/lib/vivesec-matrix-ollama:/models", args)
+        self.assertIn("/etc/vivesec-matrix/ollama-gai.conf:/etc/gai.conf:ro", args)
+        self.assertIn("GODEBUG=netdns=cgo", args)
+        self.assertIn("OLLAMA_URL=http://127.0.0.1:11435", si.adapter_args(conf, "k"))
+
+    def test_a_changed_embedding_model_is_refused_unless_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "embed-model.json"
+            conf, _ = si.settings("", env={})
+            models = {"bge-m3:latest": "b" * 64}
+            self.assertIsNone(si.embed_change_problem(models, conf, record))
+            record.write_text(json.dumps({"model": "bge-m3:latest", "digest": "a" * 64}))
+            self.assertIn("changed", si.embed_change_problem(models, conf, record))
+            self.assertIsNone(si.embed_change_problem({"bge-m3:latest": "a" * 64}, conf, record))
+            conf, _ = si.settings("MATRIX_ACCEPT_EMBED_CHANGE=yes", env={})
+            self.assertIsNone(si.embed_change_problem(models, conf, record))
+
 
 class VaultPhaseTest(unittest.TestCase):
     """The vault phase must not order a timer or path unit after aibox-vault (an ordering
