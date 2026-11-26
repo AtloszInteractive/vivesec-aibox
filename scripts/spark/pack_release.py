@@ -21,6 +21,11 @@ saves each image, and writes OUT/:
 Building retags :latest of vivesec-adapter, -rag and -ui on this Spark, as an
 installation from the build kit would. Signing and publishing happen where the
 keys are (matrix_repo.py); this script holds no key.
+
+The release pins MATRIX_GEN_MODEL and MATRIX_EMBED_MODEL as this Spark's own
+Ollama holds them (MATRIX_OLLAMA=own): KIT.json records their manifests by hash.
+The models themselves (tens of GB) stay out of OUT/ and the update channel; they
+go on the release's USB stick with pack_models.py.
 """
 import argparse
 import hashlib
@@ -40,7 +45,8 @@ sys.path.insert(0, str(HERE.parents[1] / "scripts" / "jetson" / "standalone"))
 
 import spark_install as si  # noqa: E402
 
-PUBLIC_IMAGES = {"vivesec-clamav": "clamav/clamav-debian:1.4", "vivesec-neo4j": "neo4j:5-community"}
+PUBLIC_IMAGES = {"vivesec-clamav": "clamav/clamav-debian:1.4", "vivesec-neo4j": "neo4j:5-community",
+                 "vivesec-ollama": si.DEFAULTS["MATRIX_OLLAMA_IMAGE"]}
 BUILT_IMAGES = ("vivesec-adapter", "vivesec-rag", "vivesec-ui", "vivesec-auth", "vivesec-graph")
 VERSION = re.compile(r"^(\d{2}\.\d{2}\.\d{1,3})(?:\.\d{1,4})?$")
 # Left out of a release kit: what only a build on the box needs.
@@ -102,14 +108,16 @@ def save_image(ref, out_dir, name):
     return target
 
 
-def release_kit(kit_dir, destination, version, images):
-    """The build kit without what only a build needs, its KIT.json listing the images."""
+def release_kit(kit_dir, destination, version, images, models=()):
+    """The build kit without what only a build needs, its KIT.json listing the images
+    and pinning the models (they travel on the release's USB stick: pack_models.py)."""
     kit_dir = Path(kit_dir)
     kit = json.loads((kit_dir / "KIT.json").read_text(encoding="utf-8"))
     out = {key: kit.get(key) for key in ("format", "kind", "version", "commit", "ui_commit")}
     out.update({"label": version, "build_label": kit.get("label"),
                 "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "files": {},
-                "images": [{"name": name, "id": images[name]} for name in sorted(images)]})
+                "images": [{"name": name, "id": images[name]} for name in sorted(images)],
+                "models": list(models)})
     with tarfile.open(destination, "w:gz") as archive:
         for path in sorted(p for p in kit_dir.rglob("*") if p.is_file()):
             name = path.relative_to(kit_dir).as_posix()
@@ -136,6 +144,16 @@ def release_json(version, kit, args, image_files):
             "kit": {"file": "matrix-kit.tgz"},
             "images": [{"name": name, "id": image_id_, "file": path}
                        for name, (image_id_, path) in sorted(image_files.items())]}
+
+
+def model_pins(conf):
+    """The generation and embedding models of this build Spark's own Ollama, as the release pins them."""
+    names = list(dict.fromkeys(conf[key] for key in ("MATRIX_GEN_MODEL", "MATRIX_EMBED_MODEL")))
+    try:
+        return [si.model_pin(si.OLLAMA_DIR, name) for name in names]
+    except si.InstallError as e:
+        raise SystemExit("%s: a release pins the models of the build Spark's own Ollama "
+                         "(MATRIX_OLLAMA=own, spark_install.py --only ollama)" % e)
 
 
 def main(argv=None):
@@ -171,6 +189,7 @@ def main(argv=None):
     out = Path(args.out)
     if out.exists() and any(out.iterdir()):
         raise SystemExit("%s is not empty" % out)
+    models = model_pins(si.load_settings())
     out.mkdir(parents=True, exist_ok=True)
     try:
         refs = build_images(si.KIT, si.SRC)
@@ -182,12 +201,12 @@ def main(argv=None):
         image_files[name] = (image_id(ref), target.relative_to(out).as_posix())
         si.log("SAVED %s %s (%d MB)" % (name, image_files[name][0][:19], target.stat().st_size >> 20))
     release_kit(si.KIT, out / "matrix-kit.tgz", args.version,
-                {name: value[0] for name, value in image_files.items()})
+                {name: value[0] for name, value in image_files.items()}, models)
     release = release_json(args.version, kit, args, image_files)
     (out / "release.json").write_text(json.dumps(release, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    si.log("RELEASE_PACKED %s in %s; next, where the keys are: "
+    si.log("RELEASE_PACKED %s in %s, models %s (USB stick: pack_models.py); next, where the keys are: "
            "python scripts/release/matrix_repo.py publish --repo REPO --keys KEYS --channel CHANNEL %s"
-           % (args.version, out, out))
+           % (args.version, out, ", ".join(pin["name"] for pin in models), out))
     return 0
 
 

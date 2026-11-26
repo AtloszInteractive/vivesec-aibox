@@ -107,6 +107,40 @@ class SettingsTest(unittest.TestCase):
                      "MATRIX_GRAPH_PROFILE='../x'"):
             self.assertRaises(si.InstallError, si.settings, text, {})
 
+    def test_own_ollama_needs_a_loopback_port_of_its_own_and_unclear_modes_stop(self):
+        conf, _ = si.settings("", env={})
+        self.assertEqual((conf["MATRIX_OLLAMA"], conf["MATRIX_OLLAMA_PORT"]), ("shared", None))
+        conf, _ = si.settings("MATRIX_OLLAMA=Own\nMATRIX_OLLAMA_URL=http://127.0.0.1:11435/\n", env={})
+        self.assertEqual((conf["MATRIX_OLLAMA"], conf["MATRIX_OLLAMA_PORT"]), ("own", 11435))
+        for text in ("MATRIX_OLLAMA=yes", "MATRIX_OLLAMA=own",
+                     "MATRIX_OLLAMA=own\nMATRIX_OLLAMA_URL=http://localhost:11435",
+                     "MATRIX_OLLAMA=own\nMATRIX_OLLAMA_URL=http://127.0.0.1:8088",
+                     "MATRIX_OLLAMA_IMAGE='ollama/ollama;rm'"):
+            self.assertRaises(si.InstallError, si.settings, text, {})
+
+    def test_own_ollama_runs_on_the_gpu_on_loopback_with_the_adapters_context(self):
+        conf, _ = si.settings("MATRIX_OLLAMA=own\nMATRIX_OLLAMA_URL=http://127.0.0.1:11435\n", env={})
+        args = si.ollama_args(conf)
+        self.assertIn("nvidia.com/gpu=all", args)
+        self.assertIn("OLLAMA_HOST=127.0.0.1:11435", args)
+        self.assertIn("OLLAMA_CONTEXT_LENGTH=65536", args)
+        self.assertIn("/var/lib/vivesec-matrix-ollama:/models", args)
+        self.assertIn("/etc/vivesec-matrix/ollama-gai.conf:/etc/gai.conf:ro", args)
+        self.assertIn("GODEBUG=netdns=cgo", args)
+        self.assertIn("OLLAMA_URL=http://127.0.0.1:11435", si.adapter_args(conf, "k"))
+
+    def test_a_changed_embedding_model_is_refused_unless_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "embed-model.json"
+            conf, _ = si.settings("", env={})
+            models = {"bge-m3:latest": "b" * 64}
+            self.assertIsNone(si.embed_change_problem(models, conf, record))
+            record.write_text(json.dumps({"model": "bge-m3:latest", "digest": "a" * 64}))
+            self.assertIn("changed", si.embed_change_problem(models, conf, record))
+            self.assertIsNone(si.embed_change_problem({"bge-m3:latest": "a" * 64}, conf, record))
+            conf, _ = si.settings("MATRIX_ACCEPT_EMBED_CHANGE=yes", env={})
+            self.assertIsNone(si.embed_change_problem(models, conf, record))
+
 
 class VaultPhaseTest(unittest.TestCase):
     """The vault phase must not order a timer or path unit after aibox-vault (an ordering
@@ -274,6 +308,54 @@ class InstallProbeTest(unittest.TestCase):
         self.assertEqual(self.forget("not json"), [])
         # The new probe is refused by its form, so it can never get a user.
         self.assertNotRegex(si.INSTALL_PROBE, r"^[A-Za-z0-9][A-Za-z0-9._@=+-]{0,127}$")
+
+
+class ReleaseModelsTest(unittest.TestCase):
+    def ollama(self, root, name, layers):
+        """An Ollama models folder holding one model; returns its blobs by name."""
+        root = Path(root)
+        (root / "blobs").mkdir(parents=True, exist_ok=True)
+        entries = []
+        for content in layers:
+            digest = hashlib.sha256(content).hexdigest()
+            (root / "blobs" / ("sha256-" + digest)).write_bytes(content)
+            entries.append({"digest": "sha256:" + digest, "size": len(content)})
+        manifest = root / "manifests" / si.model_manifest(name)
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"config": entries[0], "layers": entries[1:]}))
+
+    def test_model_names_map_to_ollama_manifests(self):
+        self.assertEqual(si.model_manifest("qwen3.6:35b"), "registry.ollama.ai/library/qwen3.6/35b")
+        self.assertEqual(si.model_manifest("bge-m3"), "registry.ollama.ai/library/bge-m3/latest")
+        self.assertEqual(si.model_manifest("acme/m:1"), "registry.ollama.ai/acme/m/1")
+        for bad in ("../x", "a/../../b:1", "x:", "a/b/c/d", ""):
+            self.assertRaises(si.InstallError, si.model_manifest, bad)
+
+    def test_a_pinned_model_is_placed_only_from_files_matching_the_pin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build, stick, box = Path(tmp) / "build", Path(tmp) / "stick", Path(tmp) / "box"
+            self.ollama(build, "bge-m3", [b"config", b"weights" * 100])
+            pin = si.model_pin(build, "bge-m3")
+            self.assertEqual(si.kit_models({"models": [pin]}), [pin])
+            self.assertEqual(si.place_model(pin, build, stick), 6 + 700)
+            self.assertTrue(si.model_in_place(stick, pin))
+            self.assertEqual(si.place_model(pin, stick, stick), 0)
+            blob = next((stick / "blobs").iterdir())
+            blob.write_bytes(b"X" * blob.stat().st_size)  # same size, other content
+            self.assertRaises(si.InstallError, si.place_model, pin, stick, box, True)
+            self.assertFalse((box / "manifests").exists())  # Ollama never sees a partial model
+            si.place_model(pin, build, stick)  # a second run repairs the stick
+            si.place_model(pin, stick, box, move=True)
+            self.assertTrue(si.model_in_place(box, pin))
+            self.ollama(stick, "bge-m3", [b"other config", b"other"])
+            self.assertRaises(si.InstallError, si.place_model, pin, stick, Path(tmp) / "box2")
+
+    def test_kit_models_refuse_bad_pins(self):
+        pin = {"name": "bge-m3", "manifest": si.model_manifest("bge-m3"), "sha256": "a" * 64, "bytes": 1}
+        self.assertEqual(si.kit_models({}), [])
+        for bad in ({"manifest": "registry.ollama.ai/library/x/latest"}, {"sha256": "A" * 64},
+                    {"name": "../x"}, {"bytes": "1"}):
+            self.assertRaises(si.InstallError, si.kit_models, {"models": [dict(pin, **bad)]})
 
 
 if __name__ == "__main__":

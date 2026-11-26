@@ -20,7 +20,7 @@ adapter ──▶ clamav :3310          ui :8080 (loopback: admin over an SSH tu
 | The Dokumentum AI owns | The Matrix uses |
 | --- | --- |
 | :80, :443, UDP 1900 (its ViVeSecBox adapter), :8443, loopback 8098, 11000, 18083–18086, 18200 | loopback 8080, 8088, 8090, 8097, 3310, 18476; :7476 for the tunnel front |
-| Ollama on 127.0.0.1:11434 with its models | that Ollama, read-only: no pull, no delete, the same `num_ctx` (65536) |
+| Ollama on 127.0.0.1:11434 with its models | that Ollama, read-only: no pull, no delete, the same `num_ctx` (65536); or its own (`MATRIX_OLLAMA=own`, below) |
 | `table inet vivesec_prep_v2` (ViVeSec prep firewall, rewritten every 30 s) | nothing, unless `MATRIX_TUNNEL_FIREWALL=dropin-dev` |
 
 The installer refuses a setting that would use one of their ports. The
@@ -30,6 +30,31 @@ changes it, the installer stops until the index is rebuilt
 never mix in one index. The Ollama serves one request at a time
 (`OLLAMA_NUM_PARALLEL=1` on the Dokumentum AI side): Matrix answers wait while
 the other product generates, and the other way round.
+
+### Own Ollama (`MATRIX_OLLAMA=own`)
+
+When the Dokumentum AI's Ollama is not there (a locked or retired partner
+stack), the `ollama` phase runs one for the Matrix: `vivesec-ollama`
+(`MATRIX_OLLAMA_IMAGE`, in release kits as an image), the whole GPU as the CDI
+device `nvidia.com/gpu=all`, listening on the loopback port of
+`MATRIX_OLLAMA_URL` (not 11434, e.g. `http://127.0.0.1:11435`), one request at a
+time, `OLLAMA_CONTEXT_LENGTH=MATRIX_NUM_CTX`. Its models live in
+`/var/lib/vivesec-matrix-ollama` (outside the encrypted volume: public weights).
+A release kit pins its models (`"models"` in `KIT.json`: the manifest of each by
+sha256, which names its blobs by sha256): they come on the release's USB stick
+(below), never from the internet, and every file is checked against the pin
+before Ollama sees it. A build kit pulls the missing ones from the Ollama
+registry once (22 GB for `qwen3.6:35b`). Either way the phase stops when the
+embedding model's digest differs from the recorded one. A container that reports no CUDA device is removed: CPU inference
+is not an option. `MATRIX_OLLAMA=shared` removes the container and keeps the
+models. Both Ollamas at once each hold their own copy of the model in the
+128 GB unified memory.
+
+```bash
+# /etc/vivesec-matrix/matrix.conf: MATRIX_OLLAMA=own, MATRIX_OLLAMA_URL=http://127.0.0.1:11435
+sudo python3 spark_install.py --only ollama && sudo python3 spark_install.py --only core
+sudo python3 spark_install.py --only verify
+```
 
 ## Tunnel trust
 
@@ -122,7 +147,7 @@ sudo python3 spark_install.py            # --resume after a failure, --only PHAS
 sudo python3 spark_install.py status
 ```
 
-Phases: `preflight dirs images clamav auth graph core tunnel verify` (`--list`). The
+Phases: `preflight vault ollama dirs images clamav auth graph core tunnel updater verify` (`--list`). The
 image phase builds on the Spark and needs Docker Hub and the package mirrors;
 offline images come with the signed kit (M2). A failed container start brings
 the previous container back.
@@ -216,24 +241,43 @@ A ViVeSecBox user the tunnel refused shows up in the gateway's journal
 
 ## Install from a USB stick (release kit, signed channel)
 
-A Spark with internet installs a published release from a small stick:
+A Spark with internet installs a published release from a stick (exFAT or ext4:
+FAT32 holds no 22 GB file, 64 GB or more):
 `scripts/spark/usb/matrix-usb.sh`, `matrix.conf` (from `usb/matrix.conf.bv-pilot`
-or `matrix.conf.example`, with `MATRIX_UPDATE=on` and the channel URL) and the
+or `matrix.conf.example`, with `MATRIX_UPDATE=on` and the channel URL), the
 release kit `matrix-kit-<version>.tgz` (`matrix-kit.tgz` of the pack_release.py
-output, renamed). On the Spark:
+output, renamed) and `matrix-models/`, the models that kit pins, written by
+`pack_models.py` on the build Spark:
 
 ```bash
-sudo bash /media/<user>/<stick>/matrix-usb.sh install   # nginx if missing, matrix.conf, bootstrap
+# build Spark, after pack_release.py, the stick mounted
+sudo python3 pack_models.py --kit /var/tmp/matrix-26.11.1.1/matrix-kit.tgz \
+  --out /media/<user>/<stick>/matrix-models
+```
+
+On the Spark:
+
+```bash
+sudo bash /media/<user>/<stick>/matrix-usb.sh install   # nginx if missing, matrix.conf, models, bootstrap
 sudo bash /media/<user>/<stick>/matrix-usb.sh admin     # first administrator, temporary password
 sudo bash /media/<user>/<stick>/matrix-usb.sh ids       # ViVeSecBox users the tunnel refused
 sudo bash /media/<user>/<stick>/matrix-usb.sh map <VVS-User> <user>
 ```
 
-`install` runs `updater.py bootstrap` from a scratch copy of the kit: it trusts
+`install` copies `matrix-models/` to `/var/lib/vivesec-matrix-ollama.incoming`
+(blobs the box holds already are skipped), then runs `updater.py bootstrap` from a scratch copy of the kit: it trusts
 the root in the kit, checks that the stick's kit is byte for byte the signed
 release kit, downloads that release's images from the channel (TUF), loads
-them, and only then unpacks the kit and runs every installer phase. Later
-versions come through the administration page.
+them, and only then unpacks the kit and runs every installer phase; the `ollama`
+phase moves the models into place after checking each file against the kit's
+pins (the stick is not trusted). Later versions come through the administration
+page; one that pins other models needs `matrix-usb.sh models` from its stick
+first (copy only), then the approval on the Updates tab.
+
+An installed box on the Dokumentum AI's Ollama switches to its own with the
+release that brings the models: `matrix-usb.sh own-ollama` (keeps a copy of
+`matrix.conf`, sets `MATRIX_OLLAMA=own` and `MATRIX_OLLAMA_URL=http://127.0.0.1:11435`;
+refused while neither the stick nor the box has models), then `install`.
 
 ## Updates (signed release channel)
 
@@ -306,7 +350,9 @@ sudo python3 pack_release.py --version 26.11.1.1 --out /var/tmp/matrix-26.11.1.1
 ```
 
 `YY.MM.N` is a release (stable channel) and needs a kit built at the release
-tag; `YY.MM.N.B` is a pilot or labor build. A release never goes back to an
+tag; `YY.MM.N.B` is a pilot or labor build. The build Spark runs its own Ollama
+(`MATRIX_OLLAMA=own`) with `MATRIX_GEN_MODEL` and `MATRIX_EMBED_MODEL`:
+pack_release.py pins them in the release kit and stops without them. A release never goes back to an
 older version, and `--min-from` names the oldest version it may be installed
 over. `--data-copy` makes the updater copy the data aside before installing
 (services stopped meanwhile); a rollback may put it back.
